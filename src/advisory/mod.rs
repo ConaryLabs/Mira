@@ -16,6 +16,7 @@ pub mod session;
 pub mod streaming;
 pub mod synthesis;
 pub mod tool_bridge;
+pub mod tool_loop;
 
 // Re-exports for external use (some items only used externally)
 #[allow(unused_imports)]

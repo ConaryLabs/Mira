@@ -20,7 +20,8 @@ use super::{
     AdvisoryProvider, AdvisoryRequest, AdvisoryResponse, AdvisoryRole,
     AdvisoryUsage, ToolCallRequest, get_env_var, REASONER_TIMEOUT_SECS,
 };
-use crate::advisory::tool_bridge::{AllowedTool, chat_completions_tool_schema};
+use crate::advisory::tool_bridge::{self, AllowedTool, chat_completions_tool_schema};
+use crate::advisory::tool_loop::{ToolLoopProvider, ToolDefinition};
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1/chat/completions";
 
@@ -135,7 +136,7 @@ struct ChatFunction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChatToolCall {
+pub struct ChatToolCall {
     id: String,
     #[serde(rename = "type")]
     call_type: String,
@@ -143,7 +144,7 @@ struct ChatToolCall {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChatToolCallFunction {
+pub struct ChatToolCallFunction {
     name: String,
     arguments: String,
 }
@@ -580,4 +581,280 @@ async fn parse_deepseek_sse(
     }
 
     Ok(full_text)
+}
+
+// ============================================================================
+// Input Item Types (for tool loop)
+// ============================================================================
+
+/// Input item for DeepSeek Reasoner tool loop
+#[derive(Clone, Debug)]
+pub enum ReasonerInputItem {
+    /// System message
+    SystemMessage(String),
+    /// User message
+    UserMessage(String),
+    /// Assistant message with optional tool calls
+    AssistantMessage {
+        content: Option<String>,
+        tool_calls: Vec<ChatToolCall>,
+    },
+    /// Tool result
+    ToolResult {
+        tool_call_id: String,
+        content: String,
+    },
+}
+
+impl ReasonerInputItem {
+    /// Convert to DeepSeekMessage for API request
+    fn to_message(&self) -> DeepSeekMessage {
+        match self {
+            ReasonerInputItem::SystemMessage(text) => DeepSeekMessage {
+                role: "system".to_string(),
+                content: Some(text.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ReasonerInputItem::UserMessage(text) => DeepSeekMessage {
+                role: "user".to_string(),
+                content: Some(text.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ReasonerInputItem::AssistantMessage { content, tool_calls } => DeepSeekMessage {
+                role: "assistant".to_string(),
+                content: content.clone(),
+                tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls.clone()) },
+                tool_call_id: None,
+            },
+            ReasonerInputItem::ToolResult { tool_call_id, content } => DeepSeekMessage {
+                role: "tool".to_string(),
+                content: Some(content.clone()),
+                tool_calls: None,
+                tool_call_id: Some(tool_call_id.clone()),
+            },
+        }
+    }
+}
+
+// ============================================================================
+// ToolLoopProvider Implementation
+// ============================================================================
+
+/// Convert ToolDefinitions to DeepSeek tool format
+fn tool_definitions_to_deepseek(tools: &[ToolDefinition]) -> Vec<ChatTool> {
+    tools
+        .iter()
+        .map(|td| {
+            let schema = chat_completions_tool_schema(td.tool.clone());
+            ChatTool {
+                tool_type: "function".to_string(),
+                function: ChatFunction {
+                    name: schema["function"]["name"].as_str().unwrap_or("").to_string(),
+                    description: schema["function"]["description"].as_str().map(String::from),
+                    parameters: schema["function"]["parameters"].clone(),
+                },
+            }
+        })
+        .collect()
+}
+
+#[async_trait]
+impl ToolLoopProvider for ReasonerProvider {
+    /// State is a list of input items
+    type State = Vec<ReasonerInputItem>;
+
+    /// DeepSeek doesn't have special raw response data to preserve
+    type RawResponse = ();
+
+    fn name(&self) -> &'static str {
+        "DeepSeek Reasoner"
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        REASONER_TIMEOUT_SECS
+    }
+
+    fn init_conversation(&self, message: &str) -> Self::State {
+        vec![ReasonerInputItem::UserMessage(message.to_string())]
+    }
+
+    async fn call(
+        &self,
+        state: &Self::State,
+        system: Option<&str>,
+        tools: Option<&[ToolDefinition]>,
+    ) -> Result<(AdvisoryResponse, Self::RawResponse, AdvisoryUsage)> {
+        // Build messages from state
+        let mut messages: Vec<DeepSeekMessage> = Vec::new();
+
+        // Add system message if provided
+        if let Some(s) = system {
+            messages.push(DeepSeekMessage {
+                role: "system".to_string(),
+                content: Some(s.to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+
+        // Add state items
+        for item in state {
+            messages.push(item.to_message());
+        }
+
+        let deepseek_tools = tools.map(tool_definitions_to_deepseek);
+
+        let api_request = DeepSeekRequest {
+            model: "deepseek-reasoner".to_string(),
+            messages,
+            max_tokens: 8192,
+            stream: None,
+            tools: deepseek_tools,
+        };
+
+        // Retry loop with exponential backoff
+        let mut last_error = None;
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let backoff = backoff_with_jitter(attempt - 1);
+                tracing::warn!(
+                    attempt = attempt,
+                    backoff_ms = backoff.as_millis(),
+                    "DeepSeek Reasoner: retrying after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+            }
+
+            let response = match self.client
+                .post(DEEPSEEK_API_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&api_request)
+                .timeout(Duration::from_secs(REASONER_TIMEOUT_SECS))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(format!("Network error: {}", e));
+                    if attempt < MAX_RETRIES {
+                        continue;
+                    }
+                    anyhow::bail!("DeepSeek Reasoner network error after {} retries: {}", MAX_RETRIES, e);
+                }
+            };
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+
+                if is_retryable_status(status) && attempt < MAX_RETRIES {
+                    tracing::warn!(
+                        status = %status,
+                        attempt = attempt,
+                        "DeepSeek Reasoner: retryable error"
+                    );
+                    last_error = Some(format!("{} - {}", status, body));
+                    continue;
+                }
+
+                anyhow::bail!("DeepSeek Reasoner API error: {} - {}", status, body);
+            }
+
+            // Success - parse response
+            let api_response: DeepSeekResponse = response.json().await?;
+
+            if let Some(error) = api_response.error {
+                anyhow::bail!("DeepSeek Reasoner error: {}", error.message);
+            }
+
+            // Extract response content
+            let choice = api_response.choices
+                .and_then(|c| c.into_iter().next());
+
+            let text = choice.as_ref()
+                .and_then(|c| c.message.content.clone())
+                .unwrap_or_default();
+
+            let tool_calls = choice
+                .and_then(|c| c.message.tool_calls)
+                .map(|tcs| {
+                    tcs.into_iter()
+                        .filter_map(|tc| {
+                            let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                            Some(ToolCallRequest {
+                                id: tc.id,
+                                name: tc.function.name,
+                                arguments: args,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let usage = api_response.usage
+                .map(|u| AdvisoryUsage {
+                    input_tokens: u.prompt_tokens,
+                    output_tokens: u.completion_tokens,
+                    reasoning_tokens: u.reasoning_tokens,
+                    cache_read_tokens: u.prompt_cache_hit_tokens,
+                    cache_write_tokens: u.prompt_cache_miss_tokens,
+                })
+                .unwrap_or_default();
+
+            return Ok((
+                AdvisoryResponse {
+                    text,
+                    usage: Some(usage.clone()),
+                    model: AdvisoryModel::DeepSeekReasoner,
+                    tool_calls,
+                    reasoning: None,
+                },
+                (),
+                usage,
+            ));
+        }
+
+        anyhow::bail!("DeepSeek Reasoner failed after {} retries: {:?}", MAX_RETRIES, last_error)
+    }
+
+    fn add_assistant_response(
+        &self,
+        state: &mut Self::State,
+        response: &AdvisoryResponse,
+        _raw: &Self::RawResponse,
+    ) {
+        // Convert tool calls to ChatToolCall format
+        let tool_calls: Vec<ChatToolCall> = response.tool_calls.iter()
+            .map(|tc| ChatToolCall {
+                id: tc.id.clone(),
+                call_type: "function".to_string(),
+                function: ChatToolCallFunction {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.to_string(),
+                },
+            })
+            .collect();
+
+        state.push(ReasonerInputItem::AssistantMessage {
+            content: if response.text.is_empty() { None } else { Some(response.text.clone()) },
+            tool_calls,
+        });
+    }
+
+    fn add_tool_results(
+        &self,
+        state: &mut Self::State,
+        results: Vec<tool_bridge::ToolResult>,
+    ) {
+        for result in results {
+            state.push(ReasonerInputItem::ToolResult {
+                tool_call_id: result.tool_call_id,
+                content: result.content,
+            });
+        }
+    }
 }
