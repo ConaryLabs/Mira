@@ -1,4 +1,6 @@
-//! File operation tool definitions
+//! File operation tool definitions (read-only for orchestrator)
+//! Note: write_file, edit_file, and bash have been removed.
+//! Claude Code handles all file modifications via MCP.
 
 use serde_json::json;
 use super::super::definitions::Tool;
@@ -26,25 +28,6 @@ pub fn file_ops_tools() -> Vec<Tool> {
                     }
                 },
                 "required": ["path"]
-            }),
-        },
-        Tool {
-            tool_type: "function".into(),
-            name: "write_file".into(),
-            description: Some("Write content to a file".into()),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to write to"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write"
-                    }
-                },
-                "required": ["path", "content"]
             }),
         },
         Tool {
@@ -83,48 +66,6 @@ pub fn file_ops_tools() -> Vec<Tool> {
                     }
                 },
                 "required": ["pattern"]
-            }),
-        },
-        Tool {
-            tool_type: "function".into(),
-            name: "bash".into(),
-            description: Some("Execute a shell command".into()),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to execute"
-                    }
-                },
-                "required": ["command"]
-            }),
-        },
-        Tool {
-            tool_type: "function".into(),
-            name: "edit_file".into(),
-            description: Some("Edit a file by replacing old_string with new_string. The old_string must match exactly and be unique in the file.".into()),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to edit"
-                    },
-                    "old_string": {
-                        "type": "string",
-                        "description": "The exact text to find and replace"
-                    },
-                    "new_string": {
-                        "type": "string",
-                        "description": "The text to replace old_string with"
-                    },
-                    "replace_all": {
-                        "type": "boolean",
-                        "description": "If true, replace all occurrences. Default false."
-                    }
-                },
-                "required": ["path", "old_string", "new_string"]
             }),
         },
     ]

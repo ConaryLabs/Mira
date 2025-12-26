@@ -14,8 +14,7 @@ pub use gpt::{GptProvider, ResponsesInputItem};
 pub use opus::{OpusProvider, OpusInputItem, OpusToolUse, AnthropicResponseBlock};
 pub use gemini::{
     GeminiProvider, GeminiInputItem, GeminiContent, GeminiPart, GeminiPartResponse,
-    GeminiFunctionCallResponse, GeminiTextPart, GeminiFunctionCallPart, GeminiFunctionCall,
-    GeminiFunctionResponsePart, GeminiFunctionResponse,
+    GeminiFunctionCallResponse,
 };
 pub use reasoner::ReasonerProvider;
 

@@ -1,4 +1,6 @@
 //! Council tool definitions
+//!
+//! Council members: GPT 5.2, Opus 4.5, Gemini 3 Pro, DeepSeek Reasoner
 
 use serde_json::json;
 use super::super::definitions::Tool;
@@ -8,7 +10,7 @@ pub fn council_tools() -> Vec<Tool> {
         Tool {
             tool_type: "function".into(),
             name: "council".into(),
-            description: Some("Consult the council - calls GPT 5.2, Opus 4.5, and Gemini 3 Pro in parallel. Use for important decisions, architecture review, or when you want diverse perspectives.".into()),
+            description: Some("Consult the council - calls GPT 5.2, Opus 4.5, Gemini 3 Pro, and DeepSeek Reasoner in parallel. Use for important decisions, architecture review, or when you want diverse perspectives.".into()),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -72,6 +74,25 @@ pub fn council_tools() -> Vec<Tool> {
                     "message": {
                         "type": "string",
                         "description": "The question or request for Gemini 3 Pro"
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context to include"
+                    }
+                },
+                "required": ["message"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "ask_deepseek".into(),
+            description: Some("Ask DeepSeek Reasoner directly. Excellent for deep reasoning, step-by-step analysis, and complex problem decomposition.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The question or request for DeepSeek Reasoner"
                     },
                     "context": {
                         "type": "string",

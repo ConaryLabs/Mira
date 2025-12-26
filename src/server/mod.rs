@@ -1161,6 +1161,135 @@ impl MiraServer {
         Ok(json_response(result))
     }
 
+    // === Instruction Queue (Claude Code polling) ===
+
+    #[tool(description = "Get pending instructions from Studio. Claude Code polls this to receive work.")]
+    async fn get_pending_instructions(&self, Parameters(req): Parameters<GetPendingInstructionsRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let limit = req.limit.unwrap_or(5) as i32;
+
+        // Get pending instructions, prioritized by urgency
+        let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String)>(
+            r#"SELECT id, instruction, context, priority, created_at
+               FROM instruction_queue
+               WHERE status = 'pending'
+                 AND ($1 IS NULL OR project_id = $1)
+               ORDER BY
+                 CASE priority
+                   WHEN 'urgent' THEN 1
+                   WHEN 'high' THEN 2
+                   WHEN 'normal' THEN 3
+                   ELSE 4
+                 END,
+                 created_at ASC
+               LIMIT $2"#
+        )
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(self.db.as_ref())
+        .await
+        .map_err(|e| to_mcp_err(e.into()))?;
+
+        if rows.is_empty() {
+            return Ok(json_response(serde_json::json!({
+                "pending": 0,
+                "instructions": []
+            })));
+        }
+
+        // Mark as delivered
+        for (id, _, _, _, _) in &rows {
+            let _ = sqlx::query(
+                "UPDATE instruction_queue SET status = 'delivered', delivered_at = datetime('now') WHERE id = $1"
+            )
+            .bind(id)
+            .execute(self.db.as_ref())
+            .await;
+        }
+
+        let instructions: Vec<serde_json::Value> = rows.iter().map(|(id, instruction, context, priority, created_at)| {
+            serde_json::json!({
+                "id": id,
+                "instruction": instruction,
+                "context": context,
+                "priority": priority,
+                "created_at": created_at
+            })
+        }).collect();
+
+        Ok(json_response(serde_json::json!({
+            "pending": instructions.len(),
+            "instructions": instructions
+        })))
+    }
+
+    #[tool(description = "Mark an instruction as in_progress, completed, or failed.")]
+    async fn mark_instruction(&self, Parameters(req): Parameters<MarkInstructionRequest>) -> Result<CallToolResult, McpError> {
+        let valid_statuses = ["in_progress", "completed", "failed"];
+        if !valid_statuses.contains(&req.status.as_str()) {
+            return Ok(CallToolResult::error(vec![Content::text(
+                format!("Invalid status: {}. Use: in_progress/completed/failed", req.status)
+            )]));
+        }
+
+        let (time_field, time_value) = match req.status.as_str() {
+            "in_progress" => ("started_at", "datetime('now')"),
+            "completed" | "failed" => ("completed_at", "datetime('now')"),
+            _ => ("", ""),
+        };
+
+        // Build dynamic query based on status
+        let query = if req.status == "failed" {
+            format!(
+                "UPDATE instruction_queue SET status = $1, {} = {}, error = $2 WHERE id = $3",
+                time_field, time_value
+            )
+        } else if req.status == "completed" {
+            format!(
+                "UPDATE instruction_queue SET status = $1, {} = {}, result = $2 WHERE id = $3",
+                time_field, time_value
+            )
+        } else {
+            format!(
+                "UPDATE instruction_queue SET status = $1, {} = {} WHERE id = $2",
+                time_field, time_value
+            )
+        };
+
+        let result = if req.status == "in_progress" {
+            sqlx::query(&query)
+                .bind(&req.status)
+                .bind(&req.instruction_id)
+                .execute(self.db.as_ref())
+                .await
+        } else {
+            sqlx::query(&query)
+                .bind(&req.status)
+                .bind(&req.result)
+                .bind(&req.instruction_id)
+                .execute(self.db.as_ref())
+                .await
+        };
+
+        match result {
+            Ok(r) if r.rows_affected() > 0 => {
+                Ok(json_response(serde_json::json!({
+                    "status": "updated",
+                    "instruction_id": req.instruction_id,
+                    "new_status": req.status
+                })))
+            }
+            Ok(_) => {
+                Ok(CallToolResult::error(vec![Content::text(
+                    format!("Instruction {} not found", req.instruction_id)
+                )]))
+            }
+            Err(e) => {
+                Ok(CallToolResult::error(vec![Content::text(format!("Database error: {}", e))]))
+            }
+        }
+    }
+
     // === Indexing ===
 
     #[tool(description = "Index code and git history. Actions: project/file/status/cleanup")]

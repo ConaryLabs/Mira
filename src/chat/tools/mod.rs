@@ -1,13 +1,16 @@
-//! Tool definitions and executor for GPT-5.2 function calling
+//! Tool definitions and executor for Gemini 3 Pro (Orchestrator mode)
 //!
-//! Implements coding assistant tools:
-//! - File operations (read, write, edit, glob, grep)
-//! - Shell execution
+//! Studio is an orchestrator - it doesn't write code, Claude Code does.
+//! Tools here are read-only file ops + management/intelligence tools:
+//! - File operations (read, glob, grep) - READ ONLY
 //! - Web search/fetch
 //! - Memory (remember, recall)
 //! - Mira power armor (task, goal, correction, store_decision, record_rejected_approach)
+//! - Council (consult other AI models)
+//! - Code/Git intelligence
 //!
-//! Tools are executed locally, results returned to GPT-5.2
+//! REMOVED (Claude Code handles these via MCP):
+//! - write_file, edit_file, bash, run_tests, git_commit
 
 pub mod build;
 pub mod code_intel;
@@ -20,9 +23,8 @@ pub mod git_intel;
 pub mod index;
 mod memory;
 mod mira;
+mod orchestration;
 pub mod proactive;
-mod shell;
-mod test;
 mod tool_defs;
 pub mod types;
 mod web;
@@ -44,25 +46,27 @@ use crate::chat::server::types::ToolCategory;
 /// Get the category for a tool (for UI filtering)
 pub fn tool_category(name: &str) -> ToolCategory {
     match name {
-        // File operations
-        "read_file" | "write_file" | "edit_file" | "glob" | "grep" | "list_files" | "search" => {
+        // File operations (read-only)
+        "read_file" | "glob" | "grep" | "list_files" | "search" => {
             ToolCategory::File
         }
-        // Shell execution
-        "bash" | "run_tests" => ToolCategory::Shell,
         // Memory operations
         "remember" | "recall" => ToolCategory::Memory,
         // Web operations
         "web_search" | "web_fetch" => ToolCategory::Web,
-        // Git operations
-        "git_status" | "git_diff" | "git_commit" | "git_log" | "get_recent_commits"
+        // Git operations (read-only)
+        "git_status" | "git_diff" | "git_log" | "get_recent_commits"
         | "search_commits" | "find_cochange_patterns" => ToolCategory::Git,
-        // Mira power armor
+        // Mira power armor + council + intelligence + orchestration
         "task" | "goal" | "correction" | "store_decision" | "record_rejected_approach"
         | "get_symbols" | "get_call_graph" | "semantic_code_search" | "get_related_files"
         | "get_codebase_style" | "find_similar_fixes" | "record_error_fix" | "build"
         | "document" | "index" | "get_proactive_context" | "council" | "ask_gpt" | "ask_opus"
-        | "ask_gemini" => ToolCategory::Mira,
+        | "ask_gemini" | "ask_deepseek"
+        | "view_claude_activity" | "send_instruction" | "list_instructions" | "cancel_instruction"
+        => ToolCategory::Mira,
+        // Artifact tools
+        "fetch_artifact" | "search_artifact" => ToolCategory::Other,
         // Default
         _ => ToolCategory::Other,
     }
@@ -83,18 +87,10 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
     }
 
     match name {
-        // File operations
+        // File operations (read-only)
         "read_file" => {
             let path = get_str(args, "path").unwrap_or("file");
             format!("Reading {}", truncate(path, 50))
-        }
-        "write_file" => {
-            let path = get_str(args, "path").unwrap_or("file");
-            format!("Writing {}", truncate(path, 50))
-        }
-        "edit_file" => {
-            let path = get_str(args, "path").unwrap_or("file");
-            format!("Editing {}", truncate(path, 50))
         }
         "glob" => {
             let pattern = get_str(args, "pattern").unwrap_or("*");
@@ -103,16 +99,6 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         "grep" => {
             let pattern = get_str(args, "pattern").unwrap_or("");
             format!("Searching for \"{}\"", truncate(pattern, 30))
-        }
-
-        // Shell
-        "bash" => {
-            let cmd = get_str(args, "command").unwrap_or("");
-            format!("$ {}", truncate(cmd, 50))
-        }
-        "run_tests" => {
-            let pattern = get_str(args, "pattern").unwrap_or("all");
-            format!("Running tests: {}", truncate(pattern, 30))
         }
 
         // Memory
@@ -135,7 +121,7 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
             format!("Fetching {}", truncate(url, 50))
         }
 
-        // Git
+        // Git (read-only)
         "git_status" => "Checking git status".to_string(),
         "git_diff" => {
             let path = get_str(args, "path");
@@ -143,10 +129,6 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
                 Some(p) => format!("Git diff: {}", truncate(p, 40)),
                 None => "Git diff".to_string(),
             }
-        }
-        "git_commit" => {
-            let msg = get_str(args, "message").unwrap_or("");
-            format!("Committing: {}", truncate(msg, 40))
         }
         "git_log" => "Git log".to_string(),
 
@@ -163,6 +145,7 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         "ask_gpt" => "Asking GPT-5.2".to_string(),
         "ask_opus" => "Asking Opus 4.5".to_string(),
         "ask_gemini" => "Asking Gemini 3 Pro".to_string(),
+        "ask_deepseek" => "Asking DeepSeek Reasoner".to_string(),
 
         // Code intelligence
         "get_symbols" => {
@@ -172,6 +155,18 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         "semantic_code_search" => {
             let query = get_str(args, "query").unwrap_or("");
             format!("Code search: {}", truncate(query, 40))
+        }
+
+        // Orchestration tools
+        "view_claude_activity" => "Viewing Claude Code activity".to_string(),
+        "send_instruction" => {
+            let instruction = get_str(args, "instruction").unwrap_or("");
+            format!("Sending instruction: {}", truncate(instruction, 40))
+        }
+        "list_instructions" => "Listing instruction queue".to_string(),
+        "cancel_instruction" => {
+            let id = get_str(args, "instruction_id").unwrap_or("");
+            format!("Cancelling instruction: {}", id)
         }
 
         // Default: just show tool name
@@ -276,9 +271,8 @@ use git_intel::GitIntelTools;
 use index::IndexTools;
 use memory::MemoryTools;
 use mira::MiraTools;
+use orchestration::OrchestrationTools;
 use proactive::ProactiveTools;
-use shell::ShellTools;
-use test::TestTools;
 use web::WebTools;
 pub use web::WebSearchConfig;
 
@@ -354,19 +348,17 @@ impl ToolExecutor {
     }
 
     /// Execute a tool by name with JSON arguments
+    ///
+    /// NOTE: Orchestrator mode - write/edit/shell/test tools have been removed.
+    /// Claude Code handles those via MCP.
     pub async fn execute(&self, name: &str, arguments: &str) -> Result<String> {
         let args: Value = serde_json::from_str(arguments)?;
 
         match name {
-            // File operations
+            // File operations (read-only)
             "read_file" => self.file_tools().read_file(&args).await,
-            "write_file" => self.file_tools().write_file(&args).await,
-            "edit_file" => self.file_tools().edit_file(&args).await,
             "glob" => self.file_tools().glob(&args).await,
             "grep" => self.file_tools().grep(&args).await,
-
-            // Shell
-            "bash" => self.shell_tools().bash(&args).await,
 
             // Web
             "web_search" => self.web_tools().web_search(&args).await,
@@ -383,14 +375,10 @@ impl ToolExecutor {
             "store_decision" => self.mira_tools().store_decision(&args).await,
             "record_rejected_approach" => self.mira_tools().record_rejected_approach(&args).await,
 
-            // Git tools
+            // Git tools (read-only)
             "git_status" => self.git_tools().git_status(&args).await,
             "git_diff" => self.git_tools().git_diff(&args).await,
-            "git_commit" => self.git_tools().git_commit(&args).await,
             "git_log" => self.git_tools().git_log(&args).await,
-
-            // Test tools
-            "run_tests" => self.test_tools().run_tests(&args).await,
 
             // Artifact tools
             "fetch_artifact" => self.fetch_artifact(&args).await,
@@ -416,6 +404,11 @@ impl ToolExecutor {
                 let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
                 let context = args.get("context").and_then(|v| v.as_str());
                 CouncilTools::ask_gemini(message, context).await
+            }
+            "ask_deepseek" => {
+                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                let context = args.get("context").and_then(|v| v.as_str());
+                CouncilTools::ask_deepseek(message, context).await
             }
 
             // Code intelligence tools
@@ -443,6 +436,12 @@ impl ToolExecutor {
 
             // Proactive context
             "get_proactive_context" => self.proactive_tools().get_proactive_context(&args).await,
+
+            // Orchestration tools (Studio -> Claude Code)
+            "view_claude_activity" => self.orchestration_tools().view_claude_activity(&args).await,
+            "send_instruction" => self.orchestration_tools().send_instruction(&args).await,
+            "list_instructions" => self.orchestration_tools().list_instructions(&args).await,
+            "cancel_instruction" => self.orchestration_tools().cancel_instruction(&args).await,
 
             _ => Ok(format!("Unknown tool: {}", name)),
         }
@@ -492,34 +491,24 @@ impl ToolExecutor {
         }
     }
 
-    /// Execute a tool and return rich result with diff information
+    /// Execute a tool and return rich result
     ///
-    /// For write_file and edit_file, captures before/after content for diff display.
-    /// Other tools return simple output without diff info.
+    /// Orchestrator mode - no write/edit tools, so no diff info.
     /// Large outputs are automatically stored as artifacts with a preview returned.
     pub async fn execute_rich(&self, name: &str, arguments: &str) -> Result<RichToolResult> {
-        let args: Value = serde_json::from_str(arguments)?;
+        let output = self.execute(name, arguments).await?;
+        // Check for error at the start only - content may contain "Error" strings
+        // (e.g., search results discussing error handling)
+        let success = !output.starts_with("Error") && !output.starts_with("error:");
 
-        match name {
-            "write_file" => self.file_tools().write_file_rich(&args).await,
-            "edit_file" => self.file_tools().edit_file_rich(&args).await,
-            // All other tools don't produce diffs
-            _ => {
-                let output = self.execute(name, arguments).await?;
-                // Check for error at the start only - content may contain "Error" strings
-                // (e.g., search results discussing error handling)
-                let success = !output.starts_with("Error") && !output.starts_with("error:");
+        // Check if output should be artifacted
+        let final_output = self.maybe_artifact(name, &output).await;
 
-                // Check if output should be artifacted
-                let final_output = self.maybe_artifact(name, &output).await;
-
-                Ok(RichToolResult {
-                    success,
-                    output: final_output,
-                    diff: None,
-                })
-            }
-        }
+        Ok(RichToolResult {
+            success,
+            output: final_output,
+            diff: None,
+        })
     }
 
     /// Conditionally store large output as artifact and return preview
@@ -535,8 +524,8 @@ impl ToolExecutor {
             return output.to_string();
         }
 
-        // Only artifact certain tools
-        let artifact_tools = ["bash", "grep", "read_file", "git_diff", "git_log", "run_tests"];
+        // Only artifact certain tools (read-only tools with potentially large output)
+        let artifact_tools = ["grep", "read_file", "git_diff", "git_log"];
         if !artifact_tools.iter().any(|t| tool_name.contains(t)) {
             return output.to_string();
         }
@@ -585,10 +574,6 @@ impl ToolExecutor {
         }
     }
 
-    fn shell_tools(&self) -> ShellTools<'_> {
-        ShellTools { cwd: &self.cwd }
-    }
-
     fn web_tools(&self) -> WebTools {
         WebTools::new(self.web_search_config.clone())
     }
@@ -610,10 +595,6 @@ impl ToolExecutor {
 
     fn git_tools(&self) -> GitTools<'_> {
         GitTools { cwd: &self.cwd }
-    }
-
-    fn test_tools(&self) -> TestTools<'_> {
-        TestTools { cwd: &self.cwd }
     }
 
     fn code_intel_tools(&self) -> CodeIntelTools<'_> {
@@ -662,13 +643,17 @@ impl ToolExecutor {
             semantic: &self.semantic,
         }
     }
+
+    fn orchestration_tools(&self) -> OrchestrationTools<'_> {
+        OrchestrationTools {
+            db: &self.db,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn test_executor_read_file() {
@@ -680,75 +665,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_edit_file_success() {
-        let mut temp = NamedTempFile::new().unwrap();
-        writeln!(temp, "Hello world").unwrap();
-        let path = temp.path().to_str().unwrap();
-
+    async fn test_executor_glob() {
         let executor = ToolExecutor::new();
-        let args = format!(
-            r#"{{"path": "{}", "old_string": "Hello", "new_string": "Goodbye"}}"#,
-            path.replace('\\', "\\\\")
-        );
-        let result = executor.execute("edit_file", &args).await.unwrap();
-
-        assert!(result.contains("Edited"));
-
-        // Verify content changed
-        let content = std::fs::read_to_string(path).unwrap();
-        assert!(content.contains("Goodbye"));
-        assert!(!content.contains("Hello"));
+        let result = executor
+            .execute("glob", r#"{"pattern": "*.toml"}"#)
+            .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("Cargo.toml"));
     }
 
     #[tokio::test]
-    async fn test_edit_file_not_found() {
-        let mut temp = NamedTempFile::new().unwrap();
-        writeln!(temp, "Hello world").unwrap();
-        let path = temp.path().to_str().unwrap();
-
+    async fn test_removed_tools_return_unknown() {
         let executor = ToolExecutor::new();
-        let args = format!(
-            r#"{{"path": "{}", "old_string": "NotInFile", "new_string": "Replacement"}}"#,
-            path.replace('\\', "\\\\")
-        );
-        let result = executor.execute("edit_file", &args).await.unwrap();
 
-        assert!(result.contains("not found"));
-    }
-
-    #[tokio::test]
-    async fn test_edit_file_not_unique() {
-        let mut temp = NamedTempFile::new().unwrap();
-        writeln!(temp, "foo bar foo").unwrap();
-        let path = temp.path().to_str().unwrap();
-
-        let executor = ToolExecutor::new();
-        let args = format!(
-            r#"{{"path": "{}", "old_string": "foo", "new_string": "baz"}}"#,
-            path.replace('\\', "\\\\")
-        );
-        let result = executor.execute("edit_file", &args).await.unwrap();
-
-        assert!(result.contains("2 times"));
-    }
-
-    #[tokio::test]
-    async fn test_edit_file_replace_all() {
-        let mut temp = NamedTempFile::new().unwrap();
-        writeln!(temp, "foo bar foo").unwrap();
-        let path = temp.path().to_str().unwrap();
-
-        let executor = ToolExecutor::new();
-        let args = format!(
-            r#"{{"path": "{}", "old_string": "foo", "new_string": "baz", "replace_all": true}}"#,
-            path.replace('\\', "\\\\")
-        );
-        let result = executor.execute("edit_file", &args).await.unwrap();
-
-        assert!(result.contains("Edited"));
-
-        let content = std::fs::read_to_string(path).unwrap();
-        assert_eq!(content.matches("baz").count(), 2);
-        assert!(!content.contains("foo"));
+        // These tools were removed in orchestrator mode
+        let removed = ["write_file", "edit_file", "bash", "run_tests", "git_commit"];
+        for tool in removed {
+            let result = executor.execute(tool, "{}").await.unwrap();
+            assert!(result.contains("Unknown tool"), "Tool {} should be unknown", tool);
+        }
     }
 }

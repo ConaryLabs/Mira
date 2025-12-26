@@ -207,6 +207,10 @@ pub fn create_router(state: AppState) -> Router {
             post(stream::chat_sync_handler).layer(DefaultBodyLimit::max(SYNC_MAX_BODY_BYTES)),
         )
         .route("/api/messages", get(handlers::messages_handler))
+        // Orchestration endpoints
+        .route("/api/mcp-history", get(handlers::mcp_history_handler))
+        .route("/api/instructions", get(handlers::instructions_handler))
+        .route("/api/instructions", post(handlers::create_instruction_handler))
         .layer(version_header)
         .layer(cors)
         .with_state(state)

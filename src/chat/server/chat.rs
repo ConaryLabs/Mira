@@ -2,6 +2,9 @@
 //!
 //! The main agentic loop that handles conversation flow, tool execution,
 //! and message persistence.
+//!
+//! Studio runs on Gemini 3 Pro as the orchestrator model.
+//! It manages goals, tasks, and sends instructions to Claude Code.
 
 // TODO: The outer iteration loop (line ~208) always breaks - needs investigation
 // whether multi-iteration tool loops should be supported
@@ -16,11 +19,11 @@ use uuid::Uuid;
 
 use crate::chat::{
     conductor::validation::{repair_json, ToolSchemas},
-    context::{build_deepseek_prompt, format_deepseek_context, MiraContext},
+    context::{build_orchestrator_prompt, format_orchestrator_context, MiraContext},
     session::{Checkpoint, SessionManager},
     tools::{get_tool_definitions, ToolExecutor},
     provider::{
-        DeepSeekProvider, Provider,
+        GeminiChatProvider, Provider,
         ChatRequest as ProviderChatRequest,
         StreamEvent as ProviderStreamEvent,
         Message as ProviderMessage,
@@ -35,18 +38,18 @@ use super::types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResultData};
 use super::AppState;
 use crate::chat::tools::{tool_category, tool_summary};
 
-/// Process a chat request through the agentic loop (DeepSeek V3.2)
+/// Process a chat request through the agentic loop (Gemini 3 Pro Orchestrator)
 pub async fn process_chat(
     state: AppState,
     request: ChatRequest,
     tx: mpsc::Sender<ChatEvent>,
 ) -> Result<()> {
-    // DeepSeek is the only model - direct processing
-    process_deepseek_chat(state, request, tx).await
+    // Gemini 3 Pro is the orchestrator model
+    process_gemini_chat(state, request, tx).await
 }
 
-/// Process a chat request using DeepSeek V3.2
-async fn process_deepseek_chat(
+/// Process a chat request using Gemini 3 Pro (Orchestrator mode)
+async fn process_gemini_chat(
     state: AppState,
     request: ChatRequest,
     tx: mpsc::Sender<ChatEvent>,
@@ -80,15 +83,11 @@ async fn process_deepseek_chat(
         .await;
     }
 
-    // Get DeepSeek API key from environment
-    let deepseek_key = std::env::var("DEEPSEEK_API_KEY")
-        .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+    // Create Gemini 3 Pro provider (Orchestrator model - thinking + tools)
+    let provider = GeminiChatProvider::from_env()?;
 
-    // Create DeepSeek provider (Reasoner model - thinking + tools)
-    let provider = DeepSeekProvider::new_reasoner(deepseek_key);
-
-    // Build system prompt with FULL assembled context (same as GPT-5.2)
-    // DeepSeek doesn't have server-side chain state, so we use checkpoints for continuity
+    // Build system prompt with FULL assembled context
+    // Gemini uses client-state, so we use checkpoints for continuity
     let mut session_manager: Option<SessionManager> = None;
     let (system_prompt, history_messages, checkpoint) = if let Some(db) = &state.db {
         // Create session manager for full context assembly
@@ -106,11 +105,11 @@ async fn process_deepseek_chat(
                 // Load any existing checkpoint for continuity
                 let checkpoint = s.load_checkpoint().await.ok().flatten();
                 if checkpoint.is_some() {
-                    tracing::debug!("DeepSeek: loaded checkpoint for continuity");
+                    tracing::debug!("Gemini: loaded checkpoint for continuity");
                 }
 
                 tracing::debug!(
-                    "DeepSeek context: {} recent msgs, {} summaries, {} semantic hits, {} corrections, {} memories",
+                    "Gemini context: {} recent msgs, {} summaries, {} semantic hits, {} corrections, {} memories",
                     assembled.recent_messages.len(),
                     assembled.summaries.len(),
                     assembled.semantic_context.len(),
@@ -132,8 +131,8 @@ async fn process_deepseek_chat(
                     }
                 }).collect();
 
-                let base_prompt = build_deepseek_prompt(&assembled.mira_context);
-                let context_blob = format_deepseek_context(&assembled);
+                let base_prompt = build_orchestrator_prompt(&assembled.mira_context);
+                let context_blob = format_orchestrator_context(&assembled);
 
                 let prompt = if context_blob.is_empty() {
                     base_prompt
@@ -147,15 +146,15 @@ async fn process_deepseek_chat(
                 (prompt, history, checkpoint)
             }
             Err(e) => {
-                tracing::warn!("Failed to create session for DeepSeek: {}", e);
+                tracing::warn!("Failed to create session for Gemini: {}", e);
                 let context = MiraContext::load(db, &request.project_path)
                     .await
                     .unwrap_or_default();
-                (build_deepseek_prompt(&context), Vec::new(), None)
+                (build_orchestrator_prompt(&context), Vec::<ProviderMessage>::new(), None)
             }
         }
     } else {
-        (build_deepseek_prompt(&MiraContext::default()), Vec::new(), None)
+        (build_orchestrator_prompt(&MiraContext::default()), Vec::<ProviderMessage>::new(), None)
     };
 
     // Format checkpoint as context if present

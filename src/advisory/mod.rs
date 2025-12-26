@@ -602,17 +602,19 @@ impl AdvisoryService {
     }
 
     /// Council query without synthesis - returns raw responses only
-    /// Use this when the host model will synthesize inline (e.g., chat on DeepSeek Reasoner)
+    /// Use this when the host model will synthesize inline (e.g., chat on Gemini 3 Pro)
     pub async fn council_raw(
         &self,
         message: &str,
         exclude_model: Option<AdvisoryModel>,
     ) -> Result<std::collections::HashMap<AdvisoryModel, String>> {
         // Determine which models to query (exclude host model if specified)
+        // Full council: GPT-5.2, Opus 4.5, Gemini 3 Pro, DeepSeek Reasoner
         let council_models: Vec<AdvisoryModel> = [
             AdvisoryModel::Gpt52,
             AdvisoryModel::Opus45,
             AdvisoryModel::Gemini3Pro,
+            AdvisoryModel::DeepSeekReasoner,
         ].into_iter()
             .filter(|m| Some(*m) != exclude_model)
             .filter(|m| self.providers.contains_key(m))
@@ -673,10 +675,12 @@ impl AdvisoryService {
         let per_model_timeout = Duration::from_secs(timeout_secs.unwrap_or(60));
 
         // Determine which models to query
+        // Full council: GPT-5.2, Opus 4.5, Gemini 3 Pro, DeepSeek Reasoner
         let council_models: Vec<AdvisoryModel> = [
             AdvisoryModel::Gpt52,
             AdvisoryModel::Opus45,
             AdvisoryModel::Gemini3Pro,
+            AdvisoryModel::DeepSeekReasoner,
         ].into_iter()
             .filter(|m| Some(*m) != exclude_model)
             .filter(|m| self.providers.contains_key(m))
@@ -747,10 +751,12 @@ impl AdvisoryService {
         let per_model_timeout = Duration::from_secs(60);
 
         // Determine which models to query
+        // Full council: GPT-5.2, Opus 4.5, Gemini 3 Pro, DeepSeek Reasoner
         let council_models: Vec<AdvisoryModel> = [
             AdvisoryModel::Gpt52,
             AdvisoryModel::Opus45,
             AdvisoryModel::Gemini3Pro,
+            AdvisoryModel::DeepSeekReasoner,
         ].into_iter()
             .filter(|m| Some(*m) != exclude_model)
             .filter(|m| self.providers.contains_key(m))
