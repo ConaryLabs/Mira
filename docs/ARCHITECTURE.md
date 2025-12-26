@@ -870,17 +870,19 @@ Mira integrates with 4 LLM providers through the unified `AdvisoryProvider` trai
 
 **Usage**: Advisory system for code review, architectural decisions.
 
-#### **Google Gemini 3 Pro**
-| Property | Value |
-|----------|-------|
-| API | GenerateContent API |
-| Model ID | `gemini-3-pro-preview` |
-| Endpoint | `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent` |
-| Auth | API key in URL (`GEMINI_API_KEY`) |
-| Features | Streaming (SSE), tool calling |
-| Timeout | 60s |
+#### **Google Gemini 3 Flash/Pro**
+| Property | Flash | Pro |
+|----------|-------|-----|
+| API | GenerateContent API | GenerateContent API |
+| Model ID | `gemini-3-flash-preview` | `gemini-3-pro-preview` |
+| Cost (input/output) | $0.50/$3 per 1M | $2/$12 per 1M |
+| Context | 1M tokens | 1M tokens |
+| Features | Streaming, tool calling, thinking | Streaming, tool calling, thinking |
+| Built-in | Google Search grounding (free until Jan 2026) | Google Search grounding |
 
-**Usage**: Advisory system, cost-effective alternative.
+**Usage**: Primary chat model (Studio). Tool-gated routing:
+- **Flash (default)**: Simple queries, file ops, search, memory operations
+- **Pro (escalated)**: When heavy tools called (council, goal, task, send_instruction) or chain depth > 3
 
 #### **DeepSeek Reasoner V3.2**
 | Property | Value |
@@ -892,7 +894,7 @@ Mira integrates with 4 LLM providers through the unified `AdvisoryProvider` trai
 | Features | Streaming, tool calling, reasoning tokens |
 | Timeout | 180s (reasoning can be slow) |
 
-**Usage**: Primary chat model (Studio), advisory system. Cost-effective with 128K context.
+**Usage**: Advisory system. Cost-effective with 128K context and 64K output.
 
 #### **Council Mode**
 When `provider=council`, Mira calls GPT-5.2, Gemini 3 Pro, and DeepSeek Reasoner in parallel, then synthesizes responses. Useful for:

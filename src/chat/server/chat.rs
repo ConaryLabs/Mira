@@ -3,7 +3,8 @@
 //! The main agentic loop that handles conversation flow, tool execution,
 //! and message persistence.
 //!
-//! Studio runs on Gemini 3 Pro as the orchestrator model.
+//! Studio uses Gemini 3 Flash by default (cheap, fast) and escalates to
+//! Pro when heavy tools are needed (council, goal, task) or chain depth > 3.
 //! It manages goals, tasks, and sends instructions to Claude Code.
 
 // TODO: The outer iteration loop (line ~208) always breaks - needs investigation
@@ -23,7 +24,7 @@ use crate::chat::{
     session::{Checkpoint, SessionManager},
     tools::{get_tool_definitions, ToolExecutor},
     provider::{
-        GeminiChatProvider, Provider,
+        GeminiChatProvider, GeminiModel, Provider,
         ChatRequest as ProviderChatRequest,
         StreamEvent as ProviderStreamEvent,
         Message as ProviderMessage,
@@ -34,21 +35,24 @@ use crate::chat::{
 };
 
 use super::markdown_parser::MarkdownStreamParser;
+use super::routing::RoutingState;
 use super::types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResultData};
 use super::AppState;
 use crate::chat::tools::{tool_category, tool_summary};
 
-/// Process a chat request through the agentic loop (Gemini 3 Pro Orchestrator)
+/// Process a chat request through the agentic loop (Gemini Flash/Pro Orchestrator)
 pub async fn process_chat(
     state: AppState,
     request: ChatRequest,
     tx: mpsc::Sender<ChatEvent>,
 ) -> Result<()> {
-    // Gemini 3 Pro is the orchestrator model
+    // Gemini 3 Flash is the default orchestrator model
+    // Escalates to Pro when heavy tools are needed
     process_gemini_chat(state, request, tx).await
 }
 
-/// Process a chat request using Gemini 3 Pro (Orchestrator mode)
+/// Process a chat request using Gemini 3 Flash/Pro (Orchestrator mode)
+/// Starts with Flash (cheap) and escalates to Pro when heavy tools are called
 async fn process_gemini_chat(
     state: AppState,
     request: ChatRequest,
@@ -83,8 +87,14 @@ async fn process_gemini_chat(
         .await;
     }
 
-    // Create Gemini 3 Pro provider (Orchestrator model - thinking + tools)
-    let provider = GeminiChatProvider::from_env()?;
+    // Create routing state for Flash/Pro model selection
+    // Starts with Flash, escalates to Pro when heavy tools are needed
+    let mut routing = RoutingState::new();
+
+    // Create Gemini provider (starts with Flash, may escalate to Pro)
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY not set"))?;
+    let mut provider = GeminiChatProvider::new(api_key.clone(), routing.model());
 
     // Build system prompt with FULL assembled context
     // Gemini uses client-state, so we use checkpoints for continuity
@@ -213,11 +223,14 @@ async fn process_gemini_chat(
     // Track tool execution start times for duration calculation
     let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
 
-    // First request
-    let initial_request = ProviderChatRequest::new("deepseek-reasoner", &system_prompt, &request.message)
+    // First request (using current model from routing - starts as Flash)
+    let initial_request = ProviderChatRequest::new(routing.model().model_id(), &system_prompt, &request.message)
         .with_messages(conversation_messages.clone())
         .with_tools(tools.clone());
     let mut rx = provider.create_stream(initial_request).await?;
+
+    // Track tool names completed in each iteration for escalation decisions
+    let mut iteration_tool_names: Vec<String> = Vec::new();
 
     for iteration in 0..10 {
 
@@ -353,6 +366,9 @@ async fn process_gemini_chat(
                             output: output.clone(),
                         });
 
+                        // Track tool name for escalation decisions
+                        iteration_tool_names.push(name.clone());
+
                         // Save checkpoint after successful tool execution
                         if success {
                             if let Some(ref session) = session_manager {
@@ -464,9 +480,22 @@ async fn process_gemini_chat(
                 break;
             }
 
-            tracing::debug!("DeepSeek iteration {}: continuing with {} tool results", iteration, current_tool_results.len());
+            // Check for model escalation before continuation
+            // Escalate Flash → Pro if heavy tools were called or chain depth exceeded
+            let tool_name_refs: Vec<&str> = iteration_tool_names.iter().map(|s| s.as_str()).collect();
+            if routing.process_tool_calls(&tool_name_refs) {
+                tracing::info!("Model escalation: {} → {}",
+                    GeminiModel::Flash.name(),
+                    routing.model().name());
+                provider = GeminiChatProvider::new(api_key.clone(), routing.model());
+            }
+            // Clear tool names for next iteration
+            iteration_tool_names.clear();
 
-            // Pass accumulated reasoning content - DeepSeek Reasoner requires this for continued reasoning
+            tracing::debug!("Gemini {} iteration {}: continuing with {} tool results",
+                routing.model().name(), iteration, current_tool_results.len());
+
+            // Pass accumulated reasoning content (Gemini uses thinkingConfig, not reasoning passback)
             let reasoning_for_continuation = if accumulated_reasoning.is_empty() {
                 None
             } else {
@@ -474,7 +503,7 @@ async fn process_gemini_chat(
             };
 
             let continue_request = ToolContinueRequest {
-                model: "deepseek-reasoner".into(),
+                model: routing.model().model_id().into(),
                 system: system_prompt.clone(),
                 previous_response_id: None,
                 messages: conversation_messages.clone(),
@@ -484,8 +513,7 @@ async fn process_gemini_chat(
                 reasoning_content: reasoning_for_continuation,
             };
 
-            // Clear accumulated reasoning after using it (per DeepSeek docs:
-            // "between conversation turns, clear historical reasoning_content")
+            // Clear accumulated reasoning after using it
             accumulated_reasoning.clear();
 
             rx = provider.continue_with_tools_stream(continue_request).await?;
@@ -616,6 +644,9 @@ async fn process_gemini_chat(
                             name: name.clone(),
                             output: output.clone(),
                         });
+
+                        // Track tool name for escalation decisions
+                        iteration_tool_names.push(name.clone());
 
                         // Save checkpoint after successful continuation tool
                         if success {
@@ -750,17 +781,19 @@ async fn process_gemini_chat(
         .execute(db)
         .await;
 
-        // Store token usage
+        // Store token usage (with final model used - may have escalated to Pro)
         if total_input_tokens > 0 || total_output_tokens > 0 {
             let usage_id = Uuid::new_v4().to_string();
+            let model_name = routing.model().model_id();
             let _ = sqlx::query(
                 r#"
                 INSERT INTO token_usage (id, message_id, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, created_at)
-                VALUES ($1, $2, 'deepseek-reasoner', $3, $4, $5, 0, $6)
+                VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
                 "#,
             )
             .bind(&usage_id)
             .bind(&assistant_msg_id)
+            .bind(model_name)
             .bind(total_input_tokens as i64)
             .bind(total_output_tokens as i64)
             .bind(total_reasoning_tokens as i64)
@@ -770,7 +803,7 @@ async fn process_gemini_chat(
         }
     }
 
-    // Send chain info (no chain for DeepSeek)
+    // Send chain info (client-state providers don't use response chains)
     let _ = tx.send(ChatEvent::Chain {
         response_id: None,
         previous_response_id: None,

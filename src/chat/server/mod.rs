@@ -10,6 +10,7 @@ pub mod advisory;
 mod chat;
 mod handlers;
 mod markdown_parser;
+pub mod routing;
 mod stream;
 pub mod types;
 
