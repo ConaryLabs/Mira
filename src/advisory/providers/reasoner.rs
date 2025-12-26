@@ -2,10 +2,13 @@
 //!
 //! Uses the same Chat Completions API as the chat provider but adapted
 //! for the advisory system's simpler request/response types.
+//!
+//! Includes exponential backoff with jitter for rate limiting resilience.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
+use rand::Rng;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,6 +23,32 @@ use super::{
 use crate::advisory::tool_bridge::{AllowedTool, chat_completions_tool_schema};
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1/chat/completions";
+
+/// Maximum number of retry attempts for rate-limited requests
+const MAX_RETRIES: u32 = 3;
+
+/// Initial backoff delay in milliseconds
+const INITIAL_BACKOFF_MS: u64 = 1000;
+
+/// Maximum backoff delay in milliseconds (30 seconds)
+const MAX_BACKOFF_MS: u64 = 30_000;
+
+/// Calculate backoff with exponential increase and jitter
+fn backoff_with_jitter(attempt: u32) -> Duration {
+    let base_delay = INITIAL_BACKOFF_MS * 2u64.pow(attempt);
+    let capped_delay = base_delay.min(MAX_BACKOFF_MS);
+    // Add 0-50% jitter to prevent thundering herd
+    let jitter = rand::rng().random_range(0..=(capped_delay / 2));
+    Duration::from_millis(capped_delay + jitter)
+}
+
+/// Check if an error is retryable (rate limit or temporary server error)
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        || status == reqwest::StatusCode::GATEWAY_TIMEOUT
+        || status == reqwest::StatusCode::BAD_GATEWAY
+}
 
 pub struct ReasonerProvider {
     client: Client,
@@ -255,66 +284,107 @@ impl AdvisoryProvider for ReasonerProvider {
             tools,
         };
 
-        let response = self.client
-            .post(DEEPSEEK_API_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&api_request)
-            .timeout(Duration::from_secs(REASONER_TIMEOUT_SECS))
-            .send()
-            .await?;
+        // Retry loop with exponential backoff
+        let mut last_error = None;
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let backoff = backoff_with_jitter(attempt - 1);
+                tracing::warn!(
+                    attempt = attempt,
+                    backoff_ms = backoff.as_millis(),
+                    "DeepSeek Reasoner: retrying after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+            }
 
-        if !response.status().is_success() {
+            let response = match self.client
+                .post(DEEPSEEK_API_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&api_request)
+                .timeout(Duration::from_secs(REASONER_TIMEOUT_SECS))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    // Network error - retry if attempts remain
+                    last_error = Some(format!("Network error: {}", e));
+                    if attempt < MAX_RETRIES {
+                        continue;
+                    }
+                    anyhow::bail!("DeepSeek Reasoner network error after {} retries: {}", MAX_RETRIES, e);
+                }
+            };
+
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("DeepSeek Reasoner API error: {} - {}", status, body);
-        }
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
 
-        let api_response: DeepSeekResponse = response.json().await?;
+                if is_retryable_status(status) && attempt < MAX_RETRIES {
+                    tracing::warn!(
+                        status = %status,
+                        attempt = attempt,
+                        "DeepSeek Reasoner: retryable error"
+                    );
+                    last_error = Some(format!("{} - {}", status, body));
+                    continue;
+                }
 
-        if let Some(error) = api_response.error {
-            anyhow::bail!("DeepSeek Reasoner error: {}", error.message);
-        }
+                anyhow::bail!("DeepSeek Reasoner API error: {} - {}", status, body);
+            }
 
-        let choice = api_response.choices
-            .and_then(|c| c.into_iter().next());
+            // Success - parse response
+            let api_response: DeepSeekResponse = response.json().await?;
 
-        let text = choice.as_ref()
-            .and_then(|c| c.message.content.clone())
-            .unwrap_or_default();
+            if let Some(error) = api_response.error {
+                anyhow::bail!("DeepSeek Reasoner error: {}", error.message);
+            }
 
-        // Extract tool calls
-        let tool_calls = choice
-            .and_then(|c| c.message.tool_calls)
-            .map(|tcs| {
-                tcs.into_iter()
-                    .filter_map(|tc| {
-                        let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                        Some(ToolCallRequest {
-                            id: tc.id,
-                            name: tc.function.name,
-                            arguments: args,
+            // Extract response content
+            let choice = api_response.choices
+                .and_then(|c| c.into_iter().next());
+
+            let text = choice.as_ref()
+                .and_then(|c| c.message.content.clone())
+                .unwrap_or_default();
+
+            let tool_calls = choice
+                .and_then(|c| c.message.tool_calls)
+                .map(|tcs| {
+                    tcs.into_iter()
+                        .filter_map(|tc| {
+                            let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                            Some(ToolCallRequest {
+                                id: tc.id,
+                                name: tc.function.name,
+                                arguments: args,
+                            })
                         })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+                        .collect()
+                })
+                .unwrap_or_default();
 
-        let usage = api_response.usage.map(|u| AdvisoryUsage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-            reasoning_tokens: u.reasoning_tokens,
-            cache_read_tokens: u.prompt_cache_hit_tokens,
-            cache_write_tokens: u.prompt_cache_miss_tokens, // miss = new cache writes
-        });
+            let usage = api_response.usage.map(|u| AdvisoryUsage {
+                input_tokens: u.prompt_tokens,
+                output_tokens: u.completion_tokens,
+                reasoning_tokens: u.reasoning_tokens,
+                cache_read_tokens: u.prompt_cache_hit_tokens,
+                cache_write_tokens: u.prompt_cache_miss_tokens,
+            });
 
-        Ok(AdvisoryResponse {
-            text,
-            usage,
-            model: AdvisoryModel::DeepSeekReasoner,
-            tool_calls,
-        })
+            return Ok(AdvisoryResponse {
+                text,
+                usage,
+                model: AdvisoryModel::DeepSeekReasoner,
+                tool_calls,
+                reasoning: None,
+            });
+        }
+
+        // Should not reach here, but just in case
+        anyhow::bail!("DeepSeek Reasoner failed after {} retries: {:?}", MAX_RETRIES, last_error)
     }
 
     async fn stream(

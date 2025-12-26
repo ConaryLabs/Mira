@@ -167,6 +167,8 @@ pub struct AdvisoryResponse {
     pub model: AdvisoryModel,
     /// Tool calls requested by the model (if any)
     pub tool_calls: Vec<ToolCallRequest>,
+    /// Reasoning/thinking content (for models that support it, e.g. DeepSeek Reasoner)
+    pub reasoning: Option<String>,
 }
 
 /// A tool call request from the model

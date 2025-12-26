@@ -2,14 +2,18 @@
 //!
 //! Implements the OpenAI-compatible Chat Completions API for DeepSeek models.
 //! Uses core::SseDecoder for SSE stream parsing.
+//!
+//! Includes exponential backoff with jitter for rate limiting resilience.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
 use crate::core::SseDecoder;
+use rand::Rng;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::{
@@ -18,6 +22,32 @@ use super::{
 };
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1/chat/completions";
+
+/// Maximum number of retry attempts for rate-limited requests
+const MAX_RETRIES: u32 = 3;
+
+/// Initial backoff delay in milliseconds
+const INITIAL_BACKOFF_MS: u64 = 1000;
+
+/// Maximum backoff delay in milliseconds (30 seconds)
+const MAX_BACKOFF_MS: u64 = 30_000;
+
+/// Calculate backoff with exponential increase and jitter
+fn backoff_with_jitter(attempt: u32) -> Duration {
+    let base_delay = INITIAL_BACKOFF_MS * 2u64.pow(attempt);
+    let capped_delay = base_delay.min(MAX_BACKOFF_MS);
+    // Add 0-50% jitter to prevent thundering herd
+    let jitter = rand::rng().random_range(0..=(capped_delay / 2));
+    Duration::from_millis(capped_delay + jitter)
+}
+
+/// Check if an error is retryable (rate limit or temporary server error)
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        || status == reqwest::StatusCode::GATEWAY_TIMEOUT
+        || status == reqwest::StatusCode::BAD_GATEWAY
+}
 
 /// DeepSeek provider using Chat Completions API
 pub struct DeepSeekProvider {
@@ -189,6 +219,68 @@ impl DeepSeekProvider {
                 },
             })
             .collect()
+    }
+
+    /// Make an HTTP request with retry logic for rate limiting
+    async fn request_with_retry(
+        &self,
+        body: &ChatCompletionRequest,
+    ) -> Result<reqwest::Response> {
+        let mut last_error = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let backoff = backoff_with_jitter(attempt - 1);
+                tracing::warn!(
+                    attempt = attempt,
+                    backoff_ms = backoff.as_millis(),
+                    "DeepSeek: retrying after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+            }
+
+            let response = match self.client
+                .post(DEEPSEEK_API_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(format!("Network error: {}", e));
+                    if attempt < MAX_RETRIES {
+                        continue;
+                    }
+                    anyhow::bail!("DeepSeek network error after {} retries: {}", MAX_RETRIES, e);
+                }
+            };
+
+            let status = response.status();
+            if !status.is_success() {
+                // For retryable errors, try again
+                if is_retryable_status(status) && attempt < MAX_RETRIES {
+                    let body_text = response.text().await.unwrap_or_default();
+                    tracing::warn!(
+                        status = %status,
+                        attempt = attempt,
+                        "DeepSeek: retryable error"
+                    );
+                    last_error = Some(format!("{} - {}", status, body_text));
+                    continue;
+                }
+
+                // Non-retryable error or out of retries
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("DeepSeek API error {}: {}", status, body_text);
+            }
+
+            return Ok(response);
+        }
+
+        // Should not reach here
+        anyhow::bail!("DeepSeek failed after {} retries: {:?}", MAX_RETRIES, last_error)
     }
 
     /// Process SSE stream and send events to channel
@@ -366,23 +458,8 @@ impl Provider for DeepSeekProvider {
             max_tokens: request.max_tokens,
         };
 
-        let response = self
-            .client
-            .post(DEEPSEEK_API_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("(failed to read body: {})", e));
-            anyhow::bail!("DeepSeek API error {}: {}", status, text);
-        }
+        // Use retry logic for the request
+        let response = self.request_with_retry(&body).await?;
 
         let (tx, rx) = mpsc::channel(100);
 
@@ -408,24 +485,8 @@ impl Provider for DeepSeekProvider {
             max_tokens: request.max_tokens,
         };
 
-        let response = self
-            .client
-            .post(DEEPSEEK_API_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("(failed to read body: {})", e));
-            anyhow::bail!("DeepSeek API error {}: {}", status, text);
-        }
-
+        // Use retry logic for the request
+        let response = self.request_with_retry(&body).await?;
         let result: ChatCompletionResponse = response.json().await?;
 
         let choice = result.choices.first().ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
@@ -491,23 +552,8 @@ impl Provider for DeepSeekProvider {
             max_tokens: None,
         };
 
-        let response = self
-            .client
-            .post(DEEPSEEK_API_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("(failed to read body: {})", e));
-            anyhow::bail!("DeepSeek API error {}: {}", status, text);
-        }
+        // Use retry logic for the request
+        let response = self.request_with_retry(&body).await?;
 
         // Reuse the shared streaming logic
         let (tx, rx) = mpsc::channel(100);
