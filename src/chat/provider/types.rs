@@ -178,6 +178,20 @@ pub enum StreamEvent {
         call_id: String,
     },
 
+    /// Grounding metadata from Google Search (Gemini built-in)
+    GroundingMetadata {
+        search_queries: Vec<String>,
+        sources: Vec<GroundingSource>,
+    },
+
+    /// Code execution result (Gemini built-in)
+    CodeExecution {
+        language: String,
+        code: String,
+        output: String,
+        outcome: String,
+    },
+
     /// Usage information
     Usage(Usage),
 
@@ -189,6 +203,13 @@ pub enum StreamEvent {
 
     /// Error occurred
     Error(String),
+}
+
+/// Source from Google Search grounding
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroundingSource {
+    pub uri: String,
+    pub title: Option<String>,
 }
 
 /// Unified chat response (non-streaming)

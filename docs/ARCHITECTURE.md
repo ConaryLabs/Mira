@@ -98,7 +98,6 @@ src/
 │       ├── mira.rs
 │       ├── memory.rs
 │       ├── file.rs
-│       ├── web.rs
 │       ├── shell.rs
 │       ├── git.rs
 │       ├── code_intel.rs
@@ -117,8 +116,7 @@ src/
 │           ├── file_ops.rs
 │           ├── intel.rs
 │           ├── testing.rs
-│           ├── council.rs
-│           └── web.rs
+│           └── council.rs
 │
 ├── core/                  # Shared business logic
 │   ├── mod.rs
@@ -138,7 +136,6 @@ src/
 │       ├── mod.rs        # Operation definitions
 │       ├── memory.rs
 │       ├── file.rs
-│       ├── web.rs
 │       ├── shell.rs
 │       ├── git.rs
 │       ├── code_intel.rs
@@ -194,7 +191,6 @@ src/
 │   ├── types.rs
 │   ├── memory.rs
 │   ├── file.rs
-│   ├── web.rs
 │   ├── shell.rs
 │   ├── git.rs
 │   ├── code_intel.rs
@@ -475,12 +471,6 @@ Mira uses environment variables for configuration, with sensible defaults. No TO
 | `OPENAI_API_KEY` | For advisory | GPT-5.2 via Responses API |
 | `ANTHROPIC_API_KEY` | For advisory | Opus 4.5 via Messages API |
 
-#### **Web Search (Optional)**
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GOOGLE_API_KEY` | For web search | Google Custom Search API key |
-| `GOOGLE_CX` | For web search | Google Custom Search engine ID |
-
 #### **Server Configuration**
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -670,6 +660,7 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 #### **2025-08-04: Web Search Integration**
 **Decision**: Add web search via OpenAI function calling (Tavily).
 - **Why**: Mira needed access to current information beyond training data.
+- **Note**: Later replaced by Gemini built-in tools (2025-12-26).
 
 #### **2025-08-09: Brief Claude Experiment (Reverted)**
 **Decision**: Attempted migration to Claude + Midjourney.
@@ -831,10 +822,17 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 - **Features**: Semantic interrupts, panic mode, explicit overrides, starvation prevention.
 - **Why**: Implicit context "bleed" confused users and models.
 
+#### **2025-12-26: Gemini Advanced Features**
+**Decision**: Replace custom web tools with Gemini's built-in capabilities.
+- **Removed**: Custom `web_search`, `web_fetch` tools and infrastructure.
+- **Added**: Built-in `google_search` (FREE until Jan 2026), `code_execution` (Python sandbox), `url_context` (native fetching).
+- **Added**: Context caching support (~75% cost reduction on cached tokens).
+- **Why**: Built-in tools are better integrated, free, and require no extra API keys.
+
 ---
 
 **Summary Statistics**:
-- **Duration**: 5+ months (July 18 - December 25, 2025)
+- **Duration**: 5+ months (July 18 - December 26, 2025)
 - **Total commits**: ~800+
 - **Major migrations**: GPT-4.1 -> GPT-5 -> Claude -> DeepSeek -> GPT 5.1 -> DeepSeek Reasoner
 - **Architecture rewrites**: 3 (August refactor, November fresh schema, December core/ops)
@@ -993,15 +991,24 @@ The `hotline` tool is particularly notable: it's an **inbound MCP call** that tr
 
 This bidirectional pattern enables Claude to consult other models through Mira's infrastructure.
 
-### **6.5 Web Search (Google Custom Search)**
+### **6.5 Gemini Built-in Tools**
 
-| Property | Value |
-|----------|-------|
-| API | Custom Search JSON API |
-| Endpoint | `https://www.googleapis.com/customsearch/v1` |
-| Auth | API key (`GOOGLE_API_KEY`) + Search Engine ID (`GOOGLE_CX`) |
+Gemini 3 provides built-in capabilities that are automatically enabled:
 
-**Usage**: DeepSeek chat can invoke web search for current information. Requires both API key and custom search engine ID.
+| Tool | Description | Cost |
+|------|-------------|------|
+| `google_search` | Real-time web search with source citations | FREE until Jan 2026 |
+| `code_execution` | Python sandbox (40+ libraries, 30s timeout) | Included |
+| `url_context` | Native web page fetching (20 URLs, 34MB each) | Included |
+
+**Grounding Metadata**: Search results include `groundingChunks` with source URIs and titles, automatically cited in responses.
+
+**Code Execution**: Returns `executableCode` (Python) and `codeExecutionResult` (output/outcome). Supports matplotlib, numpy, pandas, sklearn.
+
+**Context Caching**: Gemini supports caching system prompts and context for ~75% cost reduction:
+- Flash: minimum 1,024 tokens
+- Pro: minimum 4,096 tokens
+- TTL: configurable (default 1 hour)
 
 ### **6.6 External API Patterns**
 

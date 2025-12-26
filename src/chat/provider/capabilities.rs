@@ -108,12 +108,13 @@ impl Capabilities {
 
     /// Gemini 3 Flash (default, cheap, fast)
     /// Pro-level intelligence at Flash speed and pricing ($0.50/$3 per 1M)
+    /// Supports context caching with 1,024 token minimum (~75% cost reduction)
     pub fn gemini_3_flash() -> Self {
         Self {
             state_mode: StateMode::Client,
             supports_tools: true,
             supports_streaming: true,
-            supports_cached_tokens: false,
+            supports_cached_tokens: true, // Context caching supported (min 1024 tokens)
             supports_json_mode: true,
             usage_reporting: UsageReporting::Basic,
             max_context_tokens: 1_000_000,
@@ -125,12 +126,13 @@ impl Capabilities {
 
     /// Gemini 3 Pro (complex reasoning, advanced planning)
     /// Higher cost ($2/$12 per 1M) but better for council/goal/task
+    /// Supports context caching with 4,096 token minimum (~75% cost reduction)
     pub fn gemini_3_pro() -> Self {
         Self {
             state_mode: StateMode::Client,
             supports_tools: true,
             supports_streaming: true,
-            supports_cached_tokens: false,
+            supports_cached_tokens: true, // Context caching supported (min 4096 tokens)
             supports_json_mode: true,
             usage_reporting: UsageReporting::Basic,
             max_context_tokens: 1_000_000,

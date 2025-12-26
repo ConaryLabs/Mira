@@ -303,6 +303,27 @@ pub async fn chat_sync_handler(
             ChatEvent::ArtifactCreated { .. } => {
                 // Artifacts are tracked separately - ignore for sync response content
             }
+            ChatEvent::Grounding { search_queries, sources } => {
+                // Format grounding metadata as text for sync response
+                let sources_text = sources.iter()
+                    .map(|s| format!("- [{}]({})", s.title.as_deref().unwrap_or(&s.uri), s.uri))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !sources_text.is_empty() {
+                    content.push_str(&format!("\n\n**Sources** ({})\n{}\n",
+                        search_queries.join(", "),
+                        sources_text
+                    ));
+                }
+            }
+            ChatEvent::CodeExecution { language, code, output, outcome } => {
+                // Format code execution as a code block with result
+                content.push_str(&format!("\n\n```{}\n{}\n```\n", language.to_lowercase(), code));
+                if !output.is_empty() {
+                    let status = if outcome == "OUTCOME_OK" { "Output" } else { "Error" };
+                    content.push_str(&format!("\n**{}:**\n```\n{}\n```\n", status, output));
+                }
+            }
         }
     }
 

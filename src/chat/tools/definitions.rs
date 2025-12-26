@@ -22,11 +22,13 @@ pub struct Tool {
 ///
 /// REMOVED (Claude Code handles via MCP):
 /// - write_file, edit_file, bash, run_tests, git_commit
+///
+/// REMOVED (replaced by Gemini built-in tools):
+/// - web_search, web_fetch -> google_search, code_execution, url_context
 pub fn get_tools() -> Vec<Tool> {
     let mut tools = Vec::new();
 
     tools.extend(tool_defs::file_ops_tools());      // read_file, glob, grep (3)
-    tools.extend(tool_defs::web_tools());           // web_search, web_fetch (2)
     tools.extend(tool_defs::memory_tools());        // remember, recall (2)
     tools.extend(tool_defs::mira_tools());          // task, goal, correction, etc (5)
     tools.extend(tool_defs::git_tools());           // git_status, git_diff, git_log + intel (8)
@@ -46,8 +48,9 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        // 3 file_ops + 2 web + 2 memory + 5 mira + 8 git + 2 artifact + 5 council + 9 intel + 4 orchestration = 40
-        assert_eq!(tools.len(), 40, "Expected 40 tools, got {}", tools.len());
+        // 3 file_ops + 2 memory + 5 mira + 8 git + 2 artifact + 5 council + 9 intel + 4 orchestration = 38
+        // (web_search/web_fetch removed - using Gemini's built-in tools)
+        assert_eq!(tools.len(), 38, "Expected 38 tools, got {}", tools.len());
 
         // Collect tool names
         let names: HashSet<&str> = tools.iter().map(|t| t.name.as_str()).collect();
@@ -63,9 +66,10 @@ mod tests {
         assert!(!names.contains("bash"), "bash should be removed");
         assert!(!names.contains("run_tests"), "run_tests should be removed");
         assert!(!names.contains("git_commit"), "git_commit should be removed");
+        assert!(!names.contains("web_search"), "web_search replaced by Gemini's google_search");
+        assert!(!names.contains("web_fetch"), "web_fetch replaced by Gemini's url_context");
 
         // Verify key tools exist
-        assert!(names.contains("web_search"));
         assert!(names.contains("remember"));
         assert!(names.contains("recall"));
         assert!(names.contains("task"));

@@ -36,7 +36,7 @@ use crate::chat::{
 
 use super::markdown_parser::MarkdownStreamParser;
 use super::routing::RoutingState;
-use super::types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResultData};
+use super::types::{ChatEvent, ChatRequest, GroundingSourceInfo, MessageBlock, ToolCallResultData};
 use super::AppState;
 use crate::chat::tools::{tool_category, tool_summary};
 
@@ -180,8 +180,7 @@ async fn process_gemini_chat(
     };
 
     // Create tool executor
-    let mut executor = ToolExecutor::new()
-        .with_web_search(state.web_search_config.clone());
+    let mut executor = ToolExecutor::new();
     executor.cwd = project_path.clone();
     if let Some(db) = &state.db {
         executor = executor.with_db(db.clone());
@@ -422,12 +421,29 @@ async fn process_gemini_chat(
                         cached_tokens: usage.cached_tokens,
                     }).await?;
                 }
+                ProviderStreamEvent::GroundingMetadata { search_queries, sources } => {
+                    tx.send(ChatEvent::Grounding {
+                        search_queries,
+                        sources: sources.into_iter().map(|s| GroundingSourceInfo {
+                            uri: s.uri,
+                            title: s.title,
+                        }).collect(),
+                    }).await?;
+                }
+                ProviderStreamEvent::CodeExecution { language, code, output, outcome } => {
+                    tx.send(ChatEvent::CodeExecution {
+                        language,
+                        code,
+                        output,
+                        outcome,
+                    }).await?;
+                }
                 ProviderStreamEvent::Error(e) => {
                     tx.send(ChatEvent::Error { message: e }).await?;
                     break;
                 }
                 ProviderStreamEvent::Done => break,
-                _ => {} // Ignore other events
+                _ => {} // Ignore other events (e.g., ResponseId for non-chain providers)
             }
         }
 
@@ -698,6 +714,23 @@ async fn process_gemini_chat(
                         output_tokens: usage.output_tokens,
                         reasoning_tokens: usage.reasoning_tokens,
                         cached_tokens: 0,
+                    }).await?;
+                }
+                ProviderStreamEvent::GroundingMetadata { search_queries, sources } => {
+                    tx.send(ChatEvent::Grounding {
+                        search_queries,
+                        sources: sources.into_iter().map(|s| GroundingSourceInfo {
+                            uri: s.uri,
+                            title: s.title,
+                        }).collect(),
+                    }).await?;
+                }
+                ProviderStreamEvent::CodeExecution { language, code, output, outcome } => {
+                    tx.send(ChatEvent::CodeExecution {
+                        language,
+                        code,
+                        output,
+                        outcome,
                     }).await?;
                 }
                 ProviderStreamEvent::Error(e) => {

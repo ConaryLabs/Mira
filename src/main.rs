@@ -39,7 +39,6 @@ mod connect;
 
 use server::{MiraServer, create_optimized_pool, run_migrations};
 use tools::SemanticSearch;
-use chat::tools::WebSearchConfig;
 
 // === Constants ===
 
@@ -228,12 +227,6 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         .ok()
         .filter(|s| !s.is_empty());
 
-    // Google Custom Search config for web search tool
-    let web_search_config = WebSearchConfig {
-        google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
-        google_cx: std::env::var("GOOGLE_CX").ok(),
-    };
-
     // Sync token for chat sync endpoint
     let sync_token = std::env::var("MIRA_SYNC_TOKEN").ok();
 
@@ -293,7 +286,6 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
             default_reasoning_effort: "medium".to_string(),
             sync_token: sync_token.clone(),
             sync_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
-            web_search_config,
             project_locks: Arc::new(chat::server::ProjectLocks::new()),
         };
         Some(chat::create_router(chat_state))
