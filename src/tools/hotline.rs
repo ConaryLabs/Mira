@@ -21,17 +21,28 @@ use super::types::HotlineRequest;
 // Provider Functions (using AdvisoryService)
 // ============================================================================
 
-async fn call_gpt(message: &str) -> Result<serde_json::Value> {
+/// System prompt for tool-enabled advisory calls
+const TOOL_SYSTEM_PROMPT: &str = "You are an AI assistant with access to Mira's read-only tools. \
+    Use the tools to gather relevant context before answering. \
+    Available tools: recall (search memories), get_corrections (user preferences), \
+    get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
+    find_similar_fixes (past error solutions), get_related_files, get_recent_commits, \
+    search_commits, list_tasks.";
+
+/// Call any provider without tools
+async fn call_provider(model: AdvisoryModel, message: &str) -> Result<serde_json::Value> {
     let service = AdvisoryService::from_env()?;
-    let response = service.ask(AdvisoryModel::Gpt52, message).await?;
+    let response = service.ask(model, message).await?;
 
     Ok(serde_json::json!({
         "response": response.text,
-        "provider": "gpt-5.2",
+        "provider": model.as_str(),
     }))
 }
 
-async fn call_gpt_with_tools(
+/// Call any provider with tool support
+async fn call_provider_with_tools(
+    model: AdvisoryModel,
     message: &str,
     db: &SqlitePool,
     semantic: &Arc<SemanticSearch>,
@@ -39,7 +50,6 @@ async fn call_gpt_with_tools(
 ) -> Result<serde_json::Value> {
     let service = AdvisoryService::from_env()?;
 
-    // Create tool context
     let mut ctx = tool_bridge::ToolContext::new(
         Arc::new(db.clone()),
         semantic.clone(),
@@ -47,148 +57,15 @@ async fn call_gpt_with_tools(
     );
 
     let response = service.ask_with_tools(
-        AdvisoryModel::Gpt52,
+        model,
         message,
-        Some("You are an AI assistant with access to Mira's read-only tools. \
-              Use the tools to gather relevant context before answering. \
-              Available tools: recall (search memories), get_corrections (user preferences), \
-              get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
-              find_similar_fixes (past error solutions), get_related_files, get_recent_commits, search_commits.".to_string()),
+        Some(TOOL_SYSTEM_PROMPT.to_string()),
         &mut ctx,
     ).await?;
 
     Ok(serde_json::json!({
         "response": response.text,
-        "provider": "gpt-5.2",
-        "tools_used": ctx.tracker.session_total,
-    }))
-}
-
-async fn call_deepseek(message: &str) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
-    let response = service.ask(AdvisoryModel::DeepSeekReasoner, message).await?;
-
-    Ok(serde_json::json!({
-        "response": response.text,
-        "provider": "deepseek-reasoner",
-    }))
-}
-
-async fn call_deepseek_with_tools(
-    message: &str,
-    db: &SqlitePool,
-    semantic: &Arc<SemanticSearch>,
-    project_id: Option<i64>,
-) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
-
-    // Create tool context
-    let mut ctx = tool_bridge::ToolContext::new(
-        Arc::new(db.clone()),
-        semantic.clone(),
-        project_id,
-    );
-
-    let response = service.ask_with_tools(
-        AdvisoryModel::DeepSeekReasoner,
-        message,
-        Some("You are an AI assistant with access to Mira's read-only tools. \
-              Use the tools to gather relevant context before answering. \
-              Available tools: recall (search memories), get_corrections (user preferences), \
-              get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
-              find_similar_fixes (past error solutions), get_related_files, get_recent_commits, search_commits, list_tasks.".to_string()),
-        &mut ctx,
-    ).await?;
-
-    Ok(serde_json::json!({
-        "response": response.text,
-        "provider": "deepseek-reasoner",
-        "tools_used": ctx.tracker.session_total,
-    }))
-}
-
-async fn call_gemini(message: &str) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
-    let response = service.ask(AdvisoryModel::Gemini3Pro, message).await?;
-
-    Ok(serde_json::json!({
-        "response": response.text,
-        "provider": "gemini-3-pro",
-    }))
-}
-
-async fn call_gemini_with_tools(
-    message: &str,
-    db: &SqlitePool,
-    semantic: &Arc<SemanticSearch>,
-    project_id: Option<i64>,
-) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
-
-    // Create tool context
-    let mut ctx = tool_bridge::ToolContext::new(
-        Arc::new(db.clone()),
-        semantic.clone(),
-        project_id,
-    );
-
-    let response = service.ask_with_tools(
-        AdvisoryModel::Gemini3Pro,
-        message,
-        Some("You are an AI assistant with access to Mira's read-only tools. \
-              Use the tools to gather relevant context before answering. \
-              Available tools: recall (search memories), get_corrections (user preferences), \
-              get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
-              find_similar_fixes (past error solutions), get_related_files, get_recent_commits, search_commits.".to_string()),
-        &mut ctx,
-    ).await?;
-
-    Ok(serde_json::json!({
-        "response": response.text,
-        "provider": "gemini-3-pro",
-        "tools_used": ctx.tracker.session_total,
-    }))
-}
-
-async fn call_opus(message: &str) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
-    let response = service.ask(AdvisoryModel::Opus45, message).await?;
-
-    Ok(serde_json::json!({
-        "response": response.text,
-        "provider": "opus-4.5",
-    }))
-}
-
-async fn call_opus_with_tools(
-    message: &str,
-    db: &SqlitePool,
-    semantic: &Arc<SemanticSearch>,
-    project_id: Option<i64>,
-) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
-
-    // Create tool context
-    let mut ctx = tool_bridge::ToolContext::new(
-        Arc::new(db.clone()),
-        semantic.clone(),
-        project_id,
-    );
-
-    let response = service.ask_with_tools(
-        AdvisoryModel::Opus45,
-        message,
-        Some("You are an AI assistant with access to Mira's read-only tools. \
-              Use the tools to gather relevant context before answering. \
-              Available tools: recall (search memories), get_corrections (user preferences), \
-              get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
-              find_similar_fixes (past error solutions), get_related_files, get_recent_commits, search_commits, list_tasks.".to_string()),
-        &mut ctx,
-    ).await?;
-
-    Ok(serde_json::json!({
-        "response": response.text,
-        "provider": "opus-4.5",
+        "provider": model.as_str(),
         "tools_used": ctx.tracker.session_total,
     }))
 }
@@ -255,17 +132,6 @@ async fn spawn_council_deliberation(
         "message": "Council deliberation started in background. Use advisory_session(action: 'get', session_id: '...') to check progress.",
         "provider": "council"
     }))
-}
-
-/// Legacy single-shot council (for backward compatibility if needed)
-#[allow(dead_code)]
-async fn call_council_single_shot(message: &str) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
-
-    // Single-shot: exclude Opus in MCP context, GPT + Gemini only
-    let response = service.council(message, Some(AdvisoryModel::Opus45)).await?;
-
-    Ok(response.to_json())
 }
 
 // ============================================================================
@@ -379,19 +245,23 @@ pub async fn call_mira(
 
     // Route based on provider (and tools if enabled)
     let enable_tools = req.enable_tools.unwrap_or(false);
-    let mut result = match (req.provider.as_deref(), enable_tools) {
-        (Some("gemini"), true) => call_gemini_with_tools(&message, db, semantic, project_id).await?,
-        (Some("gemini"), false) => call_gemini(&message).await?,
-        (Some("deepseek"), true) => call_deepseek_with_tools(&message, db, semantic, project_id).await?,
-        (Some("deepseek"), false) => call_deepseek(&message).await?,
-        (Some("opus"), true) => call_opus_with_tools(&message, db, semantic, project_id).await?,
-        (Some("opus"), false) => call_opus(&message).await?,
-        (Some("council"), _) => {
+
+    // Map provider string to model
+    let model = match req.provider.as_deref() {
+        Some("gemini") => AdvisoryModel::Gemini3Pro,
+        Some("deepseek") => AdvisoryModel::DeepSeekReasoner,
+        Some("opus") => AdvisoryModel::Opus45,
+        Some("council") => {
             // Council mode: spawn async deliberation, return immediately
             return spawn_council_deliberation(message, db.clone(), semantic.clone(), project_id, session_id).await;
         },
-        (_, true) => call_gpt_with_tools(&message, db, semantic, project_id).await?,
-        (_, false) => call_gpt(&message).await?,
+        _ => AdvisoryModel::Gpt52, // Default to GPT-5.2
+    };
+
+    let mut result = if enable_tools {
+        call_provider_with_tools(model, &message, db, semantic, project_id).await?
+    } else {
+        call_provider(model, &message).await?
     };
 
     // If we have a session, store the response and add session_id to result
