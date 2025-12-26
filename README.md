@@ -58,9 +58,13 @@ Restart Claude Code and you're ready.
 ## Mira Studio
 
 A web-based chat interface for Mira. Provides a modern terminal-style UI with:
-- Streaming chat with GPT-5.2
+- Streaming chat with DeepSeek V3.2
+- Live streaming status showing tool names and token counts
+- Message role labels (`[you]`/`[mira]`) with hover timestamps
 - Tool call visualization with Timeline panel
+- Project management with pinnable project cards
 - File artifact tracking with Workspace panel
+- Structured tool argument display (key-value, not raw JSON)
 - Mobile-responsive with bottom sheet panels
 
 ```bash
