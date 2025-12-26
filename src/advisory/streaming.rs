@@ -474,6 +474,51 @@ pub enum CouncilProgress {
     DeliberationFailed { error: String },
 }
 
+// ============================================================================
+// Progress Sink Trait
+// ============================================================================
+
+/// Trait for sinking progress events during council deliberation.
+///
+/// This allows the core deliberation logic to emit progress events without
+/// knowing whether they go to SSE streaming, nowhere (noop), or elsewhere.
+#[async_trait::async_trait]
+pub trait ProgressSink: Send + Sync {
+    /// Emit a progress event. Implementations decide what to do with it.
+    async fn emit(&self, event: CouncilProgress);
+}
+
+/// No-op sink that discards all events.
+///
+/// Used when only database progress updates are needed (MCP path).
+pub struct NoopSink;
+
+#[async_trait::async_trait]
+impl ProgressSink for NoopSink {
+    async fn emit(&self, _event: CouncilProgress) {
+        // Intentionally empty - events are discarded
+    }
+}
+
+/// SSE sink that sends events to a channel for HTTP streaming.
+pub struct SseSink {
+    tx: mpsc::Sender<CouncilProgress>,
+}
+
+impl SseSink {
+    pub fn new(tx: mpsc::Sender<CouncilProgress>) -> Self {
+        Self { tx }
+    }
+}
+
+#[async_trait::async_trait]
+impl ProgressSink for SseSink {
+    async fn emit(&self, event: CouncilProgress) {
+        // Ignore send errors - receiver may have dropped
+        let _ = self.tx.send(event).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
