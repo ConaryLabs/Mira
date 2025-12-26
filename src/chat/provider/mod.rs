@@ -1,7 +1,8 @@
 //! Provider abstraction for chat models
 //!
 //! Supports multiple LLM backends:
-//! - DeepSeek V3.2 as the primary model
+//! - Gemini 3 Pro as the primary model (Orchestrator mode)
+//! - DeepSeek V3.2 (available for testing/fallback)
 //! - GPT-5.2 via Responses API
 //! - Unified streaming interface
 //! - Tool calling support
@@ -11,11 +12,13 @@
 
 mod capabilities;
 mod deepseek;
+mod gemini;
 pub mod responses;
 mod types;
 
 pub use capabilities::Capabilities;
 pub use deepseek::DeepSeekProvider;
+pub use gemini::GeminiChatProvider;
 pub use types::*;
 
 use anyhow::Result;
@@ -104,6 +107,21 @@ impl ModelSpec {
             supports_reasoning: true,
             input_cost_per_million: 0.55,
             output_cost_per_million: 2.19,
+        }
+    }
+
+    /// Gemini 3 Pro specification (Orchestrator primary model)
+    pub fn gemini_3_pro() -> Self {
+        Self {
+            id: "gemini-3-pro-preview".into(),
+            display_name: "Gemini 3 Pro".into(),
+            max_context_tokens: 1_000_000,
+            max_output_tokens: 65_536,
+            default_output_tokens: 16_000,
+            supports_tools: true,
+            supports_reasoning: true,  // Supports thinkingConfig
+            input_cost_per_million: 1.25,
+            output_cost_per_million: 10.00,
         }
     }
 

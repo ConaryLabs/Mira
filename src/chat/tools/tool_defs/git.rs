@@ -1,4 +1,5 @@
-//! Git tool definitions
+//! Git tool definitions (read-only for orchestrator)
+//! Note: git_commit has been removed - Claude Code handles commits via MCP.
 
 use serde_json::json;
 use super::super::definitions::Tool;
@@ -32,25 +33,6 @@ pub fn git_tools() -> Vec<Tool> {
                     }
                 },
                 "required": []
-            }),
-        },
-        Tool {
-            tool_type: "function".into(),
-            name: "git_commit".into(),
-            description: Some("Create a git commit. Optionally stage all changes first.".into()),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "Commit message"
-                    },
-                    "add_all": {
-                        "type": "boolean",
-                        "description": "Stage all changes before committing (git add -A)"
-                    }
-                },
-                "required": ["message"]
             }),
         },
         Tool {

@@ -605,3 +605,23 @@ pub struct IndexRequest {
     pub max_workers: Option<i64>,
 }
 
+// ============================================================================
+// Instruction Queue Tools (Studio -> Claude Code communication)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetPendingInstructionsRequest {
+    #[schemars(description = "Maximum number of instructions to return")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarkInstructionRequest {
+    #[schemars(description = "Instruction ID")]
+    pub instruction_id: String,
+    #[schemars(description = "New status: in_progress/completed/failed")]
+    pub status: String,
+    #[schemars(description = "Result or error message")]
+    pub result: Option<String>,
+}
+

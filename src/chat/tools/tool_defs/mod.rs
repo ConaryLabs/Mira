@@ -8,6 +8,7 @@ mod git;
 mod testing;
 mod council;
 mod intel;
+mod orchestration;
 
 pub use file_ops::*;
 pub use web::*;
@@ -17,3 +18,4 @@ pub use git::*;
 pub use testing::*;
 pub use council::*;
 pub use intel::*;
+pub use orchestration::*;

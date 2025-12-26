@@ -3,9 +3,11 @@
   import TimelineTab from '../timeline/TimelineTab.svelte';
   import WorkspaceTab from '../workspace/WorkspaceTab.svelte';
   import AdvisoryTab from '../advisory/AdvisoryTab.svelte';
+  import OrchestrationTab from '../orchestration/OrchestrationTab.svelte';
 
   // Tab configuration
   const tabs: { id: DrawerTab; label: string; icon: string }[] = [
+    { id: 'orchestration', label: 'Claude', icon: 'terminal' },
     { id: 'timeline', label: 'Timeline', icon: 'clock' },
     { id: 'workspace', label: 'Workspace', icon: 'folder' },
     { id: 'advisory', label: 'Advisory', icon: 'users' },
@@ -99,7 +101,9 @@
 
     <!-- Tab content -->
     <div class="drawer-content">
-      {#if layoutStore.contextDrawer.activeTab === 'timeline'}
+      {#if layoutStore.contextDrawer.activeTab === 'orchestration'}
+        <OrchestrationTab />
+      {:else if layoutStore.contextDrawer.activeTab === 'timeline'}
         <TimelineTab />
       {:else if layoutStore.contextDrawer.activeTab === 'workspace'}
         <WorkspaceTab />

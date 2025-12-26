@@ -1,7 +1,7 @@
 //! Council tool - consult multiple AI models in parallel
 //!
-//! Uses the unified AdvisoryService to call GPT-5.2, Opus 4.5, and Gemini 3 Pro.
-//! In chat context (running on DeepSeek Reasoner), the host synthesizes inline.
+//! Uses the unified AdvisoryService to call GPT-5.2, Opus 4.5, Gemini 3 Pro, and DeepSeek Reasoner.
+//! In chat context (running on Gemini 3 Pro), the host synthesizes inline.
 
 use anyhow::Result;
 use serde_json::json;
@@ -52,14 +52,26 @@ impl CouncilTools {
         }).to_string())
     }
 
-    /// Call the council - all three models in parallel
-    /// In chat context, no synthesis is done here - DeepSeek Reasoner (host) synthesizes inline
+    /// Ask DeepSeek Reasoner directly
+    pub async fn ask_deepseek(message: &str, context: Option<&str>) -> Result<String> {
+        let full_message = build_message(message, context);
+        let service = AdvisoryService::from_env()?;
+        let response = service.ask(AdvisoryModel::DeepSeekReasoner, &full_message).await?;
+
+        Ok(json!({
+            "provider": "deepseek-reasoner",
+            "response": response.text
+        }).to_string())
+    }
+
+    /// Call the council - all four models in parallel
+    /// In chat context (Gemini 3 Pro host), the host synthesizes inline
     pub async fn council(message: &str, context: Option<&str>) -> Result<String> {
         let full_message = build_message(message, context);
         let service = AdvisoryService::from_env()?;
 
-        // Use council_raw since chat host (DeepSeek Reasoner) will synthesize inline
-        // Include all 3 models (GPT, Opus, Gemini) - no exclusion needed
+        // Use council_raw - Gemini 3 Pro (host) will synthesize inline
+        // Include all 4 models (GPT, Opus, Gemini, DeepSeek) - no exclusion needed
         let responses = service.council_raw(&full_message, None).await?;
 
         // Format responses for chat - it expects "council" key with model responses

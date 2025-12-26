@@ -1,4 +1,7 @@
-//! Tool definitions for DeepSeek function calling
+//! Tool definitions for Gemini 3 Pro (Orchestrator mode)
+//!
+//! Orchestrator mode: Studio doesn't write code, Claude Code does.
+//! Tools here are read-only + management/intelligence.
 
 use serde::Serialize;
 
@@ -15,18 +18,22 @@ pub struct Tool {
     pub parameters: serde_json::Value,
 }
 
-/// Get all tool definitions for GPT-5.2
+/// Get all tool definitions for Gemini 3 Pro (Orchestrator)
+///
+/// REMOVED (Claude Code handles via MCP):
+/// - write_file, edit_file, bash, run_tests, git_commit
 pub fn get_tools() -> Vec<Tool> {
     let mut tools = Vec::new();
 
-    tools.extend(tool_defs::file_ops_tools());
-    tools.extend(tool_defs::web_tools());
-    tools.extend(tool_defs::memory_tools());
-    tools.extend(tool_defs::mira_tools());
-    tools.extend(tool_defs::git_tools());
-    tools.extend(tool_defs::testing_tools());
-    tools.extend(tool_defs::council_tools());
-    tools.extend(tool_defs::intel_tools());
+    tools.extend(tool_defs::file_ops_tools());      // read_file, glob, grep (3)
+    tools.extend(tool_defs::web_tools());           // web_search, web_fetch (2)
+    tools.extend(tool_defs::memory_tools());        // remember, recall (2)
+    tools.extend(tool_defs::mira_tools());          // task, goal, correction, etc (5)
+    tools.extend(tool_defs::git_tools());           // git_status, git_diff, git_log + intel (8)
+    tools.extend(tool_defs::artifact_tools());      // fetch_artifact, search_artifact (2)
+    tools.extend(tool_defs::council_tools());       // council, ask_* (5)
+    tools.extend(tool_defs::intel_tools());         // code intel + build/doc/index/proactive (9)
+    tools.extend(tool_defs::orchestration_tools()); // view_claude_activity, send_instruction, list_instructions, cancel_instruction (4)
 
     tools
 }
@@ -39,15 +46,25 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        // 6 file_ops + 2 web + 2 memory + 5 mira + 9 git + 3 testing + 4 council + 9 intel = 40
-        assert_eq!(tools.len(), 40);
+        // 3 file_ops + 2 web + 2 memory + 5 mira + 8 git + 2 artifact + 5 council + 9 intel + 4 orchestration = 40
+        assert_eq!(tools.len(), 40, "Expected 40 tools, got {}", tools.len());
 
         // Collect tool names
         let names: HashSet<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
-        // Verify key tools exist from each group
+        // Verify read-only file tools exist
         assert!(names.contains("read_file"));
-        assert!(names.contains("edit_file"));
+        assert!(names.contains("glob"));
+        assert!(names.contains("grep"));
+
+        // Verify removed tools are NOT present
+        assert!(!names.contains("write_file"), "write_file should be removed");
+        assert!(!names.contains("edit_file"), "edit_file should be removed");
+        assert!(!names.contains("bash"), "bash should be removed");
+        assert!(!names.contains("run_tests"), "run_tests should be removed");
+        assert!(!names.contains("git_commit"), "git_commit should be removed");
+
+        // Verify key tools exist
         assert!(names.contains("web_search"));
         assert!(names.contains("remember"));
         assert!(names.contains("recall"));
@@ -56,15 +73,19 @@ mod tests {
         assert!(names.contains("correction"));
         assert!(names.contains("git_status"));
         assert!(names.contains("git_diff"));
-        assert!(names.contains("run_tests"));
+        assert!(names.contains("git_log"));
         assert!(names.contains("council"));
         assert!(names.contains("ask_gpt"));
+        assert!(names.contains("ask_deepseek"));
         assert!(names.contains("get_symbols"));
         assert!(names.contains("get_call_graph"));
-        assert!(names.contains("get_recent_commits"));
-        assert!(names.contains("build"));
-        assert!(names.contains("document"));
-        assert!(names.contains("index"));
-        assert!(names.contains("get_proactive_context"));
+        assert!(names.contains("fetch_artifact"));
+        assert!(names.contains("search_artifact"));
+
+        // Verify orchestration tools exist
+        assert!(names.contains("view_claude_activity"));
+        assert!(names.contains("send_instruction"));
+        assert!(names.contains("list_instructions"));
+        assert!(names.contains("cancel_instruction"));
     }
 }

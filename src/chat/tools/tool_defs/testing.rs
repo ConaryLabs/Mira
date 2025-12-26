@@ -1,33 +1,11 @@
-//! Testing and artifact tool definitions
+//! Artifact tool definitions
+//! Note: run_tests has been removed - Claude Code runs tests via MCP.
 
 use serde_json::json;
 use super::super::definitions::Tool;
 
-pub fn testing_tools() -> Vec<Tool> {
+pub fn artifact_tools() -> Vec<Tool> {
     vec![
-        Tool {
-            tool_type: "function".into(),
-            name: "run_tests".into(),
-            description: Some("Run tests for the project. Auto-detects runner (cargo/pytest/npm/go) or specify explicitly.".into()),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "runner": {
-                        "type": "string",
-                        "description": "Test runner: cargo/pytest/npm/go (auto-detected if omitted)"
-                    },
-                    "filter": {
-                        "type": "string",
-                        "description": "Filter tests by name/pattern"
-                    },
-                    "verbose": {
-                        "type": "boolean",
-                        "description": "Show verbose output (default false)"
-                    }
-                },
-                "required": []
-            }),
-        },
         Tool {
             tool_type: "function".into(),
             name: "fetch_artifact".into(),

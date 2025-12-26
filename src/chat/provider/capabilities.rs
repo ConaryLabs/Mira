@@ -106,6 +106,22 @@ impl Capabilities {
         }
     }
 
+    /// Gemini 3 Pro (Orchestrator primary model)
+    pub fn gemini_3_pro() -> Self {
+        Self {
+            state_mode: StateMode::Client,  // Client-state like DeepSeek
+            supports_tools: true,
+            supports_streaming: true,
+            supports_cached_tokens: false,  // Gemini 3 Pro preview: no caching yet
+            supports_json_mode: true,
+            usage_reporting: UsageReporting::Basic,
+            max_context_tokens: 1_000_000,
+            max_output_tokens: 65_536,
+            // Orchestrator mode: generous turn budget
+            recommended_turn_budget: 50_000,
+        }
+    }
+
     /// Check if this is a client-state provider (needs explicit history)
     pub fn needs_client_history(&self) -> bool {
         self.state_mode == StateMode::Client
