@@ -95,7 +95,7 @@
 |_|  |_|_|_|  \__,_|
       </pre>
       <p>Ready. Type a message to begin.</p>
-      <p class="text-xs mt-2">GPT-5.2 powered coding assistant</p>
+      <p class="text-xs mt-2">DeepSeek-powered coding assistant</p>
     </div>
   {:else}
     <!-- Messages -->

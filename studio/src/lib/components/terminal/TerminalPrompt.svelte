@@ -14,7 +14,7 @@
     onCancel,
     disabled = false,
     isStreaming = false,
-    placeholder = 'Enter command...'
+    placeholder = 'Ask Mira...'
   }: Props = $props();
 
   let inputValue = $state('');
@@ -64,7 +64,7 @@
 </script>
 
 <div class="flex items-start gap-2 px-4 py-3 bg-[var(--term-bg-secondary)] border-t border-[var(--term-border)]" role="form" aria-label="Message input">
-  <span class="terminal-prompt-char text-[var(--term-prompt)] font-mono font-bold text-lg select-none pt-0.5" aria-hidden="true">{'>'}</span>
+  <span class="terminal-prompt-char text-[var(--term-prompt)] font-mono font-bold text-sm select-none leading-5" aria-hidden="true">{'>'}</span>
   <textarea
     bind:this={textareaEl}
     bind:value={inputValue}
