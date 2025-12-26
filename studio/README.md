@@ -2,7 +2,7 @@
 
 **Web-based Chat Interface for Mira**
 
-Mira Studio is a SvelteKit frontend that provides a modern chat interface to the Mira daemon. It communicates with GPT-5.2 via Mira's HTTP API and renders structured streaming responses with rich tool call visualization.
+Mira Studio is a SvelteKit frontend that provides a modern chat interface to the Mira daemon. It communicates with DeepSeek V3.2 via Mira's HTTP API and renders structured streaming responses with rich tool call visualization.
 
 ## Quick Start
 
@@ -46,15 +46,22 @@ studio/src/lib/
 ├── components/
 │   ├── layout/
 │   │   ├── AppShell.svelte         # Main layout container
-│   │   ├── NavRail.svelte          # Left 48px icon rail
+│   │   ├── NavRail.svelte          # Left nav (48px collapsed, 280px expanded)
 │   │   └── ContextDrawer.svelte    # Right tabbed panel (360px)
 │   ├── chat/
 │   │   ├── BlockRenderer.svelte    # Switch on block.type
 │   │   ├── TextRenderer.svelte     # Markdown-ish text rendering
-│   │   └── ToolCallInline.svelte   # Inline tool call display
+│   │   ├── ToolCallInline.svelte   # Inline tool call display
+│   │   └── ToolArguments.svelte    # Structured key-value argument display
 │   ├── terminal/
 │   │   ├── TerminalView.svelte     # Message list + streaming
-│   │   └── TerminalPrompt.svelte   # Chat input
+│   │   ├── TerminalPrompt.svelte   # Chat input
+│   │   └── StreamingStatus.svelte  # Live streaming status indicator
+│   ├── sidebar/
+│   │   ├── ProjectSelector.svelte  # Project list with add/remove/pin
+│   │   ├── ProjectCard.svelte      # Individual project card
+│   │   ├── StatusDashboard.svelte  # Connection status display
+│   │   └── ThemePicker.svelte      # Theme selection
 │   ├── timeline/
 │   │   ├── TimelineTab.svelte      # Tool activity feed
 │   │   └── TimelineCard.svelte     # Expandable tool call card
@@ -66,8 +73,8 @@ studio/src/lib/
 │       ├── CouncilView.svelte      # Multi-model responses
 │       └── DiffView.svelte         # File diff display
 ├── stores/
-│   ├── layout.svelte.ts       # Panel state, localStorage persistence
-│   ├── settings.ts            # Project path, model, theme
+│   ├── layout.svelte.ts       # Panel state (enum-based), localStorage
+│   ├── settings.ts            # Project path, projects[], model, theme
 │   ├── streamState.svelte.ts  # Streaming state machine
 │   ├── toolActivity.svelte.ts # Tool call tracking
 │   └── artifacts.svelte.ts    # File artifacts tracking
@@ -84,11 +91,28 @@ studio/src/lib/
 │ Rail │         Chat           │  Context    │
 │ 48px │       (flex-1)         │  Drawer     │
 │      │                        │  (360px)    │
-│ [⚙]  │  > user message        │             │
-│ [?]  │  │ assistant response  │ [Timeline]  │
-│      │  │   ✓ read_file       │ [Workspace] │
-│      │  │   ✓ bash            │             │
+│ [🕐] │  [you] > message       │             │
+│ [📁] │  [mira]                │ [Timeline]  │
+│ [👥] │  │ assistant response  │ [Workspace] │
+│      │  │   ✓ read_file       │ [Advisory]  │
+│ [⚙]  │  │   ✓ bash            │             │
 └──────┴────────────────────────┴─────────────┘
+
+Settings Mode (NavRail expanded to 280px):
+┌────────────────┬──────────────────┬───────────┐
+│    Settings    │       Chat       │  Context  │
+│     280px      │     (flex-1)     │   Drawer  │
+│                │                  │           │
+│ [M] Mira   [◀] │                  │           │
+│ ─────────────  │                  │           │
+│ Projects       │                  │           │
+│  [Mira]  📌    │                  │           │
+│  [Other] ×     │                  │           │
+│ + Add Project  │                  │           │
+│ ─────────────  │                  │           │
+│ Status         │                  │           │
+│ Theme          │                  │           │
+└────────────────┴──────────────────┴───────────┘
 ```
 
 ### Mobile (<768px)
@@ -159,13 +183,22 @@ Tracks files read, written, and modified during the session. Features:
 
 ### layoutStore
 
-Manages panel visibility and dimensions with localStorage persistence.
+Manages panel visibility and dimensions with localStorage persistence. Uses enum-based state to prevent double-sidebar bugs.
 
 ```typescript
+// Left nav state: 'collapsed' | 'expanded' | 'settings'
+layoutStore.leftNav               // Current state
+layoutStore.toggleSettings()      // Toggle settings panel (collapsed ↔ settings)
+layoutStore.setLeftNav('expanded') // Set specific state
+
+// Right drawer
 layoutStore.toggleDrawer()          // Toggle right panel
 layoutStore.setDrawerTab('timeline') // Switch tab
 layoutStore.setDrawerWidth(400)     // Resize (280-600px)
-layoutStore.toggleSettings()        // Toggle settings modal
+
+// Derived
+layoutStore.settingsOpen          // Is settings panel showing?
+layoutStore.isLeftNavExpanded     // Is left nav expanded?
 ```
 
 ### toolActivityStore

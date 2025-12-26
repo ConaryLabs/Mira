@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Message, MessageBlock, UsageInfo } from '$lib/api/client';
   import BlockRenderer from '$lib/components/chat/BlockRenderer.svelte';
+  import StreamingStatus from './StreamingStatus.svelte';
 
   interface Props {
     messages: Message[];
@@ -23,6 +24,11 @@
       return (n / 1000).toFixed(1) + 'k';
     }
     return n.toString();
+  }
+
+  function formatTimestamp(ts: number): string {
+    const date = new Date(ts * 1000);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
   let containerEl: HTMLElement;
@@ -94,24 +100,35 @@
   {:else}
     <!-- Messages -->
     {#each messages as message (message.id)}
-      <div class="terminal-message mb-4">
+      <div class="terminal-message mb-4 group">
         {#if message.role === 'user'}
           <!-- User message -->
-          <div class="flex items-start gap-2">
-            <span class="text-[var(--term-prompt)] font-bold select-none">{'>'}</span>
-            <div class="text-[var(--term-text)] whitespace-pre-wrap">{message.blocks[0]?.content || ''}</div>
+          <div class="message-container">
+            <div class="message-header">
+              <span class="role-label role-user">[you]</span>
+              <span class="message-timestamp">{formatTimestamp(message.created_at)}</span>
+            </div>
+            <div class="user-content">
+              <span class="text-[var(--term-prompt)] font-bold select-none mr-2">{'>'}</span>
+              <span class="text-[var(--term-text)] whitespace-pre-wrap">{message.blocks[0]?.content || ''}</span>
+            </div>
           </div>
         {:else}
           <!-- Assistant message -->
-          <div class="pl-4 border-l-2 border-[var(--term-border)]">
-            {#each message.blocks as block, blockIndex}
-              <BlockRenderer
-                {block}
-                blockId={`${message.id}-${blockIndex}`}
-              />
-            {/each}
-            <!-- Usage stats -->
-            {#if message.usage}
+          <div class="message-container">
+            <div class="message-header">
+              <span class="role-label role-assistant">[mira]</span>
+              <span class="message-timestamp">{formatTimestamp(message.created_at)}</span>
+            </div>
+            <div class="assistant-content pl-4 border-l-2 border-[var(--term-border)]">
+              {#each message.blocks as block, blockIndex}
+                <BlockRenderer
+                  {block}
+                  blockId={`${message.id}-${blockIndex}`}
+                />
+              {/each}
+              <!-- Usage stats -->
+              {#if message.usage}
               {@const cachePct = message.usage.input_tokens > 0
                 ? Math.round((message.usage.cached_tokens / message.usage.input_tokens) * 100)
                 : 0}
@@ -124,6 +141,7 @@
                 <span class="ml-2" class:text-[var(--term-success)]={cachePct >= 50} title="Cached tokens">⚡{cachePct}%</span>
               </div>
             {/if}
+            </div>
           </div>
         {/if}
       </div>
@@ -132,10 +150,18 @@
     <!-- Streaming message -->
     {#if streamingMessage}
       <div class="terminal-message-streaming mb-4">
-        <div class="pl-4 border-l-2 border-[var(--term-accent)]">
-          {#if streamingMessage.blocks.length === 0}
-            <span class="text-[var(--term-accent)] animate-pulse">_</span>
-          {:else}
+        <div class="message-container">
+          <div class="message-header">
+            <span class="role-label role-assistant">[mira]</span>
+            <StreamingStatus
+              usage={streamingMessage.usage}
+              hasBlocks={streamingMessage.blocks.length > 0}
+            />
+          </div>
+          <div class="assistant-content pl-4 border-l-2 border-[var(--term-accent)]">
+            {#if streamingMessage.blocks.length === 0}
+              <span class="text-[var(--term-accent)] animate-pulse">_</span>
+            {:else}
             {#each streamingMessage.blocks as block, blockIndex}
               <BlockRenderer
                 {block}
@@ -159,6 +185,7 @@
               <span class="ml-2" class:text-[var(--term-success)]={cachePct >= 50} title="Cached tokens">⚡{cachePct}%</span>
             </div>
           {/if}
+          </div>
         </div>
       </div>
     {/if}
@@ -175,5 +202,58 @@
   /* Don't apply to streaming message (always needs to be rendered) */
   .terminal-message-streaming {
     content-visibility: visible;
+  }
+
+  /* Message container */
+  .message-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* Message header with role and timestamp */
+  .message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+
+  /* Role labels */
+  .role-label {
+    font-weight: 600;
+    text-transform: lowercase;
+  }
+
+  .role-user {
+    color: var(--term-prompt);
+  }
+
+  .role-assistant {
+    color: var(--term-accent);
+  }
+
+  /* Timestamp - hidden by default, shown on hover */
+  .message-timestamp {
+    color: var(--term-text-dim);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  .terminal-message:hover .message-timestamp,
+  .group:hover .message-timestamp {
+    opacity: 1;
+  }
+
+  /* User content */
+  .user-content {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  /* Assistant content */
+  .assistant-content {
+    margin-top: 2px;
   }
 </style>

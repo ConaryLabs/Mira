@@ -8,16 +8,28 @@ export type ReasoningEffort = 'auto' | 'none' | 'low' | 'medium' | 'high' | 'xhi
 // Note: Backend is now DeepSeek-only. This type kept for localStorage compatibility.
 export type ModelProvider = 'deepseek';
 
+export interface ProjectInfo {
+  path: string;
+  name: string;
+  pinned: boolean;
+  lastActivity?: number;  // timestamp
+}
+
 export interface Settings {
   reasoningEffort: ReasoningEffort;
   modelProvider: ModelProvider;
   projectPath: string;
   projectHistory: string[];
+  projects: ProjectInfo[];  // Rich project data
   sidebarCollapsed: boolean;
 }
 
 const STORAGE_KEY = 'mira-settings';
 const MAX_PROJECT_HISTORY = 10;
+
+function extractProjectName(path: string): string {
+  return path.split('/').filter(Boolean).pop() || path;
+}
 
 function getInitialSettings(): Settings {
   const defaults: Settings = {
@@ -25,6 +37,7 @@ function getInitialSettings(): Settings {
     modelProvider: 'deepseek',
     projectPath: '/home/peter/Mira',
     projectHistory: [],
+    projects: [],
     sidebarCollapsed: false,
   };
 
@@ -100,9 +113,89 @@ function createSettingsStore() {
         const newSettings = {
           ...s,
           projectHistory: s.projectHistory.filter((p) => p !== path),
+          projects: s.projects.filter((p) => p.path !== path),
         };
         persist(newSettings);
         return newSettings;
+      });
+    },
+    addProject: (path: string) => {
+      update((s) => {
+        // Check if already exists
+        const existing = s.projects.find((p) => p.path === path);
+        if (existing) {
+          // Just update lastActivity
+          const projects = s.projects.map((p) =>
+            p.path === path ? { ...p, lastActivity: Date.now() } : p
+          );
+          const newSettings = { ...s, projectPath: path, projects };
+          persist(newSettings);
+          return newSettings;
+        }
+        // Add new project
+        const newProject: ProjectInfo = {
+          path,
+          name: extractProjectName(path),
+          pinned: false,
+          lastActivity: Date.now(),
+        };
+        const history = s.projectHistory.filter((p) => p !== path);
+        history.unshift(path);
+        const newSettings = {
+          ...s,
+          projectPath: path,
+          projectHistory: history.slice(0, MAX_PROJECT_HISTORY),
+          projects: [...s.projects, newProject],
+        };
+        persist(newSettings);
+        return newSettings;
+      });
+    },
+    togglePinned: (path: string) => {
+      update((s) => {
+        const projects = s.projects.map((p) =>
+          p.path === path ? { ...p, pinned: !p.pinned } : p
+        );
+        const newSettings = { ...s, projects };
+        persist(newSettings);
+        return newSettings;
+      });
+    },
+    updateProjectActivity: (path: string) => {
+      update((s) => {
+        const projects = s.projects.map((p) =>
+          p.path === path ? { ...p, lastActivity: Date.now() } : p
+        );
+        const newSettings = { ...s, projects };
+        persist(newSettings);
+        return newSettings;
+      });
+    },
+    getProjectInfo: (path: string): ProjectInfo | undefined => {
+      return get(settings).projects.find((p) => p.path === path);
+    },
+    getSortedProjects: (): ProjectInfo[] => {
+      const s = get(settings);
+      // Merge history with projects (for migration)
+      const allPaths = new Set([...s.projects.map((p) => p.path), ...s.projectHistory]);
+      const projects: ProjectInfo[] = [];
+      for (const path of allPaths) {
+        const existing = s.projects.find((p) => p.path === path);
+        if (existing) {
+          projects.push(existing);
+        } else {
+          // Create from history
+          projects.push({
+            path,
+            name: extractProjectName(path),
+            pinned: false,
+          });
+        }
+      }
+      // Sort: pinned first, then by lastActivity
+      return projects.sort((a, b) => {
+        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+        return (b.lastActivity || 0) - (a.lastActivity || 0);
       });
     },
   };
