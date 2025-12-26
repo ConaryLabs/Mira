@@ -20,6 +20,7 @@ use super::{
     AdvisoryUsage, ToolCallRequest, get_env_var, DEFAULT_TIMEOUT_SECS,
 };
 use crate::advisory::tool_bridge;
+use crate::advisory::tool_loop::{ToolLoopProvider, ToolDefinition};
 
 const GEMINI_API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
 
@@ -601,4 +602,180 @@ async fn parse_gemini_sse(
 
     let _ = tx.send(AdvisoryEvent::Done).await;
     Ok(full_text)
+}
+
+// ============================================================================
+// ToolLoopProvider Implementation
+// ============================================================================
+
+/// Convert ToolDefinitions to Gemini tool format
+fn tool_definitions_to_gemini(tools: &[ToolDefinition]) -> Vec<GeminiTool> {
+    let declarations: Vec<GeminiFunctionDeclaration> = tools
+        .iter()
+        .map(|td| {
+            let schema = tool_bridge::openai_tool_schema(td.tool.clone());
+            let func = &schema["function"];
+            GeminiFunctionDeclaration {
+                name: func["name"].as_str().unwrap_or(td.tool.name()).to_string(),
+                description: func["description"].as_str().unwrap_or(td.tool.description()).to_string(),
+                parameters: func["parameters"].clone(),
+            }
+        })
+        .collect();
+
+    vec![GeminiTool {
+        function_declarations: declarations,
+    }]
+}
+
+#[async_trait]
+impl ToolLoopProvider for GeminiProvider {
+    /// State is a list of input items (user messages, model function calls, function responses)
+    type State = Vec<GeminiInputItem>;
+
+    /// Raw response preserves thought signatures for multi-turn tool use
+    type RawResponse = Vec<GeminiPartResponse>;
+
+    fn name(&self) -> &'static str {
+        "Gemini 3 Pro"
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        DEFAULT_TIMEOUT_SECS
+    }
+
+    fn init_conversation(&self, message: &str) -> Self::State {
+        vec![GeminiInputItem::UserMessage(message.to_string())]
+    }
+
+    async fn call(
+        &self,
+        state: &Self::State,
+        system: Option<&str>,
+        tools: Option<&[ToolDefinition]>,
+    ) -> Result<(AdvisoryResponse, Self::RawResponse, AdvisoryUsage)> {
+        // Convert state to GeminiContent
+        let contents: Vec<GeminiContent> = state.iter().map(|item| item.to_content()).collect();
+
+        let gemini_tools = tools.map(tool_definitions_to_gemini);
+        let enable_tools = gemini_tools.is_some();
+
+        // Use "low" thinking for tool routing (faster), "high" for final response
+        let thinking_level = if enable_tools { "low" } else { "high" };
+
+        let api_request = GeminiRequest {
+            contents,
+            system_instruction: system.map(|s| GeminiSystemInstruction {
+                parts: vec![GeminiTextPart { text: s.to_string() }],
+            }),
+            generation_config: Some(GeminiGenerationConfig {
+                thinking_config: GeminiThinkingConfig {
+                    thinking_level: thinking_level.to_string(),
+                },
+            }),
+            tools: gemini_tools,
+        };
+
+        let url = format!("{}?key={}", GEMINI_API_URL, self.api_key);
+
+        let response = self.client
+            .post(&url)
+            .json(&api_request)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Gemini API error: {} - {}", status, body);
+        }
+
+        let api_response: GeminiResponse = response.json().await?;
+
+        if let Some(error) = api_response.error {
+            anyhow::bail!("Gemini error: {}", error.message);
+        }
+
+        // Extract text and function calls from parts
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallRequest> = vec![];
+        let mut raw_parts: Vec<GeminiPartResponse> = vec![];
+
+        if let Some(candidates) = api_response.candidates {
+            if let Some(candidate) = candidates.into_iter().next() {
+                for part in candidate.content.parts {
+                    raw_parts.push(part.clone());
+
+                    if let Some(t) = &part.text {
+                        text.push_str(t);
+                    }
+
+                    if let Some(fc) = &part.function_call {
+                        tool_calls.push(ToolCallRequest {
+                            id: format!("gemini_{}", tool_calls.len()),
+                            name: fc.name.clone(),
+                            arguments: fc.args.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        let usage = api_response.usage_metadata
+            .map(|u| AdvisoryUsage {
+                input_tokens: u.prompt_token_count.unwrap_or(0),
+                output_tokens: u.candidates_token_count.unwrap_or(0),
+                reasoning_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        Ok((
+            AdvisoryResponse {
+                text,
+                usage: Some(usage.clone()),
+                model: AdvisoryModel::Gemini3Pro,
+                tool_calls,
+                reasoning: None,
+            },
+            raw_parts,
+            usage,
+        ))
+    }
+
+    fn add_assistant_response(
+        &self,
+        state: &mut Self::State,
+        _response: &AdvisoryResponse,
+        raw: &Self::RawResponse,
+    ) {
+        // Add function calls from raw parts, preserving thought signatures
+        for part in raw {
+            if let Some(fc) = &part.function_call {
+                state.push(GeminiInputItem::ModelFunctionCall {
+                    name: fc.name.clone(),
+                    args: fc.args.clone(),
+                    thought_signature: part.thought_signature.clone(),
+                });
+            }
+        }
+    }
+
+    fn add_tool_results(
+        &self,
+        state: &mut Self::State,
+        results: Vec<tool_bridge::ToolResult>,
+    ) {
+        for result in results {
+            state.push(GeminiInputItem::FunctionResponse {
+                name: result.name,
+                response: serde_json::json!({
+                    "result": result.content,
+                    "success": !result.is_error
+                }),
+            });
+        }
+    }
 }

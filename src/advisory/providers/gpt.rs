@@ -518,3 +518,166 @@ async fn parse_responses_sse(
     let _ = tx.send(AdvisoryEvent::Done).await;
     Ok(full_text)
 }
+
+// ============================================================================
+// ToolLoopProvider Implementation
+// ============================================================================
+
+use crate::advisory::tool_loop::{ToolLoopProvider, ToolDefinition};
+use crate::advisory::tool_bridge::ToolResult;
+
+#[async_trait]
+impl ToolLoopProvider for GptProvider {
+    /// GPT conversation state is a list of input items
+    type State = Vec<ResponsesInputItem>;
+
+    /// GPT doesn't need raw response (no thinking blocks/signatures)
+    type RawResponse = ();
+
+    fn name(&self) -> &'static str {
+        "GPT-5.2"
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        DEFAULT_TIMEOUT_SECS
+    }
+
+    fn init_conversation(&self, message: &str) -> Self::State {
+        vec![ResponsesInputItem::Message {
+            role: "user".to_string(),
+            content: message.to_string(),
+        }]
+    }
+
+    async fn call(
+        &self,
+        state: &Self::State,
+        system: Option<&str>,
+        tools: Option<&[ToolDefinition]>,
+    ) -> Result<(AdvisoryResponse, Self::RawResponse, AdvisoryUsage)> {
+        let tool_schemas = tools.map(|_| tool_bridge::all_openai_schemas());
+
+        let api_request = ResponsesRequest {
+            model: "gpt-5.2".to_string(),
+            input: ResponsesInput::Items(state.clone()),
+            instructions: system.map(|s| s.to_string()),
+            max_output_tokens: Some(32000),
+            reasoning: Some(ReasoningConfig {
+                effort: "high".to_string(),
+            }),
+            tools: tool_schemas,
+            stream: None,
+        };
+
+        let response = self.client
+            .post(OPENAI_RESPONSES_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&api_request)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenAI Responses API error: {} - {}", status, body);
+        }
+
+        let api_response: ResponsesResponse = response.json().await?;
+
+        if let Some(error) = api_response.error {
+            anyhow::bail!("OpenAI error: {} (code: {:?})", error.message, error.code);
+        }
+
+        // Extract text and tool calls from output
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallRequest> = vec![];
+
+        if let Some(output) = &api_response.output {
+            for item in output {
+                match item.item_type.as_str() {
+                    "message" => {
+                        if let Some(content) = &item.content {
+                            for part in content {
+                                if part.part_type == "output_text" || part.part_type == "text" {
+                                    if let Some(t) = &part.text {
+                                        text.push_str(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "function_call" => {
+                        if let (Some(call_id), Some(name), Some(args_str)) =
+                            (&item.call_id, &item.name, &item.arguments)
+                        {
+                            let args: Value = serde_json::from_str(args_str)
+                                .unwrap_or(Value::Object(serde_json::Map::new()));
+                            tool_calls.push(ToolCallRequest {
+                                id: call_id.clone(),
+                                name: name.clone(),
+                                arguments: args,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(output_text) = api_response.output_text {
+                text = output_text;
+            }
+        }
+
+        let usage = api_response.usage.map(|u| AdvisoryUsage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            reasoning_tokens: u.reasoning_tokens,
+            cache_read_tokens: u.input_token_details.map(|d| d.cached_tokens).unwrap_or(0),
+            cache_write_tokens: 0,
+        }).unwrap_or_default();
+
+        let response = AdvisoryResponse {
+            text,
+            usage: Some(usage.clone()),
+            model: AdvisoryModel::Gpt52,
+            tool_calls,
+            reasoning: None,
+        };
+
+        Ok((response, (), usage))
+    }
+
+    fn add_assistant_response(
+        &self,
+        state: &mut Self::State,
+        response: &AdvisoryResponse,
+        _raw: &Self::RawResponse,
+    ) {
+        // Add function_call items for each tool call
+        for call in &response.tool_calls {
+            state.push(ResponsesInputItem::FunctionCall {
+                call_id: call.id.clone(),
+                name: call.name.clone(),
+                arguments: serde_json::to_string(&call.arguments)
+                    .unwrap_or_else(|_| "{}".to_string()),
+            });
+        }
+    }
+
+    fn add_tool_results(
+        &self,
+        state: &mut Self::State,
+        results: Vec<ToolResult>,
+    ) {
+        for result in results {
+            state.push(ResponsesInputItem::FunctionCallOutput {
+                call_id: result.tool_call_id,
+                output: result.content,
+            });
+        }
+    }
+}

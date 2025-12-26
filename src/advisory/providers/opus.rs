@@ -20,6 +20,7 @@ use super::{
     AdvisoryUsage, ToolCallRequest, get_env_var, DEFAULT_TIMEOUT_SECS,
 };
 use crate::advisory::tool_bridge;
+use crate::advisory::tool_loop::{ToolLoopProvider, ToolDefinition};
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -164,6 +165,8 @@ pub enum AnthropicContentBlock {
 /// Tool definition for Anthropic API
 #[derive(Serialize, Clone, Debug)]
 struct AnthropicTool {
+    #[serde(rename = "type")]
+    tool_type: String,
     name: String,
     description: String,
     input_schema: Value,
@@ -244,11 +247,11 @@ fn anthropic_tool_definitions() -> Vec<AnthropicTool> {
         .into_iter()
         .map(|tool| {
             let schema = tool_bridge::openai_tool_schema(tool);
-            let func = &schema["function"];
             AnthropicTool {
-                name: func["name"].as_str().unwrap_or(tool.name()).to_string(),
-                description: func["description"].as_str().unwrap_or(tool.description()).to_string(),
-                input_schema: func["parameters"].clone(),
+                tool_type: "custom".to_string(),
+                name: schema["name"].as_str().unwrap_or(tool.name()).to_string(),
+                description: schema["description"].as_str().unwrap_or(tool.description()).to_string(),
+                input_schema: schema["parameters"].clone(),
             }
         })
         .collect()
@@ -724,4 +727,218 @@ async fn parse_anthropic_sse(
 
     let _ = tx.send(AdvisoryEvent::Done).await;
     Ok(full_text)
+}
+
+// ============================================================================
+// ToolLoopProvider Implementation
+// ============================================================================
+
+/// Convert ToolDefinitions to Anthropic tool format
+fn tool_definitions_to_anthropic(tools: &[ToolDefinition]) -> Vec<AnthropicTool> {
+    tools
+        .iter()
+        .map(|td| {
+            let schema = tool_bridge::openai_tool_schema(td.tool.clone());
+            AnthropicTool {
+                tool_type: "custom".to_string(),
+                name: schema["name"].as_str().unwrap_or(td.tool.name()).to_string(),
+                description: schema["description"].as_str().unwrap_or(td.tool.description()).to_string(),
+                input_schema: schema["parameters"].clone(),
+            }
+        })
+        .collect()
+}
+
+#[async_trait]
+impl ToolLoopProvider for OpusProvider {
+    /// State is a list of input items (user messages, assistant messages, tool results)
+    type State = Vec<OpusInputItem>;
+
+    /// Raw response preserves thinking blocks with signatures for multi-turn
+    type RawResponse = Vec<AnthropicResponseBlock>;
+
+    fn name(&self) -> &'static str {
+        "Opus 4.5"
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        DEFAULT_TIMEOUT_SECS
+    }
+
+    fn init_conversation(&self, message: &str) -> Self::State {
+        vec![OpusInputItem::UserMessage(message.to_string())]
+    }
+
+    async fn call(
+        &self,
+        state: &Self::State,
+        system: Option<&str>,
+        tools: Option<&[ToolDefinition]>,
+    ) -> Result<(AdvisoryResponse, Self::RawResponse, AdvisoryUsage)> {
+        let anthropic_tools = tools.map(tool_definitions_to_anthropic);
+        let enable_tools = anthropic_tools.is_some();
+
+        // Use lower thinking budget for tool routing (faster), higher for final response
+        let thinking_budget = if enable_tools { 10000 } else { 32000 };
+
+        let messages: Vec<AnthropicMessage> = state.iter().map(|i| i.to_message()).collect();
+
+        // Convert system prompt to cacheable block
+        let system_blocks = system.map(|s| vec![SystemBlock::cacheable(s.to_string())]);
+
+        let api_request = AnthropicRequest {
+            model: "claude-opus-4-5-20251101".to_string(),
+            max_tokens: 64000,
+            messages,
+            system: system_blocks,
+            thinking: Some(ThinkingConfig {
+                thinking_type: "enabled".to_string(),
+                budget_tokens: thinking_budget,
+            }),
+            tools: anthropic_tools,
+            stream: None,
+        };
+
+        let response = self.client
+            .post(ANTHROPIC_API_URL)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&api_request)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Anthropic API error: {} - {}", status, body);
+        }
+
+        let api_response: AnthropicResponse = response.json().await?;
+
+        if let Some(error) = api_response.error {
+            anyhow::bail!("Anthropic error: {}", error.message);
+        }
+
+        // Extract text and tool calls from content blocks
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallRequest> = vec![];
+        let mut raw_blocks: Vec<AnthropicResponseBlock> = vec![];
+
+        if let Some(contents) = api_response.content {
+            for block in contents {
+                raw_blocks.push(block.clone());
+
+                match block.content_type.as_str() {
+                    "text" => {
+                        if let Some(t) = block.text {
+                            text.push_str(&t);
+                        }
+                    }
+                    "tool_use" => {
+                        if let (Some(id), Some(name), Some(input)) =
+                            (block.id, block.name, block.input)
+                        {
+                            tool_calls.push(ToolCallRequest {
+                                id,
+                                name,
+                                arguments: input,
+                            });
+                        }
+                    }
+                    "thinking" => {
+                        // Skip thinking blocks in response text - they're internal reasoning
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let usage = api_response.usage
+            .map(|u| AdvisoryUsage {
+                input_tokens: u.input_tokens,
+                output_tokens: u.output_tokens,
+                reasoning_tokens: 0,
+                cache_read_tokens: u.cache_read_input_tokens,
+                cache_write_tokens: u.cache_creation_input_tokens,
+            })
+            .unwrap_or_default();
+
+        Ok((
+            AdvisoryResponse {
+                text,
+                usage: Some(usage.clone()),
+                model: AdvisoryModel::Opus45,
+                tool_calls,
+                reasoning: None,
+            },
+            raw_blocks,
+            usage,
+        ))
+    }
+
+    fn add_assistant_response(
+        &self,
+        state: &mut Self::State,
+        _response: &AdvisoryResponse,
+        raw: &Self::RawResponse,
+    ) {
+        // Extract thinking block (if present) and tool uses from raw blocks
+        let mut thinking: Option<String> = None;
+        let mut thinking_signature: Option<String> = None;
+        let mut text_content: Option<String> = None;
+        let mut tool_uses = vec![];
+
+        for block in raw {
+            match block.content_type.as_str() {
+                "thinking" => {
+                    // Preserve thinking with signature for multi-turn
+                    thinking = block.thinking.clone();
+                    thinking_signature = block.signature.clone();
+                }
+                "text" => {
+                    if let Some(t) = &block.text {
+                        text_content = Some(t.clone());
+                    }
+                }
+                "tool_use" => {
+                    if let (Some(id), Some(name), Some(input)) =
+                        (&block.id, &block.name, &block.input)
+                    {
+                        tool_uses.push(OpusToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Only add if there's something to add
+        if thinking.is_some() || text_content.is_some() || !tool_uses.is_empty() {
+            state.push(OpusInputItem::AssistantMessage {
+                thinking,
+                thinking_signature,
+                text: text_content,
+                tool_uses,
+            });
+        }
+    }
+
+    fn add_tool_results(
+        &self,
+        state: &mut Self::State,
+        results: Vec<tool_bridge::ToolResult>,
+    ) {
+        for result in results {
+            state.push(OpusInputItem::ToolResult {
+                tool_use_id: result.tool_call_id,
+                content: result.content,
+                is_error: result.is_error,
+            });
+        }
+    }
 }

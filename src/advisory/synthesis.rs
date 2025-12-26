@@ -426,6 +426,7 @@ That's my analysis."#;
     #[test]
     fn test_to_markdown() {
         let synthesis = CouncilSynthesis {
+            session_title: None,
             consensus: vec![ConsensusPoint {
                 point: "Models agree on X".to_string(),
                 citations: vec![
