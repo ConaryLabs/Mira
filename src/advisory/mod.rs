@@ -50,6 +50,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::core::primitives::semantic::SemanticSearch;
+
 /// Truncate a string to a maximum length, ending at word boundary with ellipsis
 fn truncate_to_snippet(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
@@ -384,6 +386,7 @@ impl AdvisoryService {
                 responses: responses_str,
                 moderator_analysis: analysis.clone(),
                 timestamp: chrono::Utc::now().timestamp(),
+                tool_usage: HashMap::new(), // No tool support in legacy council_deliberate
             });
 
             // Check for early consensus
@@ -461,16 +464,32 @@ impl AdvisoryService {
         message: &str,
         config: Option<DeliberationConfig>,
         db: &sqlx::SqlitePool,
+        semantic: &Arc<SemanticSearch>,
+        project_id: Option<i64>,
         session_id: &str,
     ) -> Result<DeliberatedSynthesis> {
         use std::time::Duration;
         use tokio::time::timeout;
         use session::{DeliberationProgress, update_deliberation_progress, update_topic};
+        use tool_bridge::SharedToolBudget;
+        use deliberation::ToolCallRecord;
 
         let config = config.unwrap_or_default();
         let mut rounds: Vec<DeliberationRound> = Vec::new();
         let mut previous_responses: HashMap<AdvisoryModel, Vec<String>> = HashMap::new();
         let mut moderator_analyses: Vec<ModeratorAnalysis> = Vec::new();
+
+        // Create shared tool budget for coordinated tool usage across models
+        let shared_budget = if config.enable_tools {
+            Some(SharedToolBudget::new(
+                Arc::new(db.clone()),
+                semantic.clone(),
+                project_id,
+                config.tool_budget.clone(),
+            ))
+        } else {
+            None
+        };
 
         // Initialize progress
         let mut progress = DeliberationProgress::new(config.max_rounds);
@@ -479,6 +498,7 @@ impl AdvisoryService {
         tracing::info!(
             max_rounds = config.max_rounds,
             models = ?config.models,
+            enable_tools = config.enable_tools,
             session_id = session_id,
             "Starting async council deliberation"
         );
@@ -500,51 +520,128 @@ impl AdvisoryService {
             );
 
             // Query all models in parallel
-            let per_model_timeout = Duration::from_secs(config.per_model_timeout_secs);
+            // Use longer timeout when tools are enabled (tool loops take more time)
+            let per_model_timeout = Duration::from_secs(
+                if config.enable_tools { 90 } else { config.per_model_timeout_secs }
+            );
             let mut round_responses: HashMap<AdvisoryModel, String> = HashMap::new();
             let mut round_errors: Vec<String> = Vec::new();
+            let mut round_tool_usage: HashMap<String, Vec<ToolCallRecord>> = HashMap::new();
 
-            let futures: Vec<_> = config.models.iter().filter_map(|model| {
-                self.providers.get(model).map(|provider| {
-                    let provider = provider.clone();
-                    let prompt = prompt.clone();
-                    let model = *model;
-                    let system_prompt = deliberation::build_deliberation_system_prompt(model);
-                    async move {
-                        let result = timeout(
-                            per_model_timeout,
-                            provider.complete(AdvisoryRequest {
-                                message: prompt,
-                                system: Some(system_prompt),
-                                history: vec![],
-                                enable_tools: false,
-                            }),
-                        ).await;
-                        (model, result)
+            if config.enable_tools {
+                // Tool-enabled path: use tool loops for each model
+                if let Some(ref budget) = shared_budget {
+                    let futures: Vec<_> = config.models.iter().map(|model| {
+                        let model = *model;
+                        let prompt = prompt.clone();
+                        let system_prompt = deliberation::build_deliberation_system_prompt(model);
+                        let mut ctx = budget.model_context();
+
+                        async move {
+                            let result = timeout(
+                                per_model_timeout,
+                                async {
+                                    match model {
+                                        AdvisoryModel::Gpt52 => {
+                                            tool_loops::ask_with_tools_gpt(&prompt, Some(system_prompt), &mut ctx).await
+                                        }
+                                        AdvisoryModel::Gemini3Pro => {
+                                            tool_loops::ask_with_tools_gemini(&prompt, Some(system_prompt), &mut ctx).await
+                                        }
+                                        AdvisoryModel::Opus45 => {
+                                            tool_loops::ask_with_tools_opus(&prompt, Some(system_prompt), &mut ctx).await
+                                        }
+                                        _ => anyhow::bail!("Model {:?} not supported in council", model),
+                                    }
+                                }
+                            ).await;
+
+                            // Extract tool usage from context
+                            let tool_records: Vec<ToolCallRecord> = ctx.tracker.recent_queries
+                                .iter()
+                                .map(|(fingerprint, _)| ToolCallRecord {
+                                    tool_name: fingerprint.split(':').next().unwrap_or("unknown").to_string(),
+                                    query_summary: fingerprint.chars().take(50).collect(),
+                                    success: true,
+                                })
+                                .collect();
+
+                            (model, result, tool_records, ctx)
+                        }
+                    }).collect();
+
+                    let results = futures::future::join_all(futures).await;
+
+                    for (model, result, tool_records, ctx) in results {
+                        // Merge usage back into shared budget
+                        budget.merge_usage(&ctx);
+
+                        match result {
+                            Ok(Ok(response)) => {
+                                tracing::debug!(model = ?model, tools_used = tool_records.len(), "Model responded with tools");
+                                round_responses.insert(model, response.text.clone());
+                                previous_responses.entry(model).or_default().push(response.text);
+                                if !tool_records.is_empty() {
+                                    round_tool_usage.insert(model.as_str().to_string(), tool_records);
+                                }
+
+                                progress.model_responded(model.as_str());
+                                let _ = update_deliberation_progress(db, session_id, &progress).await;
+                            }
+                            Ok(Err(e)) => {
+                                tracing::warn!(model = ?model, error = %e, "Model error");
+                                round_errors.push(format!("{:?}: {}", model, e));
+                            }
+                            Err(_) => {
+                                tracing::warn!(model = ?model, "Model timeout");
+                                round_errors.push(format!("{:?}: timeout", model));
+                            }
+                        }
                     }
-                })
-            }).collect();
+                }
+            } else {
+                // Non-tool path: use direct provider.complete()
+                let futures: Vec<_> = config.models.iter().filter_map(|model| {
+                    self.providers.get(model).map(|provider| {
+                        let provider = provider.clone();
+                        let prompt = prompt.clone();
+                        let model = *model;
+                        let system_prompt = deliberation::build_deliberation_system_prompt(model);
+                        async move {
+                            let result = timeout(
+                                per_model_timeout,
+                                provider.complete(AdvisoryRequest {
+                                    message: prompt,
+                                    system: Some(system_prompt),
+                                    history: vec![],
+                                    enable_tools: false,
+                                }),
+                            ).await;
+                            (model, result)
+                        }
+                    })
+                }).collect();
 
-            let results = futures::future::join_all(futures).await;
+                let results = futures::future::join_all(futures).await;
 
-            for (model, result) in results {
-                match result {
-                    Ok(Ok(response)) => {
-                        tracing::debug!(model = ?model, "Model responded");
-                        round_responses.insert(model, response.text.clone());
-                        previous_responses.entry(model).or_default().push(response.text);
+                for (model, result) in results {
+                    match result {
+                        Ok(Ok(response)) => {
+                            tracing::debug!(model = ?model, "Model responded");
+                            round_responses.insert(model, response.text.clone());
+                            previous_responses.entry(model).or_default().push(response.text);
 
-                        // Update progress: model responded
-                        progress.model_responded(model.as_str());
-                        let _ = update_deliberation_progress(db, session_id, &progress).await;
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!(model = ?model, error = %e, "Model error");
-                        round_errors.push(format!("{:?}: {}", model, e));
-                    }
-                    Err(_) => {
-                        tracing::warn!(model = ?model, "Model timeout");
-                        round_errors.push(format!("{:?}: timeout", model));
+                            progress.model_responded(model.as_str());
+                            let _ = update_deliberation_progress(db, session_id, &progress).await;
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(model = ?model, error = %e, "Model error");
+                            round_errors.push(format!("{:?}: {}", model, e));
+                        }
+                        Err(_) => {
+                            tracing::warn!(model = ?model, "Model timeout");
+                            round_errors.push(format!("{:?}: timeout", model));
+                        }
                     }
                 }
             }
@@ -614,6 +711,7 @@ impl AdvisoryService {
                     .collect(),
                 moderator_analysis: analysis.clone(),
                 timestamp: now,
+                tool_usage: round_tool_usage,
             };
             rounds.push(round_data);
 
@@ -975,17 +1073,33 @@ impl AdvisoryService {
         message: &str,
         config: Option<DeliberationConfig>,
         db: &sqlx::SqlitePool,
+        semantic: &Arc<SemanticSearch>,
+        project_id: Option<i64>,
         session_id: &str,
         progress_tx: tokio::sync::mpsc::Sender<streaming::CouncilProgress>,
     ) -> Result<DeliberatedSynthesis> {
         use std::time::Duration;
         use tokio::time::timeout;
         use session::{DeliberationProgress, update_deliberation_progress, update_topic};
+        use tool_bridge::SharedToolBudget;
+        use deliberation::ToolCallRecord;
 
         let config = config.unwrap_or_default();
         let mut rounds: Vec<DeliberationRound> = Vec::new();
         let mut previous_responses: HashMap<AdvisoryModel, Vec<String>> = HashMap::new();
         let mut moderator_analyses: Vec<ModeratorAnalysis> = Vec::new();
+
+        // Create shared tool budget for coordinated tool usage across models
+        let shared_budget = if config.enable_tools {
+            Some(SharedToolBudget::new(
+                Arc::new(db.clone()),
+                semantic.clone(),
+                project_id,
+                config.tool_budget.clone(),
+            ))
+        } else {
+            None
+        };
 
         // Initialize progress
         let mut progress = DeliberationProgress::new(config.max_rounds);
@@ -994,6 +1108,7 @@ impl AdvisoryService {
         tracing::info!(
             max_rounds = config.max_rounds,
             models = ?config.models,
+            enable_tools = config.enable_tools,
             session_id = session_id,
             "Starting streaming council deliberation"
         );
@@ -1021,85 +1136,202 @@ impl AdvisoryService {
             );
 
             // Query all models in parallel
-            let per_model_timeout = Duration::from_secs(config.per_model_timeout_secs);
+            // Use longer timeout when tools are enabled
+            let per_model_timeout = Duration::from_secs(
+                if config.enable_tools { 90 } else { config.per_model_timeout_secs }
+            );
             let mut round_responses: HashMap<AdvisoryModel, String> = HashMap::new();
             let mut round_errors: Vec<String> = Vec::new();
+            let mut round_tool_usage: HashMap<String, Vec<ToolCallRecord>> = HashMap::new();
 
-            let futures: Vec<_> = config.models.iter().filter_map(|model| {
-                self.providers.get(model).map(|provider| {
-                    let provider = provider.clone();
-                    let prompt = prompt.clone();
-                    let model = *model;
-                    let system_prompt = deliberation::build_deliberation_system_prompt(model);
-                    let progress_tx = progress_tx.clone();
+            if config.enable_tools {
+                // Tool-enabled path with SSE events
+                if let Some(ref budget) = shared_budget {
+                    let futures: Vec<_> = config.models.iter().map(|model| {
+                        let model = *model;
+                        let prompt = prompt.clone();
+                        let system_prompt = deliberation::build_deliberation_system_prompt(model);
+                        let mut ctx = budget.model_context();
+                        let progress_tx = progress_tx.clone();
 
-                    async move {
-                        let model_str = model.as_str().to_string();
+                        async move {
+                            let model_str = model.as_str().to_string();
 
-                        // Send model started event
-                        let _ = progress_tx.send(streaming::CouncilProgress::ModelStarted {
-                            model: model_str.clone()
-                        }).await;
+                            // Send model started event
+                            let _ = progress_tx.send(streaming::CouncilProgress::ModelStarted {
+                                model: model_str.clone()
+                            }).await;
 
-                        let result = timeout(
-                            per_model_timeout,
-                            provider.complete(AdvisoryRequest {
-                                message: prompt,
-                                system: Some(system_prompt),
-                                history: vec![],
-                                enable_tools: false,
-                            }),
-                        ).await;
+                            let result = timeout(
+                                per_model_timeout,
+                                async {
+                                    match model {
+                                        AdvisoryModel::Gpt52 => {
+                                            tool_loops::ask_with_tools_gpt(&prompt, Some(system_prompt), &mut ctx).await
+                                        }
+                                        AdvisoryModel::Gemini3Pro => {
+                                            tool_loops::ask_with_tools_gemini(&prompt, Some(system_prompt), &mut ctx).await
+                                        }
+                                        AdvisoryModel::Opus45 => {
+                                            tool_loops::ask_with_tools_opus(&prompt, Some(system_prompt), &mut ctx).await
+                                        }
+                                        _ => anyhow::bail!("Model {:?} not supported in council", model),
+                                    }
+                                }
+                            ).await;
+
+                            // Extract tool usage from context
+                            let tool_records: Vec<ToolCallRecord> = ctx.tracker.recent_queries
+                                .iter()
+                                .map(|(fingerprint, _)| ToolCallRecord {
+                                    tool_name: fingerprint.split(':').next().unwrap_or("unknown").to_string(),
+                                    query_summary: fingerprint.chars().take(50).collect(),
+                                    success: true,
+                                })
+                                .collect();
+
+                            // Send tool completion event if tools were used
+                            if !tool_records.is_empty() {
+                                let tools_called: Vec<String> = tool_records.iter()
+                                    .map(|t| t.tool_name.clone())
+                                    .collect();
+                                let _ = progress_tx.send(streaming::CouncilProgress::ModelToolsComplete {
+                                    model: model_str.clone(),
+                                    tools_called,
+                                    round: round_num,
+                                }).await;
+                            }
+
+                            match result {
+                                Ok(Ok(response)) => {
+                                    let reasoning_snippet = response.reasoning.as_ref()
+                                        .map(|r| truncate_to_snippet(r, 500))
+                                        .or_else(|| Some(truncate_to_snippet(&response.text, 500)));
+
+                                    let _ = progress_tx.send(streaming::CouncilProgress::ModelCompleted {
+                                        model: model_str,
+                                        text: response.text.clone(),
+                                        reasoning_snippet,
+                                    }).await;
+                                    (model, Ok(response.text), tool_records, ctx)
+                                }
+                                Ok(Err(e)) => {
+                                    let error = format!("{}", e);
+                                    let _ = progress_tx.send(streaming::CouncilProgress::ModelError {
+                                        model: model_str,
+                                        error: error.clone(),
+                                    }).await;
+                                    (model, Err(error), tool_records, ctx)
+                                }
+                                Err(_) => {
+                                    let _ = progress_tx.send(streaming::CouncilProgress::ModelTimeout {
+                                        model: model_str,
+                                    }).await;
+                                    (model, Err("Timeout".to_string()), tool_records, ctx)
+                                }
+                            }
+                        }
+                    }).collect();
+
+                    let results = futures::future::join_all(futures).await;
+
+                    for (model, result, tool_records, ctx) in results {
+                        budget.merge_usage(&ctx);
 
                         match result {
-                            Ok(Ok(response)) => {
-                                // Extract reasoning snippet: use reasoning if available, otherwise first ~500 chars of response
-                                let reasoning_snippet = response.reasoning.as_ref()
-                                    .map(|r| truncate_to_snippet(r, 500))
-                                    .or_else(|| Some(truncate_to_snippet(&response.text, 500)));
+                            Ok(text) => {
+                                tracing::debug!(model = ?model, tools_used = tool_records.len(), "Model responded with tools");
+                                round_responses.insert(model, text.clone());
+                                previous_responses.entry(model).or_default().push(text);
+                                if !tool_records.is_empty() {
+                                    round_tool_usage.insert(model.as_str().to_string(), tool_records);
+                                }
 
-                                let _ = progress_tx.send(streaming::CouncilProgress::ModelCompleted {
-                                    model: model_str,
-                                    text: response.text.clone(),
-                                    reasoning_snippet,
-                                }).await;
-                                (model, Ok(response.text))
+                                progress.model_responded(model.as_str());
+                                let _ = update_deliberation_progress(db, session_id, &progress).await;
                             }
-                            Ok(Err(e)) => {
-                                let error = format!("{}", e);
-                                let _ = progress_tx.send(streaming::CouncilProgress::ModelError {
-                                    model: model_str,
-                                    error: error.clone(),
-                                }).await;
-                                (model, Err(error))
-                            }
-                            Err(_) => {
-                                let _ = progress_tx.send(streaming::CouncilProgress::ModelTimeout {
-                                    model: model_str,
-                                }).await;
-                                (model, Err("Timeout".to_string()))
+                            Err(e) => {
+                                tracing::warn!(model = ?model, error = %e, "Model failed");
+                                round_errors.push(format!("{:?}: {}", model, e));
                             }
                         }
                     }
-                })
-            }).collect();
+                }
+            } else {
+                // Non-tool path
+                let futures: Vec<_> = config.models.iter().filter_map(|model| {
+                    self.providers.get(model).map(|provider| {
+                        let provider = provider.clone();
+                        let prompt = prompt.clone();
+                        let model = *model;
+                        let system_prompt = deliberation::build_deliberation_system_prompt(model);
+                        let progress_tx = progress_tx.clone();
 
-            let results = futures::future::join_all(futures).await;
+                        async move {
+                            let model_str = model.as_str().to_string();
 
-            for (model, result) in results {
-                match result {
-                    Ok(text) => {
-                        tracing::debug!(model = ?model, "Model responded");
-                        round_responses.insert(model, text.clone());
-                        previous_responses.entry(model).or_default().push(text);
+                            let _ = progress_tx.send(streaming::CouncilProgress::ModelStarted {
+                                model: model_str.clone()
+                            }).await;
 
-                        // Update progress: model responded
-                        progress.model_responded(model.as_str());
-                        let _ = update_deliberation_progress(db, session_id, &progress).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!(model = ?model, error = %e, "Model failed");
-                        round_errors.push(format!("{:?}: {}", model, e));
+                            let result = timeout(
+                                per_model_timeout,
+                                provider.complete(AdvisoryRequest {
+                                    message: prompt,
+                                    system: Some(system_prompt),
+                                    history: vec![],
+                                    enable_tools: false,
+                                }),
+                            ).await;
+
+                            match result {
+                                Ok(Ok(response)) => {
+                                    let reasoning_snippet = response.reasoning.as_ref()
+                                        .map(|r| truncate_to_snippet(r, 500))
+                                        .or_else(|| Some(truncate_to_snippet(&response.text, 500)));
+
+                                    let _ = progress_tx.send(streaming::CouncilProgress::ModelCompleted {
+                                        model: model_str,
+                                        text: response.text.clone(),
+                                        reasoning_snippet,
+                                    }).await;
+                                    (model, Ok(response.text))
+                                }
+                                Ok(Err(e)) => {
+                                    let error = format!("{}", e);
+                                    let _ = progress_tx.send(streaming::CouncilProgress::ModelError {
+                                        model: model_str,
+                                        error: error.clone(),
+                                    }).await;
+                                    (model, Err(error))
+                                }
+                                Err(_) => {
+                                    let _ = progress_tx.send(streaming::CouncilProgress::ModelTimeout {
+                                        model: model_str,
+                                    }).await;
+                                    (model, Err("Timeout".to_string()))
+                                }
+                            }
+                        }
+                    })
+                }).collect();
+
+                let results = futures::future::join_all(futures).await;
+
+                for (model, result) in results {
+                    match result {
+                        Ok(text) => {
+                            tracing::debug!(model = ?model, "Model responded");
+                            round_responses.insert(model, text.clone());
+                            previous_responses.entry(model).or_default().push(text);
+
+                            progress.model_responded(model.as_str());
+                            let _ = update_deliberation_progress(db, session_id, &progress).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(model = ?model, error = %e, "Model failed");
+                            round_errors.push(format!("{:?}: {}", model, e));
+                        }
                     }
                 }
             }
@@ -1187,6 +1419,7 @@ impl AdvisoryService {
                     .collect(),
                 moderator_analysis: analysis.clone(),
                 timestamp: now,
+                tool_usage: round_tool_usage,
             };
             rounds.push(round_data);
 

@@ -200,6 +200,8 @@ async fn call_opus_with_tools(
 async fn spawn_council_deliberation(
     message: String,
     db: SqlitePool,
+    semantic: Arc<SemanticSearch>,
+    project_id: Option<i64>,
     session_id: String,
 ) -> Result<serde_json::Value> {
     use crate::advisory::session::{SessionStatus, update_status, DeliberationProgress, update_deliberation_progress};
@@ -213,6 +215,7 @@ async fn spawn_council_deliberation(
 
     // Spawn the deliberation task in background
     let db_clone = db.clone();
+    let semantic_clone = semantic.clone();
     let session_id_clone = session_id.clone();
     let message_clone = message.clone();
 
@@ -225,6 +228,8 @@ async fn spawn_council_deliberation(
                 &message_clone,
                 None,
                 &db_clone,
+                &semantic_clone,
+                project_id,
                 &session_id_clone,
             ).await
         }.await;
@@ -383,7 +388,7 @@ pub async fn call_mira(
         (Some("opus"), false) => call_opus(&message).await?,
         (Some("council"), _) => {
             // Council mode: spawn async deliberation, return immediately
-            return spawn_council_deliberation(message, db.clone(), session_id).await;
+            return spawn_council_deliberation(message, db.clone(), semantic.clone(), project_id, session_id).await;
         },
         (_, true) => call_gpt_with_tools(&message, db, semantic, project_id).await?,
         (_, false) => call_gpt(&message).await?,

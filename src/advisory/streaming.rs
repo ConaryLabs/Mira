@@ -432,6 +432,27 @@ pub enum CouncilProgress {
     /// All done (single-round)
     Done { result: serde_json::Value },
 
+    // === Tool calling events ===
+    /// A model is calling a tool
+    ModelToolCall {
+        model: String,
+        tool_name: String,
+        round: u8,
+    },
+    /// A model's tool call completed
+    ModelToolResult {
+        model: String,
+        tool_name: String,
+        success: bool,
+        round: u8,
+    },
+    /// Model finished all tool calls for this round
+    ModelToolsComplete {
+        model: String,
+        tools_called: Vec<String>,
+        round: u8,
+    },
+
     // === Multi-round deliberation events ===
     /// Deliberation round is starting
     RoundStarted { round: u8, max_rounds: u8 },

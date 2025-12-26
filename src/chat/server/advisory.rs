@@ -26,6 +26,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::advisory::{AdvisoryService, streaming::CouncilProgress};
+use crate::core::SemanticSearch;
 use crate::server::handlers::advisory;
 
 /// Manages broadcast channels for active deliberation sessions
@@ -70,6 +71,7 @@ impl SessionBroadcaster {
 #[derive(Clone)]
 pub struct AdvisoryState {
     pub db: Arc<SqlitePool>,
+    pub semantic: Arc<SemanticSearch>,
     pub broadcaster: SessionBroadcaster,
 }
 
@@ -206,6 +208,8 @@ async fn deliberate_stream(
     // Clone what we need for the spawned task
     let service = service.clone();
     let db = state.db.clone();
+    let semantic = state.semantic.clone();
+    let project_id = request.project_id;
     let message = request.message.clone();
     let session_id_clone = session_id.clone();
 
@@ -229,6 +233,8 @@ async fn deliberate_stream(
             &message,
             None,
             &db,
+            &semantic,
+            project_id,
             &session_id_clone,
             tx,
         ).await;
@@ -385,9 +391,10 @@ async fn stream_session(
 }
 
 /// Create advisory router
-pub fn create_router(db: Arc<SqlitePool>) -> Router {
+pub fn create_router(db: Arc<SqlitePool>, semantic: Arc<SemanticSearch>) -> Router {
     let state = AdvisoryState {
         db,
+        semantic,
         broadcaster: SessionBroadcaster::new(),
     };
 
