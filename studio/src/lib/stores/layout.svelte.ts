@@ -2,8 +2,8 @@
  * Layout State Store
  *
  * Manages UI panel state with localStorage persistence:
+ * - Left nav state (collapsed | expanded | settings) - enforces single container invariant
  * - Context drawer (right panel) state
- * - Settings modal state
  * - Mobile responsive breakpoints
  */
 
@@ -11,24 +11,27 @@ import { browser } from '$app/environment';
 
 export type DrawerTab = 'timeline' | 'workspace' | 'advisory';
 
+// Left nav can only be in ONE of these states - prevents double-sidebar bug
+export type LeftNavState = 'collapsed' | 'expanded' | 'settings';
+
 export interface LayoutState {
+  leftNav: LeftNavState;
   contextDrawer: {
     open: boolean;
     width: number;
     activeTab: DrawerTab;
   };
-  settingsOpen: boolean;
   isMobile: boolean;
 }
 
 // Default state
 const defaultState: LayoutState = {
+  leftNav: 'collapsed',  // Start collapsed, user can expand
   contextDrawer: {
     open: true,  // Open by default on desktop
     width: 360,
     activeTab: 'timeline',
   },
-  settingsOpen: false,
   isMobile: false,
 };
 
@@ -40,9 +43,15 @@ function loadState(): LayoutState {
     const saved = localStorage.getItem('mira-layout');
     if (saved) {
       const parsed = JSON.parse(saved);
+      // Migrate from old settingsOpen boolean if present
+      let leftNav: LeftNavState = parsed.leftNav || defaultState.leftNav;
+      if (parsed.settingsOpen === true) {
+        leftNav = 'settings';
+      }
       return {
         ...defaultState,
-        ...parsed,
+        leftNav,
+        contextDrawer: parsed.contextDrawer || defaultState.contextDrawer,
         isMobile: window.innerWidth < 768,
       };
     }
@@ -69,8 +78,9 @@ function persistState() {
   }
   saveTimeout = window.setTimeout(() => {
     const toSave = {
+      leftNav: state.leftNav,
       contextDrawer: state.contextDrawer,
-      // Don't persist settingsOpen or isMobile
+      // Don't persist isMobile (computed from window size)
     };
     localStorage.setItem('mira-layout', JSON.stringify(toSave));
   }, 100);
@@ -82,11 +92,19 @@ function persistState() {
 export const layoutStore = {
   // State access
   get state() { return state; },
+  get leftNav() { return state.leftNav; },
   get contextDrawer() { return state.contextDrawer; },
-  get settingsOpen() { return state.settingsOpen; },
   get isMobile() { return state.isMobile; },
 
-  // Derived: is drawer effectively visible (always available, even on mobile)
+  // Derived: is settings panel showing (in expanded left nav)
+  get settingsOpen() { return state.leftNav === 'settings'; },
+
+  // Derived: is left nav expanded (either expanded or settings)
+  get isLeftNavExpanded() {
+    return state.leftNav === 'expanded' || state.leftNav === 'settings';
+  },
+
+  // Derived: is drawer effectively visible
   get isDrawerVisible() {
     return state.contextDrawer.open;
   },
@@ -96,7 +114,35 @@ export const layoutStore = {
     return state.isMobile;
   },
 
-  // Actions
+  // Left nav actions
+  setLeftNav(navState: LeftNavState) {
+    state.leftNav = navState;
+    persistState();
+  },
+
+  toggleLeftNav() {
+    // Toggle between collapsed and expanded (not settings)
+    state.leftNav = state.leftNav === 'collapsed' ? 'expanded' : 'collapsed';
+    persistState();
+  },
+
+  toggleSettings() {
+    // Toggle between settings and collapsed
+    state.leftNav = state.leftNav === 'settings' ? 'collapsed' : 'settings';
+    persistState();
+  },
+
+  openSettings() {
+    state.leftNav = 'settings';
+    persistState();
+  },
+
+  closeSettings() {
+    state.leftNav = 'collapsed';
+    persistState();
+  },
+
+  // Context drawer actions
   toggleDrawer() {
     state.contextDrawer.open = !state.contextDrawer.open;
     persistState();
@@ -129,23 +175,15 @@ export const layoutStore = {
     persistState();
   },
 
-  toggleSettings() {
-    state.settingsOpen = !state.settingsOpen;
-  },
-
-  openSettings() {
-    state.settingsOpen = true;
-  },
-
-  closeSettings() {
-    state.settingsOpen = false;
-  },
-
   setMobile(isMobile: boolean) {
     state.isMobile = isMobile;
     // Auto-close drawer on mobile
     if (isMobile && state.contextDrawer.open) {
       state.contextDrawer.open = false;
+    }
+    // Collapse left nav on mobile
+    if (isMobile && state.leftNav !== 'collapsed') {
+      state.leftNav = 'collapsed';
     }
   },
 

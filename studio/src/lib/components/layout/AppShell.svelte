@@ -3,7 +3,6 @@
   import { layoutStore } from '$lib/stores/layout.svelte';
   import NavRail from './NavRail.svelte';
   import ContextDrawer from './ContextDrawer.svelte';
-  import SettingsSidebar from '../sidebar/SettingsSidebar.svelte';
   import type { StatusResponse } from '$lib/api/client';
 
   interface Props {
@@ -42,18 +41,14 @@
       window.removeEventListener('keydown', handleKeydown);
     };
   });
-
-  function handleSettingsClick() {
-    layoutStore.toggleSettings();
-  }
 </script>
 
 <div class="app-shell">
-  <!-- Left Navigation Rail -->
+  <!-- Left Navigation Rail (handles settings inline when expanded) -->
   {#if !layoutStore.isMobile}
     <NavRail
       connected={apiStatus?.status === 'ok'}
-      onSettingsClick={handleSettingsClick}
+      status={apiStatus}
     />
   {/if}
 
@@ -62,7 +57,7 @@
     <header class="mobile-header">
       <button
         class="mobile-menu-btn"
-        onclick={handleSettingsClick}
+        onclick={() => layoutStore.toggleSettings()}
         aria-label="Open menu"
       >
         <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -99,23 +94,6 @@
 
   <!-- Right Context Drawer -->
   <ContextDrawer />
-
-  <!-- Settings Sidebar (modal on desktop, slide-over on mobile) -->
-  {#if layoutStore.settingsOpen}
-    <!-- Backdrop -->
-    <button
-      class="settings-backdrop"
-      onclick={() => layoutStore.closeSettings()}
-      aria-label="Close settings"
-    ></button>
-    <div class="settings-panel {layoutStore.isMobile ? 'mobile' : 'desktop'}">
-      <SettingsSidebar
-        status={apiStatus}
-        onClose={() => layoutStore.closeSettings()}
-        isMobile={layoutStore.isMobile}
-      />
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -221,32 +199,5 @@
   .panel-icon {
     width: 20px;
     height: 20px;
-  }
-
-  /* Settings panel */
-  .settings-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 100;
-    border: none;
-    cursor: pointer;
-  }
-
-  .settings-panel {
-    position: fixed;
-    z-index: 101;
-  }
-
-  .settings-panel.desktop {
-    left: 48px;
-    top: 0;
-    bottom: 0;
-  }
-
-  .settings-panel.mobile {
-    left: 0;
-    top: 0;
-    bottom: 0;
   }
 </style>

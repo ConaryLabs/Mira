@@ -1403,6 +1403,15 @@ npm run build    # Production build
 npm run preview  # Preview production build
 ```
 
+**Key UX Components** (as of 2025-12-25):
+| Component | Purpose |
+|-----------|---------|
+| `NavRail.svelte` | Left nav with enum state (`collapsed`/`expanded`/`settings`) |
+| `StreamingStatus.svelte` | Live streaming status with tool names and token counts |
+| `ProjectSelector.svelte` | Project cards with pin/unpin and last activity |
+| `ToolArguments.svelte` | Structured key-value argument display (not raw JSON) |
+| `TerminalView.svelte` | Messages with `[you]`/`[mira]` role labels and hover timestamps |
+
 #### **Full Rebuild Script**
 ```bash
 ./rebuild.sh                 # Rebuild everything, restart services
@@ -1590,6 +1599,7 @@ Currently no automated CI/CD pipeline. Deployment is manual:
 |------|-----|--------|---------|
 | 2025-12-25 | 1.0 | Peter + Claude | Initial comprehensive documentation. All 9 sections complete. |
 | 2025-12-25 | 1.1 | Peter + Claude | Council review feedback: added Carousel state machine diagram, context composition strategy, Hotline interface clarification. |
+| 2025-12-25 | 1.2 | Peter + Claude | Studio UX overhaul: enum-based layout state, message role labels, streaming status, tool argument rendering, project management UI. |
 
 ---
 
