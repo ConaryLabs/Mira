@@ -1,6 +1,7 @@
-//! Gemini 3 Pro provider for Studio chat (Orchestrator mode)
+//! Gemini 3 provider for Studio chat (Orchestrator mode)
 //!
 //! Uses Gemini's generateContent API with function calling.
+//! Supports both Flash (cheap, fast) and Pro (complex reasoning) models.
 //! Adapted from advisory/providers/gemini.rs for the chat Provider interface.
 
 use anyhow::Result;
@@ -17,32 +18,98 @@ use super::{
     StreamEvent, ToolCall, ToolContinueRequest, ToolDefinition, Usage,
 };
 
-const GEMINI_API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
-const GEMINI_STREAM_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:streamGenerateContent";
+const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
-/// Gemini 3 Pro provider for chat interface
+// ============================================================================
+// Model Selection
+// ============================================================================
+
+/// Gemini 3 model variants
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GeminiModel {
+    /// Flash: Pro-level intelligence at Flash speed and pricing ($0.50/$3 per 1M)
+    /// Best for: simple queries, file ops, search, memory operations
+    #[default]
+    Flash,
+    /// Pro: Complex reasoning and advanced planning ($2/$12 per 1M)
+    /// Best for: council, goal, task, multi-step chains
+    Pro,
+}
+
+impl GeminiModel {
+    /// Get the model ID for the API
+    pub fn model_id(&self) -> &'static str {
+        match self {
+            Self::Flash => "gemini-3-flash-preview",
+            Self::Pro => "gemini-3-pro-preview",
+        }
+    }
+
+    /// Get display name
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Flash => "Gemini 3 Flash",
+            Self::Pro => "Gemini 3 Pro",
+        }
+    }
+
+    /// Build the generateContent URL for this model
+    fn generate_url(&self) -> String {
+        format!("{}/{}:generateContent", GEMINI_API_BASE, self.model_id())
+    }
+
+    /// Build the streamGenerateContent URL for this model
+    fn stream_url(&self) -> String {
+        format!("{}/{}:streamGenerateContent", GEMINI_API_BASE, self.model_id())
+    }
+}
+
+/// Gemini 3 provider for chat interface (Flash or Pro)
 pub struct GeminiChatProvider {
     client: HttpClient,
     api_key: String,
+    model: GeminiModel,
     capabilities: Capabilities,
 }
 
 impl GeminiChatProvider {
-    /// Create a new Gemini Chat provider
-    pub fn new(api_key: String) -> Self {
+    /// Create a new Gemini Chat provider with specified model
+    pub fn new(api_key: String, model: GeminiModel) -> Self {
+        let capabilities = match model {
+            GeminiModel::Flash => Capabilities::gemini_3_flash(),
+            GeminiModel::Pro => Capabilities::gemini_3_pro(),
+        };
         Self {
             client: HttpClient::new(),
             api_key,
-            capabilities: Capabilities::gemini_3_pro(),
+            model,
+            capabilities,
         }
     }
 
-    /// Create from environment variable
-    pub fn from_env() -> Result<Self> {
+    /// Create Flash provider from environment variable (default, cheap)
+    pub fn flash() -> Result<Self> {
         let api_key = std::env::var("GEMINI_API_KEY")
             .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY not set"))?;
-        Ok(Self::new(api_key))
+        Ok(Self::new(api_key, GeminiModel::Flash))
+    }
+
+    /// Create Pro provider from environment variable (for complex reasoning)
+    pub fn pro() -> Result<Self> {
+        let api_key = std::env::var("GEMINI_API_KEY")
+            .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY not set"))?;
+        Ok(Self::new(api_key, GeminiModel::Pro))
+    }
+
+    /// Create from environment variable (defaults to Flash)
+    pub fn from_env() -> Result<Self> {
+        Self::flash()
+    }
+
+    /// Get the current model
+    pub fn model(&self) -> GeminiModel {
+        self.model
     }
 
     /// Build Gemini contents from chat request
@@ -163,7 +230,7 @@ impl GeminiChatProvider {
             tools,
         };
 
-        let url = format!("{}?key={}", GEMINI_API_URL, self.api_key);
+        let url = format!("{}?key={}", self.model.generate_url(), self.api_key);
 
         let response = self.client
             .post(&url)
@@ -236,7 +303,7 @@ impl Provider for GeminiChatProvider {
     }
 
     fn name(&self) -> &'static str {
-        "Gemini 3 Pro"
+        self.model.name()
     }
 
     async fn create(&self, request: ChatRequest) -> Result<ChatResponse> {
@@ -277,7 +344,7 @@ impl Provider for GeminiChatProvider {
             tools,
         };
 
-        let url = format!("{}?alt=sse&key={}", GEMINI_STREAM_URL, self.api_key);
+        let url = format!("{}?alt=sse&key={}", self.model.stream_url(), self.api_key);
         let client = self.client.clone();
 
         tokio::spawn(async move {
@@ -392,7 +459,7 @@ impl Provider for GeminiChatProvider {
             tools,
         };
 
-        let url = format!("{}?alt=sse&key={}", GEMINI_STREAM_URL, self.api_key);
+        let url = format!("{}?alt=sse&key={}", self.model.stream_url(), self.api_key);
         let client = self.client.clone();
 
         tokio::spawn(async move {
@@ -616,10 +683,22 @@ mod tests {
 
     #[test]
     fn test_capabilities() {
-        let provider = GeminiChatProvider::new("test_key".into());
-        assert!(provider.capabilities().supports_tools);
-        assert!(provider.capabilities().supports_streaming);
-        assert_eq!(provider.capabilities().max_context_tokens, 1_000_000);
+        let flash = GeminiChatProvider::new("test_key".into(), GeminiModel::Flash);
+        assert!(flash.capabilities().supports_tools);
+        assert!(flash.capabilities().supports_streaming);
+        assert_eq!(flash.capabilities().max_context_tokens, 1_000_000);
+        assert_eq!(flash.name(), "Gemini 3 Flash");
+
+        let pro = GeminiChatProvider::new("test_key".into(), GeminiModel::Pro);
+        assert_eq!(pro.name(), "Gemini 3 Pro");
+    }
+
+    #[test]
+    fn test_model_urls() {
+        assert_eq!(GeminiModel::Flash.model_id(), "gemini-3-flash-preview");
+        assert_eq!(GeminiModel::Pro.model_id(), "gemini-3-pro-preview");
+        assert!(GeminiModel::Flash.generate_url().contains("gemini-3-flash-preview"));
+        assert!(GeminiModel::Pro.stream_url().contains("gemini-3-pro-preview"));
     }
 
     #[test]

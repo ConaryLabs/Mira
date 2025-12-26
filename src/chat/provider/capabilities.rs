@@ -106,18 +106,36 @@ impl Capabilities {
         }
     }
 
-    /// Gemini 3 Pro (Orchestrator primary model)
-    pub fn gemini_3_pro() -> Self {
+    /// Gemini 3 Flash (default, cheap, fast)
+    /// Pro-level intelligence at Flash speed and pricing ($0.50/$3 per 1M)
+    pub fn gemini_3_flash() -> Self {
         Self {
-            state_mode: StateMode::Client,  // Client-state like DeepSeek
+            state_mode: StateMode::Client,
             supports_tools: true,
             supports_streaming: true,
-            supports_cached_tokens: false,  // Gemini 3 Pro preview: no caching yet
+            supports_cached_tokens: false,
             supports_json_mode: true,
             usage_reporting: UsageReporting::Basic,
             max_context_tokens: 1_000_000,
             max_output_tokens: 65_536,
-            // Orchestrator mode: generous turn budget
+            // Flash: moderate turn budget
+            recommended_turn_budget: 30_000,
+        }
+    }
+
+    /// Gemini 3 Pro (complex reasoning, advanced planning)
+    /// Higher cost ($2/$12 per 1M) but better for council/goal/task
+    pub fn gemini_3_pro() -> Self {
+        Self {
+            state_mode: StateMode::Client,
+            supports_tools: true,
+            supports_streaming: true,
+            supports_cached_tokens: false,
+            supports_json_mode: true,
+            usage_reporting: UsageReporting::Basic,
+            max_context_tokens: 1_000_000,
+            max_output_tokens: 65_536,
+            // Pro: generous turn budget for complex reasoning
             recommended_turn_budget: 50_000,
         }
     }

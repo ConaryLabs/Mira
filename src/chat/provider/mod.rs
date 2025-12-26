@@ -1,7 +1,7 @@
 //! Provider abstraction for chat models
 //!
 //! Supports multiple LLM backends:
-//! - Gemini 3 Pro as the primary model (Orchestrator mode)
+//! - Gemini 3 Flash (default, cheap) / Pro (complex reasoning)
 //! - DeepSeek V3.2 (available for testing/fallback)
 //! - GPT-5.2 via Responses API
 //! - Unified streaming interface
@@ -18,7 +18,7 @@ mod types;
 
 pub use capabilities::Capabilities;
 pub use deepseek::DeepSeekProvider;
-pub use gemini::GeminiChatProvider;
+pub use gemini::{GeminiChatProvider, GeminiModel};
 pub use types::*;
 
 use anyhow::Result;
@@ -110,7 +110,22 @@ impl ModelSpec {
         }
     }
 
-    /// Gemini 3 Pro specification (Orchestrator primary model)
+    /// Gemini 3 Flash specification (default, cheap, fast)
+    pub fn gemini_3_flash() -> Self {
+        Self {
+            id: "gemini-3-flash-preview".into(),
+            display_name: "Gemini 3 Flash".into(),
+            max_context_tokens: 1_000_000,
+            max_output_tokens: 65_536,
+            default_output_tokens: 16_000,
+            supports_tools: true,
+            supports_reasoning: true,  // Supports thinkingConfig
+            input_cost_per_million: 0.50,
+            output_cost_per_million: 3.00,
+        }
+    }
+
+    /// Gemini 3 Pro specification (complex reasoning, advanced planning)
     pub fn gemini_3_pro() -> Self {
         Self {
             id: "gemini-3-pro-preview".into(),
@@ -120,8 +135,8 @@ impl ModelSpec {
             default_output_tokens: 16_000,
             supports_tools: true,
             supports_reasoning: true,  // Supports thinkingConfig
-            input_cost_per_million: 1.25,
-            output_cost_per_million: 10.00,
+            input_cost_per_million: 2.00,
+            output_cost_per_million: 12.00,
         }
     }
 
