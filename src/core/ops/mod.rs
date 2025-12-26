@@ -23,11 +23,11 @@ pub mod rejected;
 // Re-export from mira module for backwards compatibility
 pub mod mira;
 
-// Phase 3: File, shell, git, web, code intelligence
+// Phase 3: File, shell, git, code intelligence
+// Note: web removed - replaced by Gemini's built-in google_search, code_execution, url_context
 pub mod file;
 pub mod shell;
 pub mod git;
-pub mod web;
 pub mod code_intel;
 
 // Phase 5: Documents, build, work state, session

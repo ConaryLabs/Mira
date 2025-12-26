@@ -18,7 +18,9 @@ mod types;
 
 pub use capabilities::Capabilities;
 pub use deepseek::DeepSeekProvider;
-pub use gemini::{GeminiChatProvider, GeminiModel};
+pub use gemini::CachedContent;
+pub use gemini::GeminiChatProvider;
+pub use gemini::GeminiModel;
 pub use types::*;
 
 use anyhow::Result;

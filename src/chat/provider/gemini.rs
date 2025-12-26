@@ -14,12 +14,17 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::{
-    Capabilities, ChatRequest, ChatResponse, FinishReason, Provider,
+    Capabilities, ChatRequest, ChatResponse, FinishReason, GroundingSource, Provider,
     StreamEvent, ToolCall, ToolContinueRequest, ToolDefinition, Usage,
 };
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
+const GEMINI_CACHE_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
+
+/// Minimum tokens required for caching
+const FLASH_MIN_CACHE_TOKENS: u32 = 1_024;
+const PRO_MIN_CACHE_TOKENS: u32 = 4_096;
 
 // ============================================================================
 // Model Selection
@@ -62,6 +67,19 @@ impl GeminiModel {
     /// Build the streamGenerateContent URL for this model
     fn stream_url(&self) -> String {
         format!("{}/{}:streamGenerateContent", GEMINI_API_BASE, self.model_id())
+    }
+
+    /// Minimum tokens required for caching
+    pub fn min_cache_tokens(&self) -> u32 {
+        match self {
+            Self::Flash => FLASH_MIN_CACHE_TOKENS,
+            Self::Pro => PRO_MIN_CACHE_TOKENS,
+        }
+    }
+
+    /// Full model path for cache API
+    fn model_path(&self) -> String {
+        format!("models/{}", self.model_id())
     }
 }
 
@@ -191,22 +209,110 @@ impl GeminiChatProvider {
         contents
     }
 
-    /// Convert tool definitions to Gemini format
-    fn build_tools(tools: &[ToolDefinition]) -> Option<Vec<GeminiTool>> {
-        if tools.is_empty() {
-            return None;
+    /// Convert tool definitions to Gemini format, including built-in tools
+    fn build_tools(tools: &[ToolDefinition]) -> Option<Vec<GeminiToolEntry>> {
+        // Always include built-in tools for enhanced capabilities
+        let mut entries = vec![
+            // Google Search grounding (FREE until Jan 2026)
+            GeminiToolEntry::GoogleSearch { google_search: EmptyObject {} },
+            // Code execution (Python sandbox for data analysis)
+            GeminiToolEntry::CodeExecution { code_execution: EmptyObject {} },
+            // URL context (native web fetching)
+            GeminiToolEntry::UrlContext { url_context: EmptyObject {} },
+        ];
+
+        // Add custom function declarations if any
+        if !tools.is_empty() {
+            let declarations: Vec<GeminiFunctionDeclaration> = tools
+                .iter()
+                .map(|t| GeminiFunctionDeclaration {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.parameters.clone(),
+                })
+                .collect();
+            entries.push(GeminiToolEntry::Functions { function_declarations: declarations });
         }
 
-        let declarations: Vec<GeminiFunctionDeclaration> = tools
-            .iter()
-            .map(|t| GeminiFunctionDeclaration {
-                name: t.name.clone(),
-                description: t.description.clone(),
-                parameters: t.parameters.clone(),
-            })
-            .collect();
+        Some(entries)
+    }
 
-        Some(vec![GeminiTool { function_declarations: declarations }])
+    /// Process streaming response data and send events
+    async fn process_stream_response(
+        response: &GeminiResponse,
+        tx: &mpsc::Sender<StreamEvent>,
+        tool_call_count: &mut usize,
+    ) {
+        if let Some(candidates) = &response.candidates {
+            for candidate in candidates {
+                // Track code execution across parts
+                let mut exec_code: Option<&GeminiExecutableCode> = None;
+                let mut exec_result: Option<&GeminiCodeExecutionResult> = None;
+
+                for part in &candidate.content.parts {
+                    if let Some(text) = &part.text {
+                        let _ = tx.send(StreamEvent::TextDelta(text.clone())).await;
+                    }
+                    if let Some(fc) = &part.function_call {
+                        let call_id = format!("gemini_{}", *tool_call_count);
+                        *tool_call_count += 1;
+                        let _ = tx.send(StreamEvent::FunctionCallStart {
+                            call_id: call_id.clone(),
+                            name: fc.name.clone(),
+                        }).await;
+                        let _ = tx.send(StreamEvent::FunctionCallDelta {
+                            call_id: call_id.clone(),
+                            arguments_delta: fc.args.to_string(),
+                        }).await;
+                        let _ = tx.send(StreamEvent::FunctionCallEnd {
+                            call_id,
+                        }).await;
+                    }
+                    // Track code execution parts
+                    if let Some(code) = &part.executable_code {
+                        exec_code = Some(code);
+                    }
+                    if let Some(result) = &part.code_execution_result {
+                        exec_result = Some(result);
+                    }
+                }
+
+                // Emit code execution if we have both code and result
+                if let (Some(code), Some(result)) = (exec_code, exec_result) {
+                    let _ = tx.send(StreamEvent::CodeExecution {
+                        language: code.language.clone(),
+                        code: code.code.clone(),
+                        output: result.output.clone().unwrap_or_default(),
+                        outcome: result.outcome.clone(),
+                    }).await;
+                }
+
+                // Emit grounding metadata if present
+                if let Some(grounding) = &candidate.grounding_metadata {
+                    if !grounding.web_search_queries.is_empty() || !grounding.grounding_chunks.is_empty() {
+                        let sources: Vec<GroundingSource> = grounding.grounding_chunks
+                            .iter()
+                            .filter_map(|chunk| chunk.web.as_ref().map(|w| GroundingSource {
+                                uri: w.uri.clone(),
+                                title: w.title.clone(),
+                            }))
+                            .collect();
+                        let _ = tx.send(StreamEvent::GroundingMetadata {
+                            search_queries: grounding.web_search_queries.clone(),
+                            sources,
+                        }).await;
+                    }
+                }
+            }
+        }
+        if let Some(usage) = &response.usage_metadata {
+            let _ = tx.send(StreamEvent::Usage(Usage {
+                input_tokens: usage.prompt_token_count.unwrap_or(0),
+                output_tokens: usage.candidates_token_count.unwrap_or(0),
+                reasoning_tokens: 0,
+                cached_tokens: 0,
+            })).await;
+        }
     }
 
     /// Make a non-streaming request
@@ -214,7 +320,7 @@ impl GeminiChatProvider {
         &self,
         contents: Vec<GeminiContent>,
         system: Option<String>,
-        tools: Option<Vec<GeminiTool>>,
+        tools: Option<Vec<GeminiToolEntry>>,
         thinking_level: &str,
     ) -> Result<GeminiResponse> {
         let api_request = GeminiRequest {
@@ -293,6 +399,271 @@ impl GeminiChatProvider {
             usage,
             finish_reason,
         }
+    }
+
+    // ========================================================================
+    // Context Caching
+    // ========================================================================
+
+    /// Create a cached context for reuse across requests.
+    ///
+    /// Returns `Ok(None)` if content is below minimum token threshold.
+    /// Cache reduces cost by ~75% on cached input tokens.
+    ///
+    /// # Arguments
+    /// * `system_prompt` - System instructions to cache
+    /// * `context` - Optional additional context to cache (e.g., code, docs)
+    /// * `ttl_seconds` - Time to live (default 3600 = 1 hour)
+    pub async fn create_cache(
+        &self,
+        system_prompt: &str,
+        context: Option<&str>,
+        ttl_seconds: u32,
+    ) -> Result<Option<CachedContent>> {
+        // Rough token estimate (4 chars ≈ 1 token)
+        let system_tokens = system_prompt.len() as u32 / 4;
+        let context_tokens = context.map(|c| c.len() as u32 / 4).unwrap_or(0);
+        let estimated_tokens = system_tokens + context_tokens;
+
+        // Check minimum threshold
+        if estimated_tokens < self.model.min_cache_tokens() {
+            tracing::debug!(
+                "Content too small for caching: {} tokens < {} min",
+                estimated_tokens,
+                self.model.min_cache_tokens()
+            );
+            return Ok(None);
+        }
+
+        // Build cache request
+        let mut contents = Vec::new();
+        if let Some(ctx) = context {
+            contents.push(GeminiContent {
+                role: "user".to_string(),
+                parts: vec![GeminiPart::Text { text: ctx.to_string() }],
+            });
+        }
+
+        let request = CreateCacheRequest {
+            model: self.model.model_path(),
+            system_instruction: Some(GeminiSystemInstruction {
+                parts: vec![GeminiTextPart { text: system_prompt.to_string() }],
+            }),
+            contents,
+            ttl: format!("{}s", ttl_seconds),
+        };
+
+        let url = format!("{}?key={}", GEMINI_CACHE_BASE, self.api_key);
+
+        let response = self.client
+            .post(&url)
+            .json(&request)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Cache creation failed: {} - {}", status, body);
+        }
+
+        let cache_response: CreateCacheResponse = response.json().await?;
+        let token_count = cache_response.usage_metadata
+            .and_then(|u| u.total_token_count)
+            .unwrap_or(estimated_tokens);
+
+        tracing::info!(
+            "Created cache '{}' with {} tokens, expires {}",
+            cache_response.name,
+            token_count,
+            cache_response.expire_time
+        );
+
+        Ok(Some(CachedContent {
+            name: cache_response.name,
+            expire_time: cache_response.expire_time,
+            token_count,
+        }))
+    }
+
+    /// Delete a cached context
+    pub async fn delete_cache(&self, cache_name: &str) -> Result<()> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
+            cache_name,
+            self.api_key
+        );
+
+        let response = self.client
+            .delete(&url)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Cache deletion failed: {} - {}", status, body);
+        }
+
+        tracing::debug!("Deleted cache '{}'", cache_name);
+        Ok(())
+    }
+
+    /// Make a streaming request using cached content
+    pub async fn create_stream_with_cache(
+        &self,
+        cache: &CachedContent,
+        request: ChatRequest,
+    ) -> Result<mpsc::Receiver<StreamEvent>> {
+        let (tx, rx) = mpsc::channel(100);
+
+        // Only include messages not in the cache (new user messages)
+        let contents = Self::build_contents(&request);
+        let tools = Self::build_tools(&request.tools);
+        let thinking_level = if tools.is_some() { "low" } else { "high" };
+
+        let api_request = CachedGeminiRequest {
+            cached_content: cache.name.clone(),
+            contents,
+            generation_config: Some(GeminiGenerationConfig {
+                thinking_config: GeminiThinkingConfig {
+                    thinking_level: thinking_level.to_string(),
+                },
+            }),
+            tools,
+        };
+
+        let url = format!("{}?alt=sse&key={}", self.model.stream_url(), self.api_key);
+        let client = self.client.clone();
+        let cached_tokens = cache.token_count;
+
+        tokio::spawn(async move {
+            match client
+                .post(&url)
+                .json(&api_request)
+                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        let body = response.text().await.unwrap_or_default();
+                        let _ = tx.send(StreamEvent::Error(
+                            format!("Gemini API error: {} - {}", status, body)
+                        )).await;
+                        return;
+                    }
+
+                    let mut stream = response.bytes_stream();
+                    let mut buffer = String::new();
+                    let mut tool_call_count = 0;
+                    let mut usage_sent = false;
+
+                    while let Some(chunk) = stream.next().await {
+                        match chunk {
+                            Ok(bytes) => {
+                                buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                                while let Some(line_end) = buffer.find('\n') {
+                                    let line = buffer[..line_end].to_string();
+                                    buffer = buffer[line_end + 1..].to_string();
+
+                                    if line.starts_with("data: ") {
+                                        let data = &line[6..];
+                                        if let Ok(gemini_response) = serde_json::from_str::<GeminiResponse>(data) {
+                                            // Process response but intercept usage to add cached_tokens
+                                            if let Some(candidates) = &gemini_response.candidates {
+                                                for candidate in candidates {
+                                                    let mut exec_code: Option<&GeminiExecutableCode> = None;
+                                                    let mut exec_result: Option<&GeminiCodeExecutionResult> = None;
+
+                                                    for part in &candidate.content.parts {
+                                                        if let Some(text) = &part.text {
+                                                            let _ = tx.send(StreamEvent::TextDelta(text.clone())).await;
+                                                        }
+                                                        if let Some(fc) = &part.function_call {
+                                                            let call_id = format!("gemini_{}", tool_call_count);
+                                                            tool_call_count += 1;
+                                                            let _ = tx.send(StreamEvent::FunctionCallStart {
+                                                                call_id: call_id.clone(),
+                                                                name: fc.name.clone(),
+                                                            }).await;
+                                                            let _ = tx.send(StreamEvent::FunctionCallDelta {
+                                                                call_id: call_id.clone(),
+                                                                arguments_delta: fc.args.to_string(),
+                                                            }).await;
+                                                            let _ = tx.send(StreamEvent::FunctionCallEnd { call_id }).await;
+                                                        }
+                                                        if let Some(code) = &part.executable_code {
+                                                            exec_code = Some(code);
+                                                        }
+                                                        if let Some(result) = &part.code_execution_result {
+                                                            exec_result = Some(result);
+                                                        }
+                                                    }
+
+                                                    if let (Some(code), Some(result)) = (exec_code, exec_result) {
+                                                        let _ = tx.send(StreamEvent::CodeExecution {
+                                                            language: code.language.clone(),
+                                                            code: code.code.clone(),
+                                                            output: result.output.clone().unwrap_or_default(),
+                                                            outcome: result.outcome.clone(),
+                                                        }).await;
+                                                    }
+
+                                                    if let Some(grounding) = &candidate.grounding_metadata {
+                                                        if !grounding.web_search_queries.is_empty() || !grounding.grounding_chunks.is_empty() {
+                                                            let sources: Vec<GroundingSource> = grounding.grounding_chunks
+                                                                .iter()
+                                                                .filter_map(|chunk| chunk.web.as_ref().map(|w| GroundingSource {
+                                                                    uri: w.uri.clone(),
+                                                                    title: w.title.clone(),
+                                                                }))
+                                                                .collect();
+                                                            let _ = tx.send(StreamEvent::GroundingMetadata {
+                                                                search_queries: grounding.web_search_queries.clone(),
+                                                                sources,
+                                                            }).await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Send usage with cached_tokens
+                                            if !usage_sent {
+                                                if let Some(usage) = &gemini_response.usage_metadata {
+                                                    let _ = tx.send(StreamEvent::Usage(Usage {
+                                                        input_tokens: usage.prompt_token_count.unwrap_or(0),
+                                                        output_tokens: usage.candidates_token_count.unwrap_or(0),
+                                                        reasoning_tokens: 0,
+                                                        cached_tokens,
+                                                    })).await;
+                                                    usage_sent = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                                break;
+                            }
+                        }
+                    }
+
+                    let _ = tx.send(StreamEvent::Done).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                }
+            }
+        });
+
+        Ok(rx)
     }
 }
 
@@ -382,38 +753,7 @@ impl Provider for GeminiChatProvider {
                                     if line.starts_with("data: ") {
                                         let data = &line[6..];
                                         if let Ok(response) = serde_json::from_str::<GeminiResponse>(data) {
-                                            if let Some(candidates) = response.candidates {
-                                                for candidate in candidates {
-                                                    for part in candidate.content.parts {
-                                                        if let Some(text) = part.text {
-                                                            let _ = tx.send(StreamEvent::TextDelta(text)).await;
-                                                        }
-                                                        if let Some(fc) = part.function_call {
-                                                            let call_id = format!("gemini_{}", tool_call_count);
-                                                            tool_call_count += 1;
-                                                            let _ = tx.send(StreamEvent::FunctionCallStart {
-                                                                call_id: call_id.clone(),
-                                                                name: fc.name.clone(),
-                                                            }).await;
-                                                            let _ = tx.send(StreamEvent::FunctionCallDelta {
-                                                                call_id: call_id.clone(),
-                                                                arguments_delta: fc.args.to_string(),
-                                                            }).await;
-                                                            let _ = tx.send(StreamEvent::FunctionCallEnd {
-                                                                call_id,
-                                                            }).await;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            if let Some(usage) = response.usage_metadata {
-                                                let _ = tx.send(StreamEvent::Usage(Usage {
-                                                    input_tokens: usage.prompt_token_count.unwrap_or(0),
-                                                    output_tokens: usage.candidates_token_count.unwrap_or(0),
-                                                    reasoning_tokens: 0,
-                                                    cached_tokens: 0,
-                                                })).await;
-                                            }
+                                            Self::process_stream_response(&response, &tx, &mut tool_call_count).await;
                                         }
                                     }
                                 }
@@ -496,38 +836,7 @@ impl Provider for GeminiChatProvider {
                                     if line.starts_with("data: ") {
                                         let data = &line[6..];
                                         if let Ok(response) = serde_json::from_str::<GeminiResponse>(data) {
-                                            if let Some(candidates) = response.candidates {
-                                                for candidate in candidates {
-                                                    for part in candidate.content.parts {
-                                                        if let Some(text) = part.text {
-                                                            let _ = tx.send(StreamEvent::TextDelta(text)).await;
-                                                        }
-                                                        if let Some(fc) = part.function_call {
-                                                            let call_id = format!("gemini_{}", tool_call_count);
-                                                            tool_call_count += 1;
-                                                            let _ = tx.send(StreamEvent::FunctionCallStart {
-                                                                call_id: call_id.clone(),
-                                                                name: fc.name.clone(),
-                                                            }).await;
-                                                            let _ = tx.send(StreamEvent::FunctionCallDelta {
-                                                                call_id: call_id.clone(),
-                                                                arguments_delta: fc.args.to_string(),
-                                                            }).await;
-                                                            let _ = tx.send(StreamEvent::FunctionCallEnd {
-                                                                call_id,
-                                                            }).await;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            if let Some(usage) = response.usage_metadata {
-                                                let _ = tx.send(StreamEvent::Usage(Usage {
-                                                    input_tokens: usage.prompt_token_count.unwrap_or(0),
-                                                    output_tokens: usage.candidates_token_count.unwrap_or(0),
-                                                    reasoning_tokens: 0,
-                                                    cached_tokens: 0,
-                                                })).await;
-                                            }
+                                            Self::process_stream_response(&response, &tx, &mut tool_call_count).await;
                                         }
                                     }
                                 }
@@ -563,7 +872,7 @@ struct GeminiRequest {
     #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
     generation_config: Option<GeminiGenerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<GeminiTool>>,
+    tools: Option<Vec<GeminiToolEntry>>,
 }
 
 #[derive(Serialize)]
@@ -603,11 +912,32 @@ struct GeminiFunctionResponse {
     response: Value,
 }
 
+/// Tool entries for Gemini API - supports both function declarations and built-in tools
 #[derive(Serialize)]
-struct GeminiTool {
-    #[serde(rename = "functionDeclarations")]
-    function_declarations: Vec<GeminiFunctionDeclaration>,
+#[serde(untagged)]
+enum GeminiToolEntry {
+    /// Custom function declarations
+    Functions {
+        #[serde(rename = "functionDeclarations")]
+        function_declarations: Vec<GeminiFunctionDeclaration>,
+    },
+    /// Google Search grounding (FREE until Jan 2026)
+    GoogleSearch {
+        google_search: EmptyObject,
+    },
+    /// Code execution (Python sandbox)
+    CodeExecution {
+        code_execution: EmptyObject,
+    },
+    /// URL context fetching
+    UrlContext {
+        url_context: EmptyObject,
+    },
 }
+
+/// Empty object for built-in tools that take no configuration
+#[derive(Serialize)]
+struct EmptyObject {}
 
 #[derive(Serialize)]
 struct GeminiFunctionDeclaration {
@@ -644,6 +974,27 @@ struct GeminiResponse {
 #[derive(Deserialize)]
 struct GeminiCandidate {
     content: GeminiContentResponse,
+    #[serde(rename = "groundingMetadata")]
+    grounding_metadata: Option<GeminiGroundingMetadata>,
+}
+
+#[derive(Deserialize)]
+struct GeminiGroundingMetadata {
+    #[serde(rename = "webSearchQueries", default)]
+    web_search_queries: Vec<String>,
+    #[serde(rename = "groundingChunks", default)]
+    grounding_chunks: Vec<GeminiGroundingChunk>,
+}
+
+#[derive(Deserialize)]
+struct GeminiGroundingChunk {
+    web: Option<GeminiWebChunk>,
+}
+
+#[derive(Deserialize)]
+struct GeminiWebChunk {
+    uri: String,
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -656,6 +1007,24 @@ struct GeminiPartResponse {
     text: Option<String>,
     #[serde(rename = "functionCall")]
     function_call: Option<GeminiFunctionCallResponse>,
+    /// Code execution: generated Python code
+    #[serde(rename = "executableCode")]
+    executable_code: Option<GeminiExecutableCode>,
+    /// Code execution: execution result
+    #[serde(rename = "codeExecutionResult")]
+    code_execution_result: Option<GeminiCodeExecutionResult>,
+}
+
+#[derive(Deserialize)]
+struct GeminiExecutableCode {
+    language: String,
+    code: String,
+}
+
+#[derive(Deserialize)]
+struct GeminiCodeExecutionResult {
+    outcome: String,
+    output: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -675,6 +1044,61 @@ struct GeminiUsage {
 #[derive(Deserialize)]
 struct GeminiError {
     message: String,
+}
+
+// ============================================================================
+// Context Caching Types
+// ============================================================================
+
+/// Request to create a cached context
+#[derive(Serialize)]
+struct CreateCacheRequest {
+    model: String,
+    #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
+    system_instruction: Option<GeminiSystemInstruction>,
+    contents: Vec<GeminiContent>,
+    ttl: String,
+}
+
+/// Response from cache creation
+#[derive(Deserialize)]
+struct CreateCacheResponse {
+    name: String,
+    #[serde(rename = "expireTime")]
+    expire_time: String,
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: Option<CacheUsageMetadata>,
+}
+
+#[derive(Deserialize)]
+struct CacheUsageMetadata {
+    #[serde(rename = "totalTokenCount")]
+    total_token_count: Option<u32>,
+}
+
+/// Cached content reference for use in requests
+#[derive(Debug, Clone)]
+pub struct CachedContent {
+    /// Cache name (e.g., "cachedContents/abc123")
+    pub name: String,
+    /// Expiration time (ISO 8601)
+    pub expire_time: String,
+    /// Number of tokens cached
+    pub token_count: u32,
+}
+
+/// Request format when using cached content
+#[derive(Serialize)]
+struct CachedGeminiRequest {
+    /// Reference to cached content (replaces system_instruction + cached contents)
+    #[serde(rename = "cachedContent")]
+    cached_content: String,
+    /// Only new user messages (not in cache)
+    contents: Vec<GeminiContent>,
+    #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
+    generation_config: Option<GeminiGenerationConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<GeminiToolEntry>>,
 }
 
 #[cfg(test)]

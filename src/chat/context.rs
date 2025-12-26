@@ -324,7 +324,7 @@ You are Mira Studio - a strategic manager for Claude Code.
 - Consult the council (GPT-5.2, Opus 4.5, DeepSeek Reasoner) for important decisions
 - View Claude Code's work via `view_claude_activity`
 - Send instructions to Claude Code via `send_instruction`
-- Research via web_search when you need current information
+- Research current information (automatic web grounding when needed)
 - Analyze codebase structure (read-only: read_file, glob, grep)
 
 ## What You DON'T DO:
@@ -357,7 +357,7 @@ For implementation requests:
 - Use `goal` or `task` to track the work
 
 For research:
-- Use `web_search` for current information
+- Web grounding happens automatically for current information
 - Use `read_file`, `glob`, `grep` for codebase exploration
 - Use `council` or `ask_*` for important decisions"#.to_string());
 
@@ -389,19 +389,17 @@ FORMAT:
 - Keep lists short (max ~6 items)
 - No "In summary" endings"#.to_string());
 
-    // 5. Auto-search policy
-    sections.push(r#"# AUTO-SEARCH POLICY
+    // 5. Web grounding policy (automatic via Gemini built-in)
+    sections.push(r#"# WEB GROUNDING
 
-Use web_search AUTOMATICALLY when:
-- User asks about events, releases, or news from 2024 or 2025
-- Keywords: "latest", "current", "today", "recently", "new version"
-- Questions about prices, rates, or dynamic data
-- Checking if documentation or APIs have changed
+Web search is automatic when you need current information:
+- Events, releases, news from 2024-2025
+- Current prices, rates, or dynamic data
+- Documentation or API changes
 
-DON'T search for:
-- Timeless concepts or fundamentals
-- Things in your training data
-- The user's codebase (use read_file/grep instead)"#.to_string());
+Sources are cited automatically in grounding metadata.
+
+For the user's codebase, use read_file/glob/grep instead."#.to_string());
 
     // 6. Project path
     if let Some(path) = &context.project_path {

@@ -3,7 +3,6 @@
 //! Studio is an orchestrator - it doesn't write code, Claude Code does.
 //! Tools here are read-only file ops + management/intelligence tools:
 //! - File operations (read, glob, grep) - READ ONLY
-//! - Web search/fetch
 //! - Memory (remember, recall)
 //! - Mira power armor (task, goal, correction, store_decision, record_rejected_approach)
 //! - Council (consult other AI models)
@@ -11,6 +10,9 @@
 //!
 //! REMOVED (Claude Code handles these via MCP):
 //! - write_file, edit_file, bash, run_tests, git_commit
+//!
+//! REMOVED (replaced by Gemini built-in tools):
+//! - web_search, web_fetch -> google_search, code_execution, url_context
 
 pub mod build;
 pub mod code_intel;
@@ -27,7 +29,6 @@ mod orchestration;
 pub mod proactive;
 mod tool_defs;
 pub mod types;
-mod web;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -52,8 +53,6 @@ pub fn tool_category(name: &str) -> ToolCategory {
         }
         // Memory operations
         "remember" | "recall" => ToolCategory::Memory,
-        // Web operations
-        "web_search" | "web_fetch" => ToolCategory::Web,
         // Git operations (read-only)
         "git_status" | "git_diff" | "git_log" | "get_recent_commits"
         | "search_commits" | "find_cochange_patterns" => ToolCategory::Git,
@@ -109,16 +108,6 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         "recall" => {
             let query = get_str(args, "query").unwrap_or("");
             format!("Recalling \"{}\"", truncate(query, 40))
-        }
-
-        // Web
-        "web_search" => {
-            let query = get_str(args, "query").unwrap_or("");
-            format!("Searching web: {}", truncate(query, 40))
-        }
-        "web_fetch" => {
-            let url = get_str(args, "url").unwrap_or("");
-            format!("Fetching {}", truncate(url, 50))
         }
 
         // Git (read-only)
@@ -273,8 +262,6 @@ use memory::MemoryTools;
 use mira::MiraTools;
 use orchestration::OrchestrationTools;
 use proactive::ProactiveTools;
-use web::WebTools;
-pub use web::WebSearchConfig;
 
 /// Tool executor handles tool invocation and result formatting
 ///
@@ -293,8 +280,6 @@ pub struct ToolExecutor {
     session: Option<Arc<SessionManager>>,
     /// File content cache for avoiding re-reads
     file_cache: FileCache,
-    /// Web search configuration (Google Custom Search)
-    web_search_config: WebSearchConfig,
 }
 
 impl Default for ToolExecutor {
@@ -313,7 +298,6 @@ impl ToolExecutor {
             db: None,
             session: None,
             file_cache: FileCache::new(),
-            web_search_config: WebSearchConfig::default(),
         }
     }
 
@@ -341,12 +325,6 @@ impl ToolExecutor {
         self
     }
 
-    /// Configure with web search (Google Custom Search)
-    pub fn with_web_search(mut self, config: WebSearchConfig) -> Self {
-        self.web_search_config = config;
-        self
-    }
-
     /// Execute a tool by name with JSON arguments
     ///
     /// NOTE: Orchestrator mode - write/edit/shell/test tools have been removed.
@@ -359,10 +337,6 @@ impl ToolExecutor {
             "read_file" => self.file_tools().read_file(&args).await,
             "glob" => self.file_tools().glob(&args).await,
             "grep" => self.file_tools().grep(&args).await,
-
-            // Web
-            "web_search" => self.web_tools().web_search(&args).await,
-            "web_fetch" => self.web_tools().web_fetch(&args).await,
 
             // Memory
             "remember" => self.memory_tools().remember(&args).await,
@@ -572,10 +546,6 @@ impl ToolExecutor {
             session: &self.session,
             cache: &self.file_cache,
         }
-    }
-
-    fn web_tools(&self) -> WebTools {
-        WebTools::new(self.web_search_config.clone())
     }
 
     fn memory_tools(&self) -> MemoryTools<'_> {

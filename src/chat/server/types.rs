@@ -191,6 +191,23 @@ pub enum ChatEvent {
         previous_response_id: Option<String>,
     },
 
+    /// Google Search grounding metadata (Gemini built-in)
+    #[serde(rename = "grounding")]
+    Grounding {
+        search_queries: Vec<String>,
+        sources: Vec<GroundingSourceInfo>,
+    },
+
+    /// Code execution result (Gemini built-in Python sandbox)
+    #[serde(rename = "code_execution")]
+    CodeExecution {
+        language: String,
+        code: String,
+        output: String,
+        /// "OUTCOME_OK" or "OUTCOME_FAILED"
+        outcome: String,
+    },
+
     /// Stream complete
     #[serde(rename = "done")]
     Done,
@@ -198,6 +215,14 @@ pub enum ChatEvent {
     /// Error
     #[serde(rename = "error")]
     Error { message: String },
+}
+
+/// Source info from Google Search grounding
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroundingSourceInfo {
+    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 // ============================================================================
