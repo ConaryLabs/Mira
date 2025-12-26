@@ -24,6 +24,8 @@
   let hasMoreMessages = $state(false);
   let loadingMore = $state(false);
   let initialLoadComplete = $state(false);
+  let messageQueue = $state<string[]>([]);
+  let isProcessing = $state(false);
 
   // Reference to terminal view for scrolling
   let terminalView: { scrollToBottom: () => void; forceScrollToBottom: () => void };
@@ -136,10 +138,10 @@
     }
   }
 
-  async function sendMessage(content: string) {
-    if (!content || streamState.isLoading) return;
+  function sendMessage(content: string) {
+    if (!content) return;
 
-    // Add user message
+    // Add user message to UI immediately
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -147,8 +149,20 @@
       created_at: Date.now() / 1000,
     };
     messages = [...messages, userMessage];
-
     setTimeout(() => terminalView?.scrollToBottom(), 0);
+
+    // Queue the message for processing
+    messageQueue = [...messageQueue, content];
+    processQueue();
+  }
+
+  async function processQueue() {
+    // Don't start if already processing or queue is empty
+    if (isProcessing || messageQueue.length === 0) return;
+
+    isProcessing = true;
+    const content = messageQueue[0];
+    messageQueue = messageQueue.slice(1);
 
     // Start streaming via state machine
     const messageId = crypto.randomUUID();
@@ -234,7 +248,10 @@
       }
     } finally {
       streamState.reset();
+      isProcessing = false;
       setTimeout(() => terminalView?.scrollToBottom(), 0);
+      // Process next message in queue if any
+      processQueue();
     }
   }
 </script>
@@ -253,9 +270,9 @@
       bind:this={terminalPrompt}
       onSend={sendMessage}
       onCancel={() => streamState.cancelStream()}
-      disabled={streamState.isLoading}
+      disabled={false}
       isStreaming={streamState.isLoading}
-      placeholder={streamState.isLoading ? 'Processing...' : 'Enter command...'}
+      placeholder={messageQueue.length > 0 ? `${messageQueue.length} queued...` : undefined}
     />
   </div>
 </AppShell>
