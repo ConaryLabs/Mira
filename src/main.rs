@@ -287,6 +287,7 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
             sync_token: sync_token.clone(),
             sync_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
             project_locks: Arc::new(chat::server::ProjectLocks::new()),
+            context_caches: Arc::new(chat::server::ContextCaches::new()),
         };
         Some(chat::create_router(chat_state))
     } else {

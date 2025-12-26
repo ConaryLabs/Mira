@@ -28,6 +28,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::chat::provider::CachedContent;
 use crate::core::SemanticSearch;
 
 // ============================================================================
@@ -158,6 +159,78 @@ mod tests {
 pub(crate) use types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResultData, UsageInfo};
 
 // ============================================================================
+// Context Caching
+// ============================================================================
+
+/// Default cache TTL (1 hour)
+const CACHE_TTL_SECONDS: u32 = 3600;
+
+/// Cached context entry for a project
+#[derive(Clone)]
+pub struct ContextCacheEntry {
+    /// The cached content reference from Gemini
+    pub cache: CachedContent,
+    /// Hash of the system prompt used to create this cache
+    /// (if prompt changes, cache is invalidated)
+    pub prompt_hash: u64,
+    /// When the cache was created (for TTL tracking)
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ContextCacheEntry {
+    /// Check if the cache is still valid
+    pub fn is_valid(&self, current_prompt_hash: u64) -> bool {
+        // Check prompt hash matches
+        if self.prompt_hash != current_prompt_hash {
+            return false;
+        }
+
+        // Check TTL (use 90% of TTL to allow refresh buffer)
+        let age = chrono::Utc::now().signed_duration_since(self.created_at);
+        let ttl_90_percent = chrono::Duration::seconds((CACHE_TTL_SECONDS as f64 * 0.9) as i64);
+        age < ttl_90_percent
+    }
+}
+
+/// Manages context caches per project
+#[derive(Default)]
+pub struct ContextCaches {
+    caches: RwLock<HashMap<String, ContextCacheEntry>>,
+}
+
+impl ContextCaches {
+    pub fn new() -> Self {
+        Self {
+            caches: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Get a valid cache for a project if one exists
+    pub async fn get(&self, project_path: &str, prompt_hash: u64) -> Option<ContextCacheEntry> {
+        let caches = self.caches.read().await;
+        caches.get(project_path).and_then(|entry| {
+            if entry.is_valid(prompt_hash) {
+                Some(entry.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Store a cache entry for a project
+    pub async fn set(&self, project_path: &str, entry: ContextCacheEntry) {
+        let mut caches = self.caches.write().await;
+        caches.insert(project_path.to_string(), entry);
+    }
+
+    /// Remove a cache entry for a project
+    pub async fn remove(&self, project_path: &str) {
+        let mut caches = self.caches.write().await;
+        caches.remove(project_path);
+    }
+}
+
+// ============================================================================
 // Server State
 // ============================================================================
 
@@ -170,6 +243,7 @@ pub struct AppState {
     pub sync_token: Option<String>, // Bearer token for /api/chat/sync
     pub sync_semaphore: Arc<tokio::sync::Semaphore>, // Limit concurrent sync requests
     pub project_locks: Arc<ProjectLocks>, // Per-project locking for concurrency safety
+    pub context_caches: Arc<ContextCaches>, // Gemini context caching for cost reduction
 }
 
 // ============================================================================
@@ -232,6 +306,7 @@ pub async fn run(
         sync_token: sync_token.clone(),
         sync_semaphore: Arc::new(tokio::sync::Semaphore::new(SYNC_MAX_CONCURRENT)),
         project_locks: Arc::new(ProjectLocks::new()),
+        context_caches: Arc::new(ContextCaches::new()),
     };
 
     let app = create_router(state);
