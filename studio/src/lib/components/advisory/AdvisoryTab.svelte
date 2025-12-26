@@ -3,15 +3,22 @@
   import type { AdvisorySessionSummary, AdvisorySessionDetail } from '$lib/types/advisory';
   import { formatCost, formatTimestamp } from '$lib/types/advisory';
   import SessionDetail from './SessionDetail.svelte';
+  import DeliberationInput from './DeliberationInput.svelte';
+  import DeliberationTimeline from './DeliberationTimeline.svelte';
 
   // API base - use relative path for same-origin requests
   const API_BASE = '/api/advisory';
+
+  // View modes
+  type ViewMode = 'list' | 'detail' | 'deliberating' | 'new';
 
   let sessions = $state<AdvisorySessionSummary[]>([]);
   let selectedSession = $state<AdvisorySessionDetail | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let loadingDetail = $state(false);
+  let viewMode = $state<ViewMode>('list');
+  let deliberationMessage = $state('');
 
   async function loadSessions() {
     loading = true;
@@ -34,6 +41,7 @@
       const res = await fetch(`${API_BASE}/sessions/${id}`);
       if (!res.ok) throw new Error(`Failed to load session: ${res.status}`);
       selectedSession = await res.json();
+      viewMode = 'detail';
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load session';
     } finally {
@@ -43,6 +51,32 @@
 
   function clearSelection() {
     selectedSession = null;
+    viewMode = 'list';
+  }
+
+  function showNewDeliberation() {
+    viewMode = 'new';
+  }
+
+  function startDeliberation(message: string) {
+    deliberationMessage = message;
+    viewMode = 'deliberating';
+  }
+
+  function handleDeliberationComplete(sessionId: string) {
+    // Refresh sessions and view the completed session
+    loadSessions();
+    selectSession(sessionId);
+  }
+
+  function handleDeliberationError(err: string) {
+    error = err;
+    // Stay in deliberating view to show error
+  }
+
+  function cancelDeliberation() {
+    viewMode = 'list';
+    deliberationMessage = '';
   }
 
   function getStatusColor(status: string): string {
@@ -69,7 +103,7 @@
 </script>
 
 <div class="advisory-tab">
-  {#if selectedSession}
+  {#if viewMode === 'detail' && selectedSession}
     <!-- Session Detail View -->
     <div class="detail-header">
       <button class="back-btn" onclick={clearSelection}>
@@ -81,16 +115,55 @@
       <span class="session-id">{selectedSession.session.id.slice(0, 8)}</span>
     </div>
     <SessionDetail session={selectedSession} />
+
+  {:else if viewMode === 'new'}
+    <!-- New Deliberation View -->
+    <div class="detail-header">
+      <button class="back-btn" onclick={cancelDeliberation}>
+        <svg class="back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Back
+      </button>
+      <span class="header-title">New Council Deliberation</span>
+    </div>
+    <DeliberationInput onSubmit={startDeliberation} />
+
+  {:else if viewMode === 'deliberating'}
+    <!-- Active Deliberation View -->
+    <div class="detail-header">
+      <button class="back-btn" onclick={cancelDeliberation}>
+        <svg class="back-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Cancel
+      </button>
+      <span class="header-title">Council Deliberation</span>
+    </div>
+    <DeliberationTimeline
+      message={deliberationMessage}
+      onComplete={handleDeliberationComplete}
+      onError={handleDeliberationError}
+    />
+
   {:else}
     <!-- Session List View -->
     <div class="list-header">
       <span class="header-title">Advisory Sessions</span>
-      <button class="refresh-btn" onclick={loadSessions} disabled={loading} title="Refresh sessions">
-        <svg class="refresh-icon {loading ? 'spinning' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M23 4v6h-6M1 20v-6h6" />
-          <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-        </svg>
-      </button>
+      <div class="header-actions">
+        <button class="new-btn" onclick={showNewDeliberation} title="New deliberation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          New
+        </button>
+        <button class="refresh-btn" onclick={loadSessions} disabled={loading} title="Refresh sessions">
+          <svg class="refresh-icon {loading ? 'spinning' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6" />
+            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     {#if loading}
@@ -179,7 +252,12 @@
     color: var(--term-text);
   }
 
-  .refresh-btn, .back-btn {
+  .header-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .refresh-btn, .back-btn, .new-btn {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -193,9 +271,23 @@
     transition: all 0.15s ease;
   }
 
-  .refresh-btn:hover, .back-btn:hover {
+  .refresh-btn:hover, .back-btn:hover, .new-btn:hover {
     color: var(--term-accent);
     background: var(--term-bg-secondary);
+  }
+
+  .new-btn {
+    color: var(--term-accent);
+    border: 1px solid var(--term-accent);
+  }
+
+  .new-btn:hover {
+    background: rgba(var(--term-accent-rgb, 100, 149, 237), 0.15);
+  }
+
+  .new-btn svg {
+    width: 14px;
+    height: 14px;
   }
 
   .refresh-icon, .back-icon {

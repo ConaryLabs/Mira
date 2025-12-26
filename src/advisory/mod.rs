@@ -827,8 +827,12 @@ impl AdvisoryService {
             let progress = progress_tx.clone();
 
             async move {
+                let model_str = model.as_str().to_string();
+
                 // Notify that this model started
-                let _ = progress.send(streaming::CouncilProgress::ModelStarted(model)).await;
+                let _ = progress.send(streaming::CouncilProgress::ModelStarted {
+                    model: model_str.clone()
+                }).await;
 
                 // Create a channel for streaming events
                 let (tx, mut rx) = mpsc::channel::<AdvisoryEvent>(100);
@@ -848,12 +852,16 @@ impl AdvisoryService {
 
                 // Forward deltas to progress channel
                 let progress_clone = progress.clone();
+                let model_str_clone = model_str.clone();
                 let forward_handle = tokio::spawn(async move {
                     while let Some(event) = rx.recv().await {
                         match event {
                             AdvisoryEvent::TextDelta(delta) => {
                                 let _ = progress_clone.send(
-                                    streaming::CouncilProgress::ModelDelta { model, delta }
+                                    streaming::CouncilProgress::ModelDelta {
+                                        model: model_str_clone.clone(),
+                                        delta
+                                    }
                                 ).await;
                             }
                             AdvisoryEvent::Done => break,
@@ -871,27 +879,38 @@ impl AdvisoryService {
                 match query_result {
                     Ok(Ok(Ok(text))) => {
                         let _ = progress.send(
-                            streaming::CouncilProgress::ModelCompleted { model, text: text.clone() }
+                            streaming::CouncilProgress::ModelCompleted {
+                                model: model_str.clone(),
+                                text: text.clone()
+                            }
                         ).await;
                         (model, Ok(text))
                     }
                     Ok(Ok(Err(e))) => {
                         let error = format!("{}", e);
                         let _ = progress.send(
-                            streaming::CouncilProgress::ModelError { model, error: error.clone() }
+                            streaming::CouncilProgress::ModelError {
+                                model: model_str.clone(),
+                                error: error.clone()
+                            }
                         ).await;
                         (model, Err(error))
                     }
                     Ok(Err(e)) => {
                         let error = format!("Task panic: {}", e);
                         let _ = progress.send(
-                            streaming::CouncilProgress::ModelError { model, error: error.clone() }
+                            streaming::CouncilProgress::ModelError {
+                                model: model_str.clone(),
+                                error: error.clone()
+                            }
                         ).await;
                         (model, Err(error))
                     }
                     Err(_) => {
                         let _ = progress.send(
-                            streaming::CouncilProgress::ModelTimeout(model)
+                            streaming::CouncilProgress::ModelTimeout {
+                                model: model_str.clone()
+                            }
                         ).await;
                         (model, Err("Timeout".to_string()))
                     }
@@ -916,8 +935,298 @@ impl AdvisoryService {
             }
         }
 
-        // Send final done event
-        let _ = progress_tx.send(streaming::CouncilProgress::Done(result.clone())).await;
+        // Send final done event - convert result to JSON
+        let result_json = serde_json::json!({
+            "responses": result.responses.iter()
+                .map(|(k, v)| (k.as_str(), v.clone()))
+                .collect::<HashMap<&str, String>>(),
+            "timeouts": result.timeouts.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+            "errors": result.errors.iter()
+                .map(|(k, v)| (k.as_str(), v.clone()))
+                .collect::<HashMap<&str, String>>(),
+        });
+        let _ = progress_tx.send(streaming::CouncilProgress::Done { result: result_json }).await;
+
+        Ok(result)
+    }
+
+    /// Multi-round council deliberation with SSE streaming
+    ///
+    /// Like `council_deliberate_with_progress` but sends real-time events
+    /// to a channel for SSE streaming to the frontend.
+    pub async fn council_deliberate_streaming(
+        &self,
+        message: &str,
+        config: Option<DeliberationConfig>,
+        db: &sqlx::SqlitePool,
+        session_id: &str,
+        progress_tx: tokio::sync::mpsc::Sender<streaming::CouncilProgress>,
+    ) -> Result<DeliberatedSynthesis> {
+        use std::time::Duration;
+        use tokio::time::timeout;
+        use session::{DeliberationProgress, update_deliberation_progress, update_topic};
+
+        let config = config.unwrap_or_default();
+        let mut rounds: Vec<DeliberationRound> = Vec::new();
+        let mut previous_responses: HashMap<AdvisoryModel, Vec<String>> = HashMap::new();
+        let mut moderator_analyses: Vec<ModeratorAnalysis> = Vec::new();
+
+        // Initialize progress
+        let mut progress = DeliberationProgress::new(config.max_rounds);
+        let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+        tracing::info!(
+            max_rounds = config.max_rounds,
+            models = ?config.models,
+            session_id = session_id,
+            "Starting streaming council deliberation"
+        );
+
+        for round_num in 1..=config.max_rounds {
+            // Update progress: starting new round
+            progress.start_round(round_num);
+            let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+            // Send SSE event
+            let _ = progress_tx.send(streaming::CouncilProgress::RoundStarted {
+                round: round_num,
+                max_rounds: config.max_rounds,
+            }).await;
+
+            tracing::info!(round = round_num, "Starting deliberation round");
+
+            // Build prompt for this round
+            let prompt = deliberation::build_round_prompt(
+                message,
+                round_num,
+                config.max_rounds,
+                &previous_responses,
+                moderator_analyses.last(),
+            );
+
+            // Query all models in parallel
+            let per_model_timeout = Duration::from_secs(config.per_model_timeout_secs);
+            let mut round_responses: HashMap<AdvisoryModel, String> = HashMap::new();
+            let mut round_errors: Vec<String> = Vec::new();
+
+            let futures: Vec<_> = config.models.iter().filter_map(|model| {
+                self.providers.get(model).map(|provider| {
+                    let provider = provider.clone();
+                    let prompt = prompt.clone();
+                    let model = *model;
+                    let system_prompt = deliberation::build_deliberation_system_prompt(model);
+                    let progress_tx = progress_tx.clone();
+
+                    async move {
+                        let model_str = model.as_str().to_string();
+
+                        // Send model started event
+                        let _ = progress_tx.send(streaming::CouncilProgress::ModelStarted {
+                            model: model_str.clone()
+                        }).await;
+
+                        let result = timeout(
+                            per_model_timeout,
+                            provider.complete(AdvisoryRequest {
+                                message: prompt,
+                                system: Some(system_prompt),
+                                history: vec![],
+                                enable_tools: false,
+                            }),
+                        ).await;
+
+                        match result {
+                            Ok(Ok(response)) => {
+                                let _ = progress_tx.send(streaming::CouncilProgress::ModelCompleted {
+                                    model: model_str,
+                                    text: response.text.clone(),
+                                }).await;
+                                (model, Ok(response.text))
+                            }
+                            Ok(Err(e)) => {
+                                let error = format!("{}", e);
+                                let _ = progress_tx.send(streaming::CouncilProgress::ModelError {
+                                    model: model_str,
+                                    error: error.clone(),
+                                }).await;
+                                (model, Err(error))
+                            }
+                            Err(_) => {
+                                let _ = progress_tx.send(streaming::CouncilProgress::ModelTimeout {
+                                    model: model_str,
+                                }).await;
+                                (model, Err("Timeout".to_string()))
+                            }
+                        }
+                    }
+                })
+            }).collect();
+
+            let results = futures::future::join_all(futures).await;
+
+            for (model, result) in results {
+                match result {
+                    Ok(text) => {
+                        tracing::debug!(model = ?model, "Model responded");
+                        round_responses.insert(model, text.clone());
+                        previous_responses.entry(model).or_default().push(text);
+
+                        // Update progress: model responded
+                        progress.model_responded(model.as_str());
+                        let _ = update_deliberation_progress(db, session_id, &progress).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(model = ?model, error = %e, "Model failed");
+                        round_errors.push(format!("{:?}: {}", model, e));
+                    }
+                }
+            }
+
+            if round_responses.is_empty() {
+                let error = format!("All models failed in round {}: {:?}", round_num, round_errors);
+                progress.fail(error.clone());
+                let _ = update_deliberation_progress(db, session_id, &progress).await;
+                let _ = progress_tx.send(streaming::CouncilProgress::DeliberationFailed {
+                    error: error.clone()
+                }).await;
+                anyhow::bail!(error);
+            }
+
+            // Update progress: round complete, starting moderator analysis
+            progress.round_complete(round_num);
+            let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+            // Send moderator analyzing event
+            let _ = progress_tx.send(streaming::CouncilProgress::ModeratorAnalyzing {
+                round: round_num
+            }).await;
+
+            // Get moderator analysis (skip for final round)
+            let analysis = if round_num < config.max_rounds {
+                if let Some(reasoner) = self.providers.get(&AdvisoryModel::DeepSeekReasoner) {
+                    let moderator_prompt = deliberation::build_moderator_prompt(
+                        message,
+                        round_num,
+                        &round_responses,
+                        &moderator_analyses,
+                    );
+
+                    match reasoner.complete(AdvisoryRequest {
+                        message: moderator_prompt,
+                        system: Some(deliberation::MODERATOR_SYSTEM_PROMPT.to_string()),
+                        history: vec![],
+                        enable_tools: false,
+                    }).await {
+                        Ok(response) => {
+                            match ModeratorAnalysis::parse(&response.text) {
+                                Ok(a) => {
+                                    tracing::info!(
+                                        should_continue = a.should_continue,
+                                        disagreements = a.disagreements.len(),
+                                        resolved = a.resolved_points.len(),
+                                        "Moderator analysis complete"
+                                    );
+
+                                    // Send moderator complete event
+                                    let _ = progress_tx.send(streaming::CouncilProgress::ModeratorComplete {
+                                        round: round_num,
+                                        should_continue: a.should_continue,
+                                        disagreements: a.disagreements.iter().map(|d| d.topic.clone()).collect(),
+                                        focus_questions: a.focus_questions.clone(),
+                                        resolved_points: a.resolved_points.clone(),
+                                    }).await;
+
+                                    Some(a)
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to parse moderator analysis");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Moderator error");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Record this round
+            let now = chrono::Utc::now().timestamp();
+            let round_data = DeliberationRound {
+                round: round_num,
+                responses: round_responses.iter()
+                    .map(|(m, r)| (m.as_str().to_string(), r.clone()))
+                    .collect(),
+                moderator_analysis: analysis.clone(),
+                timestamp: now,
+            };
+            rounds.push(round_data);
+
+            // Check if we should continue
+            if let Some(ref a) = analysis {
+                if !a.should_continue {
+                    tracing::info!(
+                        round = round_num,
+                        reason = ?a.early_exit_reason,
+                        "Early consensus reached"
+                    );
+
+                    // Send early consensus event
+                    let _ = progress_tx.send(streaming::CouncilProgress::EarlyConsensus {
+                        round: round_num,
+                        reason: a.early_exit_reason.clone(),
+                    }).await;
+
+                    moderator_analyses.push(a.clone());
+                    break;
+                }
+                moderator_analyses.push(a.clone());
+            }
+        }
+
+        // Update progress: starting synthesis
+        progress.start_synthesis();
+        let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+        // Send synthesis started event
+        let _ = progress_tx.send(streaming::CouncilProgress::SynthesisStarted).await;
+
+        // Final synthesis with deliberation context
+        let synthesis = self.synthesize_deliberation(message, &rounds).await?;
+        let early_consensus = rounds.len() < config.max_rounds as usize;
+
+        tracing::info!(
+            rounds_completed = rounds.len(),
+            early_consensus = early_consensus,
+            "Deliberation complete"
+        );
+
+        let result = DeliberatedSynthesis {
+            synthesis,
+            rounds_completed: rounds.len() as u8,
+            early_consensus,
+            rounds,
+        };
+
+        // Update progress: complete with result
+        progress.complete(result.to_json());
+        let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+        // Update session topic if synthesis includes one
+        if let Some(title) = result.synthesis.session_title.as_ref() {
+            let _ = update_topic(db, session_id, title).await;
+        }
+
+        // Send deliberation complete event
+        let _ = progress_tx.send(streaming::CouncilProgress::DeliberationComplete {
+            result: result.to_json()
+        }).await;
 
         Ok(result)
     }

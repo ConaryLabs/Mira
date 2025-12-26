@@ -4,18 +4,26 @@
 //! - GET /api/advisory/sessions - List sessions
 //! - GET /api/advisory/sessions/:id - Get session details
 //! - POST /api/advisory/sessions/:id/close - Close/archive a session
+//! - POST /api/advisory/deliberate - SSE streaming deliberation
 
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::Json,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        Json,
+    },
     routing::get,
     Router,
 };
+use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::convert::Infallible;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
+use crate::advisory::{AdvisoryService, streaming::CouncilProgress};
 use crate::server::handlers::advisory;
 
 /// Shared state for advisory routes
@@ -90,6 +98,130 @@ async fn close_session(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string()))))
 }
 
+/// Request for starting a streaming deliberation
+#[derive(Debug, Deserialize)]
+pub struct DeliberateRequest {
+    /// The message/question to deliberate on
+    pub message: String,
+    /// Optional existing session ID (creates new if not provided)
+    pub session_id: Option<String>,
+    /// Optional project ID for the session
+    pub project_id: Option<i64>,
+}
+
+/// SSE streaming deliberation endpoint
+///
+/// Starts a council deliberation and streams progress events in real-time.
+/// Events include: round_started, model_started, model_completed, moderator_analyzing,
+/// moderator_complete, early_consensus, synthesis_started, deliberation_complete
+async fn deliberate_stream(
+    State(state): State<AdvisoryState>,
+    Json(request): Json<DeliberateRequest>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<ErrorResponse>)> {
+    // Create advisory service from environment
+    let service = Arc::new(AdvisoryService::from_env().map_err(|e| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new(format!("Advisory service not configured: {}", e))))
+    })?);
+
+    // Create or get session
+    let session_id = match request.session_id {
+        Some(id) => id,
+        None => {
+            use crate::advisory::session::{create_session, SessionMode, update_status, SessionStatus};
+            let id = create_session(
+                &state.db,
+                request.project_id,
+                SessionMode::Council,
+                None,
+                Some("Advisory council session"),
+            ).await.map_err(|e| {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new(e.to_string())))
+            })?;
+
+            // Mark as deliberating
+            let _ = update_status(&state.db, &id, SessionStatus::Deliberating).await;
+            id
+        }
+    };
+
+    // Create channel for progress events
+    let (tx, rx) = mpsc::channel::<CouncilProgress>(100);
+
+    // Clone what we need for the spawned task
+    let service = service.clone();
+    let db = state.db.clone();
+    let message = request.message.clone();
+    let session_id_clone = session_id.clone();
+
+    // Spawn the deliberation task
+    tokio::spawn(async move {
+        use crate::advisory::session::{update_status, SessionStatus, add_message_with_usage};
+
+        // Store the user message
+        let _ = add_message_with_usage(
+            &db,
+            &session_id_clone,
+            "user",
+            &message,
+            None,
+            None,
+            None,
+        ).await;
+
+        // Run deliberation
+        let result = service.council_deliberate_streaming(
+            &message,
+            None,
+            &db,
+            &session_id_clone,
+            tx,
+        ).await;
+
+        // Update session status based on result
+        match result {
+            Ok(synthesis) => {
+                let _ = update_status(&db, &session_id_clone, SessionStatus::Active).await;
+
+                // Store synthesis as assistant message
+                let synthesis_json = serde_json::to_string(&synthesis.to_json()).ok();
+                let _ = add_message_with_usage(
+                    &db,
+                    &session_id_clone,
+                    "assistant",
+                    &synthesis.synthesis.to_markdown(),
+                    Some("council"),
+                    synthesis_json.as_deref(),
+                    None,
+                ).await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, session_id = %session_id_clone, "Deliberation failed");
+                let _ = update_status(&db, &session_id_clone, SessionStatus::Failed).await;
+            }
+        }
+    });
+
+    // Convert channel to SSE stream
+    let stream = async_stream::stream! {
+        let mut rx = rx;
+
+        // Send initial event with session ID
+        let init_event = serde_json::json!({
+            "type": "session_created",
+            "session_id": session_id,
+        });
+        yield Ok(Event::default().data(serde_json::to_string(&init_event).unwrap_or_default()));
+
+        // Stream progress events
+        while let Some(event) = rx.recv().await {
+            let data = serde_json::to_string(&event).unwrap_or_default();
+            yield Ok(Event::default().data(data));
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
 /// Create advisory router
 pub fn create_router(db: Arc<SqlitePool>) -> Router {
     let state = AdvisoryState { db };
@@ -98,5 +230,6 @@ pub fn create_router(db: Arc<SqlitePool>) -> Router {
         .route("/api/advisory/sessions", get(list_sessions))
         .route("/api/advisory/sessions/{id}", get(get_session))
         .route("/api/advisory/sessions/{id}/close", axum::routing::post(close_session))
+        .route("/api/advisory/deliberate", axum::routing::post(deliberate_stream))
         .with_state(state)
 }

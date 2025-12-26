@@ -106,6 +106,74 @@ export function formatTokens(count: number): string {
   return count.toString();
 }
 
+// === Streaming Deliberation Types ===
+
+// Progress events from SSE stream (matches CouncilProgress in Rust)
+export type CouncilProgressEvent =
+  | { type: 'session_created'; session_id: string }
+  | { type: 'model_started'; model: string }
+  | { type: 'model_delta'; model: string; delta: string }
+  | { type: 'model_completed'; model: string; text: string }
+  | { type: 'model_timeout'; model: string }
+  | { type: 'model_error'; model: string; error: string }
+  | { type: 'synthesis_started' }
+  | { type: 'synthesis_delta'; delta: string }
+  | { type: 'done'; result: unknown }
+  | { type: 'round_started'; round: number; max_rounds: number }
+  | { type: 'moderator_analyzing'; round: number }
+  | { type: 'moderator_complete'; round: number; should_continue: boolean; disagreements: string[]; focus_questions: string[]; resolved_points: string[] }
+  | { type: 'early_consensus'; round: number; reason: string | null }
+  | { type: 'deliberation_complete'; result: unknown }
+  | { type: 'deliberation_failed'; error: string };
+
+// State for tracking streaming deliberation
+export interface DeliberationState {
+  status: 'idle' | 'connecting' | 'streaming' | 'complete' | 'error';
+  sessionId: string | null;
+  currentRound: number;
+  maxRounds: number;
+  events: TimelineEvent[];
+  modelResponses: Map<string, string>;
+  synthesis: string;
+  error: string | null;
+}
+
+// Timeline event for UI display
+export interface TimelineEvent {
+  id: number;
+  type: string;
+  timestamp: Date;
+  model?: string;
+  content?: string;
+  metadata?: Record<string, unknown>;
+}
+
+// Get model display info
+export function getModelInfo(model: string): { name: string; color: string; shortName: string } {
+  const lower = model.toLowerCase();
+  if (lower.includes('gpt') || lower.includes('openai')) {
+    return { name: 'GPT-5.2', color: '#10a37f', shortName: 'GPT' };
+  }
+  if (lower.includes('opus') || lower.includes('claude') || lower.includes('anthropic')) {
+    return { name: 'Opus 4.5', color: '#d4a574', shortName: 'Opus' };
+  }
+  if (lower.includes('gemini') || lower.includes('google')) {
+    return { name: 'Gemini 3 Pro', color: '#4285f4', shortName: 'Gemini' };
+  }
+  if (lower.includes('deepseek')) {
+    return { name: 'DeepSeek V3', color: '#5c6bc0', shortName: 'DS' };
+  }
+  return { name: model, color: 'var(--term-accent)', shortName: model.slice(0, 3) };
+}
+
+// Format duration in seconds
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs.toFixed(0)}s`;
+}
+
 // Format timestamp as relative time or date
 export function formatTimestamp(unixTimestamp: number): string {
   const now = Date.now();

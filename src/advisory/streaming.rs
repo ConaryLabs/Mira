@@ -406,24 +406,46 @@ pub async fn stream_council(
 }
 
 /// Progress update during council streaming
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum CouncilProgress {
+    // === Single-round events ===
     /// A model has started responding
-    ModelStarted(AdvisoryModel),
+    ModelStarted { model: String },
     /// A model sent a text delta
-    ModelDelta { model: AdvisoryModel, delta: String },
+    ModelDelta { model: String, delta: String },
     /// A model completed
-    ModelCompleted { model: AdvisoryModel, text: String },
+    ModelCompleted { model: String, text: String },
     /// A model timed out
-    ModelTimeout(AdvisoryModel),
+    ModelTimeout { model: String },
     /// A model errored
-    ModelError { model: AdvisoryModel, error: String },
+    ModelError { model: String, error: String },
     /// Synthesis has started
     SynthesisStarted,
     /// Synthesis delta
-    SynthesisDelta(String),
-    /// All done
-    Done(StreamingCouncilResult),
+    SynthesisDelta { delta: String },
+    /// All done (single-round)
+    Done { result: serde_json::Value },
+
+    // === Multi-round deliberation events ===
+    /// Deliberation round is starting
+    RoundStarted { round: u8, max_rounds: u8 },
+    /// Round complete, moderator is analyzing
+    ModeratorAnalyzing { round: u8 },
+    /// Moderator analysis complete
+    ModeratorComplete {
+        round: u8,
+        should_continue: bool,
+        disagreements: Vec<String>,
+        focus_questions: Vec<String>,
+        resolved_points: Vec<String>,
+    },
+    /// Early consensus reached
+    EarlyConsensus { round: u8, reason: Option<String> },
+    /// Deliberation complete with full result
+    DeliberationComplete { result: serde_json::Value },
+    /// Deliberation failed
+    DeliberationFailed { error: String },
 }
 
 #[cfg(test)]
