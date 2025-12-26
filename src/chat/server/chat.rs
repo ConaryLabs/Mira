@@ -24,7 +24,7 @@ use crate::chat::{
     session::{Checkpoint, SessionManager},
     tools::{get_tool_definitions, ToolExecutor},
     provider::{
-        GeminiChatProvider, GeminiModel, Provider,
+        CachedContent, GeminiChatProvider, GeminiModel, Provider,
         ChatRequest as ProviderChatRequest,
         StreamEvent as ProviderStreamEvent,
         Message as ProviderMessage,
@@ -33,12 +33,22 @@ use crate::chat::{
         ToolResult as ProviderToolResult,
     },
 };
+use super::{ContextCacheEntry, CACHE_TTL_SECONDS};
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 
 use super::markdown_parser::MarkdownStreamParser;
 use super::routing::RoutingState;
 use super::types::{ChatEvent, ChatRequest, GroundingSourceInfo, MessageBlock, ToolCallResultData};
 use super::AppState;
 use crate::chat::tools::{tool_category, tool_summary};
+
+/// Compute a hash of the system prompt for cache invalidation
+fn hash_prompt(prompt: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    prompt.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Process a chat request through the agentic loop (Gemini Flash/Pro Orchestrator)
 pub async fn process_chat(
@@ -222,11 +232,66 @@ async fn process_gemini_chat(
     // Track tool execution start times for duration calculation
     let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
 
+    // Context caching for cost reduction (~75% savings on cached tokens)
+    let prompt_hash = hash_prompt(&system_prompt);
+    let cached_content: Option<CachedContent> = {
+        // Check if we have a valid cache for this project
+        if let Some(entry) = state.context_caches.get(&request.project_path, prompt_hash).await {
+            tracing::debug!(
+                project = %request.project_path,
+                cached_tokens = entry.cache.token_count,
+                "Using cached context"
+            );
+            Some(entry.cache)
+        } else {
+            // Try to create a cache for future requests (async, don't block)
+            let cache_result = provider.create_cache(&system_prompt, None, CACHE_TTL_SECONDS).await;
+            match cache_result {
+                Ok(Some(cache)) => {
+                    tracing::info!(
+                        project = %request.project_path,
+                        cached_tokens = cache.token_count,
+                        expires = %cache.expire_time,
+                        "Created new context cache"
+                    );
+                    let entry = ContextCacheEntry {
+                        cache: cache.clone(),
+                        prompt_hash,
+                        created_at: chrono::Utc::now(),
+                    };
+                    state.context_caches.set(&request.project_path, entry).await;
+                    Some(cache)
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        project = %request.project_path,
+                        "System prompt too small for caching"
+                    );
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        project = %request.project_path,
+                        error = %e,
+                        "Failed to create context cache, proceeding without"
+                    );
+                    None
+                }
+            }
+        }
+    };
+
     // First request (using current model from routing - starts as Flash)
+    // Use cached context if available for cost savings
     let initial_request = ProviderChatRequest::new(routing.model().model_id(), &system_prompt, &request.message)
         .with_messages(conversation_messages.clone())
         .with_tools(tools.clone());
-    let mut rx = provider.create_stream(initial_request).await?;
+
+    let mut rx = if let Some(ref cache) = cached_content {
+        provider.create_stream_with_cache(cache, initial_request).await?
+    } else {
+        provider.create_stream(initial_request).await?
+    };
 
     // Track tool names completed in each iteration for escalation decisions
     let mut iteration_tool_names: Vec<String> = Vec::new();
