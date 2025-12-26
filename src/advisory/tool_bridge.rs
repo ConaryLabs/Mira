@@ -14,7 +14,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use sqlx::SqlitePool;
 
 use crate::core::primitives::semantic::SemanticSearch;
@@ -379,6 +379,18 @@ impl Default for ToolBudget {
     }
 }
 
+impl ToolBudget {
+    /// Budget settings for council deliberation
+    /// Higher limits to allow all 3 models × up to 4 rounds
+    pub fn for_deliberation() -> Self {
+        Self {
+            per_call_limit: 3,        // 3 tools per model per round
+            per_session_limit: 24,    // 24 total (3 models × 4 rounds × 2 avg)
+            query_cooldown_turns: 1,  // Minimal cooldown for parallel execution
+        }
+    }
+}
+
 /// Tracks tool usage within a session
 #[derive(Debug, Clone, Default)]
 pub struct ToolUsageTracker {
@@ -475,6 +487,82 @@ impl ToolContext {
             tracker: self.tracker.clone(),
             advisory_depth: self.advisory_depth + 1,
         }
+    }
+}
+
+// ============================================================================
+// Shared Tool Budget (for multi-model deliberation)
+// ============================================================================
+
+/// Shared budget for coordinating tool usage across multiple models
+/// Used in council deliberation where 3 models run in parallel
+pub struct SharedToolBudget {
+    pub budget: ToolBudget,
+    tracker: Arc<Mutex<ToolUsageTracker>>,
+    db: Arc<SqlitePool>,
+    semantic: Arc<SemanticSearch>,
+    project_id: Option<i64>,
+}
+
+impl SharedToolBudget {
+    /// Create a new shared budget for deliberation
+    pub fn new(
+        db: Arc<SqlitePool>,
+        semantic: Arc<SemanticSearch>,
+        project_id: Option<i64>,
+        budget: ToolBudget,
+    ) -> Self {
+        Self {
+            budget,
+            tracker: Arc::new(Mutex::new(ToolUsageTracker::new())),
+            db,
+            semantic,
+            project_id,
+        }
+    }
+
+    /// Create a ToolContext for one model that shares the budget tracker
+    pub fn model_context(&self) -> ToolContext {
+        let tracker = self.tracker.lock()
+            .map(|t| t.clone())
+            .unwrap_or_default();
+
+        ToolContext {
+            db: self.db.clone(),
+            semantic: self.semantic.clone(),
+            project_id: self.project_id,
+            budget: self.budget.clone(),
+            tracker,
+            advisory_depth: 0,
+        }
+    }
+
+    /// Merge usage from a completed model context back into shared tracker
+    pub fn merge_usage(&self, ctx: &ToolContext) {
+        if let Ok(mut tracker) = self.tracker.lock() {
+            // Take the max of session_total to avoid double-counting
+            // (each model's context started from a snapshot)
+            tracker.session_total = tracker.session_total.max(ctx.tracker.session_total);
+
+            // Merge recent queries (dedupe by fingerprint)
+            for (query, turn) in &ctx.tracker.recent_queries {
+                if !tracker.recent_queries.iter().any(|(q, _)| q == query) {
+                    tracker.recent_queries.push((query.clone(), *turn));
+                }
+            }
+
+            // Keep tracker tidy
+            if tracker.recent_queries.len() > 30 {
+                tracker.recent_queries.drain(0..10);
+            }
+        }
+    }
+
+    /// Get current session total across all models
+    pub fn session_total(&self) -> usize {
+        self.tracker.lock()
+            .map(|t| t.session_total)
+            .unwrap_or(0)
     }
 }
 

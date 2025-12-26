@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::providers::AdvisoryModel;
 use super::synthesis::CouncilSynthesis;
+use super::tool_bridge::ToolBudget;
 
 // ============================================================================
 // Configuration
@@ -26,6 +27,10 @@ pub struct DeliberationConfig {
     pub models: Vec<AdvisoryModel>,
     /// Per-model timeout in seconds
     pub per_model_timeout_secs: u64,
+    /// Enable tool calling for council models (default: true)
+    pub enable_tools: bool,
+    /// Tool budget for deliberation (default: for_deliberation preset)
+    pub tool_budget: ToolBudget,
 }
 
 impl Default for DeliberationConfig {
@@ -38,6 +43,8 @@ impl Default for DeliberationConfig {
                 AdvisoryModel::Opus45,
             ],
             per_model_timeout_secs: 60,
+            enable_tools: true,
+            tool_budget: ToolBudget::for_deliberation(),
         }
     }
 }
@@ -45,6 +52,17 @@ impl Default for DeliberationConfig {
 // ============================================================================
 // Round Data
 // ============================================================================
+
+/// Record of a tool call made during deliberation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallRecord {
+    /// Name of the tool called
+    pub tool_name: String,
+    /// Brief summary of the query/arguments
+    pub query_summary: String,
+    /// Whether the call succeeded
+    pub success: bool,
+}
 
 /// A single round of deliberation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +75,9 @@ pub struct DeliberationRound {
     pub moderator_analysis: Option<ModeratorAnalysis>,
     /// Timestamp
     pub timestamp: i64,
+    /// Tool usage per model (model name -> list of tool calls)
+    #[serde(default)]
+    pub tool_usage: HashMap<String, Vec<ToolCallRecord>>,
 }
 
 /// DeepSeek's analysis between rounds

@@ -426,7 +426,7 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
     }
 
     // Add advisory REST routes
-    let advisory_router = chat::server::advisory::create_router(db.clone());
+    let advisory_router = chat::server::advisory::create_router(db.clone(), semantic.clone());
     base_router = base_router.merge(advisory_router);
 
     // Add MCP routes with auth
