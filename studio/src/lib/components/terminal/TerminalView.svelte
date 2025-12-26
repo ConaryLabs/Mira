@@ -127,12 +127,12 @@
                   blockId={`${message.id}-${blockIndex}`}
                 />
               {/each}
-              <!-- Usage stats -->
+              <!-- Usage stats (hover to reveal) -->
               {#if message.usage}
               {@const cachePct = message.usage.input_tokens > 0
                 ? Math.round((message.usage.cached_tokens / message.usage.input_tokens) * 100)
                 : 0}
-              <div class="mt-2 text-xs text-[var(--term-text-dim)] font-mono">
+              <div class="usage-stats mt-2 text-xs text-[var(--term-text-dim)] font-mono">
                 <span title="Input tokens">↓{formatTokens(message.usage.input_tokens)}</span>
                 <span class="ml-2" title="Output tokens">↑{formatTokens(message.usage.output_tokens)}</span>
                 {#if message.usage.reasoning_tokens > 0}
@@ -243,6 +243,17 @@
 
   .terminal-message:hover .message-timestamp,
   .group:hover .message-timestamp {
+    opacity: 1;
+  }
+
+  /* Usage stats - hidden by default, shown on hover */
+  .usage-stats {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  .terminal-message:hover .usage-stats,
+  .group:hover .usage-stats {
     opacity: 1;
   }
 
