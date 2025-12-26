@@ -415,7 +415,12 @@ pub enum CouncilProgress {
     /// A model sent a text delta
     ModelDelta { model: String, delta: String },
     /// A model completed
-    ModelCompleted { model: String, text: String },
+    ModelCompleted {
+        model: String,
+        text: String,
+        /// Reasoning snippet (first ~500 chars) for UI timeline
+        reasoning_snippet: Option<String>,
+    },
     /// A model timed out
     ModelTimeout { model: String },
     /// A model errored

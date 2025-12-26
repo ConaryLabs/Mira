@@ -307,6 +307,7 @@ impl GeminiProvider {
                 usage,
                 model: AdvisoryModel::Gemini3Pro,
                 tool_calls,
+                reasoning: None,
             },
             raw_parts,
         ))
@@ -423,6 +424,7 @@ impl AdvisoryProvider for GeminiProvider {
             usage,
             model: AdvisoryModel::Gemini3Pro,
             tool_calls,
+            reasoning: None,
         })
     }
 

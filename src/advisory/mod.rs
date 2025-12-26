@@ -50,6 +50,21 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Truncate a string to a maximum length, ending at word boundary with ellipsis
+fn truncate_to_snippet(s: &str, max_chars: usize) -> String {
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
+
+    // Find a good break point (space, newline) before max_chars
+    let truncated = &s[..max_chars];
+    if let Some(pos) = truncated.rfind(|c: char| c.is_whitespace()) {
+        format!("{}…", &s[..pos].trim())
+    } else {
+        format!("{}…", truncated)
+    }
+}
+
 /// Main advisory service - entry point for all advisory functionality
 pub struct AdvisoryService {
     providers: HashMap<AdvisoryModel, Arc<dyn AdvisoryProvider>>,
@@ -881,7 +896,8 @@ impl AdvisoryService {
                         let _ = progress.send(
                             streaming::CouncilProgress::ModelCompleted {
                                 model: model_str.clone(),
-                                text: text.clone()
+                                text: text.clone(),
+                                reasoning_snippet: None, // Streaming mode - reasoning captured via ReasoningDelta
                             }
                         ).await;
                         (model, Ok(text))
@@ -1037,9 +1053,15 @@ impl AdvisoryService {
 
                         match result {
                             Ok(Ok(response)) => {
+                                // Extract reasoning snippet: use reasoning if available, otherwise first ~500 chars of response
+                                let reasoning_snippet = response.reasoning.as_ref()
+                                    .map(|r| truncate_to_snippet(r, 500))
+                                    .or_else(|| Some(truncate_to_snippet(&response.text, 500)));
+
                                 let _ = progress_tx.send(streaming::CouncilProgress::ModelCompleted {
                                     model: model_str,
                                     text: response.text.clone(),
+                                    reasoning_snippet,
                                 }).await;
                                 (model, Ok(response.text))
                             }

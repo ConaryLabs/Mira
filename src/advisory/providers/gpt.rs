@@ -268,6 +268,7 @@ impl GptProvider {
             usage,
             model: AdvisoryModel::Gpt52,
             tool_calls,
+            reasoning: None, // GPT doesn't expose reasoning separately
         })
     }
 }
@@ -407,6 +408,7 @@ impl AdvisoryProvider for GptProvider {
             usage,
             model: AdvisoryModel::Gpt52,
             tool_calls,
+            reasoning: None,
         })
     }
 

@@ -452,6 +452,7 @@ impl OpusProvider {
                 usage,
                 model: AdvisoryModel::Opus45,
                 tool_calls,
+                reasoning: None, // Opus thinking blocks are internal, not exposed here
             },
             raw_blocks,
         ))
@@ -584,6 +585,7 @@ impl AdvisoryProvider for OpusProvider {
             usage,
             model: AdvisoryModel::Opus45,
             tool_calls,
+            reasoning: None,
         })
     }
 
