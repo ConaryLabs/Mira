@@ -22,6 +22,7 @@ use tracing::info;
 
 use crate::tools::*;
 use crate::context::{ContextCarousel, CarouselTrigger};
+use crate::orchestrator::GeminiOrchestrator;
 
 // Re-export database utilities
 pub use db::{create_optimized_pool, run_migrations};
@@ -58,6 +59,7 @@ pub struct ProjectContext {
 pub struct MiraServer {
     pub db: Arc<SqlitePool>,
     pub semantic: Arc<SemanticSearch>,
+    pub orchestrator: Arc<RwLock<Option<GeminiOrchestrator>>>,
     pub tool_router: ToolRouter<Self>,
     pub active_project: Arc<RwLock<Option<ProjectContext>>>,
     pub carousel: Arc<RwLock<Option<ContextCarousel>>>,
@@ -69,16 +71,34 @@ impl MiraServer {
         let db = create_optimized_pool(database_url).await?;
         info!("Database connected successfully");
 
-        let semantic = SemanticSearch::new(qdrant_url, gemini_key).await;
+        let semantic = SemanticSearch::new(qdrant_url, gemini_key.clone()).await;
         if semantic.is_available() {
             info!("Semantic search enabled (Qdrant + Gemini)");
         } else {
             info!("Semantic search disabled (using text-based fallback)");
         }
 
+        // Initialize orchestrator if Gemini key is available
+        let orchestrator = if let Some(key) = gemini_key {
+            match GeminiOrchestrator::new(db.clone(), key).await {
+                Ok(orch) => {
+                    info!("Gemini orchestrator enabled");
+                    Some(orch)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize orchestrator: {}", e);
+                    None
+                }
+            }
+        } else {
+            info!("Gemini orchestrator disabled (no API key)");
+            None
+        };
+
         Ok(Self {
             db: Arc::new(db),
             semantic: Arc::new(semantic),
+            orchestrator: Arc::new(RwLock::new(orchestrator)),
             tool_router: Self::tool_router(),
             active_project: Arc::new(RwLock::new(None)),
             carousel: Arc::new(RwLock::new(None)),
@@ -123,6 +143,26 @@ impl MiraServer {
     ) -> Option<String> {
         let project_id = self.get_active_project().await.map(|p| p.id);
 
+        // Use orchestrator for intelligent routing if available
+        let mut all_triggers = triggers.to_vec();
+        if let Some(query_text) = query {
+            if let Some(orchestrator) = self.orchestrator.read().await.as_ref() {
+                let routing = orchestrator.route(query_text).await;
+                if routing.confidence >= 0.7 {
+                    // Convert routing decision to carousel trigger
+                    let trigger = CarouselTrigger::SemanticMatch(routing.primary, routing.confidence);
+                    all_triggers.push(trigger);
+                    tracing::debug!(
+                        "[ORCHESTRATOR] Routed query to {:?} (confidence={:.2}, source={:?}, {}ms)",
+                        routing.primary,
+                        routing.confidence,
+                        routing.source,
+                        routing.latency_ms
+                    );
+                }
+            }
+        }
+
         // Initialize or get carousel
         let mut carousel_guard = self.carousel.write().await;
         let carousel = match carousel_guard.as_mut() {
@@ -155,7 +195,9 @@ impl MiraServer {
         }
 
         // 3. Tick carousel with context (enables semantic interrupts)
-        match carousel.tick_with_context(triggers, query).await {
+        // Note: If orchestrator provided a trigger, carousel will still run its own
+        // detection as fallback, but orchestrator takes precedence via all_triggers
+        match carousel.tick_with_context(&all_triggers, query).await {
             Ok((decision, _categories)) => {
                 // Log semantic interrupt if it happened
                 if !decision.triggers.is_empty() {
@@ -194,6 +236,46 @@ impl MiraServer {
         match analytics::query(self.db.as_ref(), req).await {
             Ok(result) => Ok(json_response(result)),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
+        }
+    }
+
+    #[tool(description = "Check debounce state. Returns {\"proceed\": true} if action should run, false if debounced.")]
+    async fn debounce(&self, Parameters(req): Parameters<DebounceRequest>) -> Result<CallToolResult, McpError> {
+        // Use orchestrator if available, otherwise use direct DB
+        if let Some(orchestrator) = self.orchestrator.read().await.as_ref() {
+            let proceed = orchestrator.check_debounce(&req.key, req.ttl_secs).await;
+            Ok(json_response(serde_json::json!({ "proceed": proceed })))
+        } else {
+            // Fallback: direct SQLite check
+            let now = chrono::Utc::now().timestamp();
+            let result = sqlx::query_as::<_, (i64,)>(
+                "SELECT last_triggered FROM debounce_state WHERE key = $1"
+            )
+            .bind(&req.key)
+            .fetch_optional(self.db.as_ref())
+            .await
+            .map_err(|e| to_mcp_err(anyhow::anyhow!(e)))?;
+
+            let proceed = match result {
+                Some((last_triggered,)) => now - last_triggered >= req.ttl_secs as i64,
+                None => true,
+            };
+
+            if proceed {
+                let _ = sqlx::query(
+                    "INSERT INTO debounce_state (key, last_triggered, trigger_count)
+                     VALUES ($1, $2, 1)
+                     ON CONFLICT(key) DO UPDATE SET
+                         last_triggered = excluded.last_triggered,
+                         trigger_count = trigger_count + 1"
+                )
+                .bind(&req.key)
+                .bind(now)
+                .execute(self.db.as_ref())
+                .await;
+            }
+
+            Ok(json_response(serde_json::json!({ "proceed": proceed })))
         }
     }
 

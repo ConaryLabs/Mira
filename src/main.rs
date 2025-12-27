@@ -33,6 +33,7 @@ mod core;
 mod tools;
 mod indexer;
 mod hooks;
+mod orchestrator;
 mod server;
 mod daemon;
 mod connect;
@@ -255,17 +256,36 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         run_migrations(&db, &migrations_path).await?;
     }
 
-    let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key).await);
+    let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key.clone()).await);
+
+    // Initialize orchestrator if Gemini key is available
+    let orchestrator: Arc<RwLock<Option<orchestrator::GeminiOrchestrator>>> = if let Some(key) = gemini_key {
+        match orchestrator::GeminiOrchestrator::new((*db).clone(), key).await {
+            Ok(orch) => {
+                info!("Gemini orchestrator enabled");
+                Arc::new(RwLock::new(Some(orch)))
+            }
+            Err(e) => {
+                warn!("Failed to initialize orchestrator: {}", e);
+                Arc::new(RwLock::new(None))
+            }
+        }
+    } else {
+        info!("Gemini orchestrator disabled (no API key)");
+        Arc::new(RwLock::new(None))
+    };
 
     // Create the MCP service with StreamableHttpService
     let mcp_service = StreamableHttpService::new(
         {
             let db = db.clone();
             let semantic = semantic.clone();
+            let orchestrator = orchestrator.clone();
             move || {
                 Ok(MiraServer {
                     db: db.clone(),
                     semantic: semantic.clone(),
+                    orchestrator: orchestrator.clone(),
                     tool_router: MiraServer::get_tool_router(),
                     active_project: Arc::new(RwLock::new(None)),
                     carousel: Arc::new(RwLock::new(None)),

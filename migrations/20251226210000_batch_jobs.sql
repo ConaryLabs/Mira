@@ -5,7 +5,7 @@
 -- - Document summarization
 -- - Codebase analysis
 
-CREATE TABLE batch_jobs (
+CREATE TABLE IF NOT EXISTS batch_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     -- Optional project association
     project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
@@ -33,13 +33,13 @@ CREATE TABLE batch_jobs (
     metadata TEXT
 );
 
-CREATE INDEX idx_batch_jobs_status ON batch_jobs(status);
-CREATE INDEX idx_batch_jobs_project ON batch_jobs(project_id);
-CREATE INDEX idx_batch_jobs_type ON batch_jobs(job_type);
-CREATE INDEX idx_batch_jobs_gemini ON batch_jobs(gemini_batch_name);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_project ON batch_jobs(project_id);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_type ON batch_jobs(job_type);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_gemini ON batch_jobs(gemini_batch_name);
 
 -- Individual requests within a batch (for tracking per-request results)
-CREATE TABLE batch_requests (
+CREATE TABLE IF NOT EXISTS batch_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
     -- Request key for correlation
@@ -58,5 +58,5 @@ CREATE TABLE batch_requests (
     UNIQUE(job_id, request_key)
 );
 
-CREATE INDEX idx_batch_requests_job ON batch_requests(job_id);
-CREATE INDEX idx_batch_requests_status ON batch_requests(status);
+CREATE INDEX IF NOT EXISTS idx_batch_requests_job ON batch_requests(job_id);
+CREATE INDEX IF NOT EXISTS idx_batch_requests_status ON batch_requests(status);
