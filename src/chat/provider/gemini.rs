@@ -209,9 +209,12 @@ impl GeminiChatProvider {
                 parts.push(GeminiPart::FunctionCall {
                     function_call: GeminiFunctionCall {
                         name: result.name.clone(),
-                        args: serde_json::from_str(&result.output)
-                            .unwrap_or(Value::Object(Default::default())),
+                        // Note: We use empty args here since we don't store original args
+                        // Gemini API accepts this for tool result continuation
+                        args: Value::Object(Default::default()),
                     },
+                    // Include thought_signature if available (required for Gemini 2.5+)
+                    thought_signature: result.thought_signature.clone(),
                 });
             }
             contents.push(GeminiContent {
@@ -244,27 +247,16 @@ impl GeminiChatProvider {
     }
 
     /// Build tools with optional FileSearch stores for RAG
+    ///
+    /// IMPORTANT: Gemini 3 does NOT support combining built-in tools (google_search,
+    /// code_execution, url_context) with custom function declarations. We must choose:
+    /// - Custom functions (Mira tools) when tools are provided
+    /// - Built-in tools only when no custom tools are needed
     fn build_tools_with_stores(tools: &[ToolDefinition], file_search_stores: &[String]) -> Option<Vec<GeminiToolEntry>> {
-        // Always include built-in tools for enhanced capabilities
-        let mut entries = vec![
-            // Google Search grounding (FREE until Jan 2026)
-            GeminiToolEntry::GoogleSearch { google_search: EmptyObject {} },
-            // Code execution (Python sandbox for data analysis)
-            GeminiToolEntry::CodeExecution { code_execution: EmptyObject {} },
-            // URL context (native web fetching)
-            GeminiToolEntry::UrlContext { url_context: EmptyObject {} },
-        ];
-
-        // Add FileSearch stores if any (per-project RAG)
-        if !file_search_stores.is_empty() {
-            entries.push(GeminiToolEntry::FileSearch {
-                file_search: FileSearchConfig {
-                    file_search_store_names: file_search_stores.to_vec(),
-                },
-            });
-        }
+        let mut entries = Vec::new();
 
         // Add custom function declarations if any
+        // When using custom tools, we CANNOT use built-in tools (Gemini 3 limitation)
         if !tools.is_empty() {
             let declarations: Vec<GeminiFunctionDeclaration> = tools
                 .iter()
@@ -275,9 +267,35 @@ impl GeminiChatProvider {
                 })
                 .collect();
             entries.push(GeminiToolEntry::Functions { function_declarations: declarations });
+
+            // FileSearch can work with custom functions
+            if !file_search_stores.is_empty() {
+                entries.push(GeminiToolEntry::FileSearch {
+                    file_search: FileSearchConfig {
+                        file_search_store_names: file_search_stores.to_vec(),
+                    },
+                });
+            }
+        } else {
+            // No custom functions - we can use all built-in tools
+            entries.push(GeminiToolEntry::GoogleSearch { google_search: EmptyObject {} });
+            entries.push(GeminiToolEntry::CodeExecution { code_execution: EmptyObject {} });
+            entries.push(GeminiToolEntry::UrlContext { url_context: EmptyObject {} });
+
+            if !file_search_stores.is_empty() {
+                entries.push(GeminiToolEntry::FileSearch {
+                    file_search: FileSearchConfig {
+                        file_search_store_names: file_search_stores.to_vec(),
+                    },
+                });
+            }
         }
 
-        Some(entries)
+        if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        }
     }
 
     /// Process streaming response data and send events
@@ -302,6 +320,7 @@ impl GeminiChatProvider {
                         let _ = tx.send(StreamEvent::FunctionCallStart {
                             call_id: call_id.clone(),
                             name: fc.name.clone(),
+                            thought_signature: part.thought_signature.clone(),
                         }).await;
                         let _ = tx.send(StreamEvent::FunctionCallDelta {
                             call_id: call_id.clone(),
@@ -435,6 +454,7 @@ impl GeminiChatProvider {
                             call_id: format!("gemini_{}", tool_calls.len()),
                             name: fc.name,
                             arguments: fc.args.to_string(),
+                            thought_signature: part.thought_signature.clone(),
                         });
                     }
                 }
@@ -653,6 +673,7 @@ impl GeminiChatProvider {
                                                             let _ = tx.send(StreamEvent::FunctionCallStart {
                                                                 call_id: call_id.clone(),
                                                                 name: fc.name.clone(),
+                                                                thought_signature: part.thought_signature.clone(),
                                                             }).await;
                                                             let _ = tx.send(StreamEvent::FunctionCallDelta {
                                                                 call_id: call_id.clone(),
@@ -1055,6 +1076,9 @@ enum GeminiPart {
     FunctionCall {
         #[serde(rename = "functionCall")]
         function_call: GeminiFunctionCall,
+        /// Thought signature for Gemini 2.5+ multi-turn tool use
+        #[serde(rename = "thoughtSignature", skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     FunctionResponse {
         #[serde(rename = "functionResponse")]
@@ -1198,6 +1222,9 @@ struct GeminiPartResponse {
     text: Option<String>,
     #[serde(rename = "functionCall")]
     function_call: Option<GeminiFunctionCallResponse>,
+    /// Thought signature for Gemini 2.5+ multi-turn tool use
+    #[serde(rename = "thoughtSignature")]
+    thought_signature: Option<String>,
     /// Code execution: generated Python code
     #[serde(rename = "executableCode")]
     executable_code: Option<GeminiExecutableCode>,

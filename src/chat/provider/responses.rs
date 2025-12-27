@@ -164,7 +164,7 @@ pub enum StreamEvent {
     /// Text delta - print this immediately
     TextDelta(String),
     /// Function call started
-    FunctionCallStart { name: String, call_id: String },
+    FunctionCallStart { name: String, call_id: String, thought_signature: Option<String> },
     /// Function call arguments delta
     FunctionCallDelta { call_id: String, arguments_delta: String },
     /// Function call completed
@@ -540,7 +540,7 @@ fn parse_sse_event(
 
                 function_calls.insert(call_id.clone(), (name.clone(), String::new()));
 
-                Some(StreamEvent::FunctionCallStart { name, call_id })
+                Some(StreamEvent::FunctionCallStart { name, call_id, thought_signature: None })
             } else {
                 None
             }

@@ -376,6 +376,7 @@ impl DeepSeekProvider {
                                     .send(StreamEvent::FunctionCallStart {
                                         call_id: call.id.clone(),
                                         name: call.name.clone(),
+                                        thought_signature: None,
                                     })
                                     .await;
                             }
@@ -504,6 +505,7 @@ impl Provider for DeepSeekProvider {
                         call_id: tc.id.clone(),
                         name: tc.function.name.clone(),
                         arguments: tc.function.arguments.clone(),
+                        thought_signature: None,
                     })
                     .collect()
             })

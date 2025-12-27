@@ -325,7 +325,8 @@ async fn process_gemini_chat(
 
     for iteration in 0..10 {
 
-        let mut pending_calls: HashMap<String, (String, String)> = HashMap::new();
+        // (name, args, thought_signature)
+        let mut pending_calls: HashMap<String, (String, String, Option<String>)> = HashMap::new();
         let mut iteration_tool_results: Vec<ProviderToolResult> = Vec::new();
         let mut iteration_text = String::new();
 
@@ -345,8 +346,8 @@ async fn process_gemini_chat(
                     // Stream reasoning content to frontend (displayed collapsed)
                     tx.send(ChatEvent::ReasoningDelta { delta }).await?;
                 }
-                ProviderStreamEvent::FunctionCallStart { call_id, name } => {
-                    pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
+                ProviderStreamEvent::FunctionCallStart { call_id, name, thought_signature } => {
+                    pending_calls.insert(call_id.clone(), (name.clone(), String::new(), thought_signature.clone()));
                     tool_start_times.insert(call_id.clone(), std::time::Instant::now());
                     seq += 1;
                     tx.send(ChatEvent::ToolCallStart {
@@ -358,15 +359,16 @@ async fn process_gemini_chat(
                         ts_ms: chrono::Utc::now().timestamp_millis() as u64,
                         summary: tool_summary(&name, &json!({})),
                         category: tool_category(&name),
+                        thought_signature,
                     }).await?;
                 }
                 ProviderStreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
-                    if let Some((_, args)) = pending_calls.get_mut(&call_id) {
+                    if let Some((_, args, _)) = pending_calls.get_mut(&call_id) {
                         args.push_str(&arguments_delta);
                     }
                 }
                 ProviderStreamEvent::FunctionCallEnd { call_id } => {
-                    if let Some((name, args)) = pending_calls.remove(&call_id) {
+                    if let Some((name, args, thought_signature)) = pending_calls.remove(&call_id) {
                         // Parse and validate/repair args before execution
                         let args_value = match repair_json(&args) {
                             Ok(v) => v,
@@ -432,6 +434,7 @@ async fn process_gemini_chat(
                             call_id: call_id.clone(),
                             name: name.clone(),
                             output: output.clone(),
+                            thought_signature,
                         });
 
                         // Track tool name for escalation decisions
@@ -623,8 +626,8 @@ async fn process_gemini_chat(
                     // Stream reasoning content to frontend (displayed collapsed)
                     tx.send(ChatEvent::ReasoningDelta { delta }).await?;
                 }
-                ProviderStreamEvent::FunctionCallStart { call_id, name } => {
-                    pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
+                ProviderStreamEvent::FunctionCallStart { call_id, name, thought_signature } => {
+                    pending_calls.insert(call_id.clone(), (name.clone(), String::new(), thought_signature.clone()));
                     tool_start_times.insert(call_id.clone(), std::time::Instant::now());
                     seq += 1;
                     tx.send(ChatEvent::ToolCallStart {
@@ -636,15 +639,16 @@ async fn process_gemini_chat(
                         ts_ms: chrono::Utc::now().timestamp_millis() as u64,
                         summary: tool_summary(&name, &json!({})),
                         category: tool_category(&name),
+                        thought_signature,
                     }).await?;
                 }
                 ProviderStreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
-                    if let Some((_, args)) = pending_calls.get_mut(&call_id) {
+                    if let Some((_, args, _)) = pending_calls.get_mut(&call_id) {
                         args.push_str(&arguments_delta);
                     }
                 }
                 ProviderStreamEvent::FunctionCallEnd { call_id } => {
-                    if let Some((name, args)) = pending_calls.remove(&call_id) {
+                    if let Some((name, args, thought_signature)) = pending_calls.remove(&call_id) {
                         // Parse and validate/repair args before execution
                         let args_value = match repair_json(&args) {
                             Ok(v) => v,
@@ -705,6 +709,7 @@ async fn process_gemini_chat(
                             call_id: call_id.clone(),
                             name: name.clone(),
                             output: output.clone(),
+                            thought_signature,
                         });
 
                         // Track tool name for escalation decisions

@@ -150,6 +150,9 @@ pub struct ToolResult {
     pub call_id: String,
     pub name: String,
     pub output: String,
+    /// Thought signature for Gemini 2.5+ multi-turn tool use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// Streaming event from provider
@@ -165,6 +168,8 @@ pub enum StreamEvent {
     FunctionCallStart {
         call_id: String,
         name: String,
+        /// Thought signature for Gemini 2.5+ multi-turn tool use
+        thought_signature: Option<String>,
     },
 
     /// Function call arguments delta
@@ -252,6 +257,9 @@ pub struct ToolCall {
     pub call_id: String,
     pub name: String,
     pub arguments: String,
+    /// Thought signature for Gemini 2.5+ multi-turn tool use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// Token usage information
