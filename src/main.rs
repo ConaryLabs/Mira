@@ -341,7 +341,7 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         project_paths,
         (*db).clone(),
         semantic.clone(),
-    );
+    ).with_orchestrator(orchestrator.clone());
     let _daemon_tasks = match daemon.spawn_background_tasks().await {
         Ok(tasks) => Some(tasks),
         Err(e) => {

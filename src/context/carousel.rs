@@ -69,6 +69,20 @@ impl ContextCategory {
         }
     }
 
+    /// Short string identifier for database storage
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Goals => "goals",
+            Self::Decisions => "decisions",
+            Self::Memories => "memories",
+            Self::GitActivity => "git_activity",
+            Self::CodeContext => "code_context",
+            Self::SystemStatus => "system_status",
+            Self::RecentErrors => "recent_errors",
+            Self::UserPatterns => "user_patterns",
+        }
+    }
+
     /// Keywords that trigger this category via semantic interrupt
     pub fn trigger_keywords(&self) -> &'static [&'static str] {
         match self {

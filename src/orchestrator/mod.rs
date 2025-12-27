@@ -9,8 +9,10 @@
 //! Hybrid approach: inline for fast routing (<500ms), background for heavy lifting.
 
 mod types;
+mod worker;
 
 pub use types::*;
+pub use worker::OrchestratorWorker;
 
 use anyhow::Result;
 use chrono::Utc;

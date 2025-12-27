@@ -7,9 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
 use sqlx::sqlite::SqlitePool;
+use tokio::sync::RwLock;
 use tokio::time::interval;
 
 use crate::indexer::{CodeIndexer, GitIndexer, Watcher};
+use crate::orchestrator::{GeminiOrchestrator, OrchestratorWorker};
 use crate::tools::SemanticSearch;
 use git2::Repository;
 
@@ -17,6 +19,7 @@ pub struct Daemon {
     project_paths: Vec<PathBuf>,
     db: SqlitePool,
     semantic: Arc<SemanticSearch>,
+    orchestrator: Option<Arc<RwLock<Option<GeminiOrchestrator>>>>,
 }
 
 /// Handles to background daemon tasks (for integration with serve-http)
@@ -25,6 +28,8 @@ pub struct DaemonTasks {
     _watchers: Vec<Watcher>,
     /// Git sync task handle
     _git_sync: tokio::task::JoinHandle<()>,
+    /// Orchestrator worker (kept alive for background jobs)
+    _orchestrator_worker: Option<OrchestratorWorker>,
 }
 
 impl Daemon {
@@ -38,7 +43,14 @@ impl Daemon {
             project_paths,
             db,
             semantic,
+            orchestrator: None,
         }
+    }
+
+    /// Set the orchestrator for background worker
+    pub fn with_orchestrator(mut self, orchestrator: Arc<RwLock<Option<GeminiOrchestrator>>>) -> Self {
+        self.orchestrator = Some(orchestrator);
+        self
     }
 
     /// Spawn background indexing tasks without blocking
@@ -116,9 +128,29 @@ impl Daemon {
             }
         });
 
+        // Spawn orchestrator background worker if available
+        let orchestrator_worker = if let Some(ref orch) = self.orchestrator {
+            let summarize_interval = {
+                let guard = orch.read().await;
+                guard.as_ref()
+                    .map(|o| o.config().summarize_interval_secs)
+                    .unwrap_or(30)
+            };
+
+            tracing::info!("Spawning orchestrator background worker");
+            Some(OrchestratorWorker::spawn(
+                orch.clone(),
+                self.db.clone(),
+                summarize_interval,
+            ))
+        } else {
+            None
+        };
+
         Ok(DaemonTasks {
             _watchers: watchers,
             _git_sync: git_sync,
+            _orchestrator_worker: orchestrator_worker,
         })
     }
 
