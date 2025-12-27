@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 
 use super::{
     Capabilities, ChatRequest, ChatResponse, FinishReason, GroundingSource, Provider,
-    StreamEvent, ToolCall, ToolContinueRequest, ToolDefinition, Usage,
+    StreamEvent, ToolCall, ToolContinueRequest, ToolDefinition, UrlFetchResult, Usage,
 };
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -48,6 +48,36 @@ impl GeminiModel {
         match self {
             Self::Flash => "gemini-3-flash-preview",
             Self::Pro => "gemini-3-pro-preview",
+        }
+    }
+
+    /// Select thinking level based on model and tool configuration.
+    ///
+    /// Thinking levels (Flash only supports all, Pro only low/high):
+    /// - `minimal`: Minimal reasoning, fast responses (Flash only)
+    /// - `low`: Light reasoning with tools
+    /// - `medium`: Balanced reasoning (Flash only)
+    /// - `high`: Deep reasoning without tools
+    ///
+    /// Strategy:
+    /// - Flash with no tools: "high" for deep reasoning
+    /// - Flash with few tools (<=3): "minimal" for simple routing
+    /// - Flash with many tools: "low" for complex tool orchestration
+    /// - Pro always uses "low" with tools, "high" without
+    pub fn select_thinking_level(&self, has_tools: bool, tool_count: usize) -> &'static str {
+        match self {
+            Self::Flash => {
+                if !has_tools {
+                    "high"
+                } else if tool_count <= 3 {
+                    "minimal" // Simple routing, fast
+                } else {
+                    "low" // Complex tool orchestration
+                }
+            }
+            Self::Pro => {
+                if has_tools { "low" } else { "high" }
+            }
         }
     }
 
@@ -303,6 +333,20 @@ impl GeminiChatProvider {
                         }).await;
                     }
                 }
+
+                // Emit URL context metadata if present
+                if let Some(url_ctx) = &candidate.url_context_metadata {
+                    if !url_ctx.url_metadata.is_empty() {
+                        let urls: Vec<UrlFetchResult> = url_ctx.url_metadata
+                            .iter()
+                            .map(|u| UrlFetchResult {
+                                url: u.retrieved_url.clone(),
+                                status: u.url_retrieval_status.clone(),
+                            })
+                            .collect();
+                        let _ = tx.send(StreamEvent::UrlContextMetadata { urls }).await;
+                    }
+                }
             }
         }
         if let Some(usage) = &response.usage_metadata {
@@ -310,7 +354,7 @@ impl GeminiChatProvider {
                 input_tokens: usage.prompt_token_count.unwrap_or(0),
                 output_tokens: usage.candidates_token_count.unwrap_or(0),
                 reasoning_tokens: 0,
-                cached_tokens: 0,
+                cached_tokens: usage.cached_content_token_count.unwrap_or(0),
             })).await;
         }
     }
@@ -388,7 +432,7 @@ impl GeminiChatProvider {
             input_tokens: u.prompt_token_count.unwrap_or(0),
             output_tokens: u.candidates_token_count.unwrap_or(0),
             reasoning_tokens: 0,
-            cached_tokens: 0,
+            cached_tokens: u.cached_content_token_count.unwrap_or(0),
         });
 
         ChatResponse {
@@ -522,7 +566,7 @@ impl GeminiChatProvider {
         // Only include messages not in the cache (new user messages)
         let contents = Self::build_contents(&request);
         let tools = Self::build_tools(&request.tools);
-        let thinking_level = if tools.is_some() { "low" } else { "high" };
+        let thinking_level = self.model.select_thinking_level(!request.tools.is_empty(), request.tools.len());
 
         let api_request = CachedGeminiRequest {
             cached_content: cache.name.clone(),
@@ -629,6 +673,20 @@ impl GeminiChatProvider {
                                                             }).await;
                                                         }
                                                     }
+
+                                                    // Emit URL context metadata if present
+                                                    if let Some(url_ctx) = &candidate.url_context_metadata {
+                                                        if !url_ctx.url_metadata.is_empty() {
+                                                            let urls: Vec<UrlFetchResult> = url_ctx.url_metadata
+                                                                .iter()
+                                                                .map(|u| UrlFetchResult {
+                                                                    url: u.retrieved_url.clone(),
+                                                                    status: u.url_retrieval_status.clone(),
+                                                                })
+                                                                .collect();
+                                                            let _ = tx.send(StreamEvent::UrlContextMetadata { urls }).await;
+                                                        }
+                                                    }
                                                 }
                                             }
 
@@ -680,7 +738,7 @@ impl Provider for GeminiChatProvider {
     async fn create(&self, request: ChatRequest) -> Result<ChatResponse> {
         let contents = Self::build_contents(&request);
         let tools = Self::build_tools(&request.tools);
-        let thinking_level = if tools.is_some() { "low" } else { "high" };
+        let thinking_level = self.model.select_thinking_level(!request.tools.is_empty(), request.tools.len());
 
         let response = self.make_request(
             contents,
@@ -700,7 +758,7 @@ impl Provider for GeminiChatProvider {
 
         let contents = Self::build_contents(&request);
         let tools = Self::build_tools(&request.tools);
-        let thinking_level = if tools.is_some() { "low" } else { "high" };
+        let thinking_level = self.model.select_thinking_level(!request.tools.is_empty(), request.tools.len());
 
         let api_request = GeminiRequest {
             contents,
@@ -784,7 +842,7 @@ impl Provider for GeminiChatProvider {
 
         let contents = Self::build_tool_contents(&request);
         let tools = Self::build_tools(&request.tools);
-        let thinking_level = if tools.is_some() { "low" } else { "high" };
+        let thinking_level = self.model.select_thinking_level(!request.tools.is_empty(), request.tools.len());
 
         let api_request = GeminiRequest {
             contents,
@@ -976,6 +1034,8 @@ struct GeminiCandidate {
     content: GeminiContentResponse,
     #[serde(rename = "groundingMetadata")]
     grounding_metadata: Option<GeminiGroundingMetadata>,
+    #[serde(rename = "urlContextMetadata")]
+    url_context_metadata: Option<GeminiUrlContextMetadata>,
 }
 
 #[derive(Deserialize)]
@@ -995,6 +1055,21 @@ struct GeminiGroundingChunk {
 struct GeminiWebChunk {
     uri: String,
     title: Option<String>,
+}
+
+/// URL context metadata from url_context tool
+#[derive(Deserialize)]
+struct GeminiUrlContextMetadata {
+    #[serde(rename = "urlMetadata", default)]
+    url_metadata: Vec<GeminiUrlMetadataEntry>,
+}
+
+#[derive(Deserialize)]
+struct GeminiUrlMetadataEntry {
+    #[serde(rename = "retrievedUrl")]
+    retrieved_url: String,
+    #[serde(rename = "urlRetrievalStatus")]
+    url_retrieval_status: String,
 }
 
 #[derive(Deserialize)]
@@ -1039,6 +1114,8 @@ struct GeminiUsage {
     prompt_token_count: Option<u32>,
     #[serde(rename = "candidatesTokenCount")]
     candidates_token_count: Option<u32>,
+    #[serde(rename = "cachedContentTokenCount")]
+    cached_content_token_count: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -1115,6 +1192,25 @@ mod tests {
 
         let pro = GeminiChatProvider::new("test_key".into(), GeminiModel::Pro);
         assert_eq!(pro.name(), "Gemini 3 Pro");
+    }
+
+    #[test]
+    fn test_thinking_level_selection() {
+        // Flash with no tools: high for deep reasoning
+        assert_eq!(GeminiModel::Flash.select_thinking_level(false, 0), "high");
+
+        // Flash with few tools: minimal for fast routing
+        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 1), "minimal");
+        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 3), "minimal");
+
+        // Flash with many tools: low for complex orchestration
+        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 4), "low");
+        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 10), "low");
+
+        // Pro: binary low/high only
+        assert_eq!(GeminiModel::Pro.select_thinking_level(false, 0), "high");
+        assert_eq!(GeminiModel::Pro.select_thinking_level(true, 1), "low");
+        assert_eq!(GeminiModel::Pro.select_thinking_level(true, 10), "low");
     }
 
     #[test]

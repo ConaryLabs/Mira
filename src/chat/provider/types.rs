@@ -192,6 +192,11 @@ pub enum StreamEvent {
         outcome: String,
     },
 
+    /// URL context metadata showing which URLs were fetched (Gemini built-in)
+    UrlContextMetadata {
+        urls: Vec<UrlFetchResult>,
+    },
+
     /// Usage information
     Usage(Usage),
 
@@ -210,6 +215,13 @@ pub enum StreamEvent {
 pub struct GroundingSource {
     pub uri: String,
     pub title: Option<String>,
+}
+
+/// Result of URL fetch from url_context tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UrlFetchResult {
+    pub url: String,
+    pub status: String,
 }
 
 /// Unified chat response (non-streaming)
