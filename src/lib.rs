@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)] // Parser walk functions need context
 
 pub mod advisory;
+pub mod batch;
 pub mod chat;
 pub mod context;
 pub mod core;

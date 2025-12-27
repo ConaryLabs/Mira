@@ -643,3 +643,23 @@ pub struct MarkInstructionRequest {
     pub result: Option<String>,
 }
 
+// ============================================================================
+// Batch Processing Tools (50% cost savings for async operations)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchRequest {
+    #[schemars(description = "Action: create/list/get/cancel")]
+    pub action: String,
+    #[schemars(description = "Job type: compaction/summarize/analyze (for 'create' action)")]
+    pub job_type: Option<String>,
+    #[schemars(description = "Job ID (for 'get' or 'cancel' action)")]
+    pub job_id: Option<i64>,
+    #[schemars(description = "Memory IDs to compact as comma-separated list (for 'create' with job_type='compaction')")]
+    pub memory_ids: Option<String>,
+    #[schemars(description = "Max results for 'list' action")]
+    pub limit: Option<i64>,
+    #[schemars(description = "Include completed jobs in 'list' action")]
+    pub include_completed: Option<bool>,
+}
+

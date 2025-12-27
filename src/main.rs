@@ -27,6 +27,7 @@ use tracing_subscriber::FmtSubscriber;
 use std::time::Duration;
 
 mod advisory;
+mod batch;
 mod chat;
 mod context;
 mod core;

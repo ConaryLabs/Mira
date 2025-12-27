@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Version** | 2.0.0 |
-| **Last Updated** | 2025-12-25 |
+| **Last Updated** | 2025-12-26 |
 | **Rust Edition** | 2024 |
-| **Document Revision** | 1.1 |
+| **Document Revision** | 1.3 |
 
 > **Maintenance Note**: Update this document after major architectural changes. Bump revision for minor updates, version for breaking changes.
 
@@ -39,6 +39,10 @@ src/
 ├── daemon.rs               # Daemon logic (286 lines, lean)
 ├── connect.rs              # Connection utilities
 │
+├── batch/                  # Batch processing (50% cost savings via Gemini Batch API)
+│   ├── mod.rs
+│   └── worker.rs           # Background worker for async batch jobs
+│
 ├── advisory/               # Multi-model advisory system
 │   ├── mod.rs
 │   ├── context.rs
@@ -69,6 +73,8 @@ src/
 │   │   ├── mod.rs
 │   │   ├── types.rs
 │   │   ├── capabilities.rs
+│   │   ├── batch.rs      # Gemini Batch API client (50% cost savings)
+│   │   ├── file_search.rs # Gemini FileSearch API client (RAG)
 │   │   ├── deepseek.rs   # DeepSeek V3.2 integration
 │   │   └── responses.rs
 │   ├── session/          # Conversation management
@@ -189,6 +195,7 @@ src/
 ├── tools/               # MCP tool implementations
 │   ├── mod.rs
 │   ├── types.rs
+│   ├── batch.rs        # Batch processing tool handler
 │   ├── memory.rs
 │   ├── file.rs
 │   ├── shell.rs
@@ -314,6 +321,10 @@ goals               # High-level goals with milestones
 decisions           # Architecture decisions with rationale
 sessions            # Chat session state
 context_slices      # Carousel v2 context windows
+batch_jobs          # Async batch processing jobs (compaction, summarize, analyze)
+batch_requests      # Individual requests within a batch job
+file_search_stores  # Gemini FileSearch stores per project
+file_search_documents # Indexed documents in FileSearch stores
 ```
 
 #### **Qdrant Vector Database**
@@ -829,6 +840,15 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 - **Added**: Context caching support (~75% cost reduction on cached tokens).
 - **Why**: Built-in tools are better integrated, free, and require no extra API keys.
 
+#### **2025-12-26: Gemini FileSearch (RAG) and Batch API**
+**Decision**: Add Gemini FileSearch for per-project RAG and Batch API for async processing.
+- **FileSearch**: Per-project stores for semantic document search via `file_search` MCP tool.
+- **Batch API**: 50% cost savings for async bulk operations (compaction, summarization, analysis).
+- **Background Worker**: Polls pending jobs, submits to Gemini Batch API, processes results.
+- **Thinking Levels**: Added `minimal`/`medium` thinking for Flash (beyond just `low`/`high`).
+- **Cached Tokens**: Parse `cachedContentTokenCount` for accurate cost tracking.
+- **Why**: Maximize Gemini 3 capabilities, reduce costs, enable advanced document search.
+
 ---
 
 **Summary Statistics**:
@@ -977,6 +997,8 @@ Claude Code → mira connect (stdio) → HTTP POST → Daemon → MiraServer
 | Index | `index` (project/file/status/cleanup) |
 | Context | `carousel`, `get_proactive_context`, `get_work_state`, `sync_work_state` |
 | Advisory | `hotline`, `advisory_session` |
+| Batch | `batch` (create/list/get/cancel) - 50% cost savings for async ops |
+| File Search | `file_search` (index/list/remove/status) - per-project RAG |
 | Admin | `get_project`, `set_project`, `permission`, `get_guidelines`, `add_guideline`, `query`, `list_tables` |
 
 #### **Interface Direction Clarification**
@@ -1436,7 +1458,7 @@ npm run preview  # Preview production build
 |----------|-------|
 | Unit tests (`#[test]`) | ~180 |
 | Integration test files | 4 |
-| SQLx migrations | 21 |
+| SQLx migrations | 23 |
 
 #### **Test Suites**
 | File | Purpose |
@@ -1598,7 +1620,7 @@ Currently no automated CI/CD pipeline. Deployment is manual:
 | Advisory providers | 4 |
 | Unit tests | ~180 |
 | Integration tests | 4 |
-| SQLx migrations | 21 |
+| SQLx migrations | 23 |
 
 ---
 
@@ -1609,6 +1631,7 @@ Currently no automated CI/CD pipeline. Deployment is manual:
 | 2025-12-25 | 1.0 | Peter + Claude | Initial comprehensive documentation. All 9 sections complete. |
 | 2025-12-25 | 1.1 | Peter + Claude | Council review feedback: added Carousel state machine diagram, context composition strategy, Hotline interface clarification. |
 | 2025-12-25 | 1.2 | Peter + Claude | Studio UX overhaul: enum-based layout state, message role labels, streaming status, tool argument rendering, project management UI. |
+| 2025-12-26 | 1.3 | Peter + Claude | Gemini 3 maximization: FileSearch (RAG), Batch API (50% cost savings), thinking levels, cached token tracking, URL context metadata. |
 
 ---
 
