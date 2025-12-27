@@ -26,14 +26,8 @@ export interface ToolCallResult {
 // Tool categories from backend
 export type ToolCategory = 'file' | 'shell' | 'memory' | 'web' | 'git' | 'mira' | 'other';
 
-export interface CouncilResponses {
-  gpt?: string;
-  opus?: string;
-  gemini?: string;
-}
-
 export interface MessageBlock {
-  type: 'text' | 'tool_call' | 'code_block' | 'council';
+  type: 'text' | 'tool_call' | 'code_block';
   content?: string;
   call_id?: string;
   name?: string;
@@ -46,10 +40,6 @@ export interface MessageBlock {
   language?: string;
   code?: string;
   filename?: string;
-  // Council fields
-  gpt?: string;
-  opus?: string;
-  gemini?: string;
 }
 
 export interface UsageInfo {
@@ -96,8 +86,6 @@ export type ChatEvent =
   | { type: 'code_block_start'; id: string; language: string; filename?: string }
   | { type: 'code_block_delta'; id: string; delta: string }
   | { type: 'code_block_end'; id: string }
-  // Council (multi-model)
-  | { type: 'council'; gpt?: string; opus?: string; gemini?: string }
   // Tool execution (enhanced with correlation IDs and metadata)
   | {
       type: 'tool_call_start';
@@ -362,19 +350,6 @@ export function createMessageBuilder(id: string): {
       case 'code_block_end': {
         // Code block complete, remove from tracking
         codeBlockIndices.delete(event.id);
-        break;
-      }
-
-      case 'council': {
-        // End current text block
-        currentTextBlockIndex = -1;
-        // Add council block
-        message.blocks.push({
-          type: 'council',
-          gpt: event.gpt,
-          opus: event.opus,
-          gemini: event.gemini,
-        });
         break;
       }
 

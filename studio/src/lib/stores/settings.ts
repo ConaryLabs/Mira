@@ -217,7 +217,7 @@ export const reasoningOptions: { value: ReasoningEffort; label: string; descript
   { value: 'xhigh', label: 'X-High', description: 'Critical analysis and architecture' },
 ];
 
-// Model options - DeepSeek is now the only option (council tool provides access to other models)
+// Model options - Gemini is the primary provider
 export const modelProviderOptions: { value: ModelProvider; label: string; description: string }[] = [
-  { value: 'deepseek', label: 'DeepSeek V3.2', description: 'Primary model (use council tool for GPT/Opus/Gemini)' },
+  { value: 'deepseek', label: 'Gemini 3', description: 'Primary model (Flash for speed, Pro for complex tasks)' },
 ];
