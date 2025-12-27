@@ -101,6 +101,9 @@ pub enum ChatEvent {
         summary: String,
         /// Tool category for filtering
         category: ToolCategory,
+        /// Thought signature for Gemini 2.5+ multi-turn tool use
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
 
     /// Tool result (may include diff for file operations)
