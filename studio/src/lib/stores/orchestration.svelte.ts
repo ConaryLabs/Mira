@@ -173,13 +173,39 @@ export const orchestrationStore = {
 
   /**
    * Create a new instruction
+   *
+   * @param instruction - The instruction text
+   * @param priority - Priority level (low, normal, high, urgent)
+   * @param options - Optional settings
+   * @param options.projectPath - Project path for auto-spawning a session
+   * @param options.context - Additional context for the instruction
+   * @param options.autoSpawn - Whether to auto-spawn (default: true if projectPath provided)
    */
-  async createInstruction(instruction: string, priority: string = 'normal'): Promise<{ id: string } | null> {
+  async createInstruction(
+    instruction: string,
+    priority: string = 'normal',
+    options?: {
+      projectPath?: string;
+      context?: string;
+      autoSpawn?: boolean;
+    }
+  ): Promise<{ id: string; session_id?: string } | null> {
     try {
+      const body: Record<string, unknown> = { instruction, priority };
+      if (options?.projectPath) {
+        body.project_path = options.projectPath;
+      }
+      if (options?.context) {
+        body.context = options.context;
+      }
+      if (options?.autoSpawn !== undefined) {
+        body.auto_spawn = options.autoSpawn;
+      }
+
       const res = await fetch('/api/instructions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction, priority }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         return await res.json();

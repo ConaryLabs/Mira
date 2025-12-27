@@ -287,6 +287,11 @@ pub struct CreateInstructionRequest {
     pub context: Option<String>,
     #[serde(default = "default_priority")]
     pub priority: String,
+    /// Project path for spawning a session (optional - if provided, auto-spawns)
+    pub project_path: Option<String>,
+    /// Whether to auto-spawn a session for this instruction (default: true if project_path provided)
+    #[serde(default)]
+    pub auto_spawn: Option<bool>,
 }
 
 fn default_priority() -> String { "normal".to_string() }
@@ -295,9 +300,14 @@ fn default_priority() -> String { "normal".to_string() }
 pub struct CreateInstructionResponse {
     pub id: String,
     pub status: String,
+    /// Session ID if a session was spawned for this instruction
+    pub session_id: Option<String>,
 }
 
 /// Create a new instruction
+///
+/// If `project_path` is provided and `auto_spawn` is true (default), a Claude Code
+/// session will be spawned to execute the instruction automatically.
 pub async fn create_instruction_handler(
     State(state): State<AppState>,
     Json(req): Json<CreateInstructionRequest>,
@@ -320,9 +330,57 @@ pub async fn create_instruction_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Auto-spawn session if project_path is provided
+    let should_spawn = req.auto_spawn.unwrap_or(req.project_path.is_some());
+    let session_id = if should_spawn {
+        if let (Some(spawner), Some(project_path)) = (&state.spawner, &req.project_path) {
+            // Build prompt with instruction context
+            let prompt = if let Some(ctx) = &req.context {
+                format!("{}\n\nContext: {}", req.instruction, ctx)
+            } else {
+                req.instruction.clone()
+            };
+
+            // Create spawn config with instruction metadata
+            let mut config = SpawnConfig::new(project_path, &prompt);
+            config.instruction_id = Some(id.clone());
+            config.system_prompt = Some(format!(
+                "You are executing instruction '{}'. When complete, call mark_instruction with status='completed' and include a summary of what you did.",
+                id
+            ));
+
+            match spawner.spawn(config).await {
+                Ok(sid) => {
+                    // Update instruction with session ID and mark as in_progress
+                    let _ = sqlx::query(
+                        "UPDATE instruction_queue SET status = 'in_progress', session_id = $1, started_at = datetime('now') WHERE id = $2"
+                    )
+                    .bind(&sid)
+                    .bind(&id)
+                    .execute(db)
+                    .await;
+
+                    tracing::info!(instruction_id = %id, session_id = %sid, "Auto-spawned session for instruction");
+                    Some(sid)
+                }
+                Err(e) => {
+                    tracing::warn!(instruction_id = %id, error = %e, "Failed to auto-spawn session");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let status = if session_id.is_some() { "in_progress" } else { "pending" };
+
     Ok(Json(CreateInstructionResponse {
         id,
-        status: "pending".to_string(),
+        status: status.to_string(),
+        session_id,
     }))
 }
 
@@ -518,4 +576,199 @@ pub async fn orchestration_stream_handler(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ============================================================================
+// Claude Code Spawner Endpoints
+// ============================================================================
+
+use crate::spawner::SpawnConfig;
+
+#[derive(Deserialize)]
+pub struct SpawnSessionRequest {
+    /// Project directory to run Claude Code in
+    pub project_path: String,
+    /// Initial prompt/task for Claude Code
+    pub prompt: String,
+    /// Optional system prompt to append
+    pub system_prompt: Option<String>,
+    /// Budget in USD (default: $5.00)
+    pub budget_usd: Option<f64>,
+    /// Allowed tools (None = all)
+    pub allowed_tools: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+pub struct SpawnSessionResponse {
+    pub session_id: String,
+    pub status: String,
+}
+
+/// Spawn a new Claude Code session
+pub async fn spawn_session_handler(
+    State(state): State<AppState>,
+    Json(req): Json<SpawnSessionRequest>,
+) -> Result<Json<SpawnSessionResponse>, (StatusCode, String)> {
+    let spawner = state.spawner.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Spawner not available".to_string(),
+    ))?;
+
+    let mut config = SpawnConfig::new(&req.project_path, &req.prompt);
+
+    if let Some(budget) = req.budget_usd {
+        config = config.with_budget(budget);
+    }
+    if let Some(tools) = req.allowed_tools {
+        config = config.with_tools(tools);
+    }
+    if let Some(sys) = req.system_prompt {
+        config.system_prompt = Some(sys);
+    }
+
+    let session_id = spawner
+        .spawn(config)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(SpawnSessionResponse {
+        session_id,
+        status: "starting".to_string(),
+    }))
+}
+
+#[derive(Serialize)]
+pub struct SessionInfo {
+    pub session_id: String,
+    pub status: String,
+}
+
+/// List active Claude Code sessions
+pub async fn list_sessions_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<SessionInfo>>, (StatusCode, String)> {
+    let spawner = state.spawner.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Spawner not available".to_string(),
+    ))?;
+
+    let sessions = spawner.list_sessions().await;
+    let result: Vec<SessionInfo> = sessions
+        .into_iter()
+        .map(|(session_id, status)| SessionInfo {
+            session_id,
+            status: status.as_str().to_string(),
+        })
+        .collect();
+
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+pub struct AnswerQuestionRequest {
+    /// Question ID to answer
+    pub question_id: String,
+    /// The answer
+    pub answer: String,
+}
+
+#[derive(Serialize)]
+pub struct AnswerQuestionResponse {
+    pub status: String,
+}
+
+/// Answer a pending question from Claude Code
+pub async fn answer_question_handler(
+    State(state): State<AppState>,
+    Json(req): Json<AnswerQuestionRequest>,
+) -> Result<Json<AnswerQuestionResponse>, (StatusCode, String)> {
+    let spawner = state.spawner.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Spawner not available".to_string(),
+    ))?;
+
+    spawner
+        .answer_question(&req.question_id, &req.answer)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(AnswerQuestionResponse {
+        status: "answered".to_string(),
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct TerminateSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Serialize)]
+pub struct TerminateSessionResponse {
+    pub exit_code: i32,
+    pub status: String,
+}
+
+/// Terminate a Claude Code session
+pub async fn terminate_session_handler(
+    State(state): State<AppState>,
+    Json(req): Json<TerminateSessionRequest>,
+) -> Result<Json<TerminateSessionResponse>, (StatusCode, String)> {
+    let spawner = state.spawner.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Spawner not available".to_string(),
+    ))?;
+
+    let exit_code = spawner
+        .terminate(&req.session_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let status = if exit_code == 0 { "completed" } else { "failed" };
+
+    Ok(Json(TerminateSessionResponse {
+        exit_code,
+        status: status.to_string(),
+    }))
+}
+
+/// SSE stream for Claude Code session events
+pub async fn session_events_handler(
+    State(state): State<AppState>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+    let spawner = state.spawner.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Spawner not available".to_string(),
+    ))?;
+
+    let mut rx = spawner.subscribe();
+
+    let stream = async_stream::stream! {
+        loop {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            let data = serde_json::to_string(&event).unwrap_or_default();
+                            yield Ok(Event::default().data(data));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            // Missed some events, log and continue
+                            tracing::warn!("Session event stream lagged by {} events", n);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            // Channel closed, end stream
+                            break;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    // Send heartbeat
+                    let heartbeat = serde_json::json!({"type": "heartbeat", "ts": chrono::Utc::now().timestamp()});
+                    yield Ok(Event::default().data(heartbeat.to_string()));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

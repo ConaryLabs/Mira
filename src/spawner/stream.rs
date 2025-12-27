@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::ChildStdout;
 use tokio::sync::mpsc;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, warn};
 
 use super::types::StreamEvent;
 
@@ -31,16 +31,20 @@ impl StreamParser {
     async fn read_stream(self, stdout: ChildStdout) {
         let mut reader = BufReader::new(stdout).lines();
 
+        info!("Stream parser: starting to read stdout");
+
         while let Ok(Some(line)) = reader.next_line().await {
+            debug!("Stream parser: received line (len={})", line.len());
+
             if line.is_empty() {
                 continue;
             }
 
             match self.parse_line(&line) {
                 Ok(event) => {
-                    trace!(?event, "Parsed stream event");
+                    info!(?event, "Stream parser: parsed event");
                     if self.tx.send(event).await.is_err() {
-                        debug!("Stream receiver dropped, stopping parser");
+                        warn!("Stream receiver dropped, stopping parser");
                         break;
                     }
                 }
@@ -50,7 +54,7 @@ impl StreamParser {
             }
         }
 
-        debug!("Stream parser finished");
+        info!("Stream parser: finished reading (EOF)");
     }
 
     fn parse_line(&self, line: &str) -> Result<StreamEvent> {
@@ -93,6 +97,7 @@ pub fn detect_question(event: &StreamEvent) -> Option<DetectedQuestion> {
 
 /// A detected question from Claude Code output
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DetectedQuestion {
     pub tool_id: String,
     pub question: String,
@@ -108,8 +113,8 @@ mod tests {
         let json = r#"{"type":"assistant","message":{"content":"Hello world","stop_reason":"end_turn"}}"#;
         let event: StreamEvent = serde_json::from_str(json).unwrap();
 
-        if let StreamEvent::Assistant { message } = event {
-            assert_eq!(message.content, Some("Hello world".to_string()));
+        if let StreamEvent::Assistant { message, .. } = event {
+            assert_eq!(message.content_text(), Some("Hello world".to_string()));
         } else {
             panic!("Expected Assistant event");
         }

@@ -36,6 +36,15 @@ pub struct SemanticSearch {
 }
 
 impl SemanticSearch {
+    /// Create a disabled semantic search instance (for routes that don't need it)
+    pub fn disabled() -> Self {
+        Self {
+            qdrant: None,
+            gemini_key: None,
+            http_client: reqwest::Client::new(),
+        }
+    }
+
     /// Create a new semantic search client
     /// Gracefully handles missing Qdrant or Gemini config
     pub async fn new(qdrant_url: Option<&str>, gemini_key: Option<String>) -> Self {

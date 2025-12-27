@@ -62,7 +62,9 @@ mod stream;
 pub mod types;
 
 pub use process::ClaudeCodeSpawner;
+#[allow(unused_imports)]
 pub use stream::{detect_question, DetectedQuestion, StreamParser};
+#[allow(unused_imports)]
 pub use types::{
     ContextSnapshot, CorrectionSummary, GoalSummary, PendingQuestion, QuestionOption,
     QuestionStatus, ReviewStatus, SessionEvent, SessionReview, SessionStatus, SpawnConfig,
