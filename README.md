@@ -151,7 +151,7 @@ DATABASE_URL=sqlite:///home/you/.mira/mira.db
 QDRANT_URL=http://localhost:6334
 GEMINI_API_KEY=your-gemini-key
 
-# For chat/hotline
+# For chat
 DEEPSEEK_API_KEY=your-deepseek-key
 
 # For web search in chat
@@ -221,23 +221,6 @@ Then just talk naturally:
 | `task` | Manage tasks (create/list/get/update/complete/delete) |
 | `goal` | Manage goals and milestones |
 | `correction` | Record corrections when user corrects you |
-
-### Hotline
-| Tool | Description |
-|------|-------------|
-| `hotline` | Consult GPT-5.2, DeepSeek, Gemini, or all three (council) |
-
-**Automatic Context Injection:** By default (`inject_context=true`), hotline automatically includes project context:
-- Corrections (learned mistakes to avoid)
-- Active goals and progress
-- Past decisions
-- Relevant memories
-- Recent commits
-- Similar past fixes
-- Related files and key symbols
-- Call graph relationships
-
-Set `inject_context=false` to send raw messages without context.
 
 ## Requirements
 

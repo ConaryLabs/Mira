@@ -301,7 +301,6 @@ When writing code:
 /// Build system prompt for Studio Orchestrator (Gemini 3 Pro)
 ///
 /// Studio is a strategic orchestrator that manages Claude Code:
-/// - Plans work with Council (GPT-5.2, Opus 4.5, DeepSeek Reasoner, Gemini 3 Pro)
 /// - Manages goals, tasks, decisions, corrections, memory
 /// - Views Claude Code's work and sends instructions
 /// - NEVER writes code or touches files - Claude Code does all grunt work
@@ -321,7 +320,6 @@ You are Mira Studio - a strategic manager for Claude Code.
 ## What You DO:
 - Plan work by creating goals, tasks, and milestones
 - Record decisions, corrections, and learnings for future reference
-- Consult the council (GPT-5.2, Opus 4.5, DeepSeek Reasoner) for important decisions
 - View Claude Code's work via `view_claude_activity`
 - Send instructions to Claude Code via `send_instruction`
 - Research current information (automatic web grounding when needed)
@@ -358,8 +356,7 @@ For implementation requests:
 
 For research:
 - Web grounding happens automatically for current information
-- Use `read_file`, `glob`, `grep` for codebase exploration
-- Use `council` or `ask_*` for important decisions"#.to_string());
+- Use `read_file`, `glob`, `grep` for codebase exploration"#.to_string());
 
     // 4. Mira Voice Contract - personality
     sections.push(r#"# VOICE: Mira

@@ -1,14 +1,8 @@
 //! Model routing for Gemini Flash/Pro selection
 //!
 //! Tool-gated escalation: Start with Flash (cheap), escalate to Pro when:
-//! 1. Heavy tools are requested (council, goal, task, etc.)
+//! 1. Heavy tools are requested (goal, task, orchestration, etc.)
 //! 2. Tool chain exceeds depth threshold
-//!
-//! Based on council consensus:
-//! - GPT-5.2: "Keywords are brittle. Run Flash by default, escalate to Pro when
-//!   it requests heavy tools (council/goal/task) or hits retry/uncertainty."
-//! - DeepSeek: "Agree. Also escalate when tool chain exceeds 3 steps -
-//!   cumulative reasoning demands heavier lifting."
 
 use crate::chat::provider::GeminiModel;
 
@@ -17,14 +11,8 @@ use crate::chat::provider::GeminiModel;
 // ============================================================================
 
 /// Heavy tools that benefit from Pro's advanced reasoning.
-/// These involve complex decision-making, multi-step planning, or external LLM calls.
+/// These involve complex decision-making and multi-step planning.
 const HEAVY_TOOLS: &[&str] = &[
-    // Council / external LLM calls
-    "council",
-    "ask_gpt",
-    "ask_opus",
-    "ask_gemini",
-    "ask_deepseek",
     // Planning and project management
     "goal",
     "task",
@@ -143,7 +131,6 @@ mod tests {
 
     #[test]
     fn test_heavy_tool_detection() {
-        assert!(requires_pro("council"));
         assert!(requires_pro("goal"));
         assert!(requires_pro("task"));
         assert!(requires_pro("send_instruction"));
@@ -177,11 +164,11 @@ mod tests {
     fn test_heavy_tool_triggers_escalation() {
         let mut state = RoutingState::new();
 
-        let changed = state.process_tool_calls(&["council"]);
+        let changed = state.process_tool_calls(&["goal"]);
         assert!(changed);
         assert_eq!(state.current_model, GeminiModel::Pro);
         assert!(state.has_escalated);
-        assert!(state.escalation_reason.as_ref().unwrap().contains("council"));
+        assert!(state.escalation_reason.as_ref().unwrap().contains("goal"));
     }
 
     #[test]

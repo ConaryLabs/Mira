@@ -84,18 +84,6 @@ pub enum ChatEvent {
     #[serde(rename = "code_block_end")]
     CodeBlockEnd { id: String },
 
-    // === Council (multi-model) ===
-    /// Council response from multiple models (GPT 5.2, Opus 4.5, Gemini 3 Pro)
-    #[serde(rename = "council")]
-    Council {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        gpt: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        opus: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        gemini: Option<String>,
-    },
-
     // === Tool Execution ===
     /// Tool call started - show in UI immediately
     #[serde(rename = "tool_call_start")]
@@ -272,16 +260,6 @@ pub enum MessageBlock {
         code: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         filename: Option<String>,
-    },
-
-    #[serde(rename = "council")]
-    Council {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        gpt: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        opus: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        gemini: Option<String>,
     },
 
     #[serde(rename = "tool_call")]
