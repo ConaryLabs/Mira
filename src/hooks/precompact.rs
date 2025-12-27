@@ -254,7 +254,8 @@ fn summarize_tool_input(tool_name: &str, tool_input: &serde_json::Value) -> Stri
 }
 
 fn extract_decisions(text: &str, decisions: &mut Vec<String>) {
-    // Simple pattern matching for decision-like statements
+    // Fallback pattern matching for decision-like statements
+    // Used when LLM extraction is not available
     let patterns = [
         "I'll ", "I will ", "Let's ", "We should ", "Going to ",
         "I'm going to ", "I decided to ", "The approach is to ",
@@ -371,6 +372,128 @@ fn generate_summary(context: &TranscriptContext, trigger: &str) -> String {
     parts.join("\n")
 }
 
+/// Extract decisions using LLM via MCP extract tool
+/// Falls back to pattern matching if LLM extraction fails
+async fn extract_decisions_llm(
+    client: &reqwest::Client,
+    mira_url: &str,
+    auth_token: &str,
+    mcp_session: &str,
+    transcript_content: &str,
+) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
+    // Skip if transcript is too small
+    if transcript_content.len() < 100 {
+        return None;
+    }
+
+    // Truncate transcript for LLM (first 3000 chars)
+    let truncated: String = transcript_content.chars().take(3000).collect();
+
+    let req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 10,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "extract",
+            "arguments": {
+                "transcript": truncated
+            }
+        }),
+    };
+
+    let resp = client
+        .post(mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", mcp_session)
+        .json(&req)
+        .send()
+        .await
+        .ok()?;
+
+    let body = resp.text().await.ok()?;
+
+    // Parse SSE response for decisions, topics, insights
+    let mut decisions = Vec::new();
+    let mut topics = Vec::new();
+    let mut insights = Vec::new();
+
+    // Look for JSON in SSE response
+    for line in body.lines() {
+        if line.contains("\"decisions\"") {
+            // Try to parse decisions array
+            if let Some(start) = line.find("\"decisions\"") {
+                if let Some(arr_start) = line[start..].find('[') {
+                    let rest = &line[start + arr_start..];
+                    if let Some(end) = find_matching_bracket(rest) {
+                        let arr_str = &rest[..end + 1];
+                        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(arr_str) {
+                            for d in arr {
+                                if let Some(content) = d.get("content").and_then(|c| c.as_str()) {
+                                    if d.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.5) >= 0.6 {
+                                        decisions.push(content.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if line.contains("\"topics\"") {
+            if let Some(start) = line.find("\"topics\"") {
+                if let Some(arr_start) = line[start..].find('[') {
+                    let rest = &line[start + arr_start..];
+                    if let Some(end) = find_matching_bracket(rest) {
+                        let arr_str = &rest[..end + 1];
+                        if let Ok(arr) = serde_json::from_str::<Vec<String>>(arr_str) {
+                            topics = arr;
+                        }
+                    }
+                }
+            }
+        }
+        if line.contains("\"insights\"") {
+            if let Some(start) = line.find("\"insights\"") {
+                if let Some(arr_start) = line[start..].find('[') {
+                    let rest = &line[start + arr_start..];
+                    if let Some(end) = find_matching_bracket(rest) {
+                        let arr_str = &rest[..end + 1];
+                        if let Ok(arr) = serde_json::from_str::<Vec<String>>(arr_str) {
+                            insights = arr;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if decisions.is_empty() && topics.is_empty() && insights.is_empty() {
+        return None;
+    }
+
+    Some((decisions, topics, insights))
+}
+
+/// Find matching bracket in string
+fn find_matching_bracket(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.chars().enumerate() {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 async fn save_to_mira(
     session_id: &str,
     trigger: &str,
@@ -434,9 +557,31 @@ async fn save_to_mira(
         .send()
         .await?;
 
+    // Try LLM extraction for better decision/topic extraction
+    // Collect raw transcript text for LLM
+    let transcript_text: String = context.user_requests.iter()
+        .chain(context.decisions.iter())
+        .take(50)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let (llm_decisions, llm_topics, llm_insights) = match extract_decisions_llm(
+        &client,
+        &mira_url,
+        &auth_token,
+        &mcp_session,
+        &transcript_text,
+    ).await {
+        Some((d, t, i)) => (Some(d), Some(t), Some(i)),
+        None => (None, None, None),
+    };
+
     // Store session summary
     let full_summary = format!("[Pre-Compaction Save - {}]\n{}", trigger, summary);
-    let topics: Vec<_> = context.topics.iter().take(10).cloned().collect();
+    // Use LLM topics if available, otherwise fall back to pattern-matched
+    let topics: Vec<_> = llm_topics.clone()
+        .unwrap_or_else(|| context.topics.iter().take(10).cloned().collect());
 
     call_tool(
         &client,
@@ -474,9 +619,12 @@ async fn save_to_mira(
         .await?;
     }
 
-    // Store decisions (confidence 0.8 for compaction summaries)
-    if !context.decisions.is_empty() {
-        let decisions: Vec<_> = context.decisions.iter().take(15).cloned().collect();
+    // Store decisions - use LLM-extracted if available (higher confidence)
+    let decisions = llm_decisions.clone()
+        .unwrap_or_else(|| context.decisions.iter().take(15).cloned().collect());
+    let decision_confidence = if llm_decisions.is_some() { 0.9 } else { 0.8 };
+
+    if !decisions.is_empty() {
         let content = format!(
             "Decisions made before compaction ({}):\n{}",
             trigger,
@@ -494,10 +642,36 @@ async fn save_to_mira(
                 "fact_type": "decision",
                 "category": "compaction",
                 "key": format!("compaction-decisions-{}", snapshot_id),
-                "confidence": 0.8
+                "confidence": decision_confidence
             }),
         )
         .await?;
+    }
+
+    // Store LLM insights if available (new capability)
+    if let Some(insights) = llm_insights {
+        if !insights.is_empty() {
+            let content = format!(
+                "Session insights (LLM-extracted):\n{}",
+                insights.iter().map(|i| format!("- {}", i)).collect::<Vec<_>>().join("\n")
+            );
+
+            call_tool(
+                &client,
+                &mira_url,
+                &auth_token,
+                &mcp_session,
+                "remember",
+                serde_json::json!({
+                    "content": content,
+                    "fact_type": "context",
+                    "category": "insights",
+                    "key": format!("compaction-insights-{}", snapshot_id),
+                    "confidence": 0.85
+                }),
+            )
+            .await?;
+        }
     }
 
     // Store user requests (confidence 0.8 for compaction summaries)

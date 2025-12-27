@@ -279,6 +279,55 @@ impl MiraServer {
         }
     }
 
+    #[tool(description = "Extract decisions, topics, and insights from transcript text using LLM analysis.")]
+    async fn extract(&self, Parameters(req): Parameters<ExtractRequest>) -> Result<CallToolResult, McpError> {
+        // Use orchestrator if available
+        if let Some(orchestrator) = self.orchestrator.read().await.as_ref() {
+            match orchestrator.extract(&req.transcript).await {
+                Ok(result) => {
+                    // Convert to JSON-serializable format
+                    let decisions: Vec<serde_json::Value> = result.decisions.iter().map(|d| {
+                        serde_json::json!({
+                            "content": d.content,
+                            "confidence": d.confidence,
+                            "type": format!("{:?}", d.decision_type).to_lowercase(),
+                            "context": d.context
+                        })
+                    }).collect();
+
+                    Ok(json_response(serde_json::json!({
+                        "decisions": decisions,
+                        "topics": result.topics,
+                        "files_modified": result.files_modified,
+                        "insights": result.insights,
+                        "confidence": result.confidence
+                    })))
+                }
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!("Extraction failed: {}", e))])),
+            }
+        } else {
+            // Fallback: basic pattern matching
+            let decisions: Vec<String> = req.transcript
+                .lines()
+                .filter(|line| {
+                    let l = line.to_lowercase();
+                    l.contains("i'll ") || l.contains("i will ") || l.contains("let's ") ||
+                    l.contains("we should ") || l.contains("going to ") || l.contains("decided to ")
+                })
+                .take(10)
+                .map(|s| s.chars().take(150).collect())
+                .collect();
+
+            Ok(json_response(serde_json::json!({
+                "decisions": decisions.iter().map(|d| serde_json::json!({"content": d, "confidence": 0.5, "type": "approach", "context": "pattern-matched"})).collect::<Vec<_>>(),
+                "topics": [],
+                "files_modified": [],
+                "insights": [],
+                "confidence": 0.5
+            })))
+        }
+    }
+
     // === Memory (core - high usage) ===
 
     #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]
