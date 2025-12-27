@@ -453,6 +453,14 @@ pub struct QueryRequest {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebounceRequest {
+    #[schemars(description = "Unique key for debouncing (e.g., 'pretool:/path/to/file.rs')")]
+    pub key: String,
+    #[schemars(description = "Time-to-live in seconds before the key can trigger again")]
+    pub ttl_secs: u64,
+}
+
 // ============================================================================
 // Proactive Context
 // ============================================================================

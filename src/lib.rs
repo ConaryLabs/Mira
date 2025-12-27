@@ -11,5 +11,6 @@ pub mod chat;
 pub mod context;
 pub mod core;
 pub mod indexer;
+pub mod orchestrator;
 pub mod server;
 pub mod tools;
