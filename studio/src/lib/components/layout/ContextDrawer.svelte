@@ -2,7 +2,6 @@
   import { layoutStore, type DrawerTab } from '$lib/stores/layout.svelte';
   import TimelineTab from '../timeline/TimelineTab.svelte';
   import WorkspaceTab from '../workspace/WorkspaceTab.svelte';
-  import AdvisoryTab from '../advisory/AdvisoryTab.svelte';
   import OrchestrationTab from '../orchestration/OrchestrationTab.svelte';
 
   // Tab configuration
@@ -10,7 +9,6 @@
     { id: 'orchestration', label: 'Claude', icon: 'terminal' },
     { id: 'timeline', label: 'Timeline', icon: 'clock' },
     { id: 'workspace', label: 'Workspace', icon: 'folder' },
-    { id: 'advisory', label: 'Advisory', icon: 'users' },
   ];
 
   // Resize handling
@@ -107,8 +105,6 @@
         <TimelineTab />
       {:else if layoutStore.contextDrawer.activeTab === 'workspace'}
         <WorkspaceTab />
-      {:else if layoutStore.contextDrawer.activeTab === 'advisory'}
-        <AdvisoryTab />
       {/if}
     </div>
   </aside>

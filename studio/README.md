@@ -135,8 +135,6 @@ Renders message blocks by type. No parsing needed - backend sends structured blo
   <CodeBlock language={block.language} code={block.code} />
 {:else if block.type === 'tool_call'}
   <ToolCallInline name={block.name} arguments={block.arguments} result={block.result} />
-{:else if block.type === 'council'}
-  <CouncilView responses={toCouncilResponses(block)} />
 {/if}
 ```
 

@@ -9,7 +9,7 @@
 
 import { browser } from '$app/environment';
 
-export type DrawerTab = 'timeline' | 'workspace' | 'advisory' | 'orchestration';
+export type DrawerTab = 'timeline' | 'workspace' | 'orchestration';
 
 // Left nav can only be in ONE of these states - prevents double-sidebar bug
 export type LeftNavState = 'collapsed' | 'expanded' | 'settings';
