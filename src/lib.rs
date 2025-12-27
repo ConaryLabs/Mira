@@ -13,4 +13,5 @@ pub mod core;
 pub mod indexer;
 pub mod orchestrator;
 pub mod server;
+pub mod spawner;
 pub mod tools;
