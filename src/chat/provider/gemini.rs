@@ -1,8 +1,7 @@
-//! Gemini 3 provider for Studio chat (Orchestrator mode)
+//! Gemini provider for Studio chat (Orchestrator mode)
 //!
 //! Uses Gemini's generateContent API with function calling.
 //! Supports both Flash (cheap, fast) and Pro (complex reasoning) models.
-//! Adapted from advisory/providers/gemini.rs for the chat Provider interface.
 
 use anyhow::Result;
 use async_trait::async_trait;
