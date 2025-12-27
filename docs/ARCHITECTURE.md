@@ -43,26 +43,6 @@ src/
 │   ├── mod.rs
 │   └── worker.rs           # Background worker for async batch jobs
 │
-├── advisory/               # Multi-model advisory system
-│   ├── mod.rs
-│   ├── context.rs
-│   ├── session.rs
-│   ├── streaming.rs
-│   ├── synthesis.rs
-│   ├── tool_bridge.rs     # External LLM tool bridge (155 lines)
-│   ├── providers/
-│   │   ├── mod.rs
-│   │   ├── gpt.rs
-│   │   ├── opus.rs
-│   │   ├── gemini.rs
-│   │   └── reasoner.rs    # DeepSeek Reasoner integration
-│   └── tool_loops/
-│       ├── mod.rs
-│       ├── gpt.rs
-│       ├── opus.rs
-│       ├── gemini.rs
-│       └── deepseek.rs
-│
 ├── chat/                   # Chat interface (Mira-Chat)
 │   ├── mod.rs
 │   ├── context.rs
@@ -99,7 +79,7 @@ src/
 │   │   ├── types.rs
 │   │   └── markdown_parser.rs
 │   └── tools/            # Chat-accessible tools
-│       ├── mod.rs        # Tool registration (139 lines)
+│       ├── mod.rs        # Tool registration
 │       ├── types.rs
 │       ├── mira.rs
 │       ├── memory.rs
@@ -108,7 +88,6 @@ src/
 │       ├── git.rs
 │       ├── code_intel.rs
 │       ├── build.rs
-│       ├── council.rs
 │       ├── documents.rs
 │       ├── git_intel.rs
 │       ├── index.rs
@@ -121,8 +100,7 @@ src/
 │           ├── memory.rs
 │           ├── file_ops.rs
 │           ├── intel.rs
-│           ├── testing.rs
-│           └── council.rs
+│           └── testing.rs
 │
 ├── core/                  # Shared business logic
 │   ├── mod.rs
@@ -188,7 +166,6 @@ src/
 │   ├── db.rs
 │   └── handlers/
 │       ├── mod.rs
-│       ├── advisory.rs
 │       ├── indexing.rs
 │       └── proposals.rs
 │
@@ -211,7 +188,6 @@ src/
 │   ├── proactive.rs
 │   ├── project.rs
 │   ├── ingest.rs
-│   ├── hotline.rs
 │   ├── mcp_history.rs
 │   ├── response.rs
 │   ├── permissions.rs
@@ -242,7 +218,6 @@ docs/ARCHITECTURE.md        # Architecture documentation
 ```
 MCP Server (src/tools/) → core::ops → core::primitives
 Chat Interface (src/chat/) → core::ops → core::primitives
-Advisory System → core::ops (read-only access)
 Carousel Context → chat/session/context → core::ops
 ```
 
@@ -251,13 +226,11 @@ Carousel Context → chat/session/context → core::ops
 2. **core::primitives**: Utilities with no external dependencies
 3. **src/tools/**: MCP protocol adapters (type conversion only)
 4. **src/chat/tools/**: Chat protocol adapters (type conversion only)
-5. **src/advisory/**: External LLM integration layer (tool_bridge)
 
 ### Cross-cutting Concerns
 - **Error handling**: `core::error.rs` defines unified error types
 - **Configuration**: CLI/env/TOML merge in `main.rs`
 - **Telemetry**: SQLite `chat_usage` table, `/usage` REPL command
-- **Security**: Whitelists, budgets, cooldowns in advisory/tool_bridge
 
 ## 3. **Data Flow & State Management**
 
@@ -476,11 +449,8 @@ Mira uses environment variables for configuration, with sensible defaults. No TO
 #### **API Keys (LLM Providers)**
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GEMINI_API_KEY` | For embeddings | Google Gemini API key (free tier works) |
+| `GEMINI_API_KEY` | Yes | Google Gemini API key (for embeddings, chat, file search) |
 | `GOOGLE_API_KEY` | Fallback | Alternative to GEMINI_API_KEY |
-| `DEEPSEEK_API_KEY` | For chat | DeepSeek Reasoner API key |
-| `OPENAI_API_KEY` | For advisory | GPT-5.2 via Responses API |
-| `ANTHROPIC_API_KEY` | For advisory | Opus 4.5 via Messages API |
 
 #### **Server Configuration**
 | Variable | Default | Description |
@@ -824,10 +794,6 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 **Decision**: Route all chat traffic through DeepSeek Reasoner.
 - **Why**: V3.2 added tool-call support, eliminating dual-model routing need.
 
-#### **2025-12-24: Unified Advisory System**
-**Decision**: Single advisory service with tool calling for all 4 providers.
-- **Why**: Bespoke integrations caused drift and maintenance burden.
-
 #### **2025-12-25: Carousel v2**
 **Decision**: Replace context-decay heuristics with deterministic state machine.
 - **Features**: Semantic interrupts, panic mode, explicit overrides, starvation prevention.
@@ -849,6 +815,11 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 - **Cached Tokens**: Parse `cachedContentTokenCount` for accurate cost tracking.
 - **Why**: Maximize Gemini 3 capabilities, reduce costs, enable advanced document search.
 
+#### **2025-12-26: Remove Advisory/Hotline/Council System**
+**Decision**: Remove multi-LLM advisory system (~10k lines).
+- **Removed**: `src/advisory/`, `hotline` tool, `council` chat tools, LLM-based proposal extraction.
+- **Why**: Simplification - the plan is to go through Gemini/Mira via Studio frontend, not Claude Code calling other LLMs directly.
+
 ---
 
 **Summary Statistics**:
@@ -860,33 +831,9 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 
 ## 6. **External Integrations**
 
-### **6.1 LLM Providers**
+### **6.1 LLM Provider (Gemini)**
 
-Mira integrates with 4 LLM providers through the unified `AdvisoryProvider` trait.
-
-#### **OpenAI GPT-5.2**
-| Property | Value |
-|----------|-------|
-| API | Responses API (`/v1/responses`) |
-| Model ID | `gpt-5.2` |
-| Endpoint | `https://api.openai.com/v1/responses` |
-| Auth | Bearer token (`OPENAI_API_KEY`) |
-| Features | Streaming, tool calling, reasoning |
-| Timeout | 60s |
-
-**Usage**: Primary voice for advisory system, high-quality reasoning tasks.
-
-#### **Anthropic Opus 4.5**
-| Property | Value |
-|----------|-------|
-| API | Messages API (`/v1/messages`) |
-| Model ID | `claude-opus-4-5-20251101` |
-| Endpoint | `https://api.anthropic.com/v1/messages` |
-| Auth | `x-api-key` header (`ANTHROPIC_API_KEY`) |
-| Features | Streaming, tool calling, extended thinking |
-| Timeout | 60s |
-
-**Usage**: Advisory system for code review, architectural decisions.
+Mira uses Google Gemini as the primary LLM provider for all chat and intelligence features.
 
 #### **Google Gemini 3 Flash/Pro**
 | Property | Flash | Pro |
@@ -900,25 +847,7 @@ Mira integrates with 4 LLM providers through the unified `AdvisoryProvider` trai
 
 **Usage**: Primary chat model (Studio). Tool-gated routing:
 - **Flash (default)**: Simple queries, file ops, search, memory operations
-- **Pro (escalated)**: When heavy tools called (council, goal, task, send_instruction) or chain depth > 3
-
-#### **DeepSeek Reasoner V3.2**
-| Property | Value |
-|----------|-------|
-| API | Chat Completions API |
-| Model ID | `deepseek-reasoner` |
-| Endpoint | `https://api.deepseek.com/v1/chat/completions` |
-| Auth | Bearer token (`DEEPSEEK_API_KEY`) |
-| Features | Streaming, tool calling, reasoning tokens |
-| Timeout | 180s (reasoning can be slow) |
-
-**Usage**: Advisory system. Cost-effective with 128K context and 64K output.
-
-#### **Council Mode**
-When `provider=council`, Mira calls GPT-5.2, Gemini 3 Pro, and DeepSeek Reasoner in parallel, then synthesizes responses. Useful for:
-- Architectural decisions (get multiple perspectives)
-- Validation (cross-check reasoning)
-- Complex problems (ensemble approach)
+- **Pro (escalated)**: When heavy tools called (goal, task, send_instruction) or chain depth > 3
 
 ### **6.2 Embeddings (Gemini)**
 
@@ -996,22 +925,9 @@ Claude Code → mira connect (stdio) → HTTP POST → Daemon → MiraServer
 | Documents | `document` (list/search/get/ingest/delete) |
 | Index | `index` (project/file/status/cleanup) |
 | Context | `carousel`, `get_proactive_context`, `get_work_state`, `sync_work_state` |
-| Advisory | `hotline`, `advisory_session` |
 | Batch | `batch` (create/list/get/cancel) - 50% cost savings for async ops |
 | File Search | `file_search` (index/list/remove/status) - per-project RAG |
 | Admin | `get_project`, `set_project`, `permission`, `get_guidelines`, `add_guideline`, `query`, `list_tables` |
-
-#### **Interface Direction Clarification**
-
-> **Inbound vs Outbound**: Section 6.1 (LLM Providers) describes **outbound** calls—Mira calling external LLMs. The MCP tools above are **inbound** interfaces—Claude Code (or other MCP clients) calling into Mira.
-
-The `hotline` tool is particularly notable: it's an **inbound MCP call** that triggers **outbound LLM calls**. When Claude Code invokes `hotline(message, provider="council")`, Mira:
-1. Receives the MCP request (inbound)
-2. Calls GPT-5.2, Gemini, and DeepSeek in parallel (outbound)
-3. Synthesizes responses
-4. Returns via MCP (inbound response)
-
-This bidirectional pattern enables Claude to consult other models through Mira's infrastructure.
 
 ### **6.5 Gemini Built-in Tools**
 
@@ -1122,8 +1038,7 @@ The daemon spawns several background tasks:
 | Memory recall | <100ms | Qdrant query + DB lookup |
 | Code search | <200ms | Embedding + vector search |
 | Tool execution (simple) | <50ms | DB read/write |
-| LLM advisory call | 2-30s | Network-bound, model-dependent |
-| Chat streaming | First token <2s | DeepSeek Reasoner |
+| Chat streaming | First token <2s | Gemini 3 Flash/Pro |
 
 #### **Throughput**
 | Metric | Value |
@@ -1376,7 +1291,7 @@ If deploying Mira externally:
 ├── src/                    # Rust source code
 │   ├── main.rs             # CLI entry point
 │   ├── lib.rs              # Library root
-│   ├── advisory/           # LLM provider integrations
+│   ├── batch/              # Batch processing (Gemini Batch API)
 │   ├── chat/               # Studio chat backend
 │   ├── context/            # Carousel, context assembly
 │   ├── core/               # Shared ops, primitives
