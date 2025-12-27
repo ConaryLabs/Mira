@@ -328,6 +328,27 @@ impl MiraServer {
         }
     }
 
+    #[tool(description = "Track tool activity for session phase detection. Called by hooks after tool execution.")]
+    async fn track_activity(&self, Parameters(req): Parameters<TrackActivityRequest>) -> Result<CallToolResult, McpError> {
+        // Record the tool activity
+        self.record_tool_activity(&req.tool_name, req.success).await;
+
+        // Optionally track file touch
+        if let Some(file_path) = &req.file_path {
+            if let Some(session_id) = self.get_mcp_session_id().await {
+                let ctx = crate::core::OpContext::just_db(self.db.as_ref().clone());
+                let _ = mcp_session::record_file_touch(&ctx, &session_id, file_path).await;
+            }
+        }
+
+        // Return current phase
+        let phase = self.get_session_phase().await;
+        Ok(json_response(serde_json::json!({
+            "recorded": true,
+            "phase": phase.as_str()
+        })))
+    }
+
     #[tool(description = "Extract decisions, topics, and insights from transcript text using LLM analysis.")]
     async fn extract(&self, Parameters(req): Parameters<ExtractRequest>) -> Result<CallToolResult, McpError> {
         // Use orchestrator if available

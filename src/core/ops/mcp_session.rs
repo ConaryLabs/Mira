@@ -113,26 +113,44 @@ pub struct SessionMetrics {
 
 impl SessionMetrics {
     /// Classify a tool call as read or write
+    /// Handles both Mira MCP tools and Claude Code built-in tools
     pub fn classify_tool(tool_name: &str) -> ToolType {
-        match tool_name {
-            // Read operations
+        // Strip mcp__mira__ prefix if present
+        let name = tool_name.strip_prefix("mcp__mira__").unwrap_or(tool_name);
+
+        match name {
+            // === Mira MCP Read operations ===
             "recall" | "get_symbols" | "get_call_graph" | "semantic_code_search"
             | "get_recent_commits" | "search_commits" | "find_cochange_patterns"
             | "get_related_files" | "get_guidelines" | "get_session_context"
             | "get_proactive_context" | "get_codebase_style" | "search_sessions"
             | "get_work_state" | "search_mcp_history" | "get_project"
             | "get_pending_instructions" | "carousel" | "query" | "list_tables"
-            | "debounce" | "document" => ToolType::Read,
+            | "debounce" | "document" | "track_activity" => ToolType::Read,
 
-            // Write/mutation operations
+            // === Mira MCP Write/mutation operations ===
             "remember" | "forget" | "store_session" | "store_decision"
             | "add_guideline" | "goal" | "task" | "correction"
             | "record_error_fix" | "record_rejected_approach" | "permission"
             | "sync_work_state" | "mark_instruction" | "proposal"
             | "set_project" | "session_start" | "index" | "file_search" => ToolType::Write,
 
-            // Build operations
+            // === Mira MCP Build operations ===
             "build" | "find_similar_fixes" => ToolType::Build,
+
+            // === Claude Code built-in tools ===
+            // Read operations
+            "Read" | "Glob" | "Grep" | "WebFetch" | "WebSearch"
+            | "Task" | "TaskOutput" | "AskUserQuestion" => ToolType::Read,
+
+            // Write operations
+            "Edit" | "Write" | "NotebookEdit" | "TodoWrite" => ToolType::Write,
+
+            // Build operations (Bash with build commands detected separately)
+            "Bash" => ToolType::Build,
+
+            // Plan mode
+            "EnterPlanMode" | "ExitPlanMode" => ToolType::Read,
 
             // Unknown - default to read
             _ => ToolType::Read,

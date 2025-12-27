@@ -15,7 +15,6 @@ struct HookInput {
     session_id: Option<String>,
     tool_name: Option<String>,
     tool_input: Option<serde_json::Value>,
-    #[allow(dead_code)] // May use for richer context later
     tool_result: Option<serde_json::Value>,
 }
 
@@ -58,13 +57,33 @@ pub async fn run() -> Result<()> {
         None => return Ok(()),
     };
 
-    // Skip Mira tools to avoid recursion
+    let tool_input = hook_input.tool_input.unwrap_or(serde_json::json!({}));
+    let session_id = hook_input.session_id.unwrap_or_else(|| "unknown".to_string());
+
+    // Track ALL tools for session phase detection (including Mira tools)
+    // Determine success from tool_result (look for error indicators)
+    let success = hook_input.tool_result
+        .as_ref()
+        .map(|r| !r.get("isError").and_then(|e| e.as_bool()).unwrap_or(false))
+        .unwrap_or(true);
+
+    // Extract file path if present (for file touch tracking)
+    let file_path = tool_input.get("file_path").and_then(|p| p.as_str()).map(String::from);
+
+    // Track activity (fire and forget - don't block on response)
+    let session_id_clone = session_id.clone();
+    let tool_name_clone = tool_name.clone();
+    tokio::spawn(async move {
+        if let Err(e) = track_session_activity(&session_id_clone, &tool_name_clone, success, file_path).await {
+            // Silently ignore errors - this is best-effort tracking
+            eprintln!("PostToolCall: Failed to track activity: {}", e);
+        }
+    });
+
+    // Skip action extraction for Mira tools to avoid recursion
     if tool_name.starts_with("mcp__mira__") {
         return Ok(());
     }
-
-    let tool_input = hook_input.tool_input.unwrap_or(serde_json::json!({}));
-    let session_id = hook_input.session_id.unwrap_or_else(|| "unknown".to_string());
 
     // Process based on tool type
     let action = match tool_name.as_str() {
@@ -779,6 +798,95 @@ async fn save_action(session_id: &str, action: &Action) -> Result<()> {
         .header("Authorization", format!("Bearer {}", auth_token))
         .header("Mcp-Session-Id", &mcp_session)
         .json(&remember_req)
+        .send()
+        .await?;
+
+    Ok(())
+}
+
+/// Track tool activity for session phase detection
+/// This is lightweight and doesn't block on response
+async fn track_session_activity(
+    session_id: &str,
+    tool_name: &str,
+    success: bool,
+    file_path: Option<String>,
+) -> Result<()> {
+    let mira_url = std::env::var("MIRA_URL")
+        .unwrap_or_else(|_| "http://localhost:3000/mcp".to_string());
+    let auth_token = std::env::var("MIRA_AUTH_TOKEN")
+        .unwrap_or_else(|_| "63c7663fe0dbdfcd2bbf6c33a0a9b4b9".to_string());
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    // Initialize MCP session
+    let init_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 1,
+        method: "initialize".to_string(),
+        params: serde_json::json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "posttool-activity", "version": "1.0"}
+        }),
+    };
+
+    let resp = client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .json(&init_req)
+        .send()
+        .await?;
+
+    let mcp_session = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or(session_id)
+        .to_string();
+
+    // Send initialized notification
+    let notif = McpNotification {
+        jsonrpc: "2.0".to_string(),
+        method: "notifications/initialized".to_string(),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&notif)
+        .send()
+        .await?;
+
+    // Call track_activity
+    let track_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 2,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "track_activity",
+            "arguments": {
+                "tool_name": tool_name,
+                "success": success,
+                "file_path": file_path
+            }
+        }),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&track_req)
         .send()
         .await?;
 
