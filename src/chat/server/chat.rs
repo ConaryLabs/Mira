@@ -281,6 +281,29 @@ async fn process_gemini_chat(
         }
     };
 
+    // Check for project FileSearch store (for RAG grounding)
+    let file_search_stores: Vec<String> = if let Some(db) = &state.db {
+        sqlx::query_scalar::<_, String>(
+            "SELECT fs.store_name FROM file_search_stores fs
+             JOIN projects p ON fs.project_id = p.id
+             WHERE p.path = ?"
+        )
+        .bind(&request.project_path)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    if !file_search_stores.is_empty() {
+        tracing::debug!(
+            project = %request.project_path,
+            stores = ?file_search_stores,
+            "Using FileSearch stores for RAG"
+        );
+    }
+
     // First request (using current model from routing - starts as Flash)
     // Use cached context if available for cost savings
     let initial_request = ProviderChatRequest::new(routing.model().model_id(), &system_prompt, &request.message)
@@ -289,6 +312,9 @@ async fn process_gemini_chat(
 
     let mut rx = if let Some(ref cache) = cached_content {
         provider.create_stream_with_cache(cache, initial_request).await?
+    } else if !file_search_stores.is_empty() {
+        // Use FileSearch-enabled stream when stores exist
+        provider.create_stream_with_file_search(initial_request, &file_search_stores).await?
     } else {
         provider.create_stream(initial_request).await?
     };

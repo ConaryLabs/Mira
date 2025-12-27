@@ -12,13 +12,16 @@
 
 mod capabilities;
 mod deepseek;
+pub mod file_search;
 mod gemini;
 pub mod responses;
 mod types;
 
 pub use capabilities::Capabilities;
 pub use deepseek::DeepSeekProvider;
+pub use file_search::{FileSearchClient, FileSearchStore, CustomMetadata, Operation};
 pub use gemini::CachedContent;
+pub use gemini::FileSearchConfig;
 pub use gemini::GeminiChatProvider;
 pub use gemini::GeminiModel;
 pub use types::*;

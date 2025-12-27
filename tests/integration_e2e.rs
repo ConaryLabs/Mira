@@ -17,8 +17,7 @@ use tokio::sync::Semaphore;
 use tower::ServiceExt;
 
 // Import from mira crate
-use mira::chat::server::{AppState, ProjectLocks};
-use mira::chat::tools::WebSearchConfig;
+use mira::chat::server::{AppState, ProjectLocks, ContextCaches};
 use mira::core::SemanticSearch;
 
 // ============================================================================
@@ -104,11 +103,8 @@ async fn create_test_state(db: SqlitePool) -> AppState {
         default_reasoning_effort: "low".to_string(),
         sync_token: None,
         sync_semaphore: Arc::new(Semaphore::new(3)),
-        web_search_config: WebSearchConfig {
-            google_api_key: None,
-            google_cx: None,
-        },
         project_locks: Arc::new(ProjectLocks::new()),
+        context_caches: Arc::new(ContextCaches::new()),
     }
 }
 

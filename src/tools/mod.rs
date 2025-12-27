@@ -10,6 +10,7 @@ pub mod build_intel;
 pub mod code_intel;
 pub mod corrections;
 pub mod documents;
+pub mod file_search;
 pub mod format;
 pub mod hotline;
 pub mod ingest;
