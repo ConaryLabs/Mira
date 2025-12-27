@@ -5,6 +5,7 @@
 #![allow(dead_code)] // Tool infrastructure (some items for future use)
 
 pub mod analytics;
+pub mod batch;
 pub mod helpers;
 pub mod build_intel;
 pub mod code_intel;
