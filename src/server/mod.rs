@@ -197,67 +197,6 @@ impl MiraServer {
         }
     }
 
-    // === Hotline - Talk to Mira (GPT-5.2) ===
-
-    #[tool(description = "Talk to Mira (GPT-5.2) for advice or collaboration.")]
-    // Note: Provider param allows switching to DeepSeek V3.2. See HotlineRequest schema.
-    async fn hotline(&self, Parameters(req): Parameters<HotlineRequest>) -> Result<CallToolResult, McpError> {
-        let project = self.get_active_project().await;
-        let project_id = project.as_ref().map(|p| p.id);
-        let project_name = project.as_ref().map(|p| p.name.as_str());
-        let project_type = project.as_ref().and_then(|p| p.project_type.as_deref());
-        let message_preview: String = req.message.chars().take(100).collect();
-        let provider = req.provider.clone().unwrap_or_else(|| "openai".to_string());
-        let start = std::time::Instant::now();
-
-        match hotline::call_mira(
-            req,
-            self.db.as_ref(),
-            &self.semantic,
-            project_id,
-            project_name,
-            project_type,
-        ).await {
-            Ok(result) => {
-                let _ = mcp_history::log_call_semantic(
-                    self.db.as_ref(),
-                    &self.semantic,
-                    None,
-                    project_id,
-                    "hotline",
-                    Some(&serde_json::json!({"message": &message_preview, "provider": &provider})),
-                    &format!("Asked {}: {}", provider, message_preview),
-                    true,
-                    Some(start.elapsed().as_millis() as i64),
-                ).await;
-                Ok(json_response(result))
-            }
-            Err(e) => {
-                let _ = mcp_history::log_call_semantic(
-                    self.db.as_ref(),
-                    &self.semantic,
-                    None,
-                    project_id,
-                    "hotline",
-                    Some(&serde_json::json!({"message": &message_preview, "provider": &provider})),
-                    &format!("Failed {}: {}", provider, e),
-                    false,
-                    Some(start.elapsed().as_millis() as i64),
-                ).await;
-                Ok(CallToolResult::error(vec![Content::text(format!("Hotline error: {}", e))]))
-            }
-        }
-    }
-
-    #[tool(description = "Manage advisory sessions. Actions: list/get/close/pin/decide")]
-    async fn advisory_session(&self, Parameters(req): Parameters<AdvisorySessionRequest>) -> Result<CallToolResult, McpError> {
-        let project_id = self.get_active_project().await.map(|p| p.id);
-        match handlers::advisory::handle(self.db.as_ref(), project_id, &req).await {
-            Ok(result) => Ok(json_response(result)),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
-        }
-    }
-
     // === Memory (core - high usage) ===
 
     #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]

@@ -26,7 +26,6 @@ use tracing::{info, warn, error, Level};
 use tracing_subscriber::FmtSubscriber;
 use std::time::Duration;
 
-mod advisory;
 mod batch;
 mod chat;
 mod context;
@@ -418,10 +417,6 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
     if let Some(chat) = chat_router {
         base_router = base_router.merge(chat);
     }
-
-    // Add advisory REST routes
-    let advisory_router = chat::server::advisory::create_router(db.clone(), semantic.clone());
-    base_router = base_router.merge(advisory_router);
 
     // Add MCP routes with auth
     let token = auth_token.clone();

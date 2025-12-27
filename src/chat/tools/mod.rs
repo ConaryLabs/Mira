@@ -5,7 +5,6 @@
 //! - File operations (read, glob, grep) - READ ONLY
 //! - Memory (remember, recall)
 //! - Mira power armor (task, goal, correction, store_decision, record_rejected_approach)
-//! - Council (consult other AI models)
 //! - Code/Git intelligence
 //!
 //! REMOVED (Claude Code handles these via MCP):
@@ -16,7 +15,6 @@
 
 pub mod build;
 pub mod code_intel;
-mod council;
 mod definitions;
 pub mod documents;
 mod file;
@@ -56,12 +54,11 @@ pub fn tool_category(name: &str) -> ToolCategory {
         // Git operations (read-only)
         "git_status" | "git_diff" | "git_log" | "get_recent_commits"
         | "search_commits" | "find_cochange_patterns" => ToolCategory::Git,
-        // Mira power armor + council + intelligence + orchestration
+        // Mira power armor + intelligence + orchestration
         "task" | "goal" | "correction" | "store_decision" | "record_rejected_approach"
         | "get_symbols" | "get_call_graph" | "semantic_code_search" | "get_related_files"
         | "get_codebase_style" | "find_similar_fixes" | "record_error_fix" | "build"
-        | "document" | "index" | "get_proactive_context" | "council" | "ask_gpt" | "ask_opus"
-        | "ask_gemini" | "ask_deepseek"
+        | "document" | "index" | "get_proactive_context"
         | "view_claude_activity" | "send_instruction" | "list_instructions" | "cancel_instruction"
         => ToolCategory::Mira,
         // Artifact tools
@@ -130,11 +127,6 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
             let action = get_str(args, "action").unwrap_or("manage");
             format!("Goal: {}", action)
         }
-        "council" => "Consulting council".to_string(),
-        "ask_gpt" => "Asking GPT-5.2".to_string(),
-        "ask_opus" => "Asking Opus 4.5".to_string(),
-        "ask_gemini" => "Asking Gemini 3 Pro".to_string(),
-        "ask_deepseek" => "Asking DeepSeek Reasoner".to_string(),
 
         // Code intelligence
         "get_symbols" => {
@@ -252,7 +244,6 @@ impl FileCache {
 
 use build::BuildTools;
 use code_intel::CodeIntelTools;
-use council::CouncilTools;
 use documents::DocumentTools;
 use file::FileTools;
 use git::GitTools;
@@ -357,33 +348,6 @@ impl ToolExecutor {
             // Artifact tools
             "fetch_artifact" => self.fetch_artifact(&args).await,
             "search_artifact" => self.search_artifact(&args).await,
-
-            // Council tools - consult other AI models
-            "council" => {
-                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let context = args.get("context").and_then(|v| v.as_str());
-                CouncilTools::council(message, context).await
-            }
-            "ask_gpt" => {
-                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let context = args.get("context").and_then(|v| v.as_str());
-                CouncilTools::ask_gpt(message, context).await
-            }
-            "ask_opus" => {
-                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let context = args.get("context").and_then(|v| v.as_str());
-                CouncilTools::ask_opus(message, context).await
-            }
-            "ask_gemini" => {
-                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let context = args.get("context").and_then(|v| v.as_str());
-                CouncilTools::ask_gemini(message, context).await
-            }
-            "ask_deepseek" => {
-                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let context = args.get("context").and_then(|v| v.as_str());
-                CouncilTools::ask_deepseek(message, context).await
-            }
 
             // Code intelligence tools
             "get_symbols" => self.code_intel_tools().get_symbols(&args).await,

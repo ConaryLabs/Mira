@@ -11,108 +11,59 @@ use crate::core::ops::proposals::{self, ProposalType};
 use crate::core::OpContext;
 use crate::tools::types::ProposalRequest;
 
-/// Extract proposals from text using pattern matching or LLM fallback
+/// Extract proposals from text using pattern matching
 pub async fn extract(db: &SqlitePool, text: &str, base_confidence: f64) -> Result<Value> {
     let ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
         .with_db(db.clone());
 
-    // First try pattern-based extraction
+    // Pattern-based extraction
     let matches = proposals::extract_from_text(&ctx, text, base_confidence).await?;
 
     let mut created = Vec::new();
-    let mut extraction_method = "pattern";
     let mut skipped_dupes = 0;
 
     if matches.is_empty() {
-        // Fallback to LLM-based extraction
-        extraction_method = "llm";
-        match proposals::extract_with_llm(text).await {
-            Ok(llm_results) if !llm_results.is_empty() => {
-                for r in llm_results {
-                    // Check for duplicate before creating
-                    if let Ok(Some(existing_id)) = proposals::find_duplicate(&ctx, &r.content).await {
-                        tracing::debug!("Skipping duplicate proposal, matches: {}", existing_id);
-                        skipped_dupes += 1;
-                        continue;
-                    }
+        return Ok(json!({ "message": "No proposals detected in text." }));
+    }
 
-                    let ptype: ProposalType = r.proposal_type.parse()
-                        .unwrap_or(ProposalType::Task);
-
-                    let evidence = json!({
-                        "source": "llm",
-                        "llm_confidence": r.confidence,
-                    });
-
-                    let proposal = proposals::create_proposal(
-                        &ctx,
-                        ptype,
-                        &r.content,
-                        r.title.as_deref(),
-                        r.confidence.min(0.7), // Cap LLM confidence at 0.7
-                        Some(&evidence.to_string()),
-                        Some("extract_llm"),
-                        None,
-                    ).await?;
-
-                    created.push(json!({
-                        "id": proposal.id,
-                        "type": proposal.proposal_type.to_string(),
-                        "content": proposal.content,
-                        "confidence": proposal.confidence,
-                        "status": proposal.status.to_string(),
-                    }));
-                }
-            }
-            Ok(_) => {
-                return Ok(json!({ "message": "No proposals detected in text." }));
-            }
-            Err(e) => {
-                return Ok(json!({
-                    "message": format!("Pattern extraction found nothing, LLM fallback failed: {}", e)
-                }));
-            }
+    // Process pattern matches
+    for m in matches {
+        // Check for duplicate before creating
+        if let Ok(Some(existing_id)) = proposals::find_duplicate(&ctx, &m.full_context).await {
+            tracing::debug!("Skipping duplicate proposal, matches: {}", existing_id);
+            skipped_dupes += 1;
+            continue;
         }
-    } else {
-        // Process pattern matches
-        for m in matches {
-            // Check for duplicate before creating
-            if let Ok(Some(existing_id)) = proposals::find_duplicate(&ctx, &m.full_context).await {
-                tracing::debug!("Skipping duplicate proposal, matches: {}", existing_id);
-                skipped_dupes += 1;
-                continue;
-            }
 
-            let evidence = json!({
-                "pattern_id": m.pattern_id,
-                "matched_text": m.matched_text,
-                "context": m.full_context,
-            });
+        let evidence = json!({
+            "pattern_id": m.pattern_id,
+            "matched_text": m.matched_text,
+            "context": m.full_context,
+        });
 
-            let proposal = proposals::create_proposal(
-                &ctx,
-                m.proposal_type,
-                &m.full_context,
-                None,
-                m.confidence,
-                Some(&evidence.to_string()),
-                Some("extract"),
-                None,
-            ).await?;
+        let proposal = proposals::create_proposal(
+            &ctx,
+            m.proposal_type,
+            &m.full_context,
+            None,
+            m.confidence,
+            Some(&evidence.to_string()),
+            Some("extract"),
+            None,
+        ).await?;
 
-            created.push(json!({
-                "id": proposal.id,
-                "type": proposal.proposal_type.to_string(),
-                "content": proposal.content,
-                "confidence": proposal.confidence,
-                "status": proposal.status.to_string(),
-            }));
-        }
+        created.push(json!({
+            "id": proposal.id,
+            "type": proposal.proposal_type.to_string(),
+            "content": proposal.content,
+            "confidence": proposal.confidence,
+            "status": proposal.status.to_string(),
+        }));
     }
 
     let mut response = json!({
         "extracted": created.len(),
-        "method": extraction_method,
+        "method": "pattern",
         "proposals": created,
     });
     if skipped_dupes > 0 {
