@@ -4,7 +4,7 @@
 //! and message persistence.
 //!
 //! Studio uses Gemini 3 Flash by default (cheap, fast) and escalates to
-//! Pro when heavy tools are needed (council, goal, task) or chain depth > 3.
+//! Pro when heavy tools are needed (goal, task) or chain depth > 3.
 //! It manages goals, tasks, and sends instructions to Claude Code.
 
 // TODO: The outer iteration loop (line ~208) always breaks - needs investigation

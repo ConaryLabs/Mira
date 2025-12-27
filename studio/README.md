@@ -69,9 +69,7 @@ studio/src/lib/
 │   │   ├── WorkspaceTab.svelte     # Artifacts panel
 │   │   └── ArtifactCard.svelte     # File preview card
 │   └── content/
-│       ├── CodeBlock.svelte        # Syntax highlighted code
-│       ├── CouncilView.svelte      # Multi-model responses
-│       └── DiffView.svelte         # File diff display
+│       └── CodeBlock.svelte        # Syntax highlighted code
 ├── stores/
 │   ├── layout.svelte.ts       # Panel state (enum-based), localStorage
 │   ├── settings.ts            # Project path, projects[], model, theme
@@ -79,7 +77,7 @@ studio/src/lib/
 │   ├── toolActivity.svelte.ts # Tool call tracking
 │   └── artifacts.svelte.ts    # File artifacts tracking
 └── types/
-    └── content.ts             # CouncilResponses, ProviderInfo
+    └── ...                    # Shared types
 ```
 
 ## Layout

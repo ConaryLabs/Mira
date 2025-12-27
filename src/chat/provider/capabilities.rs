@@ -125,7 +125,7 @@ impl Capabilities {
     }
 
     /// Gemini 3 Pro (complex reasoning, advanced planning)
-    /// Higher cost ($2/$12 per 1M) but better for council/goal/task
+    /// Higher cost ($2/$12 per 1M) but better for goal/task/planning
     /// Supports context caching with 4,096 token minimum (~75% cost reduction)
     pub fn gemini_3_pro() -> Self {
         Self {

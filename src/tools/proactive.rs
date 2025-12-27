@@ -278,7 +278,7 @@ async fn get_related_decisions(
     limit: i64,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     if context.is_empty() {
-        // Return recent decisions when no context (useful for hotline)
+        // Return recent decisions when no context
         let results = sqlx::query_as::<_, (String, String, Option<String>, String)>(r#"
             SELECT key, value, category,
                    datetime(updated_at, 'unixepoch', 'localtime') as updated
@@ -379,7 +379,7 @@ async fn get_relevant_memories(
     limit: i64,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     if context.is_empty() {
-        // Return recent non-decision memories when no context (useful for hotline)
+        // Return recent non-decision memories when no context
         let results = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(r#"
             SELECT id, key, value, fact_type, category,
                    datetime(updated_at, 'unixepoch', 'localtime') as updated

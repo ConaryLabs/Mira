@@ -38,7 +38,7 @@ pub enum GeminiModel {
     #[default]
     Flash,
     /// Pro: Complex reasoning and advanced planning ($2/$12 per 1M)
-    /// Best for: council, goal, task, multi-step chains
+    /// Best for: goal, task, multi-step chains
     Pro,
 }
 
