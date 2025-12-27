@@ -23,6 +23,7 @@ use tracing::info;
 use crate::tools::*;
 use crate::context::{ContextCarousel, CarouselTrigger};
 use crate::orchestrator::GeminiOrchestrator;
+use crate::core::ops::mcp_session::{self, SessionPhase, McpSession};
 
 // Re-export database utilities
 pub use db::{create_optimized_pool, run_migrations};
@@ -63,6 +64,10 @@ pub struct MiraServer {
     pub tool_router: ToolRouter<Self>,
     pub active_project: Arc<RwLock<Option<ProjectContext>>>,
     pub carousel: Arc<RwLock<Option<ContextCarousel>>>,
+    /// Current MCP session ID (set on initialize or session_start)
+    pub mcp_session_id: Arc<RwLock<Option<String>>>,
+    /// Current session phase (detected from activity patterns)
+    pub session_phase: Arc<RwLock<SessionPhase>>,
 }
 
 impl MiraServer {
@@ -102,6 +107,8 @@ impl MiraServer {
             tool_router: Self::tool_router(),
             active_project: Arc::new(RwLock::new(None)),
             carousel: Arc::new(RwLock::new(None)),
+            mcp_session_id: Arc::new(RwLock::new(None)),
+            session_phase: Arc::new(RwLock::new(SessionPhase::Early)),
         })
     }
 
@@ -113,6 +120,48 @@ impl MiraServer {
     /// Set the active project context
     pub async fn set_active_project(&self, ctx: Option<ProjectContext>) {
         *self.active_project.write().await = ctx;
+    }
+
+    /// Get the current MCP session ID
+    pub async fn get_mcp_session_id(&self) -> Option<String> {
+        self.mcp_session_id.read().await.clone()
+    }
+
+    /// Set the MCP session ID and create/update session record
+    pub async fn set_mcp_session_id(&self, session_id: Option<String>, project_id: Option<i64>) {
+        *self.mcp_session_id.write().await = session_id.clone();
+
+        // Create/update session record in database
+        if let Some(sid) = session_id {
+            let ctx = crate::core::OpContext::just_db(self.db.as_ref().clone());
+            if let Err(e) = mcp_session::upsert_mcp_session(&ctx, &sid, project_id).await {
+                tracing::warn!("Failed to upsert MCP session: {}", e);
+            }
+        }
+    }
+
+    /// Get the current session phase
+    pub async fn get_session_phase(&self) -> SessionPhase {
+        *self.session_phase.read().await
+    }
+
+    /// Record a tool call and update session metrics
+    pub async fn record_tool_activity(&self, tool_name: &str, success: bool) {
+        if let Some(session_id) = self.get_mcp_session_id().await {
+            let ctx = crate::core::OpContext::just_db(self.db.as_ref().clone());
+            match mcp_session::record_tool_call(&ctx, &session_id, tool_name, success).await {
+                Ok(new_phase) => {
+                    let mut phase = self.session_phase.write().await;
+                    if *phase != new_phase {
+                        tracing::info!("[SESSION] Phase transition: {:?} → {:?}", *phase, new_phase);
+                        *phase = new_phase;
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("Failed to record tool activity: {}", e);
+                }
+            }
+        }
     }
 
     /// Get the tool router (public wrapper for macro-generated function)
@@ -402,6 +451,15 @@ impl MiraServer {
             project_type: result.project_type.clone(),
         };
         self.set_active_project(Some(ctx)).await;
+
+        // Create/update MCP session record
+        // Generate a session ID if we don't have one yet
+        let session_id = self.get_mcp_session_id().await
+            .unwrap_or_else(|| format!("session-{}", uuid::Uuid::new_v4()));
+        self.set_mcp_session_id(Some(session_id.clone()), Some(result.project_id)).await;
+
+        // Reset session phase to Early for new session
+        *self.session_phase.write().await = SessionPhase::Early;
 
         // Initialize carousel for this session
         {

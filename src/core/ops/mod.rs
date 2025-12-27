@@ -35,6 +35,7 @@ pub mod documents;
 pub mod build;
 pub mod work_state;
 pub mod session;
+pub mod mcp_session;
 pub mod chat_summary;
 pub mod chat_chain;
 

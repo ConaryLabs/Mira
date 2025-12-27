@@ -72,6 +72,7 @@ impl<'a> ProactiveTools<'a> {
             task: args["task"].as_str().map(String::from),
             error: args["error"].as_str().map(String::from),
             limit_per_category: args["limit_per_category"].as_i64().map(|v| v as i32),
+            session_phase: args["session_phase"].as_str().map(String::from),
         };
 
         // Delegate to MCP implementation

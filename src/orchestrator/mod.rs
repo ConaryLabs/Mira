@@ -10,9 +10,11 @@
 
 mod types;
 mod worker;
+pub mod task_type;
 
 pub use types::*;
 pub use worker::OrchestratorWorker;
+pub use task_type::TaskType;
 
 use anyhow::Result;
 use chrono::Utc;

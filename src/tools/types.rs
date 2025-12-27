@@ -483,6 +483,8 @@ pub struct GetProactiveContextRequest {
     pub task: Option<String>,
     #[schemars(description = "Max per category")]
     pub limit_per_category: Option<i32>,
+    #[schemars(description = "Session phase: early/middle/late/wrapping")]
+    pub session_phase: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

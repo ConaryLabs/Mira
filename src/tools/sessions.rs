@@ -8,6 +8,8 @@ use std::path::Path;
 
 use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
 use super::types::*;
+use crate::core::ops::mcp_session::{find_resumable_session, ResumeContext};
+use crate::core::OpContext;
 
 /// Get session context - combines recent sessions, memories, pending tasks, goals, and corrections
 /// This is the "where did we leave off?" tool for session startup
@@ -471,6 +473,19 @@ pub async fn session_start(
         .fetch_one(db)
         .await?;
 
+    // 1.5. Check for resumable session (within 24 hours)
+    let resume_context = {
+        let ctx = OpContext::just_db(db.clone());
+        match find_resumable_session(&ctx, project_id, 24).await {
+            Ok(Some(session)) => Some(ResumeContext::from_session(&session)),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::debug!("Failed to check for resumable session: {}", e);
+                None
+            }
+        }
+    };
+
     // 2. Count mira_usage guidelines (don't return content - just note they're loaded)
     let (usage_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM coding_guidelines WHERE category = 'mira_usage'"
@@ -626,6 +641,7 @@ pub async fn session_start(
         pending_proposals,
         index_fresh,
         stale_file_count: stale_count,
+        resume_context,
     })
 }
 
@@ -726,6 +742,8 @@ pub struct SessionStartResult {
     pub pending_proposals: Vec<ProposalSummary>,
     pub index_fresh: bool,
     pub stale_file_count: usize,
+    /// Resume context if a previous session can be resumed
+    pub resume_context: Option<ResumeContext>,
 }
 
 #[derive(Debug)]

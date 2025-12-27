@@ -45,6 +45,41 @@ pub fn session_start(result: &crate::tools::sessions::SessionStartResult) -> Str
         .unwrap_or_default();
     out.push_str(&format!("Project: {}{}\n", result.project_name, type_suffix));
 
+    // Resume context (if available - previous session can be resumed)
+    if let Some(ref resume) = result.resume_context {
+        out.push('\n');
+        out.push_str("═══════════════════════════════════════\n");
+        out.push_str("◆ RESUMABLE SESSION DETECTED\n");
+        out.push_str("═══════════════════════════════════════\n");
+        out.push_str(&format!("Previous session: {} ({}% complete, {} phase)\n",
+            &resume.previous_session_id[..8.min(resume.previous_session_id.len())],
+            resume.progress_percent as i32,
+            resume.previous_phase.as_str()));
+        out.push_str(&format!("Last active: {} minutes ago\n", resume.last_activity_ago_mins));
+        out.push_str(&format!("Tool calls made: {}\n", resume.tool_call_count));
+
+        if !resume.touched_files.is_empty() {
+            out.push_str("\nFiles from previous session:\n");
+            for f in resume.touched_files.iter().take(5) {
+                out.push_str(&format!("  {}\n", f));
+            }
+            if resume.touched_files.len() > 5 {
+                out.push_str(&format!("  ...and {} more\n", resume.touched_files.len() - 5));
+            }
+        }
+
+        if !resume.topics.is_empty() {
+            out.push_str(&format!("\nTopics: {}\n", resume.topics.join(", ")));
+        }
+
+        if let Some(ref goal_id) = resume.active_goal_id {
+            out.push_str(&format!("\nActive goal: {}\n", goal_id));
+        }
+
+        out.push_str("\nYou can continue where you left off.\n");
+        out.push_str("═══════════════════════════════════════\n");
+    }
+
     // Persona (if set)
     if let Some(ref persona) = result.persona_summary {
         out.push('\n');

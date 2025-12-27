@@ -283,6 +283,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/mcp-history", get(handlers::mcp_history_handler))
         .route("/api/instructions", get(handlers::instructions_handler))
         .route("/api/instructions", post(handlers::create_instruction_handler))
+        .route("/api/orchestration/stream", get(handlers::orchestration_stream_handler))
         .layer(version_header)
         .layer(cors)
         .with_state(state)

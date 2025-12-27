@@ -40,6 +40,8 @@ pub struct RecallConfig<'a> {
     pub fact_type: Option<&'a str>,
     /// Filter by category
     pub category: Option<&'a str>,
+    /// Files touched in current session (for relevance boost)
+    pub session_touched_files: Option<&'a std::collections::HashSet<String>>,
 }
 
 /// Validity state for a memory fact
@@ -146,15 +148,52 @@ pub fn compute_freshness(created_at: i64, category: Option<&str>, fact_type: &st
 
 /// Compute final score with weighted blend
 ///
-/// Formula: (qdrant_score * 0.7 + freshness * 0.2 + confidence * 0.1) * validity_penalty
+/// Formula: (qdrant_score * 0.7 + freshness * 0.2 + confidence * 0.1) * validity_penalty * session_boost
+/// Session boost is 1.5x for files touched in current session, 1.0 otherwise
 pub fn compute_final_score(
     qdrant_score: f32,
     confidence: f32,
     freshness: f32,
     validity: Validity,
 ) -> f32 {
+    compute_final_score_with_session_boost(qdrant_score, confidence, freshness, validity, 1.0)
+}
+
+/// Compute final score with weighted blend and session boost
+///
+/// Session boost multiplies the final score for files touched in current session
+pub fn compute_final_score_with_session_boost(
+    qdrant_score: f32,
+    confidence: f32,
+    freshness: f32,
+    validity: Validity,
+    session_boost: f32,
+) -> f32 {
     let base = (qdrant_score * 0.7) + (freshness * 0.2) + (confidence * 0.1);
-    base * validity.penalty()
+    base * validity.penalty() * session_boost
+}
+
+/// Session boost constant for files touched in current session
+pub const SESSION_BOOST_MULTIPLIER: f32 = 1.5;
+
+/// Check if a file path matches any in the touched files set
+pub fn get_session_boost(
+    file_path: Option<&str>,
+    touched_files: Option<&std::collections::HashSet<String>>,
+) -> f32 {
+    match (file_path, touched_files) {
+        (Some(path), Some(touched)) => {
+            // Check for exact match or suffix match
+            if touched.contains(path) {
+                SESSION_BOOST_MULTIPLIER
+            } else if touched.iter().any(|t| path.ends_with(t) || t.ends_with(path)) {
+                SESSION_BOOST_MULTIPLIER
+            } else {
+                1.0
+            }
+        }
+        _ => 1.0,
+    }
 }
 
 // ============================================================================
@@ -331,11 +370,13 @@ pub async fn recall_memory_facts(
                                     (key.clone(), 1.0, Validity::Active, Utc::now().timestamp(), None)
                                 };
 
-                            // Compute freshness and final score
+                            // Compute freshness and final score with session boost
                             let freshness =
                                 compute_freshness(created_at, category.as_deref(), &fact_type);
+                            let session_boost =
+                                get_session_boost(file_path.as_deref(), cfg.session_touched_files);
                             let final_score =
-                                compute_final_score(r.score, confidence, freshness, validity);
+                                compute_final_score_with_session_boost(r.score, confidence, freshness, validity, session_boost);
 
                             let fact = MemoryFact {
                                 id,
