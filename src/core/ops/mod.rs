@@ -45,7 +45,6 @@ pub mod audit;
 pub mod proposals;
 
 // Future phases:
-// pub mod council;
 // pub mod index;
 // pub mod artifacts;
 // pub mod analytics;
