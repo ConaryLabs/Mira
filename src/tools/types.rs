@@ -462,6 +462,19 @@ pub struct DebounceRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrackActivityRequest {
+    #[schemars(description = "Tool name that was called (e.g., 'Edit', 'Bash', 'Read')")]
+    pub tool_name: String,
+    #[schemars(description = "Whether the tool call succeeded")]
+    #[serde(default = "default_true")]
+    pub success: bool,
+    #[schemars(description = "Optional file path if a file was touched")]
+    pub file_path: Option<String>,
+}
+
+fn default_true() -> bool { true }
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExtractRequest {
     #[schemars(description = "Transcript or text content to extract decisions/topics from")]
     pub transcript: String,
