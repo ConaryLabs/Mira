@@ -44,7 +44,6 @@ struct McpNotification {
 }
 
 // Debounce - don't spam context for the same file
-const DEBOUNCE_FILE: &str = "/tmp/mira-pretool-debounce.json";
 const DEBOUNCE_SECONDS: u64 = 120; // 2 minutes between context for same file
 
 pub async fn run() -> Result<()> {
@@ -86,12 +85,7 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Check debounce
-    if !should_provide_context(&file_path) {
-        return Ok(());
-    }
-
-    // Get code context from Mira
+    // Get code context from Mira (includes debounce check)
     let context = match get_code_context(&file_path).await {
         Some(c) => c,
         None => return Ok(()),
@@ -101,9 +95,6 @@ pub async fn run() -> Result<()> {
     if context.is_empty() {
         return Ok(());
     }
-
-    // Mark as provided
-    mark_context_provided(&file_path);
 
     let output = HookOutput {
         hook_specific_output: HookSpecificOutput {
@@ -122,58 +113,6 @@ fn is_code_file(path: &str) -> bool {
         ".c", ".cpp", ".h", ".hpp", ".rb", ".php", ".swift", ".kt",
     ];
     code_extensions.iter().any(|ext| path.ends_with(ext))
-}
-
-fn should_provide_context(file_path: &str) -> bool {
-    let debounce = load_debounce();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    if let Some(last_time) = debounce.get(file_path).and_then(|v| v.as_u64()) {
-        if now - last_time < DEBOUNCE_SECONDS {
-            return false;
-        }
-    }
-    true
-}
-
-fn mark_context_provided(file_path: &str) {
-    let mut debounce = load_debounce();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    debounce[file_path] = serde_json::json!(now);
-
-    // Clean old entries
-    let cutoff = now.saturating_sub(3600);
-    let keys_to_remove: Vec<String> = debounce
-        .as_object()
-        .map(|obj| {
-            obj.iter()
-                .filter(|(_, v)| v.as_u64().unwrap_or(0) < cutoff)
-                .map(|(k, _)| k.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    for key in keys_to_remove {
-        debounce.as_object_mut().map(|obj| obj.remove(&key));
-    }
-
-    if let Ok(json) = serde_json::to_string(&debounce) {
-        let _ = std::fs::write(DEBOUNCE_FILE, json);
-    }
-}
-
-fn load_debounce() -> serde_json::Value {
-    std::fs::read_to_string(DEBOUNCE_FILE)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}))
 }
 
 async fn get_code_context(file_path: &str) -> Option<String> {
@@ -232,10 +171,44 @@ async fn get_code_context(file_path: &str) -> Option<String> {
         .await
         .ok()?;
 
+    // Check debounce via MCP tool (replaces /tmp file debounce)
+    let debounce_key = format!("pretool:{}", file_path);
+    let debounce_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 2,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "debounce",
+            "arguments": {
+                "key": debounce_key,
+                "ttl_secs": DEBOUNCE_SECONDS
+            }
+        }),
+    };
+
+    let resp = client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&debounce_req)
+        .send()
+        .await
+        .ok()?;
+
+    let debounce_body = resp.text().await.ok()?;
+
+    // Check if we should proceed (not debounced)
+    // Response contains {"proceed": true/false}
+    if !debounce_body.contains("\"proceed\":true") && !debounce_body.contains("\"proceed\": true") {
+        return None; // Debounced, skip context
+    }
+
     // Get related files
     let related_req = McpRequest {
         jsonrpc: "2.0".to_string(),
-        id: 2,
+        id: 3,
         method: "tools/call".to_string(),
         params: serde_json::json!({
             "name": "get_related_files",
@@ -297,7 +270,7 @@ async fn get_code_context(file_path: &str) -> Option<String> {
     // Get key symbols from the file
     let symbols_req = McpRequest {
         jsonrpc: "2.0".to_string(),
-        id: 3,
+        id: 4,
         method: "tools/call".to_string(),
         params: serde_json::json!({
             "name": "get_symbols",
@@ -339,7 +312,7 @@ async fn get_code_context(file_path: &str) -> Option<String> {
     // Get improvement suggestions via proactive context
     let proactive_req = McpRequest {
         jsonrpc: "2.0".to_string(),
-        id: 4,
+        id: 5,
         method: "tools/call".to_string(),
         params: serde_json::json!({
             "name": "get_proactive_context",

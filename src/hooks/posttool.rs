@@ -34,8 +34,7 @@ struct McpNotification {
     method: String,
 }
 
-// Debounce file to prevent duplicate saves
-const DEBOUNCE_FILE: &str = "/tmp/mira-posttool-debounce.json";
+// Debounce - prevent duplicate saves (uses MCP debounce tool)
 const DEBOUNCE_SECONDS: u64 = 60;
 
 pub async fn run() -> Result<()> {
@@ -110,20 +109,11 @@ pub async fn run() -> Result<()> {
         _ => None,
     };
 
-    // If we have a significant action, save it
+    // If we have a significant action, save it (debounce is checked inside save_action via MCP)
     if let Some(action) = action {
-        // Check debounce
-        if !should_save(&action.key) {
-            return Ok(());
-        }
-
-        // Save to Mira
         if let Err(e) = save_action(&session_id, &action).await {
             eprintln!("PostToolCall hook error: {}", e);
         }
-
-        // Update debounce
-        mark_saved(&action.key);
     }
 
     Ok(())
@@ -297,66 +287,6 @@ fn timestamp_minute() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() / 60)
         .unwrap_or(0)
-}
-
-fn should_save(key: &str) -> bool {
-    let debounce = load_debounce();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    if let Some(last_save) = debounce.get(key).and_then(|v| v.as_u64()) {
-        // Skip if saved within debounce window
-        if now - last_save < DEBOUNCE_SECONDS {
-            return false;
-        }
-    }
-
-    true
-}
-
-fn mark_saved(key: &str) {
-    let mut debounce = load_debounce();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    debounce[key] = serde_json::json!(now);
-
-    // Clean old entries (older than 1 hour)
-    let cutoff = now.saturating_sub(3600);
-    let keys_to_remove: Vec<String> = debounce
-        .as_object()
-        .map(|obj| {
-            obj.iter()
-                .filter(|(_, v)| v.as_u64().unwrap_or(0) < cutoff)
-                .map(|(k, _)| k.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    for key in keys_to_remove {
-        debounce.as_object_mut().map(|obj| obj.remove(&key));
-    }
-
-    // Save
-    if let Ok(json) = serde_json::to_string(&debounce) {
-        let _ = std::fs::write(DEBOUNCE_FILE, json);
-    }
-}
-
-fn load_debounce() -> serde_json::Value {
-    let path = Path::new(DEBOUNCE_FILE);
-    if !path.exists() {
-        return serde_json::json!({});
-    }
-
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}))
 }
 
 /// Check if a file is a working document worth tracking
@@ -794,10 +724,42 @@ async fn save_action(session_id: &str, action: &Action) -> Result<()> {
         .send()
         .await?;
 
+    // Check debounce via MCP tool (replaces /tmp file debounce)
+    let debounce_key = format!("posttool:{}", action.key);
+    let debounce_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 2,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "debounce",
+            "arguments": {
+                "key": debounce_key,
+                "ttl_secs": DEBOUNCE_SECONDS
+            }
+        }),
+    };
+
+    let resp = client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&debounce_req)
+        .send()
+        .await?;
+
+    let debounce_body = resp.text().await?;
+
+    // Check if we should proceed (not debounced)
+    if !debounce_body.contains("\"proceed\":true") && !debounce_body.contains("\"proceed\": true") {
+        return Ok(()); // Debounced, skip save
+    }
+
     // Call remember
     let remember_req = McpRequest {
         jsonrpc: "2.0".to_string(),
-        id: 2,
+        id: 3,
         method: "tools/call".to_string(),
         params: serde_json::json!({
             "name": "remember",
