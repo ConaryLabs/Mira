@@ -35,6 +35,7 @@ mod indexer;
 mod hooks;
 mod orchestrator;
 mod server;
+mod spawner;
 mod daemon;
 mod connect;
 
@@ -298,6 +299,11 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         StreamableHttpServerConfig::default(),
     );
 
+    // Initialize Claude Code spawner
+    let spawner_config = spawner::SpawnerConfig::from_env();
+    let claude_spawner = Arc::new(spawner::ClaudeCodeSpawner::new((*db).clone(), spawner_config));
+    info!("Claude Code spawner initialized");
+
     // Create chat router (if DeepSeek API key is available)
     let chat_router = if let Some(api_key) = deepseek_key {
         info!("Chat endpoints enabled (DeepSeek API key found)");
@@ -310,11 +316,17 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
             sync_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
             project_locks: Arc::new(chat::server::ProjectLocks::new()),
             context_caches: Arc::new(chat::server::ContextCaches::new()),
+            spawner: Some(claude_spawner.clone()),
         };
         Some(chat::create_router(chat_state))
     } else {
+        // No chat, but still add spawner endpoints
         info!("Chat endpoints disabled (no DEEPSEEK_API_KEY)");
-        None
+        let spawner_state = chat::server::SpawnerState {
+            db: Some((*db).clone()),
+            spawner: claude_spawner.clone(),
+        };
+        Some(chat::server::create_spawner_router(spawner_state))
     };
 
     // Start background indexer - watch registered projects from database

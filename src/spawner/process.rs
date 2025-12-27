@@ -26,10 +26,15 @@ pub struct ClaudeProcess {
     stdin: Option<ChildStdin>,
     /// Current status
     pub status: SessionStatus,
-    /// Unix timestamp when spawned
+    /// Unix timestamp when spawned (used for timeout checks)
+    #[allow(dead_code)]
     pub spawned_at: i64,
-    /// Project path
+    /// Project path (used for context/logging)
+    #[allow(dead_code)]
     pub project_path: String,
+    /// Instruction ID this session is executing (for completion tracking)
+    #[allow(dead_code)]
+    pub instruction_id: Option<String>,
 }
 
 impl ClaudeProcess {
@@ -40,9 +45,13 @@ impl ClaudeProcess {
             .as_mut()
             .context("Process stdin not available")?;
 
+        // Claude Code stream-json input format
         let msg = serde_json::json!({
             "type": "user",
-            "content": message
+            "message": {
+                "role": "user",
+                "content": message
+            }
         });
 
         let line = format!("{}\n", serde_json::to_string(&msg)?);
@@ -57,6 +66,7 @@ impl ClaudeProcess {
     }
 
     /// Check if process is still running
+    #[allow(dead_code)]
     pub fn is_running(&mut self) -> bool {
         self.child.try_wait().map(|s| s.is_none()).unwrap_or(false)
     }
@@ -112,17 +122,18 @@ impl ClaudeCodeSpawner {
             );
         }
 
-        // Generate session ID
+        // Generate session ID (must be valid UUID for Claude CLI)
         let session_id = config
             .session_id
             .clone()
-            .unwrap_or_else(|| format!("cc_{}", uuid::Uuid::new_v4()));
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         info!(session_id = %session_id, project = %config.project_path, "Spawning Claude Code session");
 
         // Build command
         let mut cmd = Command::new(&self.config.claude_binary);
         cmd.arg("--print")
+            .arg("--verbose") // Required for stream-json output
             .arg("--output-format")
             .arg("stream-json")
             .arg("--input-format")
@@ -153,11 +164,13 @@ impl ClaudeCodeSpawner {
             cmd.arg("--allowed-tools").arg(tools.join(","));
         }
 
-        // Add initial prompt
-        cmd.arg(&config.initial_prompt);
+        // Note: With --input-format stream-json, the prompt is sent via stdin, not CLI arg
 
         // Set working directory
         cmd.current_dir(&config.project_path);
+
+        // Clear ANTHROPIC_API_KEY so Claude Code uses Max subscription auth instead
+        cmd.env_remove("ANTHROPIC_API_KEY");
 
         // Configure stdio
         cmd.stdin(Stdio::piped())
@@ -174,14 +187,24 @@ impl ClaudeCodeSpawner {
         let spawned_at = chrono::Utc::now().timestamp();
 
         // Create process handle
-        let process = ClaudeProcess {
+        let mut process = ClaudeProcess {
             session_id: session_id.clone(),
             child,
             stdin,
             status: SessionStatus::Starting,
             spawned_at,
             project_path: config.project_path.clone(),
+            instruction_id: config.instruction_id.clone(),
         };
+
+        // Inject the initial prompt via stdin (required for --input-format stream-json)
+        process.inject_message(&config.initial_prompt).await?;
+
+        // Close stdin to signal end of initial input (Claude will process and respond)
+        // For future: keep stdin open if we want interactive sessions
+        process.stdin = None;
+
+        process.status = SessionStatus::Running;
 
         // Store in database
         self.insert_session(&session_id, &config, spawned_at).await?;
@@ -205,19 +228,19 @@ impl ClaudeCodeSpawner {
         let _reader_handle = parser.spawn_reader(stdout);
 
         // Spawn event processor
-        self.spawn_event_processor(session_id.clone(), stream_rx);
+        self.spawn_event_processor(session_id.clone(), config.instruction_id.clone(), stream_rx);
 
         Ok(session_id)
     }
 
     /// Spawn background task to process stream events
-    fn spawn_event_processor(&self, session_id: String, mut rx: mpsc::Receiver<StreamEvent>) {
+    fn spawn_event_processor(&self, session_id: String, instruction_id: Option<String>, mut rx: mpsc::Receiver<StreamEvent>) {
         let event_tx = self.event_tx.clone();
         let processes = self.processes.clone();
         let db = self.db.clone();
 
         tokio::spawn(async move {
-            debug!(session_id = %session_id, "Starting event processor");
+            debug!(session_id = %session_id, instruction_id = ?instruction_id, "Starting event processor");
 
             while let Some(event) = rx.recv().await {
                 // Check for questions
@@ -265,27 +288,56 @@ impl ClaudeCodeSpawner {
                 }
 
                 // Broadcast assistant output
-                if let StreamEvent::Assistant { message } = &event {
-                    if let Some(content) = &message.content {
+                if let StreamEvent::Assistant { message, error, .. } = &event {
+                    if let Some(content) = message.content_text() {
+                        let chunk_type = if error.is_some() {
+                            "error"
+                        } else {
+                            "assistant"
+                        };
                         let _ = event_tx.send(SessionEvent::Output {
                             session_id: session_id.clone(),
-                            chunk_type: "assistant".to_string(),
-                            content: content.clone(),
+                            chunk_type: chunk_type.to_string(),
+                            content,
                         });
                     }
                 }
 
                 // Handle completion
-                if let StreamEvent::Result { .. } = &event {
+                if let StreamEvent::Result { data } = &event {
+                    // Check if this was an error result
+                    let is_error = data.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let result_text = data.get("result").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                    let (status, exit_code) = if is_error {
+                        (SessionStatus::Failed, 1)
+                    } else {
+                        (SessionStatus::Completed, 0)
+                    };
+
                     if let Some(proc) = processes.write().await.get_mut(&session_id) {
-                        proc.status = SessionStatus::Completed;
+                        proc.status = status;
                     }
                     let _ = event_tx.send(SessionEvent::Ended {
                         session_id: session_id.clone(),
-                        status: SessionStatus::Completed,
-                        exit_code: Some(0),
-                        summary: None,
+                        status,
+                        exit_code: Some(exit_code),
+                        summary: result_text.clone(),
                     });
+
+                    // Mark instruction based on result
+                    if let Some(ref instr_id) = instruction_id {
+                        let (db_status, db_error) = if is_error {
+                            ("failed", result_text.as_deref())
+                        } else {
+                            ("completed", None)
+                        };
+                        if let Err(e) = mark_instruction_completed(&db, instr_id, db_status, db_error).await {
+                            error!(instruction_id = %instr_id, error = %e, "Failed to mark instruction {}", db_status);
+                        } else {
+                            info!(instruction_id = %instr_id, session_id = %session_id, "Marked instruction as {}", db_status);
+                        }
+                    }
                 }
 
                 // Handle errors
@@ -300,6 +352,15 @@ impl ClaudeCodeSpawner {
                         exit_code: None,
                         summary: Some(error.message.clone()),
                     });
+
+                    // Mark instruction as failed if this session was executing one
+                    if let Some(ref instr_id) = instruction_id {
+                        if let Err(e) = mark_instruction_completed(&db, instr_id, "failed", Some(&error.message)).await {
+                            error!(instruction_id = %instr_id, error = %e, "Failed to mark instruction failed");
+                        } else {
+                            info!(instruction_id = %instr_id, session_id = %session_id, "Marked instruction as failed");
+                        }
+                    }
                 }
             }
 
@@ -511,6 +572,45 @@ async fn update_session_completed(db: &SqlitePool, session_id: &str, exit_code: 
     .execute(db)
     .await
     .context("Failed to update session")?;
+
+    Ok(())
+}
+
+/// Mark an instruction as completed or failed
+async fn mark_instruction_completed(
+    db: &SqlitePool,
+    instruction_id: &str,
+    status: &str,
+    error: Option<&str>,
+) -> Result<()> {
+    if status == "failed" {
+        sqlx::query(
+            r#"
+            UPDATE instruction_queue
+            SET status = $1, completed_at = datetime('now'), error = $2
+            WHERE id = $3
+            "#,
+        )
+        .bind(status)
+        .bind(error)
+        .bind(instruction_id)
+        .execute(db)
+        .await
+        .context("Failed to update instruction")?;
+    } else {
+        sqlx::query(
+            r#"
+            UPDATE instruction_queue
+            SET status = $1, completed_at = datetime('now')
+            WHERE id = $2
+            "#,
+        )
+        .bind(status)
+        .bind(instruction_id)
+        .execute(db)
+        .await
+        .context("Failed to update instruction")?;
+    }
 
     Ok(())
 }

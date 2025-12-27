@@ -105,6 +105,7 @@ async fn create_test_state(db: SqlitePool) -> AppState {
         sync_semaphore: Arc::new(Semaphore::new(3)),
         project_locks: Arc::new(ProjectLocks::new()),
         context_caches: Arc::new(ContextCaches::new()),
+        spawner: None,
     }
 }
 

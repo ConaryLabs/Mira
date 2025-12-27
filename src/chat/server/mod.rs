@@ -29,6 +29,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::chat::provider::CachedContent;
 use crate::core::SemanticSearch;
+use crate::spawner::ClaudeCodeSpawner;
 
 // ============================================================================
 // Per-Project Locking
@@ -243,6 +244,7 @@ pub struct AppState {
     pub sync_semaphore: Arc<tokio::sync::Semaphore>, // Limit concurrent sync requests
     pub project_locks: Arc<ProjectLocks>, // Per-project locking for concurrency safety
     pub context_caches: Arc<ContextCaches>, // Gemini context caching for cost reduction
+    pub spawner: Option<Arc<ClaudeCodeSpawner>>, // Claude Code session spawner
 }
 
 // ============================================================================
@@ -284,9 +286,52 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/instructions", get(handlers::instructions_handler))
         .route("/api/instructions", post(handlers::create_instruction_handler))
         .route("/api/orchestration/stream", get(handlers::orchestration_stream_handler))
+        // Claude Code spawner endpoints
+        .route("/api/sessions", get(handlers::list_sessions_handler))
+        .route("/api/sessions", post(handlers::spawn_session_handler))
+        .route("/api/sessions/answer", post(handlers::answer_question_handler))
+        .route("/api/sessions/terminate", post(handlers::terminate_session_handler))
+        .route("/api/sessions/events", get(handlers::session_events_handler))
         .layer(version_header)
         .layer(cors)
         .with_state(state)
+}
+
+// ============================================================================
+// Spawner-Only Router (for use without chat endpoints)
+// ============================================================================
+
+/// State for spawner-only endpoints (when chat is disabled)
+#[derive(Clone)]
+pub struct SpawnerState {
+    pub db: Option<SqlitePool>,
+    pub spawner: Arc<ClaudeCodeSpawner>,
+}
+
+/// Create a router with only Claude Code spawner endpoints
+/// Use this when chat endpoints are disabled (no DEEPSEEK_API_KEY)
+pub fn create_spawner_router(state: SpawnerState) -> Router {
+    // Convert to AppState for handler compatibility
+    let app_state = AppState {
+        db: state.db,
+        semantic: Arc::new(crate::core::SemanticSearch::disabled()),
+        api_key: String::new(), // Not used by spawner handlers
+        default_reasoning_effort: String::new(),
+        sync_token: None,
+        sync_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+        project_locks: Arc::new(ProjectLocks::new()),
+        context_caches: Arc::new(ContextCaches::new()),
+        spawner: Some(state.spawner),
+    };
+
+    Router::new()
+        // Claude Code spawner endpoints
+        .route("/api/sessions", get(handlers::list_sessions_handler))
+        .route("/api/sessions", post(handlers::spawn_session_handler))
+        .route("/api/sessions/answer", post(handlers::answer_question_handler))
+        .route("/api/sessions/terminate", post(handlers::terminate_session_handler))
+        .route("/api/sessions/events", get(handlers::session_events_handler))
+        .with_state(app_state)
 }
 
 /// Run the HTTP server
@@ -307,6 +352,7 @@ pub async fn run(
         sync_semaphore: Arc::new(tokio::sync::Semaphore::new(SYNC_MAX_CONCURRENT)),
         project_locks: Arc::new(ProjectLocks::new()),
         context_caches: Arc::new(ContextCaches::new()),
+        spawner: None,
     };
 
     let app = create_router(state);

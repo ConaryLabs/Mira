@@ -26,6 +26,7 @@ pub enum SessionStatus {
     Failed,
 }
 
+#[allow(dead_code)]
 impl SessionStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -72,8 +73,11 @@ pub struct SpawnConfig {
     pub allowed_tools: Option<Vec<String>>,
     /// Session ID to use (auto-generated if None)
     pub session_id: Option<String>,
+    /// Instruction ID this session is executing (for completion tracking)
+    pub instruction_id: Option<String>,
 }
 
+#[allow(dead_code)]
 impl SpawnConfig {
     pub fn new(project_path: impl Into<String>, initial_prompt: impl Into<String>) -> Self {
         Self {
@@ -84,7 +88,13 @@ impl SpawnConfig {
             max_budget_usd: Some(5.0),
             allowed_tools: None,
             session_id: None,
+            instruction_id: None,
         }
+    }
+
+    pub fn with_instruction(mut self, instruction_id: impl Into<String>) -> Self {
+        self.instruction_id = Some(instruction_id.into());
+        self
     }
 
     pub fn with_context(mut self, snapshot: ContextSnapshot) -> Self {
@@ -224,6 +234,12 @@ pub enum StreamEvent {
     /// Assistant text message
     Assistant {
         message: AssistantMessage,
+        /// Error type if this was an error response
+        #[serde(default)]
+        error: Option<String>,
+        /// Session ID
+        #[serde(default)]
+        session_id: Option<String>,
     },
 
     /// Tool being used
@@ -260,8 +276,45 @@ pub enum StreamEvent {
 /// Assistant message content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantMessage {
-    pub content: Option<String>,
+    /// Content can be a string or array of content blocks
+    #[serde(default)]
+    pub content: serde_json::Value,
     pub stop_reason: Option<String>,
+    pub id: Option<String>,
+    pub model: Option<String>,
+    #[serde(rename = "type")]
+    pub msg_type: Option<String>,
+    /// Capture any extra fields
+    #[serde(flatten)]
+    pub extra: serde_json::Value,
+}
+
+impl AssistantMessage {
+    /// Get content as string (handling both string and array formats)
+    pub fn content_text(&self) -> Option<String> {
+        match &self.content {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Array(arr) => {
+                // Extract text from content blocks
+                let texts: Vec<&str> = arr
+                    .iter()
+                    .filter_map(|block| {
+                        if block.get("type")?.as_str()? == "text" {
+                            block.get("text")?.as_str()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if texts.is_empty() {
+                    None
+                } else {
+                    Some(texts.join(""))
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Error details
@@ -278,6 +331,7 @@ pub struct StreamError {
 
 /// Question that needs user input
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PendingQuestion {
     pub id: String,
     pub session_id: String,
@@ -298,6 +352,7 @@ pub struct QuestionOption {
 /// Status of a pending question
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum QuestionStatus {
     Pending,
     Answered,
@@ -364,6 +419,7 @@ pub enum SessionEvent {
 
 /// Review of a completed session by Mira
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SessionReview {
     pub session_id: String,
     pub status: ReviewStatus,
@@ -377,6 +433,7 @@ pub struct SessionReview {
 /// Status of session review
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum ReviewStatus {
     Approved,
     NeedsChanges,
@@ -389,6 +446,7 @@ pub enum ReviewStatus {
 
 /// Configuration for the spawner
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SpawnerConfig {
     /// Path to claude binary (default: "claude")
     pub claude_binary: String,

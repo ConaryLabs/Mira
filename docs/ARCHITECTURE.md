@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Version** | 2.0.0 |
-| **Last Updated** | 2025-12-26 |
+| **Last Updated** | 2025-12-27 |
 | **Rust Edition** | 2024 |
-| **Document Revision** | 1.3 |
+| **Document Revision** | 1.4 |
 
 > **Maintenance Note**: Update this document after major architectural changes. Bump revision for minor updates, version for breaking changes.
 
@@ -169,6 +169,12 @@ src/
 │       ├── indexing.rs
 │       └── proposals.rs
 │
+├── spawner/             # Claude Code session spawner
+│   ├── mod.rs           # Module exports
+│   ├── process.rs       # Process lifecycle (spawn, inject, terminate)
+│   ├── stream.rs        # Stream-JSON parser for Claude output
+│   └── types.rs         # SpawnConfig, SessionStatus, SessionEvent
+│
 ├── tools/               # MCP tool implementations
 │   ├── mod.rs
 │   ├── types.rs
@@ -298,6 +304,8 @@ batch_jobs          # Async batch processing jobs (compaction, summarize, analyz
 batch_requests      # Individual requests within a batch job
 file_search_stores  # Gemini FileSearch stores per project
 file_search_documents # Indexed documents in FileSearch stores
+instruction_queue   # Pending instructions for Claude Code (with session_id link)
+claude_sessions     # Spawned Claude Code session state
 ```
 
 #### **Qdrant Vector Database**
@@ -819,6 +827,17 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 **Decision**: Remove multi-LLM advisory system (~10k lines).
 - **Removed**: `src/advisory/`, `hotline` tool, `council` chat tools, LLM-based proposal extraction.
 - **Why**: Simplification - the plan is to go through Gemini/Mira via Studio frontend, not Claude Code calling other LLMs directly.
+
+#### **2025-12-27: Claude Code Spawner Module**
+**Decision**: Add `src/spawner/` module for orchestrating Claude Code sessions from Mira.
+- **Components**:
+  - `process.rs`: Spawn Claude Code with `--output-format stream-json`, manage lifecycle
+  - `stream.rs`: Parse stream-json events, detect `AskUserQuestion` tool calls
+  - `types.rs`: `SpawnConfig`, `SessionStatus`, `SessionEvent`, context handoff types
+- **HTTP Endpoints**: `/api/sessions` (spawn, list, terminate, answer, events SSE)
+- **Studio Integration**: `sessions.svelte.ts` store, OrchestrationTab UI for session management
+- **Database**: Added `session_id` column to `instruction_queue` for linking instructions to sessions
+- **Why**: Enable Mira (via Gemini 2M context) to orchestrate Claude Code sessions for task execution, with question relay and session review.
 
 ---
 
@@ -1545,6 +1564,7 @@ Currently no automated CI/CD pipeline. Deployment is manual:
 | 2025-12-25 | 1.1 | Peter + Claude | Council review feedback: added Carousel state machine diagram, context composition strategy, Hotline interface clarification. |
 | 2025-12-25 | 1.2 | Peter + Claude | Studio UX overhaul: enum-based layout state, message role labels, streaming status, tool argument rendering, project management UI. |
 | 2025-12-26 | 1.3 | Peter + Claude | Gemini 3 maximization: FileSearch (RAG), Batch API (50% cost savings), thinking levels, cached token tracking, URL context metadata. |
+| 2025-12-27 | 1.4 | Peter + Claude | Claude Code spawner module: process lifecycle, stream-json parsing, session endpoints, Studio integration, instruction-session linking. |
 
 ---
 

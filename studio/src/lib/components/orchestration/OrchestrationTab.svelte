@@ -1,28 +1,100 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { orchestrationStore, type InstructionEntry, type McpHistoryEntry } from '$lib/stores/orchestration.svelte';
+  import { sessionsStore, type SessionInfo, type PendingQuestion } from '$lib/stores/sessions.svelte';
 
   // State
-  let activeSection = $state<'activity' | 'instructions'>('instructions');
+  let activeSection = $state<'activity' | 'instructions' | 'sessions'>('instructions');
   let newInstruction = $state('');
   let newPriority = $state('normal');
+  let newProjectPath = $state('');
   let loading = $state(false);
 
-  // Derived from store
+  // Session spawn form state
+  let spawnProjectPath = $state('');
+  let spawnPrompt = $state('');
+  let spawnBudget = $state(5.0);
+  let spawnLoading = $state(false);
+
+  // Question answer state
+  let answerText = $state('');
+  let answeringQuestion = $state<string | null>(null);
+
+  // Derived from orchestration store
   let instructions = $derived(orchestrationStore.instructionsList);
   let mcpHistory = $derived(orchestrationStore.mcpHistory);
   let connected = $derived(orchestrationStore.connected);
   let activeCount = $derived(orchestrationStore.activeCount);
 
+  // Derived from sessions store
+  let sessions = $derived(sessionsStore.sessionsList);
+  let pendingQuestions = $derived(sessionsStore.questionsList);
+  let sessionsConnected = $derived(sessionsStore.connected);
+  let sessionCount = $derived(sessionsStore.activeCount);
+
   async function createInstruction() {
     if (!newInstruction.trim()) return;
     loading = true;
     try {
-      await orchestrationStore.createInstruction(newInstruction, newPriority);
+      const options = newProjectPath.trim()
+        ? { projectPath: newProjectPath.trim() }
+        : undefined;
+      await orchestrationStore.createInstruction(newInstruction, newPriority, options);
       newInstruction = '';
       newPriority = 'normal';
+      // Keep project path for convenience (user likely wants to send multiple instructions to same project)
     } finally {
       loading = false;
+    }
+  }
+
+  async function spawnSession() {
+    if (!spawnProjectPath.trim() || !spawnPrompt.trim()) return;
+    spawnLoading = true;
+    try {
+      const result = await sessionsStore.spawnSession(spawnProjectPath, spawnPrompt, { budgetUsd: spawnBudget });
+      if (result) {
+        spawnPrompt = '';
+      }
+    } finally {
+      spawnLoading = false;
+    }
+  }
+
+  async function answerQuestion(questionId: string) {
+    if (!answerText.trim()) return;
+    answeringQuestion = questionId;
+    try {
+      await sessionsStore.answerQuestion(questionId, answerText);
+      answerText = '';
+    } finally {
+      answeringQuestion = null;
+    }
+  }
+
+  async function terminateSession(sessionId: string) {
+    await sessionsStore.terminateSession(sessionId);
+  }
+
+  function getSessionStatusIcon(status: string): string {
+    switch (status) {
+      case 'starting': return '🚀';
+      case 'running': return '🔄';
+      case 'paused': return '⏸️';
+      case 'completed': return '✅';
+      case 'failed': return '❌';
+      default: return '❓';
+    }
+  }
+
+  function getSessionStatusClass(status: string): string {
+    switch (status) {
+      case 'running': return 'status-running';
+      case 'starting': return 'status-starting';
+      case 'paused': return 'status-paused';
+      case 'completed': return 'status-completed';
+      case 'failed': return 'status-failed';
+      default: return '';
     }
   }
 
@@ -55,10 +127,12 @@
 
   onMount(() => {
     orchestrationStore.connect();
+    sessionsStore.connect();
   });
 
   onDestroy(() => {
     orchestrationStore.disconnect();
+    sessionsStore.disconnect();
   });
 </script>
 
@@ -66,6 +140,15 @@
   <!-- Section toggle -->
   <div class="section-header">
     <div class="section-toggle">
+      <button
+        class="toggle-btn {activeSection === 'sessions' ? 'active' : ''}"
+        onclick={() => activeSection = 'sessions'}
+      >
+        Sessions
+        {#if sessionCount > 0}
+          <span class="badge">{sessionCount}</span>
+        {/if}
+      </button>
       <button
         class="toggle-btn {activeSection === 'instructions' ? 'active' : ''}"
         onclick={() => activeSection = 'instructions'}
@@ -79,17 +162,150 @@
         class="toggle-btn {activeSection === 'activity' ? 'active' : ''}"
         onclick={() => activeSection = 'activity'}
       >
-        Claude Activity
+        Activity
       </button>
     </div>
-    <div class="connection-status" class:connected>
-      {connected ? '●' : '○'}
+    <div class="connection-status" class:connected={connected && sessionsConnected}>
+      {connected && sessionsConnected ? '●' : '○'}
     </div>
   </div>
 
-  {#if activeSection === 'instructions'}
+  {#if activeSection === 'sessions'}
+    <!-- Pending Questions (show first if any) -->
+    {#if pendingQuestions.length > 0}
+      <div class="questions-section">
+        <div class="section-title">Pending Questions</div>
+        {#each pendingQuestions as question (question.question_id)}
+          <div class="question-card">
+            <div class="question-text">{question.question}</div>
+            {#if question.options && question.options.length > 0}
+              <div class="question-options">
+                {#each question.options as opt}
+                  <button
+                    class="option-btn"
+                    onclick={() => sessionsStore.answerQuestion(question.question_id, opt.label)}
+                    disabled={answeringQuestion === question.question_id}
+                  >
+                    {opt.label}
+                    {#if opt.description}
+                      <span class="option-desc">{opt.description}</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            <div class="custom-answer">
+              <input
+                type="text"
+                class="answer-input"
+                placeholder="Or type custom answer..."
+                bind:value={answerText}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    answerQuestion(question.question_id);
+                  }
+                }}
+              />
+              <button
+                class="answer-btn"
+                onclick={() => answerQuestion(question.question_id)}
+                disabled={answeringQuestion === question.question_id || !answerText.trim()}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- Spawn new session form -->
+    <div class="spawn-form">
+      <input
+        type="text"
+        class="spawn-input"
+        placeholder="Project path (e.g., /home/user/project)"
+        bind:value={spawnProjectPath}
+      />
+      <textarea
+        class="spawn-prompt"
+        placeholder="Task for Claude Code..."
+        bind:value={spawnPrompt}
+        rows="2"
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            spawnSession();
+          }
+        }}
+      ></textarea>
+      <div class="form-row">
+        <label class="budget-label">
+          Budget: $
+          <input
+            type="number"
+            class="budget-input"
+            bind:value={spawnBudget}
+            min="0.5"
+            max="100"
+            step="0.5"
+          />
+        </label>
+        <span class="hint">⌘+Enter to spawn</span>
+        <button
+          class="spawn-btn"
+          onclick={spawnSession}
+          disabled={spawnLoading || !spawnProjectPath.trim() || !spawnPrompt.trim()}
+        >
+          {spawnLoading ? 'Spawning...' : 'Spawn Session'}
+        </button>
+      </div>
+    </div>
+
+    <!-- Sessions list -->
+    <div class="list-container">
+      {#if sessions.length === 0}
+        <div class="empty-state">
+          <p class="empty-text">No sessions yet</p>
+          <p class="empty-hint">Spawn a Claude Code session above</p>
+        </div>
+      {:else}
+        {#each sessions as session (session.session_id)}
+          <div class="session-card {getSessionStatusClass(session.status)}">
+            <div class="card-header">
+              <span class="status-icon">{getSessionStatusIcon(session.status)}</span>
+              <span class="session-id">{session.session_id.slice(0, 12)}...</span>
+              <span class="session-status">{session.status}</span>
+              {#if session.status === 'running' || session.status === 'paused'}
+                <button
+                  class="terminate-btn"
+                  onclick={() => terminateSession(session.session_id)}
+                  title="Terminate session"
+                >
+                  ✕
+                </button>
+              {/if}
+            </div>
+            {#if session.project_path}
+              <div class="card-body">
+                <p class="project-path">{session.project_path}</p>
+                {#if session.initial_prompt}
+                  <p class="initial-prompt">{session.initial_prompt.slice(0, 100)}{session.initial_prompt.length > 100 ? '...' : ''}</p>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+    </div>
+  {:else if activeSection === 'instructions'}
     <!-- New instruction form -->
     <div class="instruction-form">
+      <input
+        type="text"
+        class="project-path-input"
+        placeholder="Project path (optional - enables auto-spawn)"
+        bind:value={newProjectPath}
+      />
       <textarea
         class="instruction-input"
         placeholder="Send instruction to Claude Code..."
@@ -251,6 +467,23 @@
     padding: 12px;
     border-bottom: 1px solid var(--term-border);
     background: var(--term-bg);
+  }
+
+  .project-path-input {
+    width: 100%;
+    padding: 8px;
+    font-size: 12px;
+    font-family: monospace;
+    background: var(--term-bg-secondary);
+    border: 1px solid var(--term-border);
+    border-radius: 4px;
+    color: var(--term-text);
+    margin-bottom: 8px;
+  }
+
+  .project-path-input:focus {
+    outline: none;
+    border-color: var(--term-accent);
   }
 
   .instruction-input {
@@ -441,5 +674,262 @@
     margin: 4px 0 0 0;
     font-size: 12px;
     color: var(--term-error);
+  }
+
+  /* Sessions styles */
+  .questions-section {
+    padding: 12px;
+    border-bottom: 1px solid var(--term-border);
+    background: var(--term-warning);
+    background: rgba(255, 200, 0, 0.1);
+  }
+
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--term-warning);
+    margin-bottom: 8px;
+  }
+
+  .question-card {
+    padding: 12px;
+    background: var(--term-bg);
+    border: 1px solid var(--term-warning);
+    border-radius: 6px;
+    margin-bottom: 8px;
+  }
+
+  .question-text {
+    font-size: 13px;
+    color: var(--term-text);
+    margin-bottom: 10px;
+    line-height: 1.4;
+  }
+
+  .question-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .option-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 8px 12px;
+    font-size: 12px;
+    background: var(--term-bg-secondary);
+    border: 1px solid var(--term-border);
+    border-radius: 4px;
+    color: var(--term-text);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .option-btn:hover:not(:disabled) {
+    border-color: var(--term-accent);
+    background: var(--term-accent-faded);
+  }
+
+  .option-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .option-desc {
+    font-size: 10px;
+    color: var(--term-text-dim);
+    margin-top: 2px;
+  }
+
+  .custom-answer {
+    display: flex;
+    gap: 8px;
+  }
+
+  .answer-input {
+    flex: 1;
+    padding: 8px;
+    font-size: 12px;
+    background: var(--term-bg-secondary);
+    border: 1px solid var(--term-border);
+    border-radius: 4px;
+    color: var(--term-text);
+  }
+
+  .answer-input:focus {
+    outline: none;
+    border-color: var(--term-accent);
+  }
+
+  .answer-btn {
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--term-accent);
+    border: none;
+    border-radius: 4px;
+    color: var(--term-bg);
+    cursor: pointer;
+  }
+
+  .answer-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .spawn-form {
+    padding: 12px;
+    border-bottom: 1px solid var(--term-border);
+    background: var(--term-bg);
+  }
+
+  .spawn-input {
+    width: 100%;
+    padding: 8px;
+    font-size: 13px;
+    font-family: monospace;
+    background: var(--term-bg-secondary);
+    border: 1px solid var(--term-border);
+    border-radius: 4px;
+    color: var(--term-text);
+    margin-bottom: 8px;
+  }
+
+  .spawn-input:focus {
+    outline: none;
+    border-color: var(--term-accent);
+  }
+
+  .spawn-prompt {
+    width: 100%;
+    padding: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--term-bg-secondary);
+    border: 1px solid var(--term-border);
+    border-radius: 4px;
+    color: var(--term-text);
+    resize: none;
+  }
+
+  .spawn-prompt:focus {
+    outline: none;
+    border-color: var(--term-accent);
+  }
+
+  .budget-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--term-text-dim);
+  }
+
+  .budget-input {
+    width: 60px;
+    padding: 4px 6px;
+    font-size: 12px;
+    background: var(--term-bg-secondary);
+    border: 1px solid var(--term-border);
+    border-radius: 4px;
+    color: var(--term-text);
+  }
+
+  .spawn-btn {
+    margin-left: auto;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--term-success);
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+
+  .spawn-btn:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .spawn-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .session-card {
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--term-bg);
+    border: 1px solid var(--term-border);
+    border-radius: 6px;
+  }
+
+  .session-card.status-running {
+    border-color: var(--term-accent);
+  }
+
+  .session-card.status-paused {
+    border-color: var(--term-warning);
+  }
+
+  .session-card.status-completed {
+    border-color: var(--term-success);
+    opacity: 0.7;
+  }
+
+  .session-card.status-failed {
+    border-color: var(--term-error);
+  }
+
+  .session-id {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--term-text-dim);
+  }
+
+  .session-status {
+    padding: 2px 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    background: var(--term-bg-secondary);
+    border-radius: 3px;
+    margin-left: auto;
+  }
+
+  .terminate-btn {
+    padding: 2px 6px;
+    font-size: 12px;
+    background: transparent;
+    border: 1px solid var(--term-error);
+    border-radius: 3px;
+    color: var(--term-error);
+    cursor: pointer;
+    margin-left: 8px;
+    opacity: 0.7;
+    transition: opacity 0.15s ease;
+  }
+
+  .terminate-btn:hover {
+    opacity: 1;
+    background: var(--term-error);
+    color: white;
+  }
+
+  .project-path {
+    margin: 0;
+    font-size: 11px;
+    font-family: monospace;
+    color: var(--term-text-dim);
+  }
+
+  .initial-prompt {
+    margin: 4px 0 0 0;
+    font-size: 12px;
+    color: var(--term-text);
+    line-height: 1.4;
   }
 </style>
