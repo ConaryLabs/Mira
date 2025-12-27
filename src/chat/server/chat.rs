@@ -245,7 +245,8 @@ async fn process_gemini_chat(
             Some(entry.cache)
         } else {
             // Try to create a cache for future requests (async, don't block)
-            let cache_result = provider.create_cache(&system_prompt, None, CACHE_TTL_SECONDS).await;
+            // Include tools in cache so they work with cachedContent requests
+            let cache_result = provider.create_cache(&system_prompt, &tools, None, CACHE_TTL_SECONDS).await;
             match cache_result {
                 Ok(Some(cache)) => {
                     tracing::info!(
