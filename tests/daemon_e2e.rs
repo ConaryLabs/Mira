@@ -1196,6 +1196,7 @@ async fn test_e2e_proactive_context() {
             topics: Some(vec!["security".to_string()]),
             error: None,
             limit_per_category: Some(5),
+            session_phase: None,
         },
         project_id,
     )

@@ -289,6 +289,8 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
                     tool_router: MiraServer::get_tool_router(),
                     active_project: Arc::new(RwLock::new(None)),
                     carousel: Arc::new(RwLock::new(None)),
+                    mcp_session_id: Arc::new(RwLock::new(None)),
+                    session_phase: Arc::new(RwLock::new(core::ops::mcp_session::SessionPhase::Early)),
                 })
             }
         },

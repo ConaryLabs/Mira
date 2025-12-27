@@ -11,6 +11,53 @@ use super::goals;
 use super::git_intel;
 use super::code_intel;
 use super::mcp_history;
+use crate::core::ops::mcp_session::SessionPhase;
+use crate::orchestrator::TaskType;
+
+/// Phase-aware limits for different context categories
+#[derive(Debug)]
+struct PhaseLimits {
+    goals: i64,
+    decisions: i64,
+    errors: i64,
+    memories: i64,
+    code: i64,
+}
+
+impl PhaseLimits {
+    fn for_phase(phase: SessionPhase, base_limit: i64) -> Self {
+        match phase {
+            SessionPhase::Early => Self {
+                goals: base_limit + 2,       // More goals in early phase
+                decisions: base_limit + 1,   // Understand past decisions
+                errors: 1.max(base_limit - 2), // Fewer errors early
+                memories: base_limit,
+                code: base_limit + 1,        // Understand structure
+            },
+            SessionPhase::Middle => Self {
+                goals: base_limit,           // Track progress
+                decisions: 1.max(base_limit - 1),
+                errors: base_limit + 1,      // Fix as we go
+                memories: 1.max(base_limit - 1),
+                code: base_limit + 2,        // Focus on implementation
+            },
+            SessionPhase::Late => Self {
+                goals: base_limit,           // Almost done?
+                decisions: 1.max(base_limit - 1),
+                errors: base_limit + 2,      // Fix remaining issues
+                memories: 1.max(base_limit - 1),
+                code: base_limit + 1,        // Refinement
+            },
+            SessionPhase::Wrapping => Self {
+                goals: base_limit + 1,       // Completion status
+                decisions: base_limit + 1,   // Record for next session
+                errors: 1.max(base_limit - 1),
+                memories: base_limit,        // Save learnings
+                code: 1.max(base_limit - 1),
+            },
+        }
+    }
+}
 
 /// Get all relevant context for the current work, combined into one response
 pub async fn get_proactive_context(
@@ -19,7 +66,16 @@ pub async fn get_proactive_context(
     req: GetProactiveContextRequest,
     project_id: Option<i64>,
 ) -> anyhow::Result<serde_json::Value> {
-    let limit = req.limit_per_category.unwrap_or(3) as i64;
+    let base_limit = req.limit_per_category.unwrap_or(3) as i64;
+
+    // Parse session phase and get phase-aware limits
+    let phase = req.session_phase
+        .as_ref()
+        .and_then(|s| SessionPhase::from_str(s))
+        .unwrap_or(SessionPhase::Middle);
+
+    let limits = PhaseLimits::for_phase(phase, base_limit);
+    let limit = base_limit; // Keep for backwards compat
 
     // Build context signals for relevance matching
     let file_context = req.files.as_ref().map(|f| f.join(", "));
@@ -31,7 +87,7 @@ pub async fn get_proactive_context(
         req.error.as_deref(),
     ].into_iter().flatten().collect::<Vec<_>>().join(" ");
 
-    // 1. Get relevant corrections
+    // 1. Get relevant corrections (always important, use base limit)
     let corrections = corrections::get_corrections(
         db,
         semantic,
@@ -45,7 +101,7 @@ pub async fn get_proactive_context(
         project_id,
     ).await.unwrap_or_default();
 
-    // 2. Get active goals
+    // 2. Get active goals (phase-aware: more in early/wrapping)
     let goals_result = goals::get_goal_progress(
         db,
         None, // goal_id
@@ -54,19 +110,19 @@ pub async fn get_proactive_context(
 
     let active_goals = goals_result.get("active_goals")
         .and_then(|g| g.as_array())
-        .map(|arr| arr.iter().take(limit as usize).cloned().collect::<Vec<_>>())
+        .map(|arr| arr.iter().take(limits.goals as usize).cloned().collect::<Vec<_>>())
         .unwrap_or_default();
 
     // 3. Get rejected approaches (if files or topics specified)
     let rejected_approaches = get_rejected_approaches(db, &req, project_id, limit).await.unwrap_or_default();
 
-    // 4. Get related decisions from memory
-    let related_decisions = get_related_decisions(db, semantic, &combined_context, project_id, limit).await.unwrap_or_default();
+    // 4. Get related decisions from memory (phase-aware: more in early/wrapping)
+    let related_decisions = get_related_decisions(db, semantic, &combined_context, project_id, limits.decisions).await.unwrap_or_default();
 
-    // 5. Get relevant memories (preferences, context)
-    let relevant_memories = get_relevant_memories(db, semantic, &combined_context, project_id, limit).await.unwrap_or_default();
+    // 5. Get relevant memories (preferences, context) (phase-aware)
+    let relevant_memories = get_relevant_memories(db, semantic, &combined_context, project_id, limits.memories).await.unwrap_or_default();
 
-    // 6. Get similar errors if error signal provided
+    // 6. Get similar errors if error signal provided (phase-aware: more in middle/late)
     let similar_errors = if let Some(error) = &req.error {
         git_intel::find_similar_fixes(
             db,
@@ -75,16 +131,16 @@ pub async fn get_proactive_context(
                 error: error.clone(),
                 category: None,
                 language: None,
-                limit: Some(limit),
+                limit: Some(limits.errors),
             },
         ).await.unwrap_or_default()
     } else {
         Vec::new()
     };
 
-    // 7. Get code intelligence if files specified
+    // 7. Get code intelligence if files specified (phase-aware: more in middle)
     let code_context = if let Some(files) = &req.files {
-        get_code_context(db, files, limit).await.unwrap_or_default()
+        get_code_context(db, files, limits.code).await.unwrap_or_default()
     } else {
         serde_json::json!({})
     };
@@ -159,9 +215,21 @@ pub async fn get_proactive_context(
         g.get("status").and_then(|s| s.as_str()) == Some("blocked")
     });
 
+    // Detect task type from query/context
+    let (task_type, task_confidence) = detect_task_type(&req, &similar_errors, &active_goals);
+
+    // Get tool recommendations based on task type and phase
+    let tool_recommendations = build_tool_recommendations(&task_type, phase);
+
     Ok(serde_json::json!({
         "summary": summary,
         "has_critical_items": has_critical,
+        "session_context": {
+            "phase": phase.as_str(),
+            "task_type": task_type.as_str(),
+            "task_confidence": task_confidence,
+        },
+        "tool_recommendations": tool_recommendations,
         "corrections": corrections,
         "active_goals": active_goals,
         "rejected_approaches": rejected_approaches,
@@ -796,4 +864,113 @@ async fn get_index_freshness(
         "stale_files": stale_files,
         "is_fresh": stale_files.is_empty(),
     }))
+}
+
+/// Detect task type from request context
+///
+/// Uses multiple signals:
+/// 1. Explicit task description
+/// 2. Error presence (suggests debugging)
+/// 3. Active goals (suggests planning/new feature)
+/// 4. Files being worked on
+fn detect_task_type(
+    req: &GetProactiveContextRequest,
+    similar_errors: &[serde_json::Value],
+    active_goals: &[serde_json::Value],
+) -> (TaskType, f32) {
+    // If error is explicitly provided, likely debugging
+    if req.error.is_some() || !similar_errors.is_empty() {
+        return (TaskType::Debugging, 0.9);
+    }
+
+    // If we have a task description, use keyword detection
+    if let Some(task) = &req.task {
+        return TaskType::detect_from_query(task);
+    }
+
+    // If we have files but no task, likely exploration
+    if req.files.is_some() && req.task.is_none() {
+        return (TaskType::Exploration, 0.7);
+    }
+
+    // If we have topics related to planning/goals
+    if let Some(topics) = &req.topics {
+        let topic_str = topics.join(" ").to_lowercase();
+        if topic_str.contains("goal") || topic_str.contains("plan") || topic_str.contains("milestone") {
+            return (TaskType::Planning, 0.7);
+        }
+    }
+
+    // If there are active goals in progress, likely new feature work
+    if !active_goals.is_empty() {
+        let has_in_progress = active_goals.iter().any(|g| {
+            g.get("status").and_then(|s| s.as_str()) == Some("in_progress")
+        });
+        if has_in_progress {
+            return (TaskType::NewFeature, 0.6);
+        }
+    }
+
+    // Default to exploration
+    (TaskType::Exploration, 0.5)
+}
+
+/// Build tool recommendations based on task type and session phase
+///
+/// Returns a structured recommendation with:
+/// - emphasized: Tools that are particularly useful for this context
+/// - deemphasized: Tools that are less relevant (can still be used)
+/// - model_hint: Recommended Gemini model for this context
+fn build_tool_recommendations(task_type: &TaskType, phase: SessionPhase) -> serde_json::Value {
+    let emphasized = task_type.emphasized_tools();
+    let deemphasized = task_type.deemphasized_tools();
+
+    // Adjust based on phase
+    let mut phase_emphasis: Vec<&str> = Vec::new();
+    let mut phase_deemphasis: Vec<&str> = Vec::new();
+
+    match phase {
+        SessionPhase::Early => {
+            phase_emphasis.extend(&["get_session_context", "recall", "goal"]);
+            phase_deemphasis.extend(&["store_session", "batch"]);
+        }
+        SessionPhase::Middle => {
+            phase_emphasis.extend(&["get_proactive_context", "build", "semantic_code_search"]);
+            phase_deemphasis.extend(&["store_session"]);
+        }
+        SessionPhase::Late => {
+            phase_emphasis.extend(&["build", "find_similar_fixes", "correction"]);
+            phase_deemphasis.extend(&["goal", "proposal"]);
+        }
+        SessionPhase::Wrapping => {
+            phase_emphasis.extend(&["store_session", "remember", "goal"]);
+            phase_deemphasis.extend(&["semantic_code_search", "index"]);
+        }
+    }
+
+    // Combine task and phase recommendations
+    let mut all_emphasized: Vec<&str> = emphasized.to_vec();
+    all_emphasized.extend(phase_emphasis);
+    all_emphasized.sort();
+    all_emphasized.dedup();
+
+    let mut all_deemphasized: Vec<&str> = deemphasized.to_vec();
+    all_deemphasized.extend(phase_deemphasis);
+    // Remove any that are also emphasized (task type takes precedence)
+    all_deemphasized.retain(|t| !all_emphasized.contains(t));
+    all_deemphasized.sort();
+    all_deemphasized.dedup();
+
+    serde_json::json!({
+        "emphasized": all_emphasized,
+        "deemphasized": all_deemphasized,
+        "model_hint": task_type.recommended_model(),
+        "thinking_level": task_type.recommended_thinking_level(),
+        "rationale": format!(
+            "Task type '{}' in '{}' phase: prioritize {} tools",
+            task_type.as_str(),
+            phase.as_str(),
+            if emphasized.is_empty() { "general" } else { emphasized[0] }
+        ),
+    })
 }

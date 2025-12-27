@@ -18,6 +18,8 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
+use crate::core::ops::mcp_session::SessionPhase;
+
 /// How many tool calls before rotating to next category (in Cruising mode)
 pub const ROTATION_INTERVAL: u64 = 4;
 
@@ -109,6 +111,54 @@ impl ContextCategory {
             "errors" | "recenterrors" | "recent_errors" => Some(Self::RecentErrors),
             "patterns" | "userpatterns" | "user_patterns" => Some(Self::UserPatterns),
             _ => None,
+        }
+    }
+
+    /// Get category weight based on session phase
+    /// Higher weight = more likely to be shown
+    pub fn phase_weight(&self, phase: SessionPhase) -> f32 {
+        use SessionPhase::*;
+        match phase {
+            Early => match self {
+                Self::Goals => 2.0,           // What are we building?
+                Self::Decisions => 1.5,       // Past architectural choices
+                Self::CodeContext => 1.5,     // Understanding structure
+                Self::Memories => 1.0,
+                Self::GitActivity => 0.5,     // Less relevant early
+                Self::RecentErrors => 0.5,
+                Self::SystemStatus => 0.5,
+                Self::UserPatterns => 0.8,
+            },
+            Middle => match self {
+                Self::CodeContext => 2.0,     // Focus on implementation
+                Self::RecentErrors => 1.5,    // Fixing as we go
+                Self::Goals => 1.0,           // Track progress
+                Self::GitActivity => 1.0,     // Recent changes
+                Self::Decisions => 0.5,
+                Self::Memories => 0.5,
+                Self::SystemStatus => 0.3,
+                Self::UserPatterns => 0.5,
+            },
+            Late => match self {
+                Self::RecentErrors => 2.0,    // Fix remaining issues
+                Self::CodeContext => 1.5,     // Refinement
+                Self::GitActivity => 1.0,     // Verify changes
+                Self::Goals => 1.0,           // Almost done?
+                Self::Decisions => 0.5,
+                Self::Memories => 0.5,
+                Self::SystemStatus => 0.5,
+                Self::UserPatterns => 0.3,
+            },
+            Wrapping => match self {
+                Self::Goals => 2.0,           // Completion status
+                Self::GitActivity => 1.5,     // Commit summary
+                Self::Decisions => 1.0,       // Record for next session
+                Self::Memories => 1.0,        // Save learnings
+                Self::RecentErrors => 0.5,
+                Self::CodeContext => 0.5,
+                Self::SystemStatus => 0.5,
+                Self::UserPatterns => 0.8,
+            },
         }
     }
 }
@@ -221,6 +271,9 @@ pub struct CarouselState {
     /// What triggered panic mode (for exit detection)
     #[serde(default)]
     pub panic_trigger: Option<String>,
+    /// Current session phase (for phase-aware weighting)
+    #[serde(default)]
+    pub session_phase: SessionPhase,
 }
 
 impl Default for CarouselState {
@@ -238,6 +291,7 @@ impl Default for CarouselState {
             decision_log: Vec::new(),
             panic_active: false,
             panic_trigger: None,
+            session_phase: SessionPhase::Early,
         }
     }
 }
@@ -705,6 +759,35 @@ impl ContextCarousel {
     /// Get decision log for observability
     pub fn decision_log(&self) -> &[CarouselDecision] {
         &self.state.decision_log
+    }
+
+    /// Set the session phase for phase-aware context weighting
+    pub async fn set_session_phase(&mut self, phase: SessionPhase) -> anyhow::Result<()> {
+        if self.state.session_phase != phase {
+            info!("[CAROUSEL] Session phase updated: {:?} → {:?}", self.state.session_phase, phase);
+            self.state.session_phase = phase;
+            self.save().await?;
+        }
+        Ok(())
+    }
+
+    /// Get the current session phase
+    pub fn session_phase(&self) -> SessionPhase {
+        self.state.session_phase
+    }
+
+    /// Get the highest-weighted category for the current phase
+    /// Used to bias category selection in Cruising mode
+    fn phase_preferred_category(&self) -> ContextCategory {
+        let rotation = ContextCategory::rotation();
+        rotation.iter()
+            .max_by(|a, b| {
+                let wa = a.phase_weight(self.state.session_phase);
+                let wb = b.phase_weight(self.state.session_phase);
+                wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .copied()
+            .unwrap_or(ContextCategory::Goals)
     }
 
     /// Increment call count without advancing (for skipped injections)

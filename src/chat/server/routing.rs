@@ -1,10 +1,12 @@
 //! Model routing for Gemini Flash/Pro selection
 //!
-//! Tool-gated escalation: Start with Flash (cheap), escalate to Pro when:
-//! 1. Heavy tools are requested (goal, task, orchestration, etc.)
-//! 2. Tool chain exceeds depth threshold
+//! Task-aware escalation with tool-gated fallback:
+//! 1. Start with model based on task type (Debugging/Planning → Pro, others → Flash)
+//! 2. Escalate to Pro when heavy tools are requested
+//! 3. Escalate to Pro when tool chain exceeds depth threshold
 
 use crate::chat::provider::GeminiModel;
+use crate::orchestrator::TaskType;
 
 // ============================================================================
 // Tool Categories
@@ -61,6 +63,10 @@ pub struct RoutingState {
     pub has_escalated: bool,
     /// Reason for last escalation (for logging)
     pub escalation_reason: Option<String>,
+    /// Current task type (for context-aware decisions)
+    pub task_type: Option<TaskType>,
+    /// Recommended thinking level based on task
+    pub thinking_level: &'static str,
 }
 
 impl Default for RoutingState {
@@ -70,6 +76,8 @@ impl Default for RoutingState {
             tool_call_count: 0,
             has_escalated: false,
             escalation_reason: None,
+            task_type: None,
+            thinking_level: "minimal",
         }
     }
 }
@@ -78,6 +86,56 @@ impl RoutingState {
     /// Create new routing state starting with Flash
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create routing state with task-aware model selection
+    ///
+    /// Task types that benefit from Pro's advanced reasoning:
+    /// - Debugging: Complex problem solving, root cause analysis
+    /// - Planning: Multi-step goal orchestration
+    pub fn with_task_type(task_type: TaskType) -> Self {
+        let model = match task_type.recommended_model() {
+            "pro" => GeminiModel::Pro,
+            _ => GeminiModel::Flash,
+        };
+
+        let has_escalated = model == GeminiModel::Pro;
+        let escalation_reason = if has_escalated {
+            Some(format!("task type: {}", task_type.as_str()))
+        } else {
+            None
+        };
+
+        Self {
+            current_model: model,
+            tool_call_count: 0,
+            has_escalated,
+            escalation_reason,
+            task_type: Some(task_type),
+            thinking_level: task_type.recommended_thinking_level(),
+        }
+    }
+
+    /// Update task type and potentially adjust model
+    pub fn set_task_type(&mut self, task_type: TaskType) {
+        self.task_type = Some(task_type);
+        self.thinking_level = task_type.recommended_thinking_level();
+
+        // Only escalate, never de-escalate
+        if !self.has_escalated && task_type.recommended_model() == "pro" {
+            self.escalate(format!("task type: {}", task_type.as_str()));
+        }
+    }
+
+    /// Get the current thinking level (task-aware or default)
+    pub fn get_thinking_level(&self, tool_count: usize) -> &'static str {
+        // If we have a task-specific level, use it
+        if self.task_type.is_some() {
+            return self.thinking_level;
+        }
+
+        // Default behavior based on model and tool count
+        self.current_model.select_thinking_level(tool_count > 0, tool_count)
     }
 
     /// Process tool calls and determine if escalation is needed.
@@ -201,5 +259,60 @@ mod tests {
         let changed = state.process_tool_calls(&["view_claude_activity"]);
         assert!(!changed);
         assert_eq!(state.current_model, GeminiModel::Pro);
+    }
+
+    #[test]
+    fn test_task_type_debugging_uses_pro() {
+        let state = RoutingState::with_task_type(TaskType::Debugging);
+        assert_eq!(state.current_model, GeminiModel::Pro);
+        assert!(state.has_escalated);
+        assert_eq!(state.thinking_level, "low");
+    }
+
+    #[test]
+    fn test_task_type_planning_uses_pro() {
+        let state = RoutingState::with_task_type(TaskType::Planning);
+        assert_eq!(state.current_model, GeminiModel::Pro);
+        assert!(state.has_escalated);
+        assert_eq!(state.thinking_level, "low");
+    }
+
+    #[test]
+    fn test_task_type_exploration_uses_flash() {
+        let state = RoutingState::with_task_type(TaskType::Exploration);
+        assert_eq!(state.current_model, GeminiModel::Flash);
+        assert!(!state.has_escalated);
+        assert_eq!(state.thinking_level, "minimal");
+    }
+
+    #[test]
+    fn test_task_type_new_feature_uses_flash() {
+        let state = RoutingState::with_task_type(TaskType::NewFeature);
+        assert_eq!(state.current_model, GeminiModel::Flash);
+        assert!(!state.has_escalated);
+        assert_eq!(state.thinking_level, "minimal");
+    }
+
+    #[test]
+    fn test_set_task_type_can_escalate() {
+        let mut state = RoutingState::new();
+        assert_eq!(state.current_model, GeminiModel::Flash);
+
+        // Setting debugging task should escalate to Pro
+        state.set_task_type(TaskType::Debugging);
+        assert_eq!(state.current_model, GeminiModel::Pro);
+        assert!(state.has_escalated);
+    }
+
+    #[test]
+    fn test_set_task_type_no_deescalation() {
+        // Start with Pro (debugging)
+        let mut state = RoutingState::with_task_type(TaskType::Debugging);
+        assert_eq!(state.current_model, GeminiModel::Pro);
+
+        // Changing to exploration shouldn't de-escalate
+        state.set_task_type(TaskType::Exploration);
+        assert_eq!(state.current_model, GeminiModel::Pro); // Still Pro
+        assert_eq!(state.thinking_level, "minimal"); // But thinking level updates
     }
 }

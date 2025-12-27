@@ -1,79 +1,26 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-
-  // Types for API responses
-  interface McpHistoryEntry {
-    id: number;
-    tool_name: string;
-    args_preview: string;
-    result_summary: string | null;
-    success: boolean;
-    duration_ms: number | null;
-    created_at: string;
-  }
-
-  interface InstructionEntry {
-    id: string;
-    instruction: string;
-    context: string | null;
-    priority: string;
-    status: string;
-    created_at: string;
-    completed_at: string | null;
-    result: string | null;
-    error: string | null;
-  }
+  import { onMount, onDestroy } from 'svelte';
+  import { orchestrationStore, type InstructionEntry, type McpHistoryEntry } from '$lib/stores/orchestration.svelte';
 
   // State
-  let mcpHistory = $state<McpHistoryEntry[]>([]);
-  let instructions = $state<InstructionEntry[]>([]);
   let activeSection = $state<'activity' | 'instructions'>('instructions');
-  let loading = $state(false);
   let newInstruction = $state('');
   let newPriority = $state('normal');
+  let loading = $state(false);
 
-  // Fetch functions
-  async function fetchMcpHistory() {
-    try {
-      const res = await fetch('/api/mcp-history?limit=50');
-      if (res.ok) {
-        mcpHistory = await res.json();
-      }
-    } catch (e) {
-      console.error('Failed to fetch MCP history:', e);
-    }
-  }
-
-  async function fetchInstructions() {
-    try {
-      const res = await fetch('/api/instructions?status=all&limit=20');
-      if (res.ok) {
-        instructions = await res.json();
-      }
-    } catch (e) {
-      console.error('Failed to fetch instructions:', e);
-    }
-  }
+  // Derived from store
+  let instructions = $derived(orchestrationStore.instructionsList);
+  let mcpHistory = $derived(orchestrationStore.mcpHistory);
+  let connected = $derived(orchestrationStore.connected);
+  let activeCount = $derived(orchestrationStore.activeCount);
 
   async function createInstruction() {
     if (!newInstruction.trim()) return;
     loading = true;
     try {
-      const res = await fetch('/api/instructions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          instruction: newInstruction,
-          priority: newPriority,
-        }),
-      });
-      if (res.ok) {
-        newInstruction = '';
-        newPriority = 'normal';
-        await fetchInstructions();
-      }
-    } catch (e) {
-      console.error('Failed to create instruction:', e);
+      await orchestrationStore.createInstruction(newInstruction, newPriority);
+      newInstruction = '';
+      newPriority = 'normal';
     } finally {
       loading = false;
     }
@@ -107,19 +54,11 @@
   }
 
   onMount(() => {
-    fetchInstructions();
-    fetchMcpHistory();
+    orchestrationStore.connect();
+  });
 
-    // Poll for updates
-    const interval = setInterval(() => {
-      if (activeSection === 'instructions') {
-        fetchInstructions();
-      } else {
-        fetchMcpHistory();
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
+  onDestroy(() => {
+    orchestrationStore.disconnect();
   });
 </script>
 
@@ -129,16 +68,22 @@
     <div class="section-toggle">
       <button
         class="toggle-btn {activeSection === 'instructions' ? 'active' : ''}"
-        onclick={() => { activeSection = 'instructions'; fetchInstructions(); }}
+        onclick={() => activeSection = 'instructions'}
       >
         Instructions
+        {#if activeCount > 0}
+          <span class="badge">{activeCount}</span>
+        {/if}
       </button>
       <button
         class="toggle-btn {activeSection === 'activity' ? 'active' : ''}"
-        onclick={() => { activeSection = 'activity'; fetchMcpHistory(); }}
+        onclick={() => activeSection = 'activity'}
       >
         Claude Activity
       </button>
+    </div>
+    <div class="connection-status" class:connected>
+      {connected ? '●' : '○'}
     </div>
   </div>
 
@@ -150,6 +95,11 @@
         placeholder="Send instruction to Claude Code..."
         bind:value={newInstruction}
         rows="2"
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            createInstruction();
+          }
+        }}
       ></textarea>
       <div class="form-row">
         <select class="priority-select" bind:value={newPriority}>
@@ -158,6 +108,7 @@
           <option value="high">High</option>
           <option value="urgent">Urgent</option>
         </select>
+        <span class="hint">⌘+Enter to send</span>
         <button
           class="send-btn"
           onclick={createInstruction}
@@ -241,6 +192,7 @@
   .section-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     padding: 8px 12px;
     border-bottom: 1px solid var(--term-border);
     background: var(--term-bg-secondary);
@@ -252,6 +204,9 @@
   }
 
   .toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 6px 12px;
     font-size: 12px;
     font-weight: 500;
@@ -271,6 +226,25 @@
   .toggle-btn.active {
     background: var(--term-accent-faded);
     color: var(--term-accent);
+  }
+
+  .badge {
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--term-accent);
+    color: var(--term-bg);
+    border-radius: 10px;
+  }
+
+  .connection-status {
+    font-size: 10px;
+    color: var(--term-error);
+    transition: color 0.2s ease;
+  }
+
+  .connection-status.connected {
+    color: var(--term-success);
   }
 
   .instruction-form {
@@ -298,6 +272,7 @@
 
   .form-row {
     display: flex;
+    align-items: center;
     gap: 8px;
     margin-top: 8px;
   }
@@ -311,7 +286,14 @@
     color: var(--term-text);
   }
 
+  .hint {
+    font-size: 11px;
+    color: var(--term-text-dim);
+    opacity: 0.7;
+  }
+
   .send-btn {
+    margin-left: auto;
     padding: 6px 16px;
     font-size: 12px;
     font-weight: 500;

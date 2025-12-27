@@ -176,6 +176,7 @@ pub async fn recall(ctx: &OpContext, input: RecallInput) -> CoreResult<RecallOut
         collection: COLLECTION_CONVERSATION,
         fact_type: input.fact_type.as_deref(),
         category: input.category.as_deref(),
+        session_touched_files: None, // TODO: Pass from session context when available
     };
 
     // Get semantic reference if available
