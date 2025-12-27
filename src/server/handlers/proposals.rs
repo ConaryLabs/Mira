@@ -7,7 +7,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use serde_json::{json, Value};
 
-use crate::core::ops::proposals::{self, ProposalType};
+use crate::core::ops::proposals;
 use crate::core::OpContext;
 use crate::tools::types::ProposalRequest;
 

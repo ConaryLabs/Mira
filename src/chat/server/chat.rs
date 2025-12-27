@@ -13,7 +13,7 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::mpsc;
 use uuid::Uuid;

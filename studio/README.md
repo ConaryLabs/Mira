@@ -2,7 +2,7 @@
 
 **Web-based Chat Interface for Mira**
 
-Mira Studio is a SvelteKit frontend that provides a modern chat interface to the Mira daemon. It communicates with DeepSeek V3.2 via Mira's HTTP API and renders structured streaming responses with rich tool call visualization.
+Mira Studio is a SvelteKit frontend that provides a modern chat interface to the Mira daemon. It communicates with Gemini 3 Flash/Pro via Mira's HTTP API and renders structured streaming responses with rich tool call visualization.
 
 ## Quick Start
 
@@ -22,7 +22,7 @@ Studio (SvelteKit)           Mira Daemon (Rust)
 │                 │  SSE    │                 │
 │   ChatPanel     │◄───────►│  /api/chat      │
 │   TerminalView  │         │                 │
-│   BlockRenderer │         │  GPT-5.2        │
+│   BlockRenderer │         │  Gemini 3       │
 │                 │         │  Tool execution │
 └─────────────────┘         └─────────────────┘
 ```
@@ -92,8 +92,8 @@ studio/src/lib/
 │ [🕐] │  [you] > message       │             │
 │ [📁] │  [mira]                │ [Timeline]  │
 │ [👥] │  │ assistant response  │ [Workspace] │
-│      │  │   ✓ read_file       │ [Advisory]  │
-│ [⚙]  │  │   ✓ bash            │             │
+│ [⚙]  │  │   ✓ read_file       │             │
+│      │  │   ✓ bash            │             │
 └──────┴────────────────────────┴─────────────┘
 
 Settings Mode (NavRail expanded to 280px):

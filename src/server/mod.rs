@@ -23,7 +23,7 @@ use tracing::info;
 use crate::tools::*;
 use crate::context::{ContextCarousel, CarouselTrigger};
 use crate::orchestrator::GeminiOrchestrator;
-use crate::core::ops::mcp_session::{self, SessionPhase, McpSession};
+use crate::core::ops::mcp_session::{self, SessionPhase};
 
 // Re-export database utilities
 pub use db::{create_optimized_pool, run_migrations};

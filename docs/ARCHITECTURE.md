@@ -777,7 +777,7 @@ Chronological record of architectural choices, trade-offs, and rejected alternat
 - **Also**: Smooth handoff resets, `/api/chat/sync` endpoint.
 
 #### **2025-12-18: Hotline + Full Context Assembly**
-**Decision**: Multi-provider support (GPT-5.2, DeepSeek V3.2, Gemini 3 Pro, Council).
+**Decision**: Multi-provider support (GPT-5.2, DeepSeek V3.2, Gemini 3 Pro).
 - **Why**: Different tasks need different models.
 - **Also**: Every model gets full context (corrections, goals, memories, summaries).
 
@@ -1055,9 +1055,8 @@ The daemon spawns several background tasks:
 | Service | Failure Mode | Recovery Strategy |
 |---------|--------------|-------------------|
 | Qdrant down | Semantic search unavailable | Fall back to SQL LIKE queries |
-| Gemini API error | Embedding fails | Retry 2x with 500ms backoff, then skip |
+| Gemini API error | Embedding/chat fails | Retry 2x with 500ms backoff, return error |
 | DeepSeek timeout | Chat stalls | 180s timeout, return error to user |
-| OpenAI/Anthropic error | Advisory fails | Return error, other providers unaffected |
 
 #### **Database Failures**
 
@@ -1303,7 +1302,7 @@ If deploying Mira externally:
 ├── studio/                 # SvelteKit frontend
 │   ├── src/                # Svelte components
 │   └── static/             # Static assets
-├── migrations/             # SQLx migrations (21 files)
+├── migrations/             # SQLx migrations (consolidated)
 ├── tests/                  # Integration tests
 ├── docs/                   # Documentation
 ├── data/                   # SQLite database (symlinked)
@@ -1373,7 +1372,7 @@ npm run preview  # Preview production build
 |----------|-------|
 | Unit tests (`#[test]`) | ~180 |
 | Integration test files | 4 |
-| SQLx migrations | 23 |
+| SQLx migrations | 1 (consolidated) |
 
 #### **Test Suites**
 | File | Purpose |
@@ -1532,10 +1531,9 @@ Currently no automated CI/CD pipeline. Deployment is manual:
 | Core ops modules | 18 |
 | MCP tools | 30+ |
 | Chat tools | 17 + 8 tool_defs |
-| Advisory providers | 4 |
 | Unit tests | ~180 |
 | Integration tests | 4 |
-| SQLx migrations | 23 |
+| SQLx migrations | 1 (consolidated) |
 
 ---
 
