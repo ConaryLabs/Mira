@@ -469,11 +469,13 @@ impl GeminiChatProvider {
     ///
     /// # Arguments
     /// * `system_prompt` - System instructions to cache
+    /// * `tools` - Tool definitions to cache (required for tool use with cached content)
     /// * `context` - Optional additional context to cache (e.g., code, docs)
     /// * `ttl_seconds` - Time to live (default 3600 = 1 hour)
     pub async fn create_cache(
         &self,
         system_prompt: &str,
+        tools: &[ToolDefinition],
         context: Option<&str>,
         ttl_seconds: u32,
     ) -> Result<Option<CachedContent>> {
@@ -501,12 +503,16 @@ impl GeminiChatProvider {
             });
         }
 
+        // Include tools in the cache (required for GenerateContent with cachedContent)
+        let gemini_tools = Self::build_tools(tools);
+
         let request = CreateCacheRequest {
             model: self.model.model_path(),
             system_instruction: Some(GeminiSystemInstruction {
                 parts: vec![GeminiTextPart { text: system_prompt.to_string() }],
             }),
             contents,
+            tools: gemini_tools,
             ttl: format!("{}s", ttl_seconds),
         };
 
@@ -569,6 +575,7 @@ impl GeminiChatProvider {
     }
 
     /// Make a streaming request using cached content
+    /// Note: tools are included in the cache, not in this request
     pub async fn create_stream_with_cache(
         &self,
         cache: &CachedContent,
@@ -577,8 +584,8 @@ impl GeminiChatProvider {
         let (tx, rx) = mpsc::channel(100);
 
         // Only include messages not in the cache (new user messages)
+        // Tools are already in the cached content, don't include them here
         let contents = Self::build_contents(&request);
-        let tools = Self::build_tools(&request.tools);
         let thinking_level = self.model.select_thinking_level(!request.tools.is_empty(), request.tools.len());
 
         let api_request = CachedGeminiRequest {
@@ -589,7 +596,6 @@ impl GeminiChatProvider {
                     thinking_level: thinking_level.to_string(),
                 },
             }),
-            tools,
         };
 
         let url = format!("{}?alt=sse&key={}", self.model.stream_url(), self.api_key);
@@ -1244,6 +1250,8 @@ struct CreateCacheRequest {
     #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
     system_instruction: Option<GeminiSystemInstruction>,
     contents: Vec<GeminiContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<GeminiToolEntry>>,
     ttl: String,
 }
 
@@ -1275,17 +1283,16 @@ pub struct CachedContent {
 }
 
 /// Request format when using cached content
+/// Note: tools, system_instruction, and tool_config must be in the cache, not here
 #[derive(Serialize)]
 struct CachedGeminiRequest {
-    /// Reference to cached content (replaces system_instruction + cached contents)
+    /// Reference to cached content (includes system_instruction + tools)
     #[serde(rename = "cachedContent")]
     cached_content: String,
     /// Only new user messages (not in cache)
     contents: Vec<GeminiContent>,
     #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
     generation_config: Option<GeminiGenerationConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<GeminiToolEntry>>,
 }
 
 #[cfg(test)]
