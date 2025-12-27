@@ -461,6 +461,12 @@ pub struct DebounceRequest {
     pub ttl_secs: u64,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExtractRequest {
+    #[schemars(description = "Transcript or text content to extract decisions/topics from")]
+    pub transcript: String,
+}
+
 // ============================================================================
 // Proactive Context
 // ============================================================================
