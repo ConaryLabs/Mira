@@ -1,8 +1,7 @@
-//! Chat module - DeepSeek-powered coding assistant
+//! Chat module - Gemini-powered coding assistant
 //!
 //! This module provides the chat functionality for Mira Studio:
-//! - DeepSeek V3.2 as the primary model
-//! - Council tool for consulting GPT 5.2, Opus 4.5, Gemini 3 Pro
+//! - Gemini 3 Flash/Pro as the primary model
 //! - Full Mira context injection
 //! - Persistent memory and session management
 
