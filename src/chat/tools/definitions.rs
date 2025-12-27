@@ -33,7 +33,6 @@ pub fn get_tools() -> Vec<Tool> {
     tools.extend(tool_defs::mira_tools());          // task, goal, correction, etc (5)
     tools.extend(tool_defs::git_tools());           // git_status, git_diff, git_log + intel (8)
     tools.extend(tool_defs::artifact_tools());      // fetch_artifact, search_artifact (2)
-    tools.extend(tool_defs::council_tools());       // council, ask_* (5)
     tools.extend(tool_defs::intel_tools());         // code intel + build/doc/index/proactive (9)
     tools.extend(tool_defs::orchestration_tools()); // view_claude_activity, send_instruction, list_instructions, cancel_instruction (4)
 
@@ -48,9 +47,10 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        // 3 file_ops + 2 memory + 5 mira + 8 git + 2 artifact + 5 council + 9 intel + 4 orchestration = 38
+        // 3 file_ops + 2 memory + 5 mira + 8 git + 2 artifact + 9 intel + 4 orchestration = 33
         // (web_search/web_fetch removed - using Gemini's built-in tools)
-        assert_eq!(tools.len(), 38, "Expected 38 tools, got {}", tools.len());
+        // (council tools removed - simplification)
+        assert_eq!(tools.len(), 33, "Expected 33 tools, got {}", tools.len());
 
         // Collect tool names
         let names: HashSet<&str> = tools.iter().map(|t| t.name.as_str()).collect();
@@ -68,6 +68,8 @@ mod tests {
         assert!(!names.contains("git_commit"), "git_commit should be removed");
         assert!(!names.contains("web_search"), "web_search replaced by Gemini's google_search");
         assert!(!names.contains("web_fetch"), "web_fetch replaced by Gemini's url_context");
+        assert!(!names.contains("council"), "council removed - simplification");
+        assert!(!names.contains("ask_gpt"), "ask_gpt removed - simplification");
 
         // Verify key tools exist
         assert!(names.contains("remember"));
@@ -78,9 +80,6 @@ mod tests {
         assert!(names.contains("git_status"));
         assert!(names.contains("git_diff"));
         assert!(names.contains("git_log"));
-        assert!(names.contains("council"));
-        assert!(names.contains("ask_gpt"));
-        assert!(names.contains("ask_deepseek"));
         assert!(names.contains("get_symbols"));
         assert!(names.contains("get_call_graph"));
         assert!(names.contains("fetch_artifact"));

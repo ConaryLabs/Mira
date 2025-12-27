@@ -13,7 +13,6 @@ pub mod corrections;
 pub mod documents;
 pub mod file_search;
 pub mod format;
-pub mod hotline;
 pub mod ingest;
 pub mod git_intel;
 pub mod goals;

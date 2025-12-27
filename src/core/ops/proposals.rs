@@ -588,69 +588,6 @@ async fn store_proposal_embedding(ctx: &OpContext, proposal_id: &str, content: &
 }
 
 // ============================================================================
-// LLM-based Extraction (for complex cases)
-// ============================================================================
-
-/// LLM extraction result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmExtractionResult {
-    pub proposal_type: String,
-    pub content: String,
-    pub title: Option<String>,
-    pub confidence: f64,
-}
-
-/// Extract proposals using LLM when pattern matching fails
-/// Returns structured proposals from free-form text
-pub async fn extract_with_llm(text: &str) -> CoreResult<Vec<LlmExtractionResult>> {
-    use crate::advisory::{AdvisoryService, AdvisoryModel};
-
-    let service = AdvisoryService::from_env()
-        .map_err(|e| CoreError::Internal(format!("Failed to create advisory service: {}", e)))?;
-
-    let prompt = format!(
-        r#"Analyze this text and extract any implicit goals, tasks, or decisions.
-Return a JSON array of objects with these fields:
-- proposal_type: "goal" | "task" | "decision"
-- content: the full proposal text
-- title: short title (optional)
-- confidence: 0.0-1.0 how confident this is a real proposal
-
-Only extract items that are clearly stated or strongly implied. Return empty array [] if none found.
-
-Text to analyze:
----
-{}
----
-
-Return ONLY valid JSON array, no markdown or explanation."#,
-        text
-    );
-
-    let response = service.ask(AdvisoryModel::Gpt52, &prompt).await
-        .map_err(|e| CoreError::Internal(format!("LLM extraction failed: {}", e)))?;
-
-    // Parse the response - try to extract JSON array
-    let text = response.text.trim();
-
-    // Handle markdown code blocks
-    let json_str = if text.starts_with("```") {
-        text.lines()
-            .skip(1) // skip ```json
-            .take_while(|l| !l.starts_with("```"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        text.to_string()
-    };
-
-    let results: Vec<LlmExtractionResult> = serde_json::from_str(&json_str)
-        .unwrap_or_default();
-
-    Ok(results)
-}
-
-// ============================================================================
 // Helpers
 // ============================================================================
 
