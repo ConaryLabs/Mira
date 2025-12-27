@@ -297,9 +297,6 @@ pub async fn chat_sync_handler(
                 let marker = format!("\x00CB:{}", id);
                 content = content.replace(&marker, "");
             }
-            ChatEvent::Council { gpt, opus, gemini } => {
-                blocks.push(MessageBlock::Council { gpt, opus, gemini });
-            }
             ChatEvent::ArtifactCreated { .. } => {
                 // Artifacts are tracked separately - ignore for sync response content
             }

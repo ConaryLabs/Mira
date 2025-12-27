@@ -393,29 +393,6 @@ async fn process_gemini_chat(
                             Err(e) => (false, e.to_string(), None),
                         };
 
-                        // Check for council response in tool output
-                        if let Ok(parsed) = serde_json::from_str::<Value>(&output) {
-                            if let Some(council) = parsed.get("council") {
-                                let gpt = council.get("gpt-5.2").and_then(|v| v.as_str()).map(String::from);
-                                let opus = council.get("opus-4.5").and_then(|v| v.as_str()).map(String::from);
-                                let gemini = council.get("gemini-3-pro").and_then(|v| v.as_str()).map(String::from);
-
-                                // Emit council event
-                                let _ = tx.send(ChatEvent::Council {
-                                    gpt: gpt.clone(),
-                                    opus: opus.clone(),
-                                    gemini: gemini.clone(),
-                                }).await;
-
-                                // Add council block for storage
-                                assistant_blocks.push(MessageBlock::Council {
-                                    gpt,
-                                    opus,
-                                    gemini,
-                                });
-                            }
-                        }
-
                         // Calculate duration
                         let duration_ms = tool_start_times
                             .remove(&call_id)
@@ -689,29 +666,6 @@ async fn process_gemini_chat(
                             Ok(r) => (r.success, r.output, r.diff),
                             Err(e) => (false, e.to_string(), None),
                         };
-
-                        // Check for council response in tool output
-                        if let Ok(parsed) = serde_json::from_str::<Value>(&output) {
-                            if let Some(council) = parsed.get("council") {
-                                let gpt = council.get("gpt-5.2").and_then(|v| v.as_str()).map(String::from);
-                                let opus = council.get("opus-4.5").and_then(|v| v.as_str()).map(String::from);
-                                let gemini = council.get("gemini-3-pro").and_then(|v| v.as_str()).map(String::from);
-
-                                // Emit council event
-                                let _ = tx.send(ChatEvent::Council {
-                                    gpt: gpt.clone(),
-                                    opus: opus.clone(),
-                                    gemini: gemini.clone(),
-                                }).await;
-
-                                // Add council block for storage
-                                assistant_blocks.push(MessageBlock::Council {
-                                    gpt,
-                                    opus,
-                                    gemini,
-                                });
-                            }
-                        }
 
                         // Calculate duration
                         let duration_ms = tool_start_times
