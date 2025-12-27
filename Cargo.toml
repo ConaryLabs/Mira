@@ -51,7 +51,8 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.9"
 
 # HTTP client (for Gemini embeddings API)
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "multipart"] }
+mime_guess = "2.0"
 
 # Code parsing (tree-sitter for multi-language support)
 tree-sitter = "0.25"

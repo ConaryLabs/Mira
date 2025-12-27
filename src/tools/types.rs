@@ -201,6 +201,24 @@ pub struct DocumentRequest {
 }
 
 // ============================================================================
+// File Search Tool - Gemini RAG with per-project stores
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FileSearchRequest {
+    #[schemars(description = "Action: index/list/remove/status")]
+    pub action: String,
+    #[schemars(description = "File path to index (for 'index' action)")]
+    pub path: Option<String>,
+    #[schemars(description = "Display name for the file")]
+    pub display_name: Option<String>,
+    #[schemars(description = "Custom metadata key-value pairs as JSON")]
+    pub metadata: Option<String>,
+    #[schemars(description = "Wait for indexing to complete (default: false)")]
+    pub wait: Option<bool>,
+}
+
+// ============================================================================
 // Consolidated Permission Tool (3→1)
 // ============================================================================
 

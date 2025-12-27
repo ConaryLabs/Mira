@@ -932,6 +932,61 @@ impl MiraServer {
         }
     }
 
+    // === File Search Tool (Gemini RAG) ===
+
+    #[tool(description = "Manage Gemini File Search for per-project RAG. Actions: index/list/remove/status")]
+    async fn file_search(&self, Parameters(req): Parameters<FileSearchRequest>) -> Result<CallToolResult, McpError> {
+        let project = self.get_active_project().await
+            .ok_or_else(|| to_mcp_err(anyhow::anyhow!("No active project. Call set_project first.")))?;
+
+        // Create client from environment
+        let client = crate::chat::provider::FileSearchClient::from_env()
+            .map_err(to_mcp_err)?;
+
+        match req.action.as_str() {
+            "index" => {
+                let path = require!(req.path, "path required for index");
+                let metadata = if let Some(meta_str) = &req.metadata {
+                    Some(serde_json::from_str::<Vec<crate::chat::provider::CustomMetadata>>(meta_str)
+                        .map_err(|e| to_mcp_err(anyhow::anyhow!("Invalid metadata JSON: {}", e)))?)
+                } else {
+                    None
+                };
+                let result = file_search::index_file(
+                    self.db.as_ref(),
+                    &client,
+                    &project.path,
+                    &path,
+                    req.display_name.as_deref(),
+                    metadata,
+                    req.wait.unwrap_or(false),
+                ).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "list" => {
+                let files = file_search::list_indexed_files(self.db.as_ref(), &project.path)
+                    .await.map_err(to_mcp_err)?;
+                Ok(vec_response(files, "No files indexed yet."))
+            }
+            "remove" => {
+                let path = require!(req.path, "path required for remove");
+                let removed = file_search::remove_file(self.db.as_ref(), &project.path, &path)
+                    .await.map_err(to_mcp_err)?;
+                if removed {
+                    Ok(text_response(format!("Removed '{}' from index", path)))
+                } else {
+                    Ok(text_response(format!("'{}' not found in index", path)))
+                }
+            }
+            "status" => {
+                let status = file_search::get_store_status(self.db.as_ref(), &project.path)
+                    .await.map_err(to_mcp_err)?;
+                Ok(option_response(status, "No FileSearch store for this project."))
+            }
+            action => Ok(unknown_action(action, "index/list/remove/status")),
+        }
+    }
+
     // === Consolidated Permission Tool (3→1) ===
 
     #[tool(description = "Manage permission rules. Actions: save/list/delete.")]

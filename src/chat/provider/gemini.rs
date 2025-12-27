@@ -241,6 +241,11 @@ impl GeminiChatProvider {
 
     /// Convert tool definitions to Gemini format, including built-in tools
     fn build_tools(tools: &[ToolDefinition]) -> Option<Vec<GeminiToolEntry>> {
+        Self::build_tools_with_stores(tools, &[])
+    }
+
+    /// Build tools with optional FileSearch stores for RAG
+    fn build_tools_with_stores(tools: &[ToolDefinition], file_search_stores: &[String]) -> Option<Vec<GeminiToolEntry>> {
         // Always include built-in tools for enhanced capabilities
         let mut entries = vec![
             // Google Search grounding (FREE until Jan 2026)
@@ -250,6 +255,15 @@ impl GeminiChatProvider {
             // URL context (native web fetching)
             GeminiToolEntry::UrlContext { url_context: EmptyObject {} },
         ];
+
+        // Add FileSearch stores if any (per-project RAG)
+        if !file_search_stores.is_empty() {
+            entries.push(GeminiToolEntry::FileSearch {
+                file_search: FileSearchConfig {
+                    file_search_store_names: file_search_stores.to_vec(),
+                },
+            });
+        }
 
         // Add custom function declarations if any
         if !tools.is_empty() {
@@ -723,6 +737,91 @@ impl GeminiChatProvider {
 
         Ok(rx)
     }
+
+    /// Create a streaming request with FileSearch stores for RAG
+    pub async fn create_stream_with_file_search(
+        &self,
+        request: ChatRequest,
+        file_search_stores: &[String],
+    ) -> Result<mpsc::Receiver<StreamEvent>> {
+        let (tx, rx) = mpsc::channel(100);
+
+        let contents = Self::build_contents(&request);
+        let tools = Self::build_tools_with_stores(&request.tools, file_search_stores);
+        let thinking_level = self.model.select_thinking_level(!request.tools.is_empty(), request.tools.len());
+
+        let api_request = GeminiRequest {
+            contents,
+            system_instruction: Some(GeminiSystemInstruction {
+                parts: vec![GeminiTextPart { text: request.system }],
+            }),
+            generation_config: Some(GeminiGenerationConfig {
+                thinking_config: GeminiThinkingConfig {
+                    thinking_level: thinking_level.to_string(),
+                },
+            }),
+            tools,
+        };
+
+        let url = format!("{}?alt=sse&key={}", self.model.stream_url(), self.api_key);
+        let client = self.client.clone();
+
+        tokio::spawn(async move {
+            match client
+                .post(&url)
+                .json(&api_request)
+                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        let body = response.text().await.unwrap_or_default();
+                        let _ = tx.send(StreamEvent::Error(
+                            format!("Gemini API error: {} - {}", status, body)
+                        )).await;
+                        return;
+                    }
+
+                    let mut stream = response.bytes_stream();
+                    let mut buffer = String::new();
+                    let mut tool_call_count = 0;
+
+                    while let Some(chunk) = stream.next().await {
+                        match chunk {
+                            Ok(bytes) => {
+                                buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                                while let Some(line_end) = buffer.find('\n') {
+                                    let line = buffer[..line_end].to_string();
+                                    buffer = buffer[line_end + 1..].to_string();
+
+                                    if line.starts_with("data: ") {
+                                        let data = &line[6..];
+                                        if let Ok(response) = serde_json::from_str::<GeminiResponse>(data) {
+                                            Self::process_stream_response(&response, &tx, &mut tool_call_count).await;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                                break;
+                            }
+                        }
+                    }
+
+                    let _ = tx.send(StreamEvent::Done).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                }
+            }
+        });
+
+        Ok(rx)
+    }
 }
 
 #[async_trait]
@@ -991,11 +1090,23 @@ enum GeminiToolEntry {
     UrlContext {
         url_context: EmptyObject,
     },
+    /// File Search (RAG) with per-project stores
+    FileSearch {
+        file_search: FileSearchConfig,
+    },
 }
 
 /// Empty object for built-in tools that take no configuration
 #[derive(Serialize)]
 struct EmptyObject {}
+
+/// Configuration for File Search tool
+#[derive(Serialize, Clone)]
+pub struct FileSearchConfig {
+    /// List of store names to search (e.g., ["fileSearchStores/abc123"])
+    #[serde(rename = "fileSearchStoreNames")]
+    pub file_search_store_names: Vec<String>,
+}
 
 #[derive(Serialize)]
 struct GeminiFunctionDeclaration {
