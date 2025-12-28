@@ -256,9 +256,16 @@ pub enum StreamEvent {
         is_error: Option<bool>,
     },
 
-    /// User message (echoed back when using --replay-user-messages)
+    /// User message with tool results (echoed back from Claude Code)
     User {
-        content: String,
+        message: UserMessage,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        uuid: Option<String>,
+        /// Additional tool result metadata
+        #[serde(default)]
+        tool_use_result: Option<serde_json::Value>,
     },
 
     /// Error from Claude Code
@@ -314,6 +321,36 @@ impl AssistantMessage {
             }
             _ => None,
         }
+    }
+}
+
+/// User message content (tool results)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserMessage {
+    pub role: String,
+    /// Content is an array of tool results
+    #[serde(default)]
+    pub content: Vec<ToolResultContent>,
+}
+
+/// Tool result content block
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultContent {
+    pub tool_use_id: String,
+    #[serde(rename = "type")]
+    pub content_type: String,
+    /// Tool result content (can be string or structured)
+    #[serde(default)]
+    pub content: serde_json::Value,
+    #[serde(default)]
+    pub is_error: Option<bool>,
+}
+
+impl UserMessage {
+    /// Get a summary of tool results for logging
+    pub fn summary(&self) -> String {
+        let tool_ids: Vec<&str> = self.content.iter().map(|c| c.tool_use_id.as_str()).collect();
+        format!("{} tool result(s): {}", tool_ids.len(), tool_ids.join(", "))
     }
 }
 
