@@ -14,6 +14,7 @@
   let spawnProjectPath = $state('');
   let spawnPrompt = $state('');
   let spawnBudget = $state(5.0);
+  let spawnWithContext = $state(true); // Include Mira context (goals, decisions, corrections)
   let spawnLoading = $state(false);
 
   // Question answer state
@@ -52,7 +53,10 @@
     if (!spawnProjectPath.trim() || !spawnPrompt.trim()) return;
     spawnLoading = true;
     try {
-      const result = await sessionsStore.spawnSession(spawnProjectPath, spawnPrompt, { budgetUsd: spawnBudget });
+      const result = await sessionsStore.spawnSession(spawnProjectPath, spawnPrompt, {
+        budgetUsd: spawnBudget,
+        buildContext: spawnWithContext,
+      });
       if (result) {
         spawnPrompt = '';
       }
@@ -249,6 +253,10 @@
             max="100"
             step="0.5"
           />
+        </label>
+        <label class="context-toggle" title="Include Mira context (goals, decisions, corrections)">
+          <input type="checkbox" bind:checked={spawnWithContext} />
+          Context
         </label>
         <span class="hint">⌘+Enter to spawn</span>
         <button
@@ -836,6 +844,19 @@
     border: 1px solid var(--term-border);
     border-radius: 4px;
     color: var(--term-text);
+  }
+
+  .context-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--term-text-dim);
+    cursor: pointer;
+  }
+
+  .context-toggle input[type="checkbox"] {
+    accent-color: var(--term-accent);
   }
 
   .spawn-btn {

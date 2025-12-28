@@ -240,7 +240,12 @@ export const sessionsStore = {
   async spawnSession(
     projectPath: string,
     prompt: string,
-    options?: { budgetUsd?: number; systemPrompt?: string }
+    options?: {
+      budgetUsd?: number;
+      systemPrompt?: string;
+      buildContext?: boolean;
+      keyFiles?: string[];
+    }
   ): Promise<{ session_id: string } | null> {
     try {
       const res = await fetch('/api/sessions', {
@@ -251,6 +256,8 @@ export const sessionsStore = {
           prompt,
           budget_usd: options?.budgetUsd,
           system_prompt: options?.systemPrompt,
+          build_context: options?.buildContext ?? true, // Default to true
+          key_files: options?.keyFiles,
         }),
       });
       if (res.ok) {

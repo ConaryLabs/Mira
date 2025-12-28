@@ -582,7 +582,7 @@ pub async fn orchestration_stream_handler(
 // Claude Code Spawner Endpoints
 // ============================================================================
 
-use crate::spawner::SpawnConfig;
+use crate::spawner::{build_context_snapshot, SpawnConfig};
 
 #[derive(Deserialize)]
 pub struct SpawnSessionRequest {
@@ -596,6 +596,11 @@ pub struct SpawnSessionRequest {
     pub budget_usd: Option<f64>,
     /// Allowed tools (None = all)
     pub allowed_tools: Option<Vec<String>>,
+    /// Build and attach Mira context (goals, decisions, corrections)
+    #[serde(default)]
+    pub build_context: bool,
+    /// Key files for context relevance (used when build_context is true)
+    pub key_files: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -624,6 +629,27 @@ pub async fn spawn_session_handler(
     }
     if let Some(sys) = req.system_prompt {
         config.system_prompt = Some(sys);
+    }
+
+    // Build Mira context if requested
+    if req.build_context {
+        if let Some(db) = state.db.as_ref() {
+            let key_files = req.key_files.clone().unwrap_or_default();
+            match build_context_snapshot(db, &req.prompt, None, key_files).await {
+                Ok(snapshot) => {
+                    tracing::info!(
+                        goals = snapshot.active_goals.len(),
+                        decisions = snapshot.relevant_decisions.len(),
+                        corrections = snapshot.corrections.len(),
+                        "Built context snapshot for session"
+                    );
+                    config = config.with_context(snapshot);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to build context, spawning without");
+                }
+            }
+        }
     }
 
     let session_id = spawner

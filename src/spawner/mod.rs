@@ -57,9 +57,12 @@
 //! let exit_code = spawner.terminate(&session_id).await?;
 //! ```
 
+mod context;
 mod process;
 mod stream;
 pub mod types;
+
+pub use context::build_context_snapshot;
 
 pub use process::ClaudeCodeSpawner;
 #[allow(unused_imports)]

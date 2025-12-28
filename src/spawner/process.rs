@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use sqlx::SqlitePool;
-use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdin, Command};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -111,6 +111,24 @@ impl ClaudeCodeSpawner {
         self.event_tx.subscribe()
     }
 
+    /// Start heartbeat task that sends periodic keepalive events
+    pub fn start_heartbeat(&self, interval_secs: u64) {
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+
+            loop {
+                interval.tick().await;
+                let ts = chrono::Utc::now().timestamp();
+                // Ignore send errors (no subscribers)
+                let _ = event_tx.send(SessionEvent::Heartbeat { ts });
+            }
+        });
+
+        info!(interval_secs, "Started SSE heartbeat task");
+    }
+
     /// Spawn a new Claude Code session
     pub async fn spawn(&self, config: SpawnConfig) -> Result<String> {
         // Check concurrent session limit
@@ -182,7 +200,7 @@ impl ClaudeCodeSpawner {
 
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().context("Failed to get stdout")?;
-        let _stderr = child.stderr.take(); // TODO: handle stderr
+        let stderr = child.stderr.take().context("Failed to get stderr")?;
 
         let spawned_at = chrono::Utc::now().timestamp();
 
@@ -200,10 +218,7 @@ impl ClaudeCodeSpawner {
         // Inject the initial prompt via stdin (required for --input-format stream-json)
         process.inject_message(&config.initial_prompt).await?;
 
-        // Close stdin to signal end of initial input (Claude will process and respond)
-        // For future: keep stdin open if we want interactive sessions
-        process.stdin = None;
-
+        // Keep stdin open for interactive sessions (inject_message, answer_question)
         process.status = SessionStatus::Running;
 
         // Store in database
@@ -222,10 +237,13 @@ impl ClaudeCodeSpawner {
             initial_prompt: config.initial_prompt.clone(),
         });
 
-        // Spawn output reader
+        // Spawn stdout reader (stream-json parser)
         let (stream_tx, stream_rx) = mpsc::channel(256);
         let parser = StreamParser::new(stream_tx);
         let _reader_handle = parser.spawn_reader(stdout);
+
+        // Spawn stderr reader
+        self.spawn_stderr_reader(session_id.clone(), stderr);
 
         // Spawn event processor
         self.spawn_event_processor(session_id.clone(), config.instruction_id.clone(), stream_rx);
@@ -365,6 +383,31 @@ impl ClaudeCodeSpawner {
             }
 
             debug!(session_id = %session_id, "Event processor finished");
+        });
+    }
+
+    /// Spawn background task to read stderr and broadcast as output events
+    fn spawn_stderr_reader(&self, session_id: String, stderr: ChildStderr) {
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+
+            while let Ok(Some(line)) = reader.next_line().await {
+                if line.is_empty() {
+                    continue;
+                }
+
+                debug!(session_id = %session_id, line = %line, "stderr");
+
+                let _ = event_tx.send(SessionEvent::Output {
+                    session_id: session_id.clone(),
+                    chunk_type: "stderr".to_string(),
+                    content: line,
+                });
+            }
+
+            debug!(session_id = %session_id, "Stderr reader finished");
         });
     }
 

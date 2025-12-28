@@ -411,6 +411,9 @@ pub enum SessionEvent {
         exit_code: Option<i32>,
         summary: Option<String>,
     },
+
+    /// Heartbeat to keep SSE connection alive
+    Heartbeat { ts: i64 },
 }
 
 // ============================================================================

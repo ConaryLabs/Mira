@@ -302,6 +302,7 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
     // Initialize Claude Code spawner
     let spawner_config = spawner::SpawnerConfig::from_env();
     let claude_spawner = Arc::new(spawner::ClaudeCodeSpawner::new((*db).clone(), spawner_config));
+    claude_spawner.start_heartbeat(30); // Send heartbeat every 30 seconds
     info!("Claude Code spawner initialized");
 
     // Create chat router (if DeepSeek API key is available)
