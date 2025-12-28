@@ -495,36 +495,9 @@ impl AssembledContext {
             }
         }
 
-        // 11. Recent messages - changes EVERY TURN (MUST BE LAST for cache efficiency)
-        if !self.recent_messages.is_empty() {
-            let mut lines = vec!["## Recent".to_string()];
-            let recent: Vec<_> = self.recent_messages.iter()
-                .rev()
-                .take(budget.max_recent_messages)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-
-            for msg in recent {
-                let role = if msg.role == "user" { "U" } else { "A" };
-                let content = if msg.content.len() > 800 {
-                    let mut end = 800;
-                    while !msg.content.is_char_boundary(end) && end > 0 {
-                        end -= 1;
-                    }
-                    format!("{}…", &msg.content[..end])
-                } else {
-                    msg.content.clone()
-                };
-                lines.push(format!("[{}] {}", role, content));
-            }
-            let section = lines.join("\n");
-            estimated_tokens += estimate_tokens(&section);
-            if estimated_tokens < budget.token_budget {
-                sections.push(section);
-            }
-        }
+        // NOTE: Recent messages are NOT included in the system prompt.
+        // They are passed separately as conversation history to avoid duplication.
+        // The model sees recent messages in the actual message array, not in the system prompt.
 
         if sections.is_empty() {
             String::new()

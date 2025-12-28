@@ -23,7 +23,7 @@ pub async fn status_handler(State(state): State<AppState>) -> Json<Value> {
         "status": "ok",
         "semantic_search": state.semantic.is_available(),
         "database": state.db.is_some(),
-        "model": "deepseek-reasoner",
+        "model": "gemini-3-flash",
         "default_reasoning_effort": state.default_reasoning_effort,
     }))
 }

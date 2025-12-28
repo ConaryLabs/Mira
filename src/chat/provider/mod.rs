@@ -2,7 +2,6 @@
 //!
 //! Supports multiple LLM backends:
 //! - Gemini 3 Flash (default, cheap) / Pro (complex reasoning)
-//! - DeepSeek V3.2 (available for testing/fallback)
 //! - GPT-5.2 via Responses API
 //! - Unified streaming interface
 //! - Tool calling support
@@ -12,14 +11,12 @@
 
 pub mod batch;
 mod capabilities;
-mod deepseek;
 pub mod file_search;
 mod gemini;
 pub mod responses;
 mod types;
 
 pub use capabilities::Capabilities;
-pub use deepseek::DeepSeekProvider;
 pub use file_search::{FileSearchClient, FileSearchStore, CustomMetadata, Operation};
 pub use batch::{BatchClient, BatchRequest, BatchResponse, BatchJob, BatchState, BatchError, build_batch_request};
 pub use gemini::CachedContent;
@@ -87,36 +84,6 @@ impl ModelSpec {
         }
     }
 
-    /// DeepSeek Chat specification
-    pub fn deepseek_chat() -> Self {
-        Self {
-            id: "deepseek-chat".into(),
-            display_name: "DeepSeek Chat".into(),
-            max_context_tokens: 128_000,
-            max_output_tokens: 8_000,
-            default_output_tokens: 4_000,
-            supports_tools: true,
-            supports_reasoning: false,
-            input_cost_per_million: 0.27,
-            output_cost_per_million: 0.41,
-        }
-    }
-
-    /// DeepSeek Reasoner specification
-    pub fn deepseek_reasoner() -> Self {
-        Self {
-            id: "deepseek-reasoner".into(),
-            display_name: "DeepSeek Reasoner".into(),
-            max_context_tokens: 128_000,
-            max_output_tokens: 64_000,
-            default_output_tokens: 32_000,
-            supports_tools: true,  // V3.2 supports tool calls (confirmed 2025-12-23)
-            supports_reasoning: true,
-            input_cost_per_million: 0.55,
-            output_cost_per_million: 2.19,
-        }
-    }
-
     /// Gemini 3 Flash specification (default, cheap, fast)
     pub fn gemini_3_flash() -> Self {
         Self {
@@ -165,21 +132,21 @@ mod tests {
         assert_eq!(gpt.max_context_tokens, 400_000);
         assert!(gpt.supports_tools);
 
-        let ds_chat = ModelSpec::deepseek_chat();
-        assert_eq!(ds_chat.max_output_tokens, 8_000);
-        assert!(ds_chat.supports_tools);
+        let flash = ModelSpec::gemini_3_flash();
+        assert_eq!(flash.max_context_tokens, 1_000_000);
+        assert!(flash.supports_tools);
 
-        let ds_reason = ModelSpec::deepseek_reasoner();
-        assert_eq!(ds_reason.max_output_tokens, 64_000);
-        assert!(ds_reason.supports_tools);
+        let pro = ModelSpec::gemini_3_pro();
+        assert_eq!(pro.max_context_tokens, 1_000_000);
+        assert!(pro.supports_tools);
     }
 
     #[test]
     fn test_cost_calculation() {
-        let ds = ModelSpec::deepseek_chat();
+        let flash = ModelSpec::gemini_3_flash();
         // 1M input, 100k output
-        let cost = ds.calculate_cost(1_000_000, 100_000);
-        // 0.27 + 0.041 = 0.311
-        assert!((cost - 0.311).abs() < 0.001);
+        let cost = flash.calculate_cost(1_000_000, 100_000);
+        // 0.50 + 0.30 = 0.80
+        assert!((cost - 0.80).abs() < 0.001);
     }
 }

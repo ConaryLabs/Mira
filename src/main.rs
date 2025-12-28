@@ -224,10 +224,7 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         .or_else(|_| std::env::var("GOOGLE_API_KEY"))
         .ok();
 
-    // DeepSeek API key for chat
-    let deepseek_key = std::env::var("DEEPSEEK_API_KEY")
-        .ok()
-        .filter(|s| !s.is_empty());
+    // Chat uses Gemini - check is done when creating chat router
 
     // Sync token for chat sync endpoint
     let sync_token = std::env::var("MIRA_SYNC_TOKEN").ok();
@@ -258,6 +255,9 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
     }
 
     let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key.clone()).await);
+
+    // Clone for chat router before orchestrator consumes the key
+    let chat_api_key = gemini_key.clone();
 
     // Initialize orchestrator if Gemini key is available
     let orchestrator: Arc<RwLock<Option<orchestrator::GeminiOrchestrator>>> = if let Some(key) = gemini_key {
@@ -305,9 +305,9 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
     claude_spawner.start_heartbeat(30); // Send heartbeat every 30 seconds
     info!("Claude Code spawner initialized");
 
-    // Create chat router (if DeepSeek API key is available)
-    let chat_router = if let Some(api_key) = deepseek_key {
-        info!("Chat endpoints enabled (DeepSeek API key found)");
+    // Create chat router (if Gemini API key is available)
+    let chat_router = if let Some(api_key) = chat_api_key {
+        info!("Chat endpoints enabled (Gemini API key found)");
         let chat_state = chat::AppState {
             db: Some((*db).clone()),
             semantic: semantic.clone(),
@@ -322,7 +322,7 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         Some(chat::create_router(chat_state))
     } else {
         // No chat, but still add spawner endpoints
-        info!("Chat endpoints disabled (no DEEPSEEK_API_KEY)");
+        info!("Chat endpoints disabled (no GEMINI_API_KEY)");
         let spawner_state = chat::server::SpawnerState {
             db: Some((*db).clone()),
             spawner: claude_spawner.clone(),

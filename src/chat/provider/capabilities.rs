@@ -9,7 +9,7 @@ pub enum StateMode {
     /// Uses `previous_response_id` for continuity
     Server,
 
-    /// Client maintains conversation state (DeepSeek, most chat APIs)
+    /// Client maintains conversation state (Gemini, most chat APIs)
     /// Must send message history with each request
     Client,
 }
@@ -53,7 +53,6 @@ pub struct Capabilities {
     pub max_output_tokens: u32,
 
     /// Recommended context budget per turn (for client-state providers)
-    /// This is the "12k per turn" budget for DeepSeek
     pub recommended_turn_budget: u32,
 }
 
@@ -71,38 +70,6 @@ impl Capabilities {
             max_output_tokens: 16_000,
             // Server-state: no per-turn budget needed
             recommended_turn_budget: 400_000,
-        }
-    }
-
-    /// DeepSeek Chat via Chat Completions API
-    pub fn deepseek_chat() -> Self {
-        Self {
-            state_mode: StateMode::Client,
-            supports_tools: true,
-            supports_streaming: true,
-            supports_cached_tokens: false,
-            supports_json_mode: true,
-            usage_reporting: UsageReporting::Basic,
-            max_context_tokens: 128_000,
-            max_output_tokens: 8_000,
-            // Critical: keep turns small for efficiency
-            recommended_turn_budget: 12_000,
-        }
-    }
-
-    /// DeepSeek Reasoner (V3.2 supports tools, large output)
-    pub fn deepseek_reasoner() -> Self {
-        Self {
-            state_mode: StateMode::Client,
-            supports_tools: true,  // V3.2 supports tool calls (confirmed 2025-12-23)
-            supports_streaming: true,
-            supports_cached_tokens: false,
-            supports_json_mode: true,
-            usage_reporting: UsageReporting::Basic,
-            max_context_tokens: 128_000,
-            max_output_tokens: 64_000,
-            // For planning, can use more context
-            recommended_turn_budget: 20_000,
         }
     }
 
@@ -167,16 +134,16 @@ mod tests {
     }
 
     #[test]
-    fn test_deepseek_capabilities() {
-        let chat = Capabilities::deepseek_chat();
-        assert_eq!(chat.state_mode, StateMode::Client);
-        assert!(chat.needs_client_history());
-        assert!(chat.supports_tools);
-        assert_eq!(chat.recommended_turn_budget, 12_000);
+    fn test_gemini_capabilities() {
+        let flash = Capabilities::gemini_3_flash();
+        assert_eq!(flash.state_mode, StateMode::Client);
+        assert!(flash.needs_client_history());
+        assert!(flash.supports_tools);
+        assert_eq!(flash.recommended_turn_budget, 30_000);
 
-        let reasoner = Capabilities::deepseek_reasoner();
-        assert!(reasoner.supports_tools);  // V3.2 supports tools
-        assert_eq!(reasoner.max_output_tokens, 64_000);
+        let pro = Capabilities::gemini_3_pro();
+        assert!(pro.supports_tools);
+        assert_eq!(pro.max_output_tokens, 65_536);
     }
 
     #[test]
@@ -184,7 +151,7 @@ mod tests {
         let openai = Capabilities::openai_responses();
         assert!(!openai.may_need_escalation());
 
-        let deepseek = Capabilities::deepseek_chat();
-        assert!(deepseek.may_need_escalation());
+        let gemini = Capabilities::gemini_3_flash();
+        assert!(gemini.may_need_escalation());
     }
 }

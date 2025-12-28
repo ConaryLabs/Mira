@@ -210,11 +210,19 @@ async fn process_gemini_chat(
 
     // Track conversation for multi-turn tool use (includes history)
     let mut conversation_messages = history_messages;
-    // Add user's current message to conversation
-    conversation_messages.push(ProviderMessage {
-        role: MessageRole::User,
-        content: request.message.clone(),
-    });
+
+    // Only add user's current message if it's not already the last message in history
+    // (it was saved to DB before context assembly, so it may already be in recent_messages)
+    let already_in_history = conversation_messages.last()
+        .map(|m| m.role == MessageRole::User && m.content == request.message)
+        .unwrap_or(false);
+
+    if !already_in_history {
+        conversation_messages.push(ProviderMessage {
+            role: MessageRole::User,
+            content: request.message.clone(),
+        });
+    }
 
     // Agentic loop (max 10 iterations)
     let mut assistant_blocks: Vec<MessageBlock> = Vec::new();

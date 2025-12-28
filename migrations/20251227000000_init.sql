@@ -851,3 +851,13 @@ CREATE TABLE IF NOT EXISTS code_compaction (
     expires_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_code_compaction_project ON code_compaction(project_path, created_at DESC);
+
+-- =============================================================================
+-- KEY-VALUE STORE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS kv (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
