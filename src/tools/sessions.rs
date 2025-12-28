@@ -508,15 +508,23 @@ pub async fn session_start(
     .await
     .unwrap_or_default();
 
-    // 5. Get active goals
-    let goals = sqlx::query_as::<_, (String, String, i32)>(r#"
-        SELECT title, status, progress_percent
-        FROM goals
-        WHERE status IN ('planning', 'in_progress', 'blocked')
-          AND (project_id IS NULL OR project_id = $1)
+    // 5. Get active goals with milestone info
+    let goals = sqlx::query_as::<_, (String, String, i32, Option<String>, i64, i64)>(r#"
+        SELECT
+            g.title,
+            g.status,
+            g.progress_percent,
+            (SELECT m.title FROM milestones m
+             WHERE m.goal_id = g.id AND m.status = 'pending'
+             ORDER BY m.order_index LIMIT 1) as current_milestone,
+            (SELECT COUNT(*) FROM milestones WHERE goal_id = g.id AND status = 'completed') as completed_count,
+            (SELECT COUNT(*) FROM milestones WHERE goal_id = g.id) as total_count
+        FROM goals g
+        WHERE g.status IN ('planning', 'in_progress', 'blocked')
+          AND (g.project_id IS NULL OR g.project_id = $1)
         ORDER BY
-            CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-            CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END
+            CASE g.status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+            CASE g.priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END
         LIMIT 5
     "#)
     .bind(project_id)
@@ -628,7 +636,14 @@ pub async fn session_start(
             .map(|(wrong, right)| CorrectionSummary { what_was_wrong: wrong, what_is_right: right })
             .collect(),
         goals: goals.into_iter()
-            .map(|(title, status, progress)| GoalSummary { title, status, progress_percent: progress })
+            .map(|(title, status, progress, current_milestone, completed, total)| GoalSummary {
+                title,
+                status,
+                progress_percent: progress,
+                current_milestone,
+                milestone_index: if total > 0 { Some((completed + 1) as i32) } else { None },
+                milestones_total: total as i32,
+            })
             .collect(),
         tasks: tasks.into_iter()
             .map(|(title, status)| TaskSummary { title, status })
@@ -764,6 +779,9 @@ pub struct GoalSummary {
     pub title: String,
     pub status: String,
     pub progress_percent: i32,
+    pub current_milestone: Option<String>,
+    pub milestone_index: Option<i32>, // 1-based for display
+    pub milestones_total: i32,
 }
 
 #[derive(Debug)]

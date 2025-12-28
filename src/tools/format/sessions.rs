@@ -108,13 +108,22 @@ pub fn session_start(result: &crate::tools::sessions::SessionStartResult) -> Str
         }
     }
 
-    // Goals (active work)
+    // Goals (active work) - with phase-aware display for multi-phase plans
     if !result.goals.is_empty() {
         out.push('\n');
-        out.push_str(&format!("{} active goal{}:\n",
-            result.goals.len(),
-            if result.goals.len() == 1 { "" } else { "s" }
-        ));
+        let has_phased_goal = result.goals.iter().any(|g| g.milestones_total > 0);
+
+        if has_phased_goal {
+            out.push_str("═══════════════════════════════════════\n");
+            out.push_str("◆ ACTIVE PLANS\n");
+            out.push_str("═══════════════════════════════════════\n");
+        } else {
+            out.push_str(&format!("{} active goal{}:\n",
+                result.goals.len(),
+                if result.goals.len() == 1 { "" } else { "s" }
+            ));
+        }
+
         for g in &result.goals {
             let icon = match g.status.as_str() {
                 "completed" => "✓",
@@ -122,7 +131,23 @@ pub fn session_start(result: &crate::tools::sessions::SessionStartResult) -> Str
                 "blocked" => "✗",
                 _ => "○",
             };
-            out.push_str(&format!("  {} {} ({}%)\n", icon, g.title, g.progress_percent));
+
+            if g.milestones_total > 0 {
+                // Multi-phase goal - show prominently with phase info
+                let phase_num = g.milestone_index.unwrap_or(1);
+                out.push_str(&format!("{} {} - Phase {} of {}: {}\n",
+                    icon, g.title, phase_num, g.milestones_total,
+                    g.current_milestone.as_deref().unwrap_or("(all complete)")
+                ));
+                out.push_str(&format!("  Progress: {}%\n", g.progress_percent));
+            } else {
+                // Simple goal without milestones
+                out.push_str(&format!("  {} {} ({}%)\n", icon, g.title, g.progress_percent));
+            }
+        }
+
+        if has_phased_goal {
+            out.push_str("═══════════════════════════════════════\n");
         }
     }
 
