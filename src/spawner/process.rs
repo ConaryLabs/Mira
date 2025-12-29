@@ -443,6 +443,19 @@ impl ClaudeCodeSpawner {
                         tool_id: id.clone(),
                         input_preview: preview,
                     });
+
+                    // Also emit as RawInternalEvent for real-time Studio display
+                    let ts = chrono::Utc::now().timestamp();
+                    let _ = event_tx.send(SessionEvent::RawInternalEvent {
+                        session_id: session_id.clone(),
+                        event_type: "tool_use_start".to_string(),
+                        data: serde_json::json!({
+                            "tool_name": name,
+                            "tool_id": id,
+                            "input": input
+                        }),
+                        ts,
+                    });
                 }
 
                 // Broadcast assistant output
@@ -456,8 +469,41 @@ impl ClaudeCodeSpawner {
                         let _ = event_tx.send(SessionEvent::Output {
                             session_id: session_id.clone(),
                             chunk_type: chunk_type.to_string(),
-                            content,
+                            content: content.clone(),
                         });
+
+                        // Also emit as RawInternalEvent for real-time Studio display
+                        let ts = chrono::Utc::now().timestamp();
+                        let _ = event_tx.send(SessionEvent::RawInternalEvent {
+                            session_id: session_id.clone(),
+                            event_type: "text_delta".to_string(),
+                            data: serde_json::json!({
+                                "content": content
+                            }),
+                            ts,
+                        });
+                    }
+
+                    // Check for thinking/reasoning content blocks in the raw content
+                    if let serde_json::Value::Array(blocks) = &message.content {
+                        for block in blocks {
+                            // Handle thinking blocks (Claude extended thinking)
+                            if let Some(block_type) = block.get("type").and_then(|t| t.as_str()) {
+                                if block_type == "thinking" || block_type == "reasoning" {
+                                    if let Some(thinking) = block.get("thinking").or(block.get("content")).and_then(|t| t.as_str()) {
+                                        let ts = chrono::Utc::now().timestamp();
+                                        let _ = event_tx.send(SessionEvent::RawInternalEvent {
+                                            session_id: session_id.clone(),
+                                            event_type: "reasoning_delta".to_string(),
+                                            data: serde_json::json!({
+                                                "content": thinking
+                                            }),
+                                            ts,
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -478,6 +524,28 @@ impl ClaudeCodeSpawner {
                             chunk_type: "user".to_string(),
                             content: text.to_string(),
                         });
+                    }
+
+                    // Emit tool results as RawInternalEvent for real-time display
+                    if let super::types::UserContent::ToolResults(results) = &message.content {
+                        for result in results {
+                            let ts = chrono::Utc::now().timestamp();
+                            let is_error = result.is_error.unwrap_or(false);
+                            let content_preview = match &result.content {
+                                serde_json::Value::String(s) => s.chars().take(500).collect::<String>(),
+                                other => serde_json::to_string(other).unwrap_or_default().chars().take(500).collect(),
+                            };
+                            let _ = event_tx.send(SessionEvent::RawInternalEvent {
+                                session_id: session_id.clone(),
+                                event_type: "tool_result".to_string(),
+                                data: serde_json::json!({
+                                    "tool_id": result.tool_use_id,
+                                    "result": content_preview,
+                                    "is_error": is_error
+                                }),
+                                ts,
+                            });
+                        }
                     }
                 }
 
@@ -557,6 +625,53 @@ impl ClaudeCodeSpawner {
                         } else {
                             info!(instruction_id = %instr_id, session_id = %session_id, "Marked instruction as failed");
                         }
+                    }
+                }
+            }
+
+            // Stream closed - check if session is still in running state
+            // This handles the case where Claude Code exits without sending a Result event
+            let mut guard = processes.write().await;
+            if let Some(proc) = guard.get_mut(&session_id) {
+                if !proc.status.is_terminal() {
+                    // Session was still running when stream closed - this is unexpected
+                    warn!(session_id = %session_id, status = ?proc.status, "Stream closed while session still active, marking as completed");
+
+                    // Wait a moment for the process to exit
+                    drop(guard);
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                    // Check if process exited
+                    let mut guard = processes.write().await;
+                    if let Some(proc) = guard.get_mut(&session_id) {
+                        // Try to get exit code
+                        let exit_code = match proc.child.try_wait() {
+                            Ok(Some(status)) => status.code().unwrap_or(0),
+                            _ => 0, // Default to success if we can't get exit code
+                        };
+
+                        let final_status = if exit_code == 0 {
+                            SessionStatus::Completed
+                        } else {
+                            SessionStatus::Failed
+                        };
+
+                        proc.status = final_status;
+
+                        // Update database
+                        if let Err(e) = update_session_completed(&db, &session_id, exit_code).await {
+                            error!(session_id = %session_id, error = %e, "Failed to update session status after stream close");
+                        }
+
+                        // Broadcast end event
+                        let _ = event_tx.send(SessionEvent::Ended {
+                            session_id: session_id.clone(),
+                            status: final_status,
+                            exit_code: Some(exit_code),
+                            summary: Some("Stream closed normally".to_string()),
+                        });
+
+                        info!(session_id = %session_id, exit_code, status = ?final_status, "Session completed after stream close");
                     }
                 }
             }

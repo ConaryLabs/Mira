@@ -486,6 +486,17 @@ pub enum SessionEvent {
 
     /// Heartbeat to keep SSE connection alive
     Heartbeat { ts: i64 },
+
+    /// Raw internal SSE event from Claude Code (relayed from CLAUDE_CODE_SSE_PORT)
+    RawInternalEvent {
+        session_id: String,
+        /// Event type from Claude Code internal SSE
+        event_type: String,
+        /// Raw JSON data from the event
+        data: serde_json::Value,
+        /// Timestamp when relayed
+        ts: i64,
+    },
 }
 
 // ============================================================================
