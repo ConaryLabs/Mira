@@ -13,6 +13,17 @@
   --term-error: #f85149;
   --term-warning: #d29922;
   --term-border: #30363d;
+
+  /* Prism syntax highlighting colors - GitHub Dark theme */
+  --prism-comment: #8b949e;
+  --prism-string: #a5d6ff;
+  --prism-number: #79c0ff;
+  --prism-keyword: #ff7b72;
+  --prism-function: #d2a8ff;
+  --prism-operator: #79c0ff;
+  --prism-variable: #ffa657;
+  --prism-attribute: #7ee787;
+  --prism-lifetime: #ffa657;
 }
 
 /* Theme presets - applied via data-theme attribute */
@@ -27,6 +38,15 @@
   --term-error: #f85149;
   --term-warning: #d29922;
   --term-border: #30363d;
+  /* Prism - GitHub Dark */
+  --prism-comment: #8b949e;
+  --prism-string: #a5d6ff;
+  --prism-number: #79c0ff;
+  --prism-keyword: #ff7b72;
+  --prism-function: #d2a8ff;
+  --prism-operator: #79c0ff;
+  --prism-variable: #ffa657;
+  --prism-attribute: #7ee787;
 }
 
 [data-theme="terminal-retro"] {
@@ -40,6 +60,15 @@
   --term-error: #ff3333;
   --term-warning: #ffff33;
   --term-border: #1a331a;
+  /* Prism - Retro Green */
+  --prism-comment: #1a991a;
+  --prism-string: #66ff66;
+  --prism-number: #00ff00;
+  --prism-keyword: #00ff00;
+  --prism-function: #88ff88;
+  --prism-operator: #33ff33;
+  --prism-variable: #aaff66;
+  --prism-attribute: #66ffaa;
 }
 
 [data-theme="terminal-modern"] {
@@ -53,6 +82,15 @@
   --term-error: #f7768e;
   --term-warning: #e0af68;
   --term-border: #3b4261;
+  /* Prism - Tokyo Night */
+  --prism-comment: #565f89;
+  --prism-string: #9ece6a;
+  --prism-number: #ff9e64;
+  --prism-keyword: #bb9af7;
+  --prism-function: #7aa2f7;
+  --prism-operator: #89ddff;
+  --prism-variable: #c0caf5;
+  --prism-attribute: #73daca;
 }
 
 [data-theme="terminal-neon"] {
@@ -66,6 +104,15 @@
   --term-error: #ff0055;
   --term-warning: #ffff00;
   --term-border: #ff00ff44;
+  /* Prism - Neon Cyberpunk */
+  --prism-comment: #888888;
+  --prism-string: #00ffff;
+  --prism-number: #ff00ff;
+  --prism-keyword: #ff00ff;
+  --prism-function: #00ffff;
+  --prism-operator: #ff00ff;
+  --prism-variable: #ffff00;
+  --prism-attribute: #00ff00;
 }
 
 /* Retro CRT effects for terminal-retro theme */
@@ -104,6 +151,15 @@
   --term-error: #dc3545;
   --term-warning: #fd7e14;
   --term-border: #dee2e6;
+  /* Prism - GitHub Light */
+  --prism-comment: #6a737d;
+  --prism-string: #032f62;
+  --prism-number: #005cc5;
+  --prism-keyword: #d73a49;
+  --prism-function: #6f42c1;
+  --prism-operator: #005cc5;
+  --prism-variable: #e36209;
+  --prism-attribute: #22863a;
 }
 
 /* Make corporate theme use sans-serif for extra blandness */

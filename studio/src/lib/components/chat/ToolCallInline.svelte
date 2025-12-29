@@ -14,6 +14,7 @@
   import type { ToolCallResult, ToolCategory } from '$lib/api/client';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { artifactStore, artifactViewer, ARTIFACT_SIZE_THRESHOLD } from '$lib/stores/artifacts.svelte';
+  import { highlight } from '$lib/utils/highlight';
   import DiffView from '../DiffView.svelte';
   import ToolArguments from './ToolArguments.svelte';
 
@@ -38,6 +39,9 @@
   }: Props = $props();
 
   let isExpanded = $state(false);
+  let copiedOutput = $state(false);
+  let copiedArgs = $state(false);
+  let copiedFull = $state(false);
 
   // Category colors
   const categoryColors: Record<string, string> = {

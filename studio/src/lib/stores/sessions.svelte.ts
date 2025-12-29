@@ -34,7 +34,8 @@ export type SessionEvent =
   | { type: 'tool_call'; session_id: string; tool_name: string; tool_id: string; input_preview: string }
   | { type: 'question_pending'; question_id: string; session_id: string; question: string; options?: QuestionOption[] }
   | { type: 'ended'; session_id: string; status: string; exit_code?: number; summary?: string }
-  | { type: 'heartbeat'; ts: number };
+  | { type: 'heartbeat'; ts: number }
+  | { type: 'raw_internal_event'; session_id: string; event_type: string; data: unknown; ts: number };
 
 interface SessionsState {
   sessions: Map<string, SessionInfo>;

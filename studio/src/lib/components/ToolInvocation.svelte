@@ -5,6 +5,7 @@
    * Expands to: Syntax-highlighted arguments and results
    */
   import type { ToolCallResult, ToolCategory } from '$lib/api/client';
+  import { highlight } from '$lib/utils/highlight';
 
   interface Props {
     callId: string;
@@ -31,6 +32,8 @@
   let expanded = $state(false);
   let elapsedMs = $state(0);
   let intervalId: ReturnType<typeof setInterval> | null = null;
+  let copiedArgs = $state(false);
+  let copiedOutput = $state(false);
 
   // Track elapsed time while loading
   $effect(() => {
@@ -98,6 +101,27 @@
     if (!result) return 'status-pending';
     return result.success ? 'status-success' : 'status-error';
   }
+
+  async function copyArgs() {
+    try {
+      await navigator.clipboard.writeText(formatJson(args));
+      copiedArgs = true;
+      setTimeout(() => { copiedArgs = false; }, 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }
+
+  async function copyOutput() {
+    if (!result?.output) return;
+    try {
+      await navigator.clipboard.writeText(result.output);
+      copiedOutput = true;
+      setTimeout(() => { copiedOutput = false; }, 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }
 </script>
 
 <div class="tool-invocation" class:expanded>
@@ -135,8 +159,13 @@
     <div id="tool-details-{callId}" class="details">
       <!-- Arguments Section -->
       <div class="details-section">
-        <div class="section-header">Arguments</div>
-        <pre class="code-block"><code>{formatJson(args)}</code></pre>
+        <div class="section-header">
+          Arguments
+          <button class="copy-btn" onclick={copyArgs} title="Copy arguments">
+            {copiedArgs ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+        <pre class="code-block"><code>{@html highlight(formatJson(args))}</code></pre>
       </div>
 
       <!-- Result Section -->
@@ -152,6 +181,11 @@
                 exit {result.exit_code}
               </span>
             {/if}
+            {#if result.output && !result.diff}
+              <button class="copy-btn" onclick={copyOutput} title="Copy output">
+                {copiedOutput ? 'Copied!' : 'Copy'}
+              </button>
+            {/if}
           </div>
 
           {#if result.diff}
@@ -164,13 +198,13 @@
             </div>
           {:else}
             {@const outputInfo = truncateOutput(result.output)}
-            <pre class="code-block" class:error={!result.success}><code>{outputInfo.text}{#if outputInfo.truncated || result.truncated}
+            <pre class="code-block" class:error={!result.success}><code>{@html highlight(outputInfo.text)}{#if outputInfo.truncated || result.truncated}
 ... (output truncated){/if}</code></pre>
           {/if}
 
           {#if result.stderr}
             <div class="section-header stderr-header">Stderr</div>
-            <pre class="code-block stderr"><code>{result.stderr}</code></pre>
+            <pre class="code-block stderr"><code>{@html highlight(result.stderr)}</code></pre>
           {/if}
         </div>
       {:else if isLoading}
@@ -442,5 +476,93 @@
     padding: 16px;
     color: var(--term-text-dim);
     font-size: 11px;
+  }
+
+  /* Copy Button */
+  .copy-btn {
+    margin-left: auto;
+    padding: 2px 8px;
+    background: transparent;
+    border: 1px solid var(--term-border);
+    border-radius: 3px;
+    color: var(--term-text-dim);
+    font-size: 9px;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .copy-btn:hover {
+    background: var(--term-bg-secondary);
+    color: var(--term-text);
+    border-color: var(--term-accent);
+  }
+
+  /* Prism Syntax Highlighting */
+  .code-block :global(.token.comment),
+  .code-block :global(.token.prolog),
+  .code-block :global(.token.doctype),
+  .code-block :global(.token.cdata) {
+    color: var(--prism-comment, var(--term-text-dim));
+    font-style: italic;
+  }
+
+  .code-block :global(.token.punctuation) {
+    color: var(--term-text);
+  }
+
+  .code-block :global(.token.property),
+  .code-block :global(.token.tag),
+  .code-block :global(.token.boolean),
+  .code-block :global(.token.number),
+  .code-block :global(.token.constant),
+  .code-block :global(.token.symbol),
+  .code-block :global(.token.deleted) {
+    color: var(--prism-number);
+  }
+
+  .code-block :global(.token.selector),
+  .code-block :global(.token.attr-name),
+  .code-block :global(.token.string),
+  .code-block :global(.token.char),
+  .code-block :global(.token.builtin),
+  .code-block :global(.token.inserted) {
+    color: var(--prism-string);
+  }
+
+  .code-block :global(.token.operator),
+  .code-block :global(.token.entity),
+  .code-block :global(.token.url) {
+    color: var(--prism-operator);
+  }
+
+  .code-block :global(.token.atrule),
+  .code-block :global(.token.attr-value),
+  .code-block :global(.token.keyword) {
+    color: var(--prism-keyword);
+  }
+
+  .code-block :global(.token.function),
+  .code-block :global(.token.class-name) {
+    color: var(--prism-function);
+  }
+
+  .code-block :global(.token.regex),
+  .code-block :global(.token.important),
+  .code-block :global(.token.variable) {
+    color: var(--prism-variable);
+  }
+
+  .code-block :global(.token.bold) {
+    font-weight: bold;
+  }
+
+  .code-block :global(.token.italic) {
+    font-style: italic;
+  }
+
+  .code-block :global(.token.macro),
+  .code-block :global(.token.attribute) {
+    color: var(--prism-attribute);
   }
 </style>

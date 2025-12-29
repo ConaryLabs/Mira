@@ -20,7 +20,9 @@
   },
   "dependencies": {
     "@types/dompurify": "^3.0.5",
+    "@types/prismjs": "^1.26.5",
     "dompurify": "^3.3.1",
-    "marked": "^17.0.1"
+    "marked": "^17.0.1",
+    "prismjs": "^1.30.0"
   }
 }

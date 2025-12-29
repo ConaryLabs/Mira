@@ -9,7 +9,7 @@
 
   interface LogEntry {
     id: string;
-    type: 'tool_call' | 'tool_result' | 'output' | 'status' | 'error' | 'started' | 'ended' | 'heartbeat';
+    type: 'tool_call' | 'tool_result' | 'output' | 'status' | 'error' | 'started' | 'ended' | 'heartbeat' | 'reasoning' | 'internal';
     timestamp: number;
     toolName?: string;
     toolId?: string;
@@ -24,6 +24,7 @@
     phase?: string;
     summary?: string;
     exitCode?: number;
+    eventType?: string; // For raw_internal_event
   }
 
   interface Props {
@@ -184,6 +185,92 @@
           content: data.message || 'Unknown error',
         };
 
+      case 'raw_internal_event':
+        // Handle Claude Code internal SSE events (thinking, tool use, etc.)
+        const eventType = data.event_type;
+        const eventData = data.data;
+
+        // Handle reasoning/thinking deltas - these are the "Thinking" events
+        if (eventType === 'reasoning_delta' || eventType === 'thinking') {
+          return {
+            id,
+            type: 'reasoning',
+            timestamp,
+            eventType,
+            content: eventData?.content || '',
+          };
+        }
+
+        // Handle text deltas
+        if (eventType === 'text_delta' || eventType === 'content_block_delta') {
+          return {
+            id,
+            type: 'output',
+            timestamp,
+            chunkType: 'text_delta',
+            content: eventData?.content || '',
+          };
+        }
+
+        // Handle tool use start
+        if (eventType === 'tool_use_start') {
+          return {
+            id,
+            type: 'tool_call',
+            timestamp,
+            toolName: eventData?.tool_name,
+            toolId: eventData?.tool_id,
+            inputPreview: '',
+          };
+        }
+
+        // Handle tool use input
+        if (eventType === 'tool_use_input') {
+          // Update existing tool_call entry if found
+          const existingTool = entries.find(e => e.toolId === eventData?.tool_id && e.type === 'tool_call');
+          if (existingTool && eventData?.input) {
+            existingTool.inputPreview = JSON.stringify(eventData.input).slice(0, 200);
+            entries = [...entries];
+          }
+          return null;
+        }
+
+        // Handle tool result
+        if (eventType === 'tool_result') {
+          const toolEntry = entries.find(e => e.toolId === eventData?.tool_id && e.type === 'tool_call');
+          if (toolEntry) {
+            toolEntry.toolResult = {
+              success: !eventData?.is_error,
+              output: eventData?.result || '',
+              duration_ms: 0,
+              truncated: false,
+              total_bytes: 0,
+            };
+            entries = [...entries];
+          }
+          return null;
+        }
+
+        // Handle turn start/end
+        if (eventType === 'turn_start' || eventType === 'turn_end' || eventType === 'message_start' || eventType === 'message_stop') {
+          return {
+            id,
+            type: 'status',
+            timestamp,
+            eventType,
+            content: eventType === 'turn_start' || eventType === 'message_start' ? '▸ Turn started' : '◂ Turn ended',
+          };
+        }
+
+        // For other internal events, show as internal type
+        return {
+          id,
+          type: 'internal',
+          timestamp,
+          eventType,
+          content: `[${eventType}] ${JSON.stringify(eventData).slice(0, 100)}`,
+        };
+
       default:
         // Unknown event type, show raw
         return {
@@ -215,11 +302,14 @@
       case 'output':
         if (entry.chunkType === 'stderr') return '⚠';
         if (entry.chunkType === 'bash' || entry.chunkType === 'stdout') return '$';
+        if (entry.chunkType === 'text_delta') return '✎';
         return '›';
       case 'status': return '●';
       case 'started': return '▶';
       case 'ended': return '■';
       case 'error': return '✕';
+      case 'reasoning': return '💭';
+      case 'internal': return '◆';
       default: return '·';
     }
   }
@@ -230,11 +320,14 @@
       case 'output':
         if (entry.chunkType === 'stderr') return 'entry-stderr';
         if (entry.chunkType === 'bash' || entry.chunkType === 'stdout') return 'entry-bash';
+        if (entry.chunkType === 'text_delta') return 'entry-text-delta';
         return 'entry-output';
       case 'status': return 'entry-status';
       case 'started': return 'entry-started';
       case 'ended': return entry.status === 'completed' ? 'entry-success' : 'entry-failed';
       case 'error': return 'entry-error';
+      case 'reasoning': return 'entry-reasoning';
+      case 'internal': return 'entry-internal';
       default: return '';
     }
   }
@@ -446,5 +539,34 @@
   .entry-error .entry-icon,
   .entry-error .entry-content {
     color: var(--term-error);
+  }
+
+  .entry-reasoning {
+    background: rgba(147, 51, 234, 0.08);
+    border-left: 2px solid var(--term-purple, #a855f7);
+    padding-left: 6px;
+    margin-left: -6px;
+  }
+
+  .entry-reasoning .entry-icon {
+    color: var(--term-purple, #a855f7);
+  }
+
+  .entry-reasoning .entry-content {
+    color: var(--term-text);
+    font-style: italic;
+    opacity: 0.9;
+  }
+
+  .entry-text-delta .entry-icon {
+    color: var(--term-cyan, #22d3ee);
+  }
+
+  .entry-internal {
+    opacity: 0.6;
+  }
+
+  .entry-internal .entry-icon {
+    color: var(--term-text-dim);
   }
 </style>

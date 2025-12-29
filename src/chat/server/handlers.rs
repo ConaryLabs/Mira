@@ -1007,6 +1007,7 @@ pub async fn session_stream_handler(
                                 SessionEvent::ToolCall { session_id, .. } => session_id == &target_session,
                                 SessionEvent::QuestionPending { session_id, .. } => session_id == &target_session,
                                 SessionEvent::Ended { session_id, .. } => session_id == &target_session,
+                                SessionEvent::RawInternalEvent { session_id, .. } => session_id == &target_session,
                                 SessionEvent::Heartbeat { .. } => true, // Always pass through heartbeats
                             };
 
