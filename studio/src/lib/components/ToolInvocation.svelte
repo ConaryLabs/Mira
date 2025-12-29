@@ -6,6 +6,7 @@
    */
   import type { ToolCallResult, ToolCategory } from '$lib/api/client';
   import { highlight } from '$lib/utils/highlight';
+  import { truncateByLength, formatDuration } from '$lib/utils/text';
 
   interface Props {
     callId: string;
@@ -65,12 +66,6 @@
     return cat ? icons[cat] : '⚙';
   }
 
-  function formatDuration(ms: number): string {
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${(ms / 60000).toFixed(1)}m`;
-  }
-
   function getDisplayDuration(): string {
     if (result?.duration_ms) {
       return formatDuration(result.duration_ms);
@@ -87,13 +82,6 @@
     } catch {
       return String(obj);
     }
-  }
-
-  function truncateOutput(output: string, maxLen = 2000): { text: string; truncated: boolean } {
-    if (output.length <= maxLen) {
-      return { text: output, truncated: false };
-    }
-    return { text: output.slice(0, maxLen), truncated: true };
   }
 
   function getStatusClass(): string {
@@ -197,7 +185,7 @@
               {/if}
             </div>
           {:else}
-            {@const outputInfo = truncateOutput(result.output)}
+            {@const outputInfo = truncateByLength(result.output)}
             <pre class="code-block" class:error={!result.success}><code>{@html highlight(outputInfo.text)}{#if outputInfo.truncated || result.truncated}
 ... (output truncated){/if}</code></pre>
           {/if}

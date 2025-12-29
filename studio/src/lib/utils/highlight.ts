@@ -4,6 +4,7 @@
  */
 
 import Prism from 'prismjs';
+import { detectLanguageFromContent } from './language';
 
 // Import language support - Prism loads JavaScript by default
 import 'prismjs/components/prism-typescript';
@@ -156,99 +157,12 @@ function getGrammarName(language: string): string {
 
 /**
  * Detect language from code content using heuristics.
+ * Re-exported from language.ts for backward compatibility.
  */
 export function detectLanguage(code: string): string {
-  const trimmed = code.trim();
-
-  // JSON detection
-  if (
-    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'))
-  ) {
-    try {
-      JSON.parse(trimmed);
-      return 'json';
-    } catch {
-      // Not valid JSON, continue detection
-    }
-  }
-
-  // Rust detection
-  if (
-    /^(use\s+\w+|fn\s+\w+|impl\s+|struct\s+|enum\s+|mod\s+|pub\s+(fn|struct|enum|mod)|let\s+mut|#\[derive)/m.test(trimmed)
-  ) {
-    return 'rust';
-  }
-
-  // Python detection
-  if (
-    /^(def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+\s+import|if\s+__name__|@\w+)/m.test(trimmed) ||
-    /^\s*#.*python/i.test(trimmed)
-  ) {
-    return 'python';
-  }
-
-  // TypeScript/JavaScript detection
-  if (
-    /^(import\s+.*from|export\s+(default\s+)?(function|class|const|let|var|interface|type)|const\s+\w+\s*=|let\s+\w+\s*=|function\s+\w+|interface\s+\w+|type\s+\w+)/m.test(trimmed)
-  ) {
-    // TypeScript indicators
-    if (/:\s*(string|number|boolean|any|void|never|unknown)\b|interface\s+\w+|type\s+\w+\s*=|<[A-Z]\w*>/.test(trimmed)) {
-      return 'typescript';
-    }
-    return 'javascript';
-  }
-
-  // HTML/XML detection
-  if (/^<(!DOCTYPE|html|head|body|div|span|p|a|script|style|link)/i.test(trimmed) || /^<\?xml/.test(trimmed)) {
-    return 'markup';
-  }
-
-  // SQL detection
-  if (/^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE|WITH|FROM)\s/i.test(trimmed)) {
-    return 'sql';
-  }
-
-  // Shell detection - common patterns
-  if (
-    /^#!\/bin\/(ba)?sh/m.test(trimmed) ||
-    /^\s*\$\s+\w+/.test(trimmed) ||
-    /^(sudo|cd|ls|grep|cat|echo|export|source|chmod|chown|mkdir|rm|cp|mv|git|npm|cargo|docker|kubectl)\s/m.test(trimmed)
-  ) {
-    return 'bash';
-  }
-
-  // YAML detection
-  if (/^\w+:\s*(\n|$)/m.test(trimmed) && !trimmed.includes('{')) {
-    return 'yaml';
-  }
-
-  // TOML detection
-  if (/^\[[\w.-]+\]/m.test(trimmed)) {
-    return 'toml';
-  }
-
-  // Diff detection
-  if (/^(diff\s+--|@@\s+-\d+,\d+\s+\+\d+,\d+\s+@@|[+-]{3}\s+[ab]\/)/m.test(trimmed)) {
-    return 'diff';
-  }
-
-  // Go detection
-  if (/^(package\s+\w+|func\s+\w+|type\s+\w+\s+(struct|interface))/.test(trimmed)) {
-    return 'go';
-  }
-
-  // CSS detection
-  if (/^(\.|#|@media|@import|@keyframes|:root)\s*\w*\s*\{/m.test(trimmed)) {
-    return 'css';
-  }
-
-  // Default to shell for command-like output
-  if (/^[/~]\S+/.test(trimmed) || /error:|warning:|info:/i.test(trimmed)) {
-    return 'bash';
-  }
-
-  return 'plain';
+  // Map unified language names to Prism grammar names
+  const lang = detectLanguageFromContent(code);
+  return lang === 'text' ? 'plain' : lang === 'html' ? 'markup' : lang;
 }
 
 /**

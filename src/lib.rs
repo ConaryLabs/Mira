@@ -6,7 +6,6 @@
 #![allow(clippy::type_complexity)] // Query result tuples are inherently complex
 #![allow(clippy::too_many_arguments)] // Parser walk functions need context
 
-pub mod batch;
 pub mod chat;
 pub mod context;
 pub mod core;

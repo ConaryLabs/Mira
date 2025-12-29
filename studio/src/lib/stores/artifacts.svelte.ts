@@ -9,6 +9,8 @@
  */
 
 import type { ChatEvent, DiffInfo } from '$lib/api/client';
+import { detectLanguageFromPath } from '$lib/utils/language';
+import { truncateByLines } from '$lib/utils/text';
 
 export type ArtifactKind = 'file' | 'diff' | 'patch' | 'log' | 'image';
 export type ArtifactAction = 'read' | 'write' | 'modified' | 'created';
@@ -32,36 +34,6 @@ export interface Artifact {
 interface ArtifactStoreState {
   artifacts: Map<string, Artifact>;
   order: string[];  // Most recent first
-}
-
-function detectLanguage(path: string): string {
-  const ext = path.split('.').pop()?.toLowerCase() || '';
-  const langMap: Record<string, string> = {
-    ts: 'typescript',
-    tsx: 'typescript',
-    js: 'javascript',
-    jsx: 'javascript',
-    rs: 'rust',
-    py: 'python',
-    go: 'go',
-    json: 'json',
-    yaml: 'yaml',
-    yml: 'yaml',
-    md: 'markdown',
-    css: 'css',
-    html: 'html',
-    svelte: 'svelte',
-    sql: 'sql',
-    sh: 'bash',
-    toml: 'toml',
-  };
-  return langMap[ext] || 'text';
-}
-
-function createPreview(content: string, maxLines = 5): string {
-  const lines = content.split('\n');
-  if (lines.length <= maxLines) return content;
-  return lines.slice(0, maxLines).join('\n') + '\n...';
 }
 
 function getFilename(path: string): string {
@@ -143,8 +115,8 @@ function createArtifactStore() {
         action: diff.is_new_file ? 'created' : 'modified',
         title: getFilename(path),
         path,
-        language: detectLanguage(path),
-        preview: createPreview(diff.new_content || '', 5),
+        language: detectLanguageFromPath(path),
+        preview: truncateByLines(diff.new_content || '', 5),
         content: diff.new_content,
         totalBytes: (diff.new_content || '').length,
         sourceCallId: call_id,
@@ -166,8 +138,8 @@ function createArtifactStore() {
           action: 'read',
           title: getFilename(path),
           path,
-          language: detectLanguage(path),
-          preview: createPreview(output, 10),
+          language: detectLanguageFromPath(path),
+          preview: truncateByLines(output, 10),
           content: output,
           totalBytes: output.length,
           sourceCallId: call_id,
@@ -183,7 +155,7 @@ function createArtifactStore() {
           kind: 'log',
           action: 'read',
           title: 'File search results',
-          preview: createPreview(output, 10),
+          preview: truncateByLines(output, 10),
           content: output,
           totalBytes: output.length,
           sourceCallId: call_id,
@@ -198,7 +170,7 @@ function createArtifactStore() {
         kind: 'log',
         action: 'read',
         title: 'Shell output',
-        preview: createPreview(output, 10),
+        preview: truncateByLines(output, 10),
         content: output,
         totalBytes: output.length,
         sourceCallId: call_id,

@@ -776,20 +776,6 @@ impl ContextCarousel {
         self.state.session_phase
     }
 
-    /// Get the highest-weighted category for the current phase
-    /// Used to bias category selection in Cruising mode
-    fn phase_preferred_category(&self) -> ContextCategory {
-        let rotation = ContextCategory::rotation();
-        rotation.iter()
-            .max_by(|a, b| {
-                let wa = a.phase_weight(self.state.session_phase);
-                let wb = b.phase_weight(self.state.session_phase);
-                wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .copied()
-            .unwrap_or(ContextCategory::Goals)
-    }
-
     /// Increment call count without advancing (for skipped injections)
     pub async fn tick(&mut self) -> anyhow::Result<()> {
         self.state.call_count += 1;

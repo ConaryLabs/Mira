@@ -14,7 +14,8 @@
   import type { ToolCallResult, ToolCategory } from '$lib/api/client';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { artifactStore, artifactViewer, ARTIFACT_SIZE_THRESHOLD } from '$lib/stores/artifacts.svelte';
-  import { highlight } from '$lib/utils/highlight';
+  import { detectLanguageFromPath } from '$lib/utils/language';
+  import { formatDuration, formatSize } from '$lib/utils/text';
   import DiffView from '../DiffView.svelte';
   import ToolArguments from './ToolArguments.svelte';
 
@@ -53,18 +54,6 @@
     mira: 'var(--term-accent)',
     other: 'var(--term-text-dim)',
   };
-
-  function formatDuration(ms: number): string {
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
-  }
-
-  function formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes}B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-  }
 
   function toggleExpand(e: MouseEvent) {
     // Alt+click opens in Timeline panel
@@ -116,7 +105,7 @@
       // Fallback: create temporary artifact from result
       artifactViewer.openLegacy({
         filename: getFilenameFromArgs(),
-        language: detectLanguage(),
+        language: getOutputLanguage(),
         code: result.output,
       });
     }
@@ -132,19 +121,11 @@
   }
 
   // Detect language from arguments or tool name
-  function detectLanguage(): string {
+  function getOutputLanguage(): string {
     const path = args.path || args.file_path || args.file;
     if (typeof path === 'string') {
-      const ext = path.split('.').pop()?.toLowerCase() || '';
-      const langMap: Record<string, string> = {
-        ts: 'typescript', tsx: 'typescript',
-        js: 'javascript', jsx: 'javascript',
-        rs: 'rust', py: 'python', go: 'go',
-        json: 'json', yaml: 'yaml', yml: 'yaml',
-        md: 'markdown', css: 'css', html: 'html',
-        svelte: 'svelte', sql: 'sql', sh: 'bash',
-      };
-      if (langMap[ext]) return langMap[ext];
+      const lang = detectLanguageFromPath(path);
+      if (lang !== 'text') return lang;
     }
     // Default based on tool type
     if (name.toLowerCase().includes('bash') || name === 'Bash') return 'bash';

@@ -26,7 +26,6 @@ use tracing::{info, warn, error, Level};
 use tracing_subscriber::FmtSubscriber;
 use std::time::Duration;
 
-mod batch;
 mod chat;
 mod context;
 mod core;

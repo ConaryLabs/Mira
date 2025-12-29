@@ -22,7 +22,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::context::ContextCategory;
@@ -39,8 +39,6 @@ pub struct GeminiOrchestrator {
     routing_cache: Arc<RwLock<HashMap<String, (RoutingDecision, Instant)>>>,
     /// Pre-computed category summaries
     category_summaries: Arc<RwLock<HashMap<ContextCategory, CategorySummary>>>,
-    /// Job submission channel for background worker
-    job_tx: Option<mpsc::Sender<OrchestratorJob>>,
     /// HTTP client for Gemini API
     client: reqwest::Client,
 }
@@ -65,7 +63,6 @@ impl GeminiOrchestrator {
             config,
             routing_cache: Arc::new(RwLock::new(HashMap::new())),
             category_summaries: Arc::new(RwLock::new(HashMap::new())),
-            job_tx: None,
             client,
         })
     }

@@ -26,14 +26,12 @@ pub struct ClaudeProcess {
     stdin: Option<ChildStdin>,
     /// Current status
     pub status: SessionStatus,
-    /// Unix timestamp when spawned (used for timeout checks)
-    #[allow(dead_code)]
+    /// Unix timestamp when spawned
     pub spawned_at: i64,
-    /// Project path (used for context/logging)
-    #[allow(dead_code)]
+    /// Project path
     pub project_path: String,
-    /// Instruction ID this session is executing (for completion tracking)
-    #[allow(dead_code)]
+    /// Instruction ID this session is executing (passed to event processor)
+    #[allow(dead_code)] // Stored but read via spawn_event_processor parameter
     pub instruction_id: Option<String>,
 }
 
@@ -72,12 +70,6 @@ impl ClaudeProcess {
 
         debug!(session_id = %self.session_id, "Message injected successfully");
         Ok(())
-    }
-
-    /// Check if process is still running
-    #[allow(dead_code)]
-    pub fn is_running(&mut self) -> bool {
-        self.child.try_wait().map(|s| s.is_none()).unwrap_or(false)
     }
 
     /// Wait for process to complete

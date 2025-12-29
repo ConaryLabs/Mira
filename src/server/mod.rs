@@ -1173,15 +1173,6 @@ impl MiraServer {
         }
     }
 
-    // === Batch Processing Tool (50% cost savings for async operations) ===
-
-    #[tool(description = "Manage batch jobs for async processing via Gemini Batch API. Actions: create/list/get/cancel")]
-    async fn batch(&self, Parameters(req): Parameters<BatchRequest>) -> Result<CallToolResult, McpError> {
-        let project_id = self.get_active_project().await.map(|p| p.id);
-        let result = batch::handle_batch(&self.db, project_id, &req.action, &req).await.map_err(to_mcp_err)?;
-        Ok(text_response(result))
-    }
-
     // === Consolidated Permission Tool (3→1) ===
 
     #[tool(description = "Manage permission rules. Actions: save/list/delete.")]

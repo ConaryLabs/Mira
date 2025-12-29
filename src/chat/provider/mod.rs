@@ -9,7 +9,6 @@
 
 #![allow(dead_code)] // Provider infrastructure (some items for future use)
 
-pub mod batch;
 mod capabilities;
 pub mod file_search;
 mod gemini;
@@ -18,7 +17,6 @@ mod types;
 
 pub use capabilities::Capabilities;
 pub use file_search::{FileSearchClient, FileSearchStore, CustomMetadata, Operation};
-pub use batch::{BatchClient, BatchRequest, BatchResponse, BatchJob, BatchState, BatchError, build_batch_request};
 pub use gemini::CachedContent;
 pub use gemini::FileSearchConfig;
 pub use gemini::GeminiChatProvider;
