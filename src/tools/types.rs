@@ -474,6 +474,13 @@ pub struct TrackActivityRequest {
 
 fn default_true() -> bool { true }
 
+/// Heartbeat request for session liveness tracking
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HeartbeatRequest {
+    #[schemars(description = "Session ID to heartbeat")]
+    pub session_id: String,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExtractRequest {
     #[schemars(description = "Transcript or text content to extract decisions/topics from")]

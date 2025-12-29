@@ -115,6 +115,127 @@ impl ClaudeCodeSpawner {
         }
     }
 
+    /// Clean up zombie sessions on startup
+    /// Marks any 'running' or 'starting' session as 'failed' since they don't have active processes
+    pub async fn cleanup_zombie_sessions(&self) -> anyhow::Result<usize> {
+        let now = chrono::Utc::now().timestamp();
+
+        // Mark all non-terminal sessions as failed (zombie cleanup)
+        let result = sqlx::query(
+            r#"
+            UPDATE claude_sessions
+            SET status = 'failed',
+                completed_at = $1,
+                summary = COALESCE(summary, 'Marked as failed during startup (zombie cleanup)')
+            WHERE status IN ('running', 'starting', 'pending', 'paused')
+            "#,
+        )
+        .bind(now)
+        .execute(&self.db)
+        .await?;
+
+        let count = result.rows_affected() as usize;
+        if count > 0 {
+            warn!(count, "Cleaned up zombie sessions on startup");
+        }
+
+        Ok(count)
+    }
+
+    /// Update heartbeat for a session (called by MCP tool)
+    pub async fn heartbeat(&self, session_id: &str) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            UPDATE claude_sessions
+            SET last_heartbeat = $1
+            WHERE id = $2 AND status = 'running'
+            "#,
+        )
+        .bind(now)
+        .bind(session_id)
+        .execute(&self.db)
+        .await?;
+
+        debug!(session_id = %session_id, "Session heartbeat updated");
+        Ok(())
+    }
+
+    /// Start the reaper task that auto-fails sessions without recent heartbeats
+    pub fn start_reaper(&self, timeout_secs: u64) {
+        let db = self.db.clone();
+        let processes = self.processes.clone();
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+
+            loop {
+                interval.tick().await;
+
+                let now = chrono::Utc::now().timestamp();
+                let cutoff = now - (timeout_secs as i64);
+
+                // Find sessions that haven't heartbeated in timeout_secs
+                let stale_sessions: Vec<(String,)> = match sqlx::query_as(
+                    r#"
+                    SELECT id FROM claude_sessions
+                    WHERE status = 'running'
+                      AND last_heartbeat IS NOT NULL
+                      AND last_heartbeat < $1
+                    "#,
+                )
+                .bind(cutoff)
+                .fetch_all(&db)
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        warn!(error = %e, "Reaper failed to query stale sessions");
+                        continue;
+                    }
+                };
+
+                for (session_id,) in stale_sessions {
+                    warn!(session_id = %session_id, "Reaping stale session (no heartbeat)");
+
+                    // Mark as failed in database
+                    let _ = sqlx::query(
+                        r#"
+                        UPDATE claude_sessions
+                        SET status = 'failed',
+                            completed_at = $1,
+                            summary = COALESCE(summary, 'Reaped: no heartbeat received')
+                        WHERE id = $2
+                        "#,
+                    )
+                    .bind(now)
+                    .bind(&session_id)
+                    .execute(&db)
+                    .await;
+
+                    // Remove from in-memory processes if present
+                    if let Some(mut proc) = processes.write().await.remove(&session_id) {
+                        proc.status = super::types::SessionStatus::Failed;
+                        // Try to kill the process
+                        let _ = proc.kill().await;
+                    }
+
+                    // Broadcast end event
+                    let _ = event_tx.send(super::types::SessionEvent::Ended {
+                        session_id: session_id.clone(),
+                        status: super::types::SessionStatus::Failed,
+                        exit_code: None,
+                        summary: Some("Reaped: no heartbeat received".to_string()),
+                    });
+                }
+            }
+        });
+
+        info!(timeout_secs, "Started session reaper task");
+    }
+
     /// Subscribe to session events
     pub fn subscribe(&self) -> broadcast::Receiver<SessionEvent> {
         self.event_tx.subscribe()
@@ -372,9 +493,19 @@ impl ClaudeCodeSpawner {
                         (SessionStatus::Completed, 0)
                     };
 
+                    // Update in-memory status
                     if let Some(proc) = processes.write().await.get_mut(&session_id) {
                         proc.status = status;
                     }
+
+                    // Update session in database
+                    if let Err(e) = update_session_completed(&db, &session_id, exit_code).await {
+                        error!(session_id = %session_id, error = %e, "Failed to update session status in database");
+                    } else {
+                        info!(session_id = %session_id, status = ?status, "Session completed");
+                    }
+
+                    // Broadcast end event
                     let _ = event_tx.send(SessionEvent::Ended {
                         session_id: session_id.clone(),
                         status,
@@ -400,9 +531,18 @@ impl ClaudeCodeSpawner {
                 // Handle errors
                 if let StreamEvent::Error { error } = &event {
                     warn!(session_id = %session_id, error = %error.message, "Session error");
+
+                    // Update in-memory status
                     if let Some(proc) = processes.write().await.get_mut(&session_id) {
                         proc.status = SessionStatus::Failed;
                     }
+
+                    // Update session in database
+                    if let Err(e) = update_session_completed(&db, &session_id, 1).await {
+                        error!(session_id = %session_id, error = %e, "Failed to update failed session in database");
+                    }
+
+                    // Broadcast end event
                     let _ = event_tx.send(SessionEvent::Ended {
                         session_id: session_id.clone(),
                         status: SessionStatus::Failed,
@@ -638,17 +778,18 @@ async fn mark_question_answered(db: &SqlitePool, question_id: &str, answer: &str
     Ok(())
 }
 
-/// Update session status to running and record start time
+/// Update session status to running and record start time + initial heartbeat
 async fn update_session_started(db: &SqlitePool, session_id: &str) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
     sqlx::query(
         r#"
         UPDATE claude_sessions
-        SET status = $1, started_at = $2
+        SET status = $1, started_at = $2, last_heartbeat = $2
         WHERE id = $3
         "#,
     )
     .bind("running")
-    .bind(chrono::Utc::now().timestamp())
+    .bind(now)
     .bind(session_id)
     .execute(db)
     .await

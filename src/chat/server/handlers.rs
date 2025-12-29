@@ -897,7 +897,7 @@ pub async fn terminate_session_handler(
     }))
 }
 
-/// SSE stream for Claude Code session events
+/// SSE stream for Claude Code session events (all sessions)
 pub async fn session_events_handler(
     State(state): State<AppState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
@@ -930,6 +930,111 @@ pub async fn session_events_handler(
                 _ = tokio::time::sleep(Duration::from_secs(30)) => {
                     // Send heartbeat
                     let heartbeat = serde_json::json!({"type": "heartbeat", "ts": chrono::Utc::now().timestamp()});
+                    yield Ok(Event::default().data(heartbeat.to_string()));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// SSE stream for a specific Claude Code session
+/// Filters events to only show those for the requested session ID
+/// The Studio "Big Screen" uses this to display live ReasoningDelta and ToolUse events
+pub async fn session_stream_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+    use crate::spawner::types::SessionEvent;
+
+    let spawner = state.spawner.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Spawner not available".to_string(),
+    ))?;
+
+    let mut rx = spawner.subscribe();
+
+    // Get session info from database for initial state
+    let db = state.db.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Database not available".to_string(),
+    ))?;
+
+    // Fetch current session status
+    let initial_status: Option<(String, Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT status, last_heartbeat, summary FROM claude_sessions WHERE id = $1"
+    )
+    .bind(&session_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+
+    let target_session = session_id.clone();
+
+    let stream = async_stream::stream! {
+        // Send initial status event
+        if let Some((status, last_heartbeat, summary)) = initial_status {
+            let init_event = serde_json::json!({
+                "type": "init",
+                "session_id": target_session,
+                "status": status,
+                "last_heartbeat": last_heartbeat,
+                "summary": summary
+            });
+            yield Ok(Event::default().data(init_event.to_string()));
+        } else {
+            let not_found = serde_json::json!({
+                "type": "error",
+                "message": "Session not found",
+                "session_id": target_session
+            });
+            yield Ok(Event::default().data(not_found.to_string()));
+            return;
+        }
+
+        loop {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            // Filter to only events for this session
+                            let matches = match &event {
+                                SessionEvent::Started { session_id, .. } => session_id == &target_session,
+                                SessionEvent::StatusChanged { session_id, .. } => session_id == &target_session,
+                                SessionEvent::Output { session_id, .. } => session_id == &target_session,
+                                SessionEvent::ToolCall { session_id, .. } => session_id == &target_session,
+                                SessionEvent::QuestionPending { session_id, .. } => session_id == &target_session,
+                                SessionEvent::Ended { session_id, .. } => session_id == &target_session,
+                                SessionEvent::Heartbeat { .. } => true, // Always pass through heartbeats
+                            };
+
+                            if matches {
+                                let data = serde_json::to_string(&event).unwrap_or_default();
+                                yield Ok(Event::default().data(data));
+
+                                // End stream if session ended
+                                if matches!(event, SessionEvent::Ended { .. }) {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(session_id = %target_session, lagged = n, "Session stream lagged");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    // Send heartbeat
+                    let heartbeat = serde_json::json!({
+                        "type": "heartbeat",
+                        "session_id": target_session,
+                        "ts": chrono::Utc::now().timestamp()
+                    });
                     yield Ok(Event::default().data(heartbeat.to_string()));
                 }
             }

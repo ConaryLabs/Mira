@@ -349,6 +349,43 @@ impl MiraServer {
         })))
     }
 
+    #[tool(description = "Session heartbeat for liveness tracking. Call every 30-60s during long tasks to prevent session timeout.")]
+    async fn heartbeat(&self, Parameters(req): Parameters<HeartbeatRequest>) -> Result<CallToolResult, McpError> {
+        let now = chrono::Utc::now().timestamp();
+
+        // Update last_heartbeat in the database
+        let result = sqlx::query(
+            r#"
+            UPDATE claude_sessions
+            SET last_heartbeat = $1
+            WHERE id = $2 AND status = 'running'
+            "#,
+        )
+        .bind(now)
+        .bind(&req.session_id)
+        .execute(self.db.as_ref())
+        .await;
+
+        match result {
+            Ok(r) if r.rows_affected() > 0 => {
+                Ok(json_response(serde_json::json!({
+                    "status": "ok",
+                    "session_id": req.session_id,
+                    "timestamp": now
+                })))
+            }
+            Ok(_) => {
+                Ok(json_response(serde_json::json!({
+                    "status": "session_not_found",
+                    "session_id": req.session_id
+                })))
+            }
+            Err(e) => {
+                Ok(CallToolResult::error(vec![Content::text(format!("Heartbeat failed: {}", e))]))
+            }
+        }
+    }
+
     #[tool(description = "Extract decisions, topics, and insights from transcript text using LLM analysis.")]
     async fn extract(&self, Parameters(req): Parameters<ExtractRequest>) -> Result<CallToolResult, McpError> {
         // Use orchestrator if available

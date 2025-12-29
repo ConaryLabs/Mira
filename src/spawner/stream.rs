@@ -166,4 +166,46 @@ mod tests {
         assert_eq!(q.question, "Which approach?");
         assert_eq!(q.options.as_ref().unwrap().len(), 2);
     }
+
+    #[test]
+    fn test_parse_user_tool_result() {
+        // Exact JSON from Claude Code that was failing
+        let json = r#"{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01XZJshNDnqwPWsryVpYjZPv","type":"tool_result","content":[{"type":"text","text":"No goals found."}]}]},"parent_tool_use_id":null,"session_id":"d7b34775-84d7-44af-b9a2-514eb5f6a76a","uuid":"f2cd4caa-9bd0-45c5-9242-3655a1bef0d6","tool_use_result":[{"type":"text","text":"No goals found."}]}"#;
+
+        let result: Result<StreamEvent, _> = serde_json::from_str(json);
+        match result {
+            Ok(event) => {
+                if let StreamEvent::User { message, session_id, .. } = event {
+                    assert_eq!(message.role, "user");
+                    assert!(session_id.is_some());
+                } else {
+                    panic!("Expected User event, got {:?}", event);
+                }
+            }
+            Err(e) => {
+                panic!("Failed to parse User event: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_user_with_glob_result() {
+        // Glob tool result from logs
+        let json = r#"{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01McSbKcYZHFUddbVf8rUMFT","type":"tool_result","content":"/home/peter/Mira/src/spawner/stream.rs\n/home/peter/Mira/src/spawner/types.rs"}]},"parent_tool_use_id":null,"session_id":"e605241f","uuid":"879668a3","tool_use_result":{"filenames":["/home/peter/Mira/src/spawner/stream.rs","/home/peter/Mira/src/spawner/types.rs"],"durationMs":523,"numFiles":2,"truncated":false}}"#;
+
+        let result: Result<StreamEvent, _> = serde_json::from_str(json);
+        match result {
+            Ok(event) => {
+                if let StreamEvent::User { message, session_id, .. } = event {
+                    assert_eq!(message.role, "user");
+                    assert!(session_id.is_some());
+                } else {
+                    panic!("Expected User event, got {:?}", event);
+                }
+            }
+            Err(e) => {
+                panic!("Failed to parse User with glob result: {}", e);
+            }
+        }
+    }
 }

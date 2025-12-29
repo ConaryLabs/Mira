@@ -302,7 +302,19 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
     // Initialize Claude Code spawner
     let spawner_config = spawner::SpawnerConfig::from_env();
     let claude_spawner = Arc::new(spawner::ClaudeCodeSpawner::new((*db).clone(), spawner_config));
-    claude_spawner.start_heartbeat(30); // Send heartbeat every 30 seconds
+
+    // Clean up zombie sessions from previous daemon runs
+    match claude_spawner.cleanup_zombie_sessions().await {
+        Ok(count) if count > 0 => info!(count, "Cleaned up zombie sessions"),
+        Ok(_) => {},
+        Err(e) => warn!(error = %e, "Failed to clean up zombie sessions"),
+    }
+
+    // Start heartbeat for SSE keepalive
+    claude_spawner.start_heartbeat(30);
+    // Start reaper for session liveness (2 minute timeout)
+    claude_spawner.start_reaper(120);
+
     info!("Claude Code spawner initialized");
 
     // Create chat router (if Gemini API key is available)
