@@ -68,7 +68,7 @@
   aria-live="polite"
   aria-busy={streamingMessage !== null}
   aria-label="Chat messages"
-  class="terminal-view relative flex-1 overflow-y-auto terminal-scroll bg-[var(--term-bg)] p-4 font-mono text-sm"
+  class="terminal-view relative flex-1 overflow-y-auto terminal-scroll bg-[var(--term-bg)] text-[var(--term-text)] p-4 font-mono text-sm"
 >
   {#if loadingMore}
     <div class="text-center py-2 text-[var(--term-text-dim)]">

@@ -194,7 +194,7 @@ html, body {
 }
 
 .terminal-scroll::-webkit-scrollbar-thumb:hover {
-  background: #484f58;
+  background: var(--term-text-dim);
 }
 
 /* Prose styles for markdown rendering */
@@ -223,7 +223,8 @@ html, body {
 }
 
 .prose code {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--term-bg-secondary);
+  color: var(--term-accent);
   padding: 0.15em 0.4em;
   border-radius: 4px;
   font-size: 0.9em;
@@ -231,8 +232,8 @@ html, body {
 }
 
 .prose pre {
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--term-bg-secondary);
+  color: var(--term-text);
   padding: 1em;
   border-radius: 8px;
   overflow-x: auto;
@@ -264,13 +265,13 @@ html, body {
 }
 
 .prose a {
-  color: #7c3aed;
+  color: var(--term-accent);
   text-decoration: underline;
 }
 
 .prose blockquote {
-  border-left: 3px solid #d1d5db;
+  border-left: 3px solid var(--term-border);
   padding-left: 1em;
   margin: 0.75em 0;
-  color: #6b7280;
+  color: var(--term-text-dim);
 }

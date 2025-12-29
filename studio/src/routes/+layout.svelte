@@ -11,6 +11,6 @@
   });
 </script>
 
-<div class="h-screen-safe w-screen overflow-hidden bg-[var(--term-bg)]" data-theme={$currentTheme}>
+<div class="h-screen-safe w-screen overflow-hidden bg-[var(--term-bg)] text-[var(--term-text)]" data-theme={$currentTheme}>
   {@render children()}
 </div>
