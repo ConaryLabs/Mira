@@ -275,6 +275,7 @@ pub fn create_router(state: AppState) -> Router {
 
     Router::new()
         .route("/api/status", get(handlers::status_handler))
+        .route("/api/health", get(handlers::health_handler))
         .route("/api/chat/stream", post(stream::chat_stream_handler))
         .route(
             "/api/chat/sync",

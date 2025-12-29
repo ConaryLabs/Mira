@@ -70,6 +70,6 @@ pub use stream::{detect_question, DetectedQuestion, StreamParser};
 #[allow(unused_imports)]
 pub use types::{
     ContextSnapshot, CorrectionSummary, GoalSummary, PendingQuestion, QuestionOption,
-    QuestionStatus, ReviewStatus, SessionEvent, SessionReview, SessionStatus, SpawnConfig,
-    SpawnerConfig, StreamEvent,
+    QuestionStatus, ReviewStatus, SessionDetails, SessionEvent, SessionReview, SessionStatus,
+    SpawnConfig, SpawnerConfig, StreamEvent,
 };

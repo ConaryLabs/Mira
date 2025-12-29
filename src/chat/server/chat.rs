@@ -20,9 +20,10 @@ use uuid::Uuid;
 
 use crate::chat::{
     conductor::validation::{repair_json, ToolSchemas},
-    context::{build_orchestrator_prompt, format_orchestrator_context, MiraContext},
+    context::MiraContext,
+    context_builder::ContextBuilder,
     session::{Checkpoint, SessionManager},
-    tools::{get_tool_definitions, ToolExecutor},
+    tools::ToolExecutor,
     provider::{
         CachedContent, GeminiChatProvider, GeminiModel, Provider,
         ChatRequest as ProviderChatRequest,
@@ -34,21 +35,12 @@ use crate::chat::{
     },
 };
 use super::{ContextCacheEntry, CACHE_TTL_SECONDS};
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 use super::markdown_parser::MarkdownStreamParser;
 use super::routing::RoutingState;
 use super::types::{ChatEvent, ChatRequest, GroundingSourceInfo, MessageBlock, ToolCallResultData};
 use super::AppState;
 use crate::chat::tools::{tool_category, tool_summary};
-
-/// Compute a hash of the system prompt for cache invalidation
-fn hash_prompt(prompt: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    prompt.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Process a chat request through the agentic loop (Gemini Flash/Pro Orchestrator)
 pub async fn process_chat(
@@ -106,10 +98,16 @@ async fn process_gemini_chat(
         .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY not set"))?;
     let mut provider = GeminiChatProvider::new(api_key.clone(), routing.model());
 
-    // Build system prompt with FULL assembled context
-    // Gemini uses client-state, so we use checkpoints for continuity
+    // ========================================================================
+    // CONTEXT BUILDING - Using unified ContextBuilder
+    // ========================================================================
+    // ContextBuilder clearly separates:
+    // - CACHED: system prompt + tools (sent to Gemini cache, stable)
+    // - FRESH: conversation history + user input (sent every request)
+    // ========================================================================
+
     let mut session_manager: Option<SessionManager> = None;
-    let (system_prompt, history_messages, checkpoint) = if let Some(db) = &state.db {
+    let context_builder = if let Some(db) = &state.db {
         // Create session manager for full context assembly
         let session = SessionManager::new(
             db.clone(),
@@ -124,70 +122,57 @@ async fn process_gemini_chat(
 
                 // Load any existing checkpoint for continuity
                 let checkpoint = s.load_checkpoint().await.ok().flatten();
-                if checkpoint.is_some() {
-                    tracing::debug!("Gemini: loaded checkpoint for continuity");
-                }
 
-                tracing::debug!(
-                    "Gemini context: {} recent msgs, {} summaries, {} semantic hits, {} corrections, {} memories",
-                    assembled.recent_messages.len(),
-                    assembled.summaries.len(),
-                    assembled.semantic_context.len(),
-                    assembled.mira_context.corrections.len(),
-                    assembled.mira_context.memories.len(),
+                // Build context using unified ContextBuilder
+                let mut builder = ContextBuilder::new(
+                    &assembled.mira_context,
+                    &assembled,
+                    &request.message,
                 );
 
-                // Convert recent messages to provider format for conversation history
-                let history: Vec<ProviderMessage> = assembled.recent_messages.iter().map(|m| {
-                    let role = match m.role.as_str() {
-                        "user" => MessageRole::User,
-                        "assistant" => MessageRole::Assistant,
-                        "tool" => MessageRole::Tool,
-                        _ => MessageRole::User,
-                    };
-                    ProviderMessage {
-                        role,
-                        content: m.content.clone(),
-                    }
-                }).collect();
-
-                let base_prompt = build_orchestrator_prompt(&assembled.mira_context);
-                let context_blob = format_orchestrator_context(&assembled);
-
-                let prompt = if context_blob.is_empty() {
-                    base_prompt
-                } else {
-                    format!("{}\n\n{}", base_prompt, context_blob)
-                };
+                // Add checkpoint if present
+                if let Some(ref cp) = checkpoint {
+                    builder = builder.with_checkpoint(cp);
+                    tracing::debug!("ContextBuilder: added checkpoint for continuity");
+                }
 
                 // Store session manager for checkpoint saving
                 session_manager = Some(s);
 
-                (prompt, history, checkpoint)
+                builder
             }
             Err(e) => {
                 tracing::warn!("Failed to create session for Gemini: {}", e);
-                let context = MiraContext::load(db, &request.project_path)
+                let mira_ctx = MiraContext::load(db, &request.project_path)
                     .await
                     .unwrap_or_default();
-                (build_orchestrator_prompt(&context), Vec::<ProviderMessage>::new(), None)
+                ContextBuilder::minimal(&mira_ctx, &request.message)
             }
         }
     } else {
-        (build_orchestrator_prompt(&MiraContext::default()), Vec::<ProviderMessage>::new(), None)
+        ContextBuilder::minimal(&MiraContext::default(), &request.message)
     };
 
-    // Format checkpoint as context if present
-    let system_prompt = if let Some(ref cp) = checkpoint {
-        format!("{}\n\n# Last Checkpoint\nTask: {}\nLast action: {}\nRemaining: {}\nFiles: {}",
-            system_prompt,
-            cp.current_task,
-            cp.last_action,
-            cp.remaining.as_deref().unwrap_or("none"),
-            cp.working_files.join(", "))
-    } else {
-        system_prompt
-    };
+    // Build cached and fresh content with metrics
+    let (cached_content, fresh_content, metrics) = context_builder.build();
+
+    // Log context breakdown for debugging
+    tracing::info!(
+        target: "context",
+        cached_tokens = metrics.total_cached,
+        fresh_tokens = metrics.total_fresh,
+        history_count = fresh_content.messages.len(),
+        system_tokens = metrics.system_prompt_tokens,
+        mira_tokens = metrics.mira_context_tokens,
+        tools_tokens = metrics.tools_tokens,
+        "Context breakdown: CACHED={} tokens, FRESH={} tokens ({} messages)",
+        metrics.total_cached, metrics.total_fresh, fresh_content.messages.len()
+    );
+
+    // Extract what we need
+    let system_prompt = cached_content.system_prompt;
+    let tools = cached_content.tools;
+    let mut conversation_messages = fresh_content.messages;
 
     // Create tool executor
     let mut executor = ToolExecutor::new();
@@ -197,9 +182,6 @@ async fn process_gemini_chat(
     }
     executor = executor.with_semantic(state.semantic.clone());
 
-    // Get tool definitions
-    let tools = get_tool_definitions();
-
     // Tool validation schemas for auto-repair
     let tool_schemas = ToolSchemas::default();
 
@@ -207,22 +189,6 @@ async fn process_gemini_chat(
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
     let mut total_reasoning_tokens: u32 = 0;
-
-    // Track conversation for multi-turn tool use (includes history)
-    let mut conversation_messages = history_messages;
-
-    // Only add user's current message if it's not already the last message in history
-    // (it was saved to DB before context assembly, so it may already be in recent_messages)
-    let already_in_history = conversation_messages.last()
-        .map(|m| m.role == MessageRole::User && m.content == request.message)
-        .unwrap_or(false);
-
-    if !already_in_history {
-        conversation_messages.push(ProviderMessage {
-            role: MessageRole::User,
-            content: request.message.clone(),
-        });
-    }
 
     // Agentic loop (max 10 iterations)
     let mut assistant_blocks: Vec<MessageBlock> = Vec::new();
@@ -240,28 +206,45 @@ async fn process_gemini_chat(
     // Track tool execution start times for duration calculation
     let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
 
-    // Context caching for cost reduction (~75% savings on cached tokens)
-    let prompt_hash = hash_prompt(&system_prompt);
-    let cached_content: Option<CachedContent> = {
+    // ========================================================================
+    // GEMINI CONTEXT CACHING - ~75% cost reduction on cached tokens
+    // ========================================================================
+    // We cache: system_prompt + tools (the CACHED content from ContextBuilder)
+    // We send fresh: conversation_messages (the FRESH content)
+    // ========================================================================
+
+    let prompt_hash = cached_content.prompt_hash;
+    let gemini_cache: Option<CachedContent> = {
         // Check if we have a valid cache for this project
         if let Some(entry) = state.context_caches.get(&request.project_path, prompt_hash).await {
-            tracing::debug!(
+            tracing::info!(
+                target: "context",
                 project = %request.project_path,
                 cached_tokens = entry.cache.token_count,
-                "Using cached context"
+                "CACHE HIT: Using existing Gemini cache"
             );
             Some(entry.cache)
         } else {
-            // Try to create a cache for future requests (async, don't block)
-            // Include tools in cache so they work with cachedContent requests
+            // Cache miss - create new cache for future requests
+            if metrics.cache_invalidated {
+                tracing::info!(
+                    target: "context",
+                    project = %request.project_path,
+                    reason = ?metrics.invalidation_reason,
+                    "CACHE INVALIDATED: Creating new cache"
+                );
+            }
+
             let cache_result = provider.create_cache(&system_prompt, &tools, None, CACHE_TTL_SECONDS).await;
             match cache_result {
                 Ok(Some(cache)) => {
                     tracing::info!(
+                        target: "context",
                         project = %request.project_path,
                         cached_tokens = cache.token_count,
                         expires = %cache.expire_time,
-                        "Created new context cache"
+                        "CACHE CREATED: New Gemini cache with {} tokens",
+                        cache.token_count
                     );
                     let entry = ContextCacheEntry {
                         cache: cache.clone(),
@@ -273,16 +256,19 @@ async fn process_gemini_chat(
                 }
                 Ok(None) => {
                     tracing::debug!(
+                        target: "context",
                         project = %request.project_path,
-                        "System prompt too small for caching"
+                        estimated_tokens = metrics.total_cached,
+                        "CACHE SKIPPED: Content too small for caching"
                     );
                     None
                 }
                 Err(e) => {
                     tracing::warn!(
+                        target: "context",
                         project = %request.project_path,
                         error = %e,
-                        "Failed to create context cache, proceeding without"
+                        "CACHE FAILED: Proceeding without cache"
                     );
                     None
                 }
@@ -313,13 +299,26 @@ async fn process_gemini_chat(
         );
     }
 
-    // First request (using current model from routing - starts as Flash)
-    // Use cached context if available for cost savings
+    // ========================================================================
+    // SEND REQUEST TO GEMINI
+    // ========================================================================
+    // - If cache exists: send gemini_cache reference + fresh conversation
+    // - Otherwise: send full system_prompt + fresh conversation
+    // ========================================================================
+
     let initial_request = ProviderChatRequest::new(routing.model().model_id(), &system_prompt, &request.message)
         .with_messages(conversation_messages.clone())
         .with_tools(tools.clone());
 
-    let mut rx = if let Some(ref cache) = cached_content {
+    tracing::debug!(
+        target: "context",
+        using_cache = gemini_cache.is_some(),
+        message_count = conversation_messages.len(),
+        "Sending request to Gemini (cache={})",
+        if gemini_cache.is_some() { "HIT" } else { "MISS" }
+    );
+
+    let mut rx = if let Some(ref cache) = gemini_cache {
         provider.create_stream_with_cache(cache, initial_request).await?
     } else if !file_search_stores.is_empty() {
         // Use FileSearch-enabled stream when stores exist

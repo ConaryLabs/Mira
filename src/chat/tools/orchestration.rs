@@ -28,7 +28,7 @@ impl<'a> OrchestrationTools<'a> {
         // Build query dynamically based on filters
         let rows = if let Some(tool) = tool_name {
             sqlx::query_as::<_, (String, String, Option<String>, String)>(
-                r#"SELECT tool_name, args_json, result_summary, created_at
+                r#"SELECT tool_name, arguments, result_summary, created_at
                    FROM mcp_history
                    WHERE tool_name LIKE $1
                    ORDER BY created_at DESC
@@ -40,9 +40,9 @@ impl<'a> OrchestrationTools<'a> {
             .await?
         } else if let Some(q) = query {
             sqlx::query_as::<_, (String, String, Option<String>, String)>(
-                r#"SELECT tool_name, args_json, result_summary, created_at
+                r#"SELECT tool_name, arguments, result_summary, created_at
                    FROM mcp_history
-                   WHERE result_summary LIKE $1 OR args_json LIKE $1
+                   WHERE result_summary LIKE $1 OR arguments LIKE $1
                    ORDER BY created_at DESC
                    LIMIT $2"#
             )
@@ -52,7 +52,7 @@ impl<'a> OrchestrationTools<'a> {
             .await?
         } else {
             sqlx::query_as::<_, (String, String, Option<String>, String)>(
-                r#"SELECT tool_name, args_json, result_summary, created_at
+                r#"SELECT tool_name, arguments, result_summary, created_at
                    FROM mcp_history
                    ORDER BY created_at DESC
                    LIMIT $1"#
@@ -69,12 +69,12 @@ impl<'a> OrchestrationTools<'a> {
         let mut output = Vec::new();
         output.push(format!("# Recent Claude Code Activity ({} entries)\n", rows.len()));
 
-        for (tool_name, args_json, result_summary, created_at) in rows {
+        for (tool_name, arguments, result_summary, created_at) in rows {
             // Truncate args for display
-            let args_preview = if args_json.len() > 100 {
-                format!("{}...", &args_json[..100])
+            let args_preview = if arguments.len() > 100 {
+                format!("{}...", &arguments[..100])
             } else {
-                args_json
+                arguments
             };
 
             let summary = result_summary.unwrap_or_else(|| "(no summary)".to_string());

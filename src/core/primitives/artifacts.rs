@@ -284,27 +284,23 @@ impl ArtifactStore {
             return Ok(None);
         };
 
-        // Check secrets
-        if artifact.contains_secrets {
-            return Ok(Some(FetchResult {
-                artifact_id: artifact_id.to_string(),
-                offset,
-                limit,
-                total_bytes: artifact.total_bytes,
-                content: "[REDACTED: artifact contains potential secrets]".to_string(),
-                truncated: false,
-            }));
-        }
+        // Redact secrets instead of blocking entirely
+        // This allows Mira to read the artifact content with just the secrets masked
+        let text = if artifact.contains_secrets {
+            super::secrets::redact_secrets(&artifact.text)
+        } else {
+            artifact.text.clone()
+        };
 
         // UTF-8 safe slice using byte boundaries
-        let (content, actual_start, actual_end) = safe_utf8_slice(&artifact.text, offset, limit);
-        let truncated = actual_end < artifact.text.len();
+        let (content, actual_start, actual_end) = safe_utf8_slice(&text, offset, limit);
+        let truncated = actual_end < text.len();
 
         Ok(Some(FetchResult {
             artifact_id: artifact_id.to_string(),
             offset: actual_start,
             limit: actual_end - actual_start,
-            total_bytes: artifact.total_bytes,
+            total_bytes: text.len(),
             content,
             truncated,
         }))
@@ -326,18 +322,15 @@ impl ArtifactStore {
             return Ok(None);
         };
 
-        if artifact.contains_secrets {
-            return Ok(Some(SearchResult {
-                artifact_id: artifact_id.to_string(),
-                query: query.to_string(),
-                total_bytes: artifact.total_bytes,
-                matches: vec![],
-                note: Some("Cannot search artifact containing secrets".to_string()),
-            }));
-        }
+        // Redact secrets but still allow searching
+        let text = if artifact.contains_secrets {
+            super::secrets::redact_secrets(&artifact.text)
+        } else {
+            artifact.text.clone()
+        };
 
         let query_lower = query.to_lowercase();
-        let text_lower = artifact.text.to_lowercase();
+        let text_lower = text.to_lowercase();
 
         let mut matches = Vec::new();
         let mut search_start = 0;
@@ -349,10 +342,10 @@ impl ArtifactStore {
                 // Get context around match using byte-safe slicing
                 let context_start = absolute_pos.saturating_sub(context_bytes / 2);
                 let context_end =
-                    (absolute_pos + query.len() + context_bytes / 2).min(artifact.text.len());
+                    (absolute_pos + query.len() + context_bytes / 2).min(text.len());
 
                 let (preview, _, _) =
-                    safe_utf8_slice(&artifact.text, context_start, context_end - context_start);
+                    safe_utf8_slice(&text, context_start, context_end - context_start);
 
                 matches.push(SearchMatch {
                     match_index: matches.len() + 1,
@@ -371,9 +364,9 @@ impl ArtifactStore {
         Ok(Some(SearchResult {
             artifact_id: artifact_id.to_string(),
             query: query.to_string(),
-            total_bytes: artifact.total_bytes,
+            total_bytes: text.len(),
             matches,
-            note: None,
+            note: if artifact.contains_secrets { Some("Secrets redacted".to_string()) } else { None },
         }))
     }
 

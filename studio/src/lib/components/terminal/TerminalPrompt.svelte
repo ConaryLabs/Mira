@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
 
   interface Props {
     onSend: (message: string) => void;
@@ -18,6 +18,7 @@
   }: Props = $props();
 
   let inputValue = $state('');
+  let sending = $state(false);
   let textareaEl: HTMLTextAreaElement;
 
   // Auto-focus on mount
@@ -43,14 +44,29 @@
     }
   }
 
-  function submit() {
+  async function submit() {
     const content = inputValue.trim();
-    if (!content || disabled) return;
-    onSend(content);
+    if (!content || disabled || sending) return;
+
+    // Set lock and clear input BEFORE dispatching
+    sending = true;
     inputValue = '';
+
     // Reset textarea height
     if (textareaEl) {
       textareaEl.style.height = 'auto';
+    }
+
+    // Ensure UI state updates before calling handler
+    await tick();
+
+    try {
+      onSend(content);
+    } finally {
+      // Release lock after a micro-delay to prevent rapid re-submission
+      setTimeout(() => {
+        sending = false;
+      }, 100);
     }
   }
 
@@ -88,7 +104,7 @@
   {:else}
     <button
       onclick={submit}
-      disabled={!inputValue.trim() || disabled}
+      disabled={!inputValue.trim() || disabled || sending}
       aria-label="Send message"
       class="text-[var(--term-accent)] font-mono text-sm hover:text-[var(--term-text)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2"
     >

@@ -1,10 +1,18 @@
 // src/tools/response.rs
 // Helper functions for MCP tool responses - human-readable formatting
+// Includes aggressive output capping to reduce token burn
 
 use rmcp::{ErrorData as McpError, model::{CallToolResult, Content, RawContent}};
 use serde::Serialize;
 use serde_json::Value;
 use super::format;
+use crate::core::primitives::{ARTIFACT_THRESHOLD_BYTES, EXCERPT_HEAD_CHARS, EXCERPT_TAIL_CHARS};
+
+/// Cap for inline output in MCP responses (4KB)
+/// Outputs exceeding this are truncated with head+tail preview
+/// NOTE: Full artifact storage requires db context (not available here)
+/// so we just aggressively truncate for now
+const MCP_OUTPUT_CAP: usize = ARTIFACT_THRESHOLD_BYTES;
 
 // ============================================================================
 // Carousel Context Injection
@@ -47,9 +55,33 @@ pub fn to_mcp_err(e: anyhow::Error) -> McpError {
     McpError::internal_error(e.to_string(), None)
 }
 
+/// Cap output to prevent token burn
+/// If output exceeds 4KB, return head + "[...truncated...]" + tail
+fn cap_output(message: String) -> String {
+    if message.len() <= MCP_OUTPUT_CAP {
+        return message;
+    }
+
+    // Create excerpt with head + tail
+    let head: String = message.chars().take(EXCERPT_HEAD_CHARS).collect();
+    let tail: String = message.chars().rev().take(EXCERPT_TAIL_CHARS).collect::<String>().chars().rev().collect();
+    let total = message.len();
+    let omitted = total - EXCERPT_HEAD_CHARS - EXCERPT_TAIL_CHARS;
+
+    format!(
+        "{}\n\n[...{} chars omitted ({} total)...]\n\n{}",
+        head.trim_end(),
+        omitted,
+        total,
+        tail.trim_start()
+    )
+}
+
 /// Create a success response with plain text
+/// Automatically caps output at 4KB to reduce token burn
 pub fn text_response(message: impl Into<String>) -> CallToolResult {
-    CallToolResult::success(vec![Content::text(message.into())])
+    let msg = cap_output(message.into());
+    CallToolResult::success(vec![Content::text(msg)])
 }
 
 /// Smart JSON response - auto-detects type and formats nicely

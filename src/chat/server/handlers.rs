@@ -28,6 +28,140 @@ pub async fn status_handler(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
+// ============================================================================
+// Health Monitor Endpoint
+// ============================================================================
+
+#[derive(Serialize)]
+pub struct HealthInfo {
+    pub db_size_bytes: i64,
+    pub db_size_human: String,
+    pub recent_errors: Vec<BuildErrorEntry>,
+    pub active_session_id: Option<String>,
+    pub active_session_status: Option<String>,
+    pub mcp_session_id: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct BuildErrorEntry {
+    pub id: i64,
+    pub category: Option<String>,
+    pub severity: String,
+    pub message: String,
+    pub file_path: Option<String>,
+    pub line_number: Option<i32>,
+    pub resolved: bool,
+    pub created_at: i64,
+}
+
+/// Health monitor endpoint - returns DB size, recent errors, and active session
+pub async fn health_handler(
+    State(state): State<AppState>,
+) -> Result<Json<HealthInfo>, (StatusCode, String)> {
+    let Some(db) = &state.db else {
+        return Ok(Json(HealthInfo {
+            db_size_bytes: 0,
+            db_size_human: "N/A".to_string(),
+            recent_errors: vec![],
+            active_session_id: None,
+            active_session_status: None,
+            mcp_session_id: None,
+        }));
+    };
+
+    // Get database file size
+    let db_size: (i64,) = sqlx::query_as(
+        "SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()"
+    )
+    .fetch_one(db)
+    .await
+    .unwrap_or((0,));
+
+    let db_size_human = format_bytes(db_size.0);
+
+    // Get last 5 build errors
+    let error_rows: Vec<(i64, Option<String>, String, String, Option<String>, Option<i32>, bool, i64)> =
+        sqlx::query_as(
+            r#"SELECT id, category, severity, message, file_path, line_number, resolved, created_at
+               FROM build_errors
+               ORDER BY created_at DESC
+               LIMIT 5"#
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+    let recent_errors: Vec<BuildErrorEntry> = error_rows
+        .into_iter()
+        .map(|(id, category, severity, message, file_path, line_number, resolved, created_at)| {
+            BuildErrorEntry {
+                id,
+                category,
+                severity,
+                message: if message.len() > 200 { format!("{}...", &message[..200]) } else { message },
+                file_path,
+                line_number,
+                resolved,
+                created_at,
+            }
+        })
+        .collect();
+
+    // Get active Claude Code session
+    let session: Option<(String, String)> = sqlx::query_as(
+        r#"SELECT id, status FROM claude_sessions
+           WHERE status IN ('running', 'starting', 'paused')
+           ORDER BY created_at DESC
+           LIMIT 1"#
+    )
+    .fetch_optional(db)
+    .await
+    .unwrap_or(None);
+
+    let (active_session_id, active_session_status) = session
+        .map(|(id, status)| (Some(id), Some(status)))
+        .unwrap_or((None, None));
+
+    // Get current MCP session ID from mcp_sessions
+    let mcp_session: Option<(String,)> = sqlx::query_as(
+        r#"SELECT session_id FROM mcp_sessions
+           WHERE ended_at IS NULL
+           ORDER BY started_at DESC
+           LIMIT 1"#
+    )
+    .fetch_optional(db)
+    .await
+    .unwrap_or(None);
+
+    let mcp_session_id = mcp_session.map(|(id,)| id);
+
+    Ok(Json(HealthInfo {
+        db_size_bytes: db_size.0,
+        db_size_human,
+        recent_errors,
+        active_session_id,
+        active_session_status,
+        mcp_session_id,
+    }))
+}
+
+/// Format bytes into human-readable string
+fn format_bytes(bytes: i64) -> String {
+    const KB: i64 = 1024;
+    const MB: i64 = KB * 1024;
+    const GB: i64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 /// Paginated message history endpoint
 pub async fn messages_handler(
     State(state): State<AppState>,
@@ -582,7 +716,7 @@ pub async fn orchestration_stream_handler(
 // Claude Code Spawner Endpoints
 // ============================================================================
 
-use crate::spawner::{build_context_snapshot, SpawnConfig};
+use crate::spawner::{build_context_snapshot, SessionDetails, SpawnConfig};
 
 #[derive(Deserialize)]
 pub struct SpawnSessionRequest {
@@ -667,6 +801,10 @@ pub async fn spawn_session_handler(
 pub struct SessionInfo {
     pub session_id: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spawned_at: Option<i64>,
 }
 
 /// List active Claude Code sessions
@@ -678,12 +816,14 @@ pub async fn list_sessions_handler(
         "Spawner not available".to_string(),
     ))?;
 
-    let sessions = spawner.list_sessions().await;
+    let sessions: Vec<SessionDetails> = spawner.list_sessions().await;
     let result: Vec<SessionInfo> = sessions
         .into_iter()
-        .map(|(session_id, status)| SessionInfo {
-            session_id,
-            status: status.as_str().to_string(),
+        .map(|s| SessionInfo {
+            session_id: s.session_id,
+            status: s.status.as_str().to_string(),
+            project_path: s.project_path,
+            spawned_at: s.spawned_at,
         })
         .collect();
 

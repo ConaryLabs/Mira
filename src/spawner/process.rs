@@ -14,7 +14,7 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
 use super::stream::{detect_question, StreamParser};
-use super::types::{SessionEvent, SessionStatus, SpawnConfig, SpawnerConfig, StreamEvent};
+use super::types::{SessionDetails, SessionEvent, SessionStatus, SpawnConfig, SpawnerConfig, StreamEvent};
 
 /// Managed Claude Code process
 pub struct ClaudeProcess {
@@ -55,13 +55,22 @@ impl ClaudeProcess {
         });
 
         let line = format!("{}\n", serde_json::to_string(&msg)?);
+
+        // Log the exact JSON being injected for debugging
+        info!(
+            session_id = %self.session_id,
+            message_preview = %if message.len() > 100 { format!("{}...", &message[..100]) } else { message.to_string() },
+            json_line = %line.trim(),
+            "Injecting message into Claude Code stdin"
+        );
+
         stdin
             .write_all(line.as_bytes())
             .await
             .context("Failed to write to stdin")?;
         stdin.flush().await.context("Failed to flush stdin")?;
 
-        debug!(session_id = %self.session_id, "Injected message into session");
+        debug!(session_id = %self.session_id, "Message injected successfully");
         Ok(())
     }
 
@@ -221,8 +230,11 @@ impl ClaudeCodeSpawner {
         // Keep stdin open for interactive sessions (inject_message, answer_question)
         process.status = SessionStatus::Running;
 
-        // Store in database
+        // Store in database (initial entry)
         self.insert_session(&session_id, &config, spawned_at).await?;
+
+        // Update DB status to running now that process is actually started
+        update_session_started(&self.db, &session_id).await?;
 
         // Store in memory
         self.processes
@@ -235,6 +247,13 @@ impl ClaudeCodeSpawner {
             session_id: session_id.clone(),
             project_path: config.project_path.clone(),
             initial_prompt: config.initial_prompt.clone(),
+        });
+
+        // Broadcast status change to Running (process is now active)
+        let _ = self.event_tx.send(SessionEvent::StatusChanged {
+            session_id: session_id.clone(),
+            status: SessionStatus::Running,
+            phase: None,
         });
 
         // Spawn stdout reader (stream-json parser)
@@ -317,6 +336,26 @@ impl ClaudeCodeSpawner {
                             session_id: session_id.clone(),
                             chunk_type: chunk_type.to_string(),
                             content,
+                        });
+                    }
+                }
+
+                // Handle User events (echoed injected messages or tool results)
+                if let StreamEvent::User { message, .. } = &event {
+                    // Log the user event for debugging instruction delivery
+                    info!(
+                        session_id = %session_id,
+                        is_text = message.is_text(),
+                        summary = %message.summary(),
+                        "Received User event from Claude Code"
+                    );
+
+                    // If this is a text message (injected instruction), broadcast it
+                    if let Some(text) = message.text() {
+                        let _ = event_tx.send(SessionEvent::Output {
+                            session_id: session_id.clone(),
+                            chunk_type: "user".to_string(),
+                            content: text.to_string(),
                         });
                     }
                 }
@@ -490,13 +529,18 @@ impl ClaudeCodeSpawner {
         Ok(code)
     }
 
-    /// Get status of all active sessions
-    pub async fn list_sessions(&self) -> Vec<(String, SessionStatus)> {
+    /// Get status of all active sessions with details
+    pub async fn list_sessions(&self) -> Vec<SessionDetails> {
         self.processes
             .read()
             .await
             .iter()
-            .map(|(id, p)| (id.clone(), p.status))
+            .map(|(id, p)| SessionDetails {
+                session_id: id.clone(),
+                status: p.status,
+                project_path: Some(p.project_path.clone()),
+                spawned_at: Some(p.spawned_at),
+            })
             .collect()
     }
 
@@ -590,6 +634,25 @@ async fn mark_question_answered(db: &SqlitePool, question_id: &str, answer: &str
     .execute(db)
     .await
     .context("Failed to update question")?;
+
+    Ok(())
+}
+
+/// Update session status to running and record start time
+async fn update_session_started(db: &SqlitePool, session_id: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE claude_sessions
+        SET status = $1, started_at = $2
+        WHERE id = $3
+        "#,
+    )
+    .bind("running")
+    .bind(chrono::Utc::now().timestamp())
+    .bind(session_id)
+    .execute(db)
+    .await
+    .context("Failed to update session to running")?;
 
     Ok(())
 }

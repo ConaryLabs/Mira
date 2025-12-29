@@ -9,6 +9,7 @@
 
 pub mod conductor;
 pub mod context;
+pub mod context_builder;
 pub mod provider;
 pub mod server;
 pub mod session;

@@ -324,13 +324,26 @@ impl AssistantMessage {
     }
 }
 
-/// User message content (tool results)
+/// User message content (can be text or tool results)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserMessage {
     pub role: String,
-    /// Content is an array of tool results
+    /// Content can be a string (user text) or array of tool results
     #[serde(default)]
-    pub content: Vec<ToolResultContent>,
+    pub content: UserContent,
+}
+
+/// User message content - either text or tool results
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(untagged)]
+pub enum UserContent {
+    /// Plain text content (from injected messages)
+    Text(String),
+    /// Tool result content blocks
+    ToolResults(Vec<ToolResultContent>),
+    /// Empty/default
+    #[default]
+    Empty,
 }
 
 /// Tool result content block
@@ -347,10 +360,32 @@ pub struct ToolResultContent {
 }
 
 impl UserMessage {
-    /// Get a summary of tool results for logging
+    /// Get a summary of the user message for logging
     pub fn summary(&self) -> String {
-        let tool_ids: Vec<&str> = self.content.iter().map(|c| c.tool_use_id.as_str()).collect();
-        format!("{} tool result(s): {}", tool_ids.len(), tool_ids.join(", "))
+        match &self.content {
+            UserContent::Text(s) => {
+                let preview = if s.len() > 100 { format!("{}...", &s[..100]) } else { s.clone() };
+                format!("text: {}", preview)
+            }
+            UserContent::ToolResults(results) => {
+                let tool_ids: Vec<&str> = results.iter().map(|c| c.tool_use_id.as_str()).collect();
+                format!("{} tool result(s): {}", tool_ids.len(), tool_ids.join(", "))
+            }
+            UserContent::Empty => "empty".to_string(),
+        }
+    }
+
+    /// Check if this is a text message (injected instruction)
+    pub fn is_text(&self) -> bool {
+        matches!(&self.content, UserContent::Text(_))
+    }
+
+    /// Get the text content if this is a text message
+    pub fn text(&self) -> Option<&str> {
+        match &self.content {
+            UserContent::Text(s) => Some(s.as_str()),
+            _ => None,
+        }
     }
 }
 
@@ -451,6 +486,19 @@ pub enum SessionEvent {
 
     /// Heartbeat to keep SSE connection alive
     Heartbeat { ts: i64 },
+}
+
+// ============================================================================
+// Session Details (for API responses)
+// ============================================================================
+
+/// Session details for list endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetails {
+    pub session_id: String,
+    pub status: SessionStatus,
+    pub project_path: Option<String>,
+    pub spawned_at: Option<i64>,
 }
 
 // ============================================================================

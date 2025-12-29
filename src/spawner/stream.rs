@@ -34,7 +34,12 @@ impl StreamParser {
         info!("Stream parser: starting to read stdout");
 
         while let Ok(Some(line)) = reader.next_line().await {
-            debug!("Stream parser: received line (len={})", line.len());
+            // Log at trace level for very verbose debugging
+            debug!(
+                line_len = line.len(),
+                line_preview = %if line.len() > 200 { format!("{}...", &line[..200]) } else { line.clone() },
+                "Stream parser: received line"
+            );
 
             if line.is_empty() {
                 continue;
@@ -42,14 +47,33 @@ impl StreamParser {
 
             match self.parse_line(&line) {
                 Ok(event) => {
-                    info!(?event, "Stream parser: parsed event");
+                    // Log more details for User events specifically
+                    match &event {
+                        super::types::StreamEvent::User { message, session_id, .. } => {
+                            info!(
+                                ?session_id,
+                                summary = %message.summary(),
+                                is_text = message.is_text(),
+                                "Stream parser: parsed User event"
+                            );
+                        }
+                        _ => {
+                            info!(?event, "Stream parser: parsed event");
+                        }
+                    }
+
                     if self.tx.send(event).await.is_err() {
                         warn!("Stream receiver dropped, stopping parser");
                         break;
                     }
                 }
                 Err(e) => {
-                    warn!(line = %line, error = %e, "Failed to parse stream-json line");
+                    // Log the full line for parse failures (important for debugging)
+                    warn!(
+                        raw_line = %line,
+                        error = %e,
+                        "Failed to parse stream-json line - this may indicate format mismatch"
+                    );
                 }
             }
         }

@@ -18,9 +18,9 @@ pub struct TokenUsage {
     pub total: usize,
 }
 
-/// Budget limits for DeepSeek context assembly
+/// Budget limits for context assembly
 /// Keeps context lean and prioritized to avoid bloat
-pub struct DeepSeekBudget {
+pub struct ContextBudget {
     /// Max recent messages to include
     pub max_recent_messages: usize,
     /// Max summaries to include
@@ -37,18 +37,18 @@ pub struct DeepSeekBudget {
     pub token_budget: usize,
 }
 
-impl Default for DeepSeekBudget {
+impl Default for ContextBudget {
     fn default() -> Self {
         Self {
-            // DeepSeek V3.2 has 128K context with DSA sparse attention
-            // Verified Dec 2025: 128K context, ~50% cost reduction for long-context
-            max_recent_messages: 15,  // was 8 - full conversation continuity
-            max_summaries: 8,         // was 5 - rich historical context
-            max_semantic_hits: 10,    // was 5 - more relevant past discussion
-            max_memories: 25,         // was 15 - room for preferences
-            max_goals: 8,             // was 5 - show active goals
-            max_constraints: 10,      // rejected approaches + past decisions
-            token_budget: 90000,      // was 24k - utilize 128K context (leaving 38K for output)
+            // Gemini 2.0 Flash has 1M context, but we keep budgets reasonable
+            // to avoid context bloat and maintain cache efficiency
+            max_recent_messages: 15,
+            max_summaries: 8,
+            max_semantic_hits: 10,
+            max_memories: 25,
+            max_goals: 8,
+            max_constraints: 10,
+            token_budget: 90000,
         }
     }
 }
@@ -164,11 +164,11 @@ impl AssembledContext {
         }
     }
 
-    /// Format context for DeepSeek with budget awareness
+    /// Format context with budget awareness
     ///
     /// IMPORTANT: Order is optimized for LLM KV caching (prefix matching).
-    /// DeepSeek caches prompt prefixes automatically - content that matches
-    /// previous requests costs 90% less. We order from MOST STABLE to LEAST:
+    /// LLMs cache prompt prefixes automatically - content that matches
+    /// previous requests costs less. We order from MOST STABLE to LEAST:
     ///
     /// STABLE (rarely change within session - high cache hit rate):
     ///   1. Corrections (rules - almost never change)
@@ -185,7 +185,7 @@ impl AssembledContext {
     ///   10. Recent messages (changes EVERY turn - MUST BE LAST)
     ///
     /// Skips code_compaction (OpenAI-specific) and code_index_hints (verbose).
-    pub fn format_for_deepseek(&self, budget: &super::context::DeepSeekBudget) -> String {
+    pub fn format_with_budget(&self, budget: &super::context::ContextBudget) -> String {
         let mut sections = Vec::new();
         let mut estimated_tokens = 0;
 

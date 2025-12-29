@@ -20,11 +20,11 @@ pub const MAX_GREP_MATCHES: usize = 20;
 /// Max diff files to include in excerpts
 pub const MAX_DIFF_FILES: usize = 10;
 
-/// Excerpt head size (chars)
-pub const EXCERPT_HEAD_CHARS: usize = 1200;
+/// Excerpt head size (chars) - kept small to minimize context burn
+pub const EXCERPT_HEAD_CHARS: usize = 500;
 
-/// Excerpt tail size (chars)
-pub const EXCERPT_TAIL_CHARS: usize = 800;
+/// Excerpt tail size (chars) - kept small to minimize context burn
+pub const EXCERPT_TAIL_CHARS: usize = 500;
 
 /// TTL for tool output artifacts (7 days)
 pub const TTL_TOOL_OUTPUT_SECS: i64 = 7 * 24 * 60 * 60;
@@ -76,13 +76,13 @@ pub const PROJECT_ARTIFACT_CAP_BYTES: i64 = 100 * 1024 * 1024;
 // Chain Reset Thresholds
 // ============================================================================
 
-/// Soft reset threshold (400k) - triggers if cache% is also low
-/// Prevents unnecessary resets when cache is working well
-pub const CHAIN_RESET_TOKEN_THRESHOLD: u32 = 400_000;
+/// Soft reset threshold (12k) - triggers if cache% is also low
+/// Keeps context tight to reduce token burn
+pub const CHAIN_RESET_TOKEN_THRESHOLD: u32 = 12_000;
 
-/// Hard reset ceiling (420k) - always reset regardless of cache%
-/// Quality guard: prevents silent truncation/degraded reasoning at context limits
-pub const CHAIN_RESET_HARD_CEILING: u32 = 420_000;
+/// Hard reset ceiling (15k) - always reset regardless of cache%
+/// Aggressive ceiling to prevent runaway context accumulation
+pub const CHAIN_RESET_HARD_CEILING: u32 = 15_000;
 
 /// Minimum cache percentage to avoid soft reset (30%)
 /// If cache% is above this, we don't soft-reset even if tokens are high

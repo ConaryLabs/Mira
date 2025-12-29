@@ -38,7 +38,7 @@ use uuid::Uuid;
 use crate::chat::context::MiraContext;
 use crate::core::SemanticSearch;
 
-pub use context::DeepSeekBudget;
+pub use context::ContextBudget;
 pub use types::{
     AssembledContext, ChatMessage, Checkpoint, CodeIndexFileHint, CodeIndexSymbolHint,
     SessionStats,

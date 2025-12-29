@@ -176,11 +176,20 @@ impl GeminiChatProvider {
             });
         }
 
-        // Add current user input
-        contents.push(GeminiContent {
-            role: "user".to_string(),
-            parts: vec![GeminiPart::Text { text: request.input.clone() }],
-        });
+        // Add current user input ONLY if not already the last message
+        // (build_fresh() may have already added it to messages)
+        let already_in_history = request
+            .messages
+            .last()
+            .map(|m| m.role.as_str() == "user" && m.content == request.input)
+            .unwrap_or(false);
+
+        if !already_in_history && !request.input.is_empty() {
+            contents.push(GeminiContent {
+                role: "user".to_string(),
+                parts: vec![GeminiPart::Text { text: request.input.clone() }],
+            });
+        }
 
         contents
     }

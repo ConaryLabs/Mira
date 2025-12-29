@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { orchestrationStore, type InstructionEntry, type McpHistoryEntry } from '$lib/stores/orchestration.svelte';
   import { sessionsStore, type SessionInfo, type PendingQuestion } from '$lib/stores/sessions.svelte';
+  import SessionOutputView from './SessionOutputView.svelte';
+  import HealthMonitor from './HealthMonitor.svelte';
 
   // State
   let activeSection = $state<'activity' | 'instructions' | 'sessions'>('instructions');
@@ -32,6 +34,12 @@
   let pendingQuestions = $derived(sessionsStore.questionsList);
   let sessionsConnected = $derived(sessionsStore.connected);
   let sessionCount = $derived(sessionsStore.activeCount);
+  let recentOutput = $derived(sessionsStore.recentOutput);
+
+  // Get output chunks for a specific session
+  function getSessionOutput(sessionId: string) {
+    return recentOutput.filter(chunk => chunk.session_id === sessionId);
+  }
 
   async function createInstruction() {
     if (!newInstruction.trim()) return;
@@ -301,6 +309,13 @@
                 {/if}
               </div>
             {/if}
+            <!-- Live output for running sessions -->
+            {#if session.status === 'running' || session.status === 'starting'}
+              {@const sessionChunks = getSessionOutput(session.session_id)}
+              {#if sessionChunks.length > 0}
+                <SessionOutputView chunks={sessionChunks} maxHeight="200px" />
+              {/if}
+            {/if}
           </div>
         {/each}
       {/if}
@@ -376,6 +391,11 @@
       {/if}
     </div>
   {:else}
+    <!-- Activity Section with Health Monitor -->
+    <div class="activity-section">
+      <HealthMonitor />
+    </div>
+
     <!-- MCP Activity list -->
     <div class="list-container">
       {#if mcpHistory.length === 0}
@@ -952,5 +972,10 @@
     font-size: 12px;
     color: var(--term-text);
     line-height: 1.4;
+  }
+
+  .activity-section {
+    padding: 8px;
+    border-bottom: 1px solid var(--term-border);
   }
 </style>

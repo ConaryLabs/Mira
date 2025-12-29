@@ -11,7 +11,7 @@ use anyhow::Result;
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 
-use crate::chat::session::{AssembledContext, DeepSeekBudget};
+use crate::chat::session::{AssembledContext, ContextBudget};
 
 /// Context loaded from Mira's persistent storage
 #[derive(Debug, Default, Clone)]
@@ -411,8 +411,8 @@ For the user's codebase, use read_file/glob/grep instead."#.to_string());
 /// Uses budget-aware formatting to keep context lean and prioritized.
 /// Wraps the context in clear markers so the model treats it as source of truth.
 pub fn format_orchestrator_context(context: &AssembledContext) -> String {
-    let budget = DeepSeekBudget::default();
-    let inner = context.format_for_deepseek(&budget);
+    let budget = ContextBudget::default();
+    let inner = context.format_with_budget(&budget);
     if inner.is_empty() {
         String::new()
     } else {
