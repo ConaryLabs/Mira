@@ -43,6 +43,7 @@ pub enum GeminiModel {
 
 impl GeminiModel {
     /// Get the model ID for the API
+    /// Using explicit Gemini 3 preview models (latest aliases still point to 2.5)
     pub fn model_id(&self) -> &'static str {
         match self {
             Self::Flash => "gemini-3-flash-preview",
@@ -52,28 +53,16 @@ impl GeminiModel {
 
     /// Select thinking level based on model and tool configuration.
     ///
-    /// Thinking levels (Flash only supports all, Pro only low/high):
-    /// - `minimal`: Minimal reasoning, fast responses (Flash only)
-    /// - `low`: Light reasoning with tools
-    /// - `medium`: Balanced reasoning (Flash only)
-    /// - `high`: Deep reasoning without tools
+    /// Thinking levels:
+    /// - Flash: minimal/low/medium/high (use medium as balanced default)
+    /// - Pro: low/high only
     ///
     /// Strategy:
-    /// - Flash with no tools: "high" for deep reasoning
-    /// - Flash with few tools (<=3): "minimal" for simple routing
-    /// - Flash with many tools: "low" for complex tool orchestration
-    /// - Pro always uses "low" with tools, "high" without
-    pub fn select_thinking_level(&self, has_tools: bool, tool_count: usize) -> &'static str {
+    /// - Flash: "medium" for balanced reasoning (works well for most tasks)
+    /// - Pro: "low" with tools, "high" without
+    pub fn select_thinking_level(&self, has_tools: bool, _tool_count: usize) -> &'static str {
         match self {
-            Self::Flash => {
-                if !has_tools {
-                    "high"
-                } else if tool_count <= 3 {
-                    "minimal" // Simple routing, fast
-                } else {
-                    "low" // Complex tool orchestration
-                }
-            }
+            Self::Flash => "medium", // Balanced default for Gemini 3 Flash
             Self::Pro => {
                 if has_tools { "low" } else { "high" }
             }
@@ -1349,16 +1338,10 @@ mod tests {
 
     #[test]
     fn test_thinking_level_selection() {
-        // Flash with no tools: high for deep reasoning
-        assert_eq!(GeminiModel::Flash.select_thinking_level(false, 0), "high");
-
-        // Flash with few tools: minimal for fast routing
-        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 1), "minimal");
-        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 3), "minimal");
-
-        // Flash with many tools: low for complex orchestration
-        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 4), "low");
-        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 10), "low");
+        // Flash always uses medium (balanced default)
+        assert_eq!(GeminiModel::Flash.select_thinking_level(false, 0), "medium");
+        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 1), "medium");
+        assert_eq!(GeminiModel::Flash.select_thinking_level(true, 10), "medium");
 
         // Pro: binary low/high only
         assert_eq!(GeminiModel::Pro.select_thinking_level(false, 0), "high");
@@ -1380,7 +1363,7 @@ mod tests {
         use super::super::MessageRole;
 
         let request = ChatRequest {
-            model: "gemini-3-pro".into(),
+            model: "gemini-2.5-pro".into(),
             system: "You are helpful".into(),
             messages: vec![
                 Message { role: MessageRole::User, content: "Hello".into() },

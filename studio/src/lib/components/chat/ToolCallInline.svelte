@@ -5,10 +5,15 @@
    * Shows tool calls inline in chat with:
    * - Collapsed: icon + name + summary + status
    * - Expanded: full arguments and output
+   *
+   * Integrates with artifact store for large outputs:
+   * - Shows "View Full" button when output is truncated
+   * - Opens artifact viewer with full content from store
    */
 
   import type { ToolCallResult, ToolCategory } from '$lib/api/client';
   import { layoutStore } from '$lib/stores/layout.svelte';
+  import { artifactStore, artifactViewer, ARTIFACT_SIZE_THRESHOLD } from '$lib/stores/artifacts.svelte';
   import DiffView from '../DiffView.svelte';
   import ToolArguments from './ToolArguments.svelte';
 
@@ -85,6 +90,62 @@
       duration_ms: result?.duration_ms,
     };
     navigator.clipboard.writeText(JSON.stringify(full, null, 2));
+  }
+
+  // Find matching artifact in store by source call ID
+  const matchingArtifact = $derived(
+    artifactStore.artifacts.find(a => a.sourceCallId === callId)
+  );
+
+  // Determine if we should show "View Full" button
+  const shouldShowViewFull = $derived(
+    result?.truncated ||
+    (result?.output && result.output.length > ARTIFACT_SIZE_THRESHOLD) ||
+    (result?.total_bytes && result.total_bytes > ARTIFACT_SIZE_THRESHOLD)
+  );
+
+  // Open full content in artifact viewer
+  function viewFull() {
+    if (matchingArtifact) {
+      artifactViewer.open(matchingArtifact);
+    } else if (result?.output) {
+      // Fallback: create temporary artifact from result
+      artifactViewer.openLegacy({
+        filename: getFilenameFromArgs(),
+        language: detectLanguage(),
+        code: result.output,
+      });
+    }
+  }
+
+  // Try to extract a filename from tool arguments
+  function getFilenameFromArgs(): string {
+    const path = args.path || args.file_path || args.file;
+    if (typeof path === 'string') {
+      return path.split('/').pop() || path;
+    }
+    return `${name} output`;
+  }
+
+  // Detect language from arguments or tool name
+  function detectLanguage(): string {
+    const path = args.path || args.file_path || args.file;
+    if (typeof path === 'string') {
+      const ext = path.split('.').pop()?.toLowerCase() || '';
+      const langMap: Record<string, string> = {
+        ts: 'typescript', tsx: 'typescript',
+        js: 'javascript', jsx: 'javascript',
+        rs: 'rust', py: 'python', go: 'go',
+        json: 'json', yaml: 'yaml', yml: 'yaml',
+        md: 'markdown', css: 'css', html: 'html',
+        svelte: 'svelte', sql: 'sql', sh: 'bash',
+      };
+      if (langMap[ext]) return langMap[ext];
+    }
+    // Default based on tool type
+    if (name.toLowerCase().includes('bash') || name === 'Bash') return 'bash';
+    if (name.toLowerCase().includes('grep') || name === 'Grep') return 'text';
+    return 'text';
   }
 </script>
 

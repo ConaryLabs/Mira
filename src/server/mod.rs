@@ -1419,11 +1419,12 @@ impl MiraServer {
         let limit = req.limit.unwrap_or(5) as i32;
 
         // Get pending instructions, prioritized by urgency
+        // Include global instructions (project_id IS NULL) plus project-specific ones
         let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String)>(
             r#"SELECT id, instruction, context, priority, created_at
                FROM instruction_queue
                WHERE status = 'pending'
-                 AND ($1 IS NULL OR project_id = $1)
+                 AND ($1 IS NULL OR project_id IS NULL OR project_id = $1)
                ORDER BY
                  CASE priority
                    WHEN 'urgent' THEN 1

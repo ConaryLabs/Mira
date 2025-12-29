@@ -112,17 +112,14 @@ impl TaskType {
     }
 
     /// Recommended Gemini model for this task type
+    ///
+    /// FLASH FOR EVERYTHING - Pro is 4x more expensive and hits daily limits fast.
+    /// Flash is highly capable for all task types. Only escalate to Pro when
+    /// actually orchestrating complex multi-step Claude Code sessions.
     pub fn recommended_model(&self) -> &'static str {
-        match self {
-            // Pro for complex reasoning tasks
-            TaskType::Planning => "pro",
-            TaskType::Debugging => "pro", // Complex problem solving
-            // Flash for quick, focused tasks
-            TaskType::Exploration => "flash",
-            TaskType::NewFeature => "flash",
-            TaskType::Refactoring => "flash",
-            TaskType::Research => "flash",
-        }
+        // Flash for all task types - Pro escalation happens dynamically
+        // based on actual tool usage (send_instruction with complex context)
+        "flash"
     }
 
     /// Recommended thinking level for this task type

@@ -41,6 +41,7 @@ pub use types::{DiffInfo, RichToolResult};
 
 use crate::chat::provider::ToolDefinition;
 use crate::chat::server::types::ToolCategory;
+use crate::spawner::ClaudeCodeSpawner;
 
 /// Get the category for a tool (for UI filtering)
 pub fn tool_category(name: &str) -> ToolCategory {
@@ -271,6 +272,8 @@ pub struct ToolExecutor {
     session: Option<Arc<SessionManager>>,
     /// File content cache for avoiding re-reads
     file_cache: FileCache,
+    /// Claude Code spawner for immediate instruction execution
+    spawner: Option<Arc<ClaudeCodeSpawner>>,
 }
 
 impl Default for ToolExecutor {
@@ -289,6 +292,7 @@ impl ToolExecutor {
             db: None,
             session: None,
             file_cache: FileCache::new(),
+            spawner: None,
         }
     }
 
@@ -313,6 +317,12 @@ impl ToolExecutor {
     /// Configure with session manager for file tracking
     pub fn with_session(mut self, session: Arc<SessionManager>) -> Self {
         self.session = Some(session);
+        self
+    }
+
+    /// Configure with Claude Code spawner for immediate instruction execution
+    pub fn with_spawner(mut self, spawner: Arc<ClaudeCodeSpawner>) -> Self {
+        self.spawner = Some(spawner);
         self
     }
 
@@ -581,6 +591,8 @@ impl ToolExecutor {
     fn orchestration_tools(&self) -> OrchestrationTools<'_> {
         OrchestrationTools {
             db: &self.db,
+            spawner: &self.spawner,
+            project_path: &self.project_path,
         }
     }
 }

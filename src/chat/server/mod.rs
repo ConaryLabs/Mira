@@ -293,7 +293,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/answer", post(handlers::answer_question_handler))
         .route("/api/sessions/terminate", post(handlers::terminate_session_handler))
         .route("/api/sessions/events", get(handlers::session_events_handler))
-        .route("/api/sessions/:id/stream", get(handlers::session_stream_handler))
+        .route("/api/sessions/{id}/stream", get(handlers::session_stream_handler))
         .layer(version_header)
         .layer(cors)
         .with_state(state)
@@ -333,7 +333,7 @@ pub fn create_spawner_router(state: SpawnerState) -> Router {
         .route("/api/sessions/answer", post(handlers::answer_question_handler))
         .route("/api/sessions/terminate", post(handlers::terminate_session_handler))
         .route("/api/sessions/events", get(handlers::session_events_handler))
-        .route("/api/sessions/:id/stream", get(handlers::session_stream_handler))
+        .route("/api/sessions/{id}/stream", get(handlers::session_stream_handler))
         .with_state(app_state)
 }
 

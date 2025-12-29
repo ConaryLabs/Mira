@@ -85,32 +85,33 @@ impl ModelSpec {
     }
 
     /// Gemini 3 Flash specification (default, cheap, fast)
+    /// Pro-level intelligence at Flash speed and pricing
     pub fn gemini_3_flash() -> Self {
         Self {
-            id: "gemini-3-flash-preview".into(),
+            id: "gemini-flash-latest".into(),
             display_name: "Gemini 3 Flash".into(),
             max_context_tokens: 1_000_000,
-            max_output_tokens: 65_536,
+            max_output_tokens: 64_000,
             default_output_tokens: 16_000,
             supports_tools: true,
-            supports_reasoning: true,  // Supports thinkingConfig
-            input_cost_per_million: 0.50,
-            output_cost_per_million: 3.00,
+            supports_reasoning: true,  // Supports thinkingConfig (low/high/medium/minimal)
+            input_cost_per_million: 0.50,   // $0.50/1M input
+            output_cost_per_million: 3.00,  // $3/1M output
         }
     }
 
     /// Gemini 3 Pro specification (complex reasoning, advanced planning)
     pub fn gemini_3_pro() -> Self {
         Self {
-            id: "gemini-3-pro-preview".into(),
+            id: "gemini-pro-latest".into(),
             display_name: "Gemini 3 Pro".into(),
             max_context_tokens: 1_000_000,
-            max_output_tokens: 65_536,
+            max_output_tokens: 64_000,
             default_output_tokens: 16_000,
             supports_tools: true,
-            supports_reasoning: true,  // Supports thinkingConfig
-            input_cost_per_million: 2.00,
-            output_cost_per_million: 12.00,
+            supports_reasoning: true,  // Supports thinkingConfig (low/high)
+            input_cost_per_million: 2.00,   // $2/1M input (<200k context)
+            output_cost_per_million: 12.00, // $12/1M output (<200k context)
         }
     }
 

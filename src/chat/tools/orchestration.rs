@@ -5,13 +5,19 @@
 //! - Send instructions for Claude Code to execute
 //! - Track instruction status
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
+use crate::spawner::{ClaudeCodeSpawner, SpawnConfig};
+
 /// Orchestration tools for managing Claude Code
 pub struct OrchestrationTools<'a> {
     pub db: &'a Option<SqlitePool>,
+    pub spawner: &'a Option<Arc<ClaudeCodeSpawner>>,
+    pub project_path: &'a str,
 }
 
 impl<'a> OrchestrationTools<'a> {
@@ -126,11 +132,48 @@ impl<'a> OrchestrationTools<'a> {
         .execute(db)
         .await?;
 
+        // Spawn Claude Code immediately if spawner is available
+        let mut session_id: Option<String> = None;
+        if let Some(spawner) = self.spawner {
+            // Build prompt with context if provided
+            let prompt = if let Some(ctx) = context {
+                format!("{}\n\nContext:\n{}", instruction, ctx)
+            } else {
+                instruction.to_string()
+            };
+
+            let config = SpawnConfig::new(self.project_path, prompt)
+                .with_instruction(&id);
+
+            match spawner.spawn(config).await {
+                Ok(sid) => {
+                    tracing::info!(
+                        instruction_id = %id,
+                        session_id = %sid,
+                        "Spawned Claude Code session for instruction"
+                    );
+                    session_id = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        instruction_id = %id,
+                        error = %e,
+                        "Failed to spawn Claude Code (instruction still queued)"
+                    );
+                }
+            }
+        }
+
         Ok(json!({
-            "status": "queued",
+            "status": if session_id.is_some() { "spawned" } else { "queued" },
             "instruction_id": id,
+            "session_id": session_id,
             "priority": priority,
-            "message": format!("Instruction queued. Claude Code will pick it up when checking for pending work.")
+            "message": if session_id.is_some() {
+                "Instruction queued and Claude Code session spawned.".to_string()
+            } else {
+                "Instruction queued. Claude Code will pick it up when checking for pending work.".to_string()
+            }
         }).to_string())
     }
 

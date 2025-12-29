@@ -175,12 +175,16 @@ async fn process_gemini_chat(
     let mut conversation_messages = fresh_content.messages;
 
     // Create tool executor
-    let mut executor = ToolExecutor::new();
+    let mut executor = ToolExecutor::new()
+        .with_project_path(request.project_path.clone());
     executor.cwd = project_path.clone();
     if let Some(db) = &state.db {
         executor = executor.with_db(db.clone());
     }
     executor = executor.with_semantic(state.semantic.clone());
+    if let Some(ref spawner) = state.spawner {
+        executor = executor.with_spawner(spawner.clone());
+    }
 
     // Tool validation schemas for auto-repair
     let tool_schemas = ToolSchemas::default();
