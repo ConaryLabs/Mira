@@ -41,6 +41,10 @@ enum Commands {
 enum HookAction {
     /// Handle PermissionRequest hooks
     Permission,
+    /// Legacy PostToolUse hook (no-op for compatibility)
+    Posttool,
+    /// Legacy PreToolUse hook (no-op for compatibility)
+    Pretool,
 }
 
 fn get_db_path() -> PathBuf {
@@ -133,6 +137,9 @@ async fn main() -> Result<()> {
         Some(Commands::Hook { action }) => match action {
             HookAction::Permission => {
                 mira::hooks::permission::run().await?;
+            }
+            HookAction::Posttool | HookAction::Pretool => {
+                // Legacy no-op hooks for compatibility
             }
         },
     }
