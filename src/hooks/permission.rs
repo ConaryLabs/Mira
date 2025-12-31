@@ -1,221 +1,69 @@
-//! Permission hook for Claude Code
-//!
-//! Reads PermissionRequest from stdin, checks against saved rules in the database,
-//! and outputs an allow decision if a matching rule is found.
+// src/hooks/permission.rs
+// Permission hook for Claude Code auto-approval
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
-use std::io::{self, Read};
+use crate::db::Database;
+use crate::hooks::{read_hook_input, write_hook_output};
+use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
-struct HookInput {
-    hook_event_name: String,
-    tool_name: Option<String>,
-    tool_input: Option<serde_json::Value>,
-    cwd: Option<String>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-#[allow(dead_code)] // Fields populated by sqlx FromRow
-struct PermissionRule {
-    id: String,
-    tool_name: String,
-    input_field: Option<String>,
-    input_pattern: Option<String>,
-    match_type: String,
-    scope: String,
-    project_id: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-struct HookOutput {
-    #[serde(rename = "hookSpecificOutput")]
-    hook_specific_output: HookSpecificOutput,
-}
-
-#[derive(Debug, Serialize)]
-struct HookSpecificOutput {
-    #[serde(rename = "hookEventName")]
-    hook_event_name: String,
-    decision: Decision,
-}
-
-#[derive(Debug, Serialize)]
-struct Decision {
-    behavior: String,
-}
-
+/// Run permission hook
 pub async fn run() -> Result<()> {
-    // Read stdin
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input)?;
+    let input = read_hook_input()?;
 
-    // Parse hook input
-    let hook_input: HookInput = match serde_json::from_str(&input) {
-        Ok(h) => h,
-        Err(_) => return Ok(()), // Invalid JSON, exit silently
-    };
+    // Extract tool info from hook input
+    let tool_name = input["tool_name"].as_str().unwrap_or("");
+    let tool_input = &input["tool_input"];
 
-    // Only process PermissionRequest events
-    if hook_input.hook_event_name != "PermissionRequest" {
-        return Ok(());
-    }
+    // Open database
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let db_path = home.join(".mira/mira.db");
+    let db = Database::open(&db_path)?;
 
-    let tool_name = match hook_input.tool_name {
-        Some(t) => t,
-        None => return Ok(()),
-    };
+    // Check for matching permission rule
+    let conn = db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT pattern, match_type FROM permission_rules WHERE tool_name = ?"
+    )?;
 
-    let tool_input = hook_input.tool_input.unwrap_or(serde_json::json!({}));
-    let cwd = hook_input.cwd;
+    let rules: Vec<(String, String)> = stmt
+        .query_map([tool_name], |row| Ok((row.get(0)?, row.get(1)?)))
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
 
-    // Determine input field and value based on tool type
-    let (input_field, input_value) = match tool_name.as_str() {
-        "Bash" => ("command", tool_input.get("command").and_then(|v| v.as_str())),
-        "Edit" | "Write" | "Read" => ("file_path", tool_input.get("file_path").and_then(|v| v.as_str())),
-        "Glob" | "Grep" => ("pattern", tool_input.get("pattern").and_then(|v| v.as_str())),
-        _ => (tool_name.as_str(), None),
-    };
+    // Check if any rule matches
+    for (pattern, match_type) in rules {
+        let input_str = serde_json::to_string(tool_input).unwrap_or_default();
 
-    // Connect to database
-    let db_path = dirs::home_dir()
-        .map(|h| h.join("Mira/data/mira.db"))
-        .expect("Could not find home directory");
-
-    if !db_path.exists() {
-        return Ok(()); // No database, exit silently
-    }
-
-    let database_url = format!("sqlite://{}", db_path.display());
-    let pool = match SqlitePool::connect(&database_url).await {
-        Ok(p) => p,
-        Err(_) => return Ok(()), // Can't connect, exit silently
-    };
-
-    // Get project_id if we have a cwd
-    let project_id: Option<i64> = if let Some(ref path) = cwd {
-        sqlx::query_scalar("SELECT id FROM projects WHERE path = ?")
-            .bind(path)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
-
-    // Query for matching rules (using runtime query to avoid sqlx offline cache)
-    let rules: Vec<PermissionRule> = sqlx::query_as::<_, PermissionRule>(
-        r#"
-        SELECT
-            id,
-            tool_name,
-            input_field,
-            input_pattern,
-            match_type,
-            scope,
-            project_id
-        FROM permission_rules
-        WHERE tool_name = ?
-          AND (
-            (scope = 'global' AND project_id IS NULL) OR
-            (scope = 'project' AND project_id = ?)
-          )
-        ORDER BY
-            CASE WHEN project_id IS NOT NULL THEN 0 ELSE 1 END,
-            CASE match_type
-                WHEN 'exact' THEN 0
-                WHEN 'prefix' THEN 1
-                WHEN 'glob' THEN 2
-                ELSE 3
-            END
-        "#,
-    )
-    .bind(&tool_name)
-    .bind(project_id)
-    .fetch_all(&pool)
-    .await
-    .unwrap_or_default();
-
-    // Check each rule for a match
-    for rule in rules {
-        // If rule has no pattern, it matches all operations for this tool
-        let pattern = match &rule.input_pattern {
-            Some(p) if !p.is_empty() => p,
-            _ => {
-                // No pattern means match all for this tool
-                update_usage(&pool, &rule.id).await;
-                output_allow();
-                return Ok(());
-            }
-        };
-
-        // Check if input field matches and we have a value
-        let rule_field = rule.input_field.as_deref().unwrap_or("");
-        if rule_field != input_field {
-            continue;
-        }
-
-        let value = match input_value {
-            Some(v) => v,
-            None => continue,
-        };
-
-        // Check match type
-        let matches = match rule.match_type.as_str() {
-            "exact" => value == pattern,
-            "prefix" => value.starts_with(pattern),
-            "glob" => glob_match(value, pattern),
+        let matches = match match_type.as_str() {
+            "exact" => input_str == pattern,
+            "prefix" => input_str.starts_with(&pattern),
+            "glob" => glob_match(&pattern, &input_str),
             _ => false,
         };
 
         if matches {
-            update_usage(&pool, &rule.id).await;
-            output_allow();
+            // Auto-approve
+            write_hook_output(&serde_json::json!({
+                "decision": "allow"
+            }));
             return Ok(());
         }
     }
 
-    // No matching rule - exit silently to let Claude Code prompt the user
+    // No matching rule - let Claude Code handle it
+    write_hook_output(&serde_json::json!({}));
     Ok(())
 }
 
-fn glob_match(value: &str, pattern: &str) -> bool {
-    // Simple glob matching - convert glob to regex
-    let regex_pattern = pattern
-        .replace('.', r"\.")
-        .replace('*', ".*")
-        .replace('?', ".");
-
-    regex::Regex::new(&format!("^{}$", regex_pattern))
-        .map(|re| re.is_match(value))
-        .unwrap_or(false)
-}
-
-async fn update_usage(pool: &SqlitePool, rule_id: &str) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let _ = sqlx::query(
-        "UPDATE permission_rules SET times_used = times_used + 1, last_used_at = ? WHERE id = ?"
-    )
-    .bind(now)
-    .bind(rule_id)
-    .execute(pool)
-    .await;
-}
-
-fn output_allow() {
-    let output = HookOutput {
-        hook_specific_output: HookSpecificOutput {
-            hook_event_name: "PermissionRequest".to_string(),
-            decision: Decision {
-                behavior: "allow".to_string(),
-            },
-        },
-    };
-    println!("{}", serde_json::to_string(&output).unwrap());
+/// Simple glob matching
+fn glob_match(pattern: &str, text: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if pattern.ends_with('*') {
+        let prefix = &pattern[..pattern.len() - 1];
+        return text.starts_with(prefix);
+    }
+    pattern == text
 }

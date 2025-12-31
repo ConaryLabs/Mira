@@ -25,14 +25,13 @@ tokio = { version = "1.38", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Database
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
-
-# Vector database
-qdrant-client = "1.16"
+# Database (rusqlite + sqlite-vec for embeddings)
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1.6"
+zerocopy = "0.7"
 
 # MCP Server
-rmcp = { version = "0.11", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
 schemars = "1"
 
 # HTTP server (for SSE transport)

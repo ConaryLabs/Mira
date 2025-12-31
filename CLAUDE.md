@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This project uses **Mira** - a persistent memory and intelligence layer via MCP.
+This project uses **Mira** - a persistent memory and code intelligence layer via MCP.
 
 ## Session Start
 
@@ -9,15 +9,29 @@ Call once at the start of every session:
 session_start(project_path="/home/peter/Mira")
 ```
 
-This single call sets the project, loads persona, corrections, goals, tasks, and recent context.
+## Available Tools
 
-All Mira documentation and usage guidance is stored in the database, not this file.
+| Tool | Description |
+|------|-------------|
+| `session_start` | Initialize session with project |
+| `remember` | Store facts, decisions, preferences |
+| `recall` | Search memories semantically |
+| `get_symbols` | Get symbols from a file |
+| `semantic_code_search` | Find code by meaning |
+| `index` | Index project code |
+| `task` | Manage tasks |
+| `goal` | Manage goals |
 
-## Permission Persistence
+## Build
 
-When the user approves a tool permission, call `save_permission()` to remember it:
+```bash
+cargo build --release
 ```
-save_permission(tool_name="Bash", input_field="command", input_pattern="cargo ", match_type="prefix")
-```
 
-This enables auto-approval in future sessions via the PermissionRequest hook.
+## Architecture
+
+- `src/db.rs` - SQLite + sqlite-vec database
+- `src/embeddings.rs` - Gemini embeddings API
+- `src/mcp/` - MCP server and tools
+- `src/indexer/` - Tree-sitter code parsing
+- `src/hooks/` - Claude Code hooks

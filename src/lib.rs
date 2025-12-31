@@ -1,16 +1,12 @@
 // src/lib.rs
-// Mira Power Suit - MCP Server for Claude Code
+// Mira - Memory and Intelligence Layer for Claude Code
 
-#![allow(clippy::collapsible_if)] // Nested ifs often clearer than let-chains
-#![allow(clippy::field_reassign_with_default)] // IndexStats built incrementally
-#![allow(clippy::type_complexity)] // Query result tuples are inherently complex
-#![allow(clippy::too_many_arguments)] // Parser walk functions need context
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
 
-pub mod chat;
-pub mod context;
-pub mod core;
+pub mod db;
+pub mod embeddings;
+pub mod hooks;
 pub mod indexer;
-pub mod orchestrator;
-pub mod server;
-pub mod spawner;
-pub mod tools;
+pub mod mcp;
