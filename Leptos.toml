@@ -1,0 +1,45 @@
+# Leptos.toml - cargo-leptos configuration for Mira Studio
+# https://github.com/leptos-rs/cargo-leptos
+
+[[workspace.members]]
+# The name used for the output binary
+output-name = "mira"
+
+# The server binary package
+bin-package = "mira-server"
+
+# The client WASM library package
+lib-package = "mira-app"
+
+# Build artifacts location
+site-root = "target/site"
+site-pkg-dir = "pkg"
+
+# Static assets
+assets-dir = "assets"
+
+# Style configuration (plain CSS, no Tailwind)
+style-file = "assets/style.css"
+
+# Binding for dev server (cargo leptos watch)
+site-addr = "127.0.0.1:3000"
+
+# Reload browser on changes
+reload-port = 3001
+
+# End-to-end tests (optional)
+# end2end-cmd = "npx playwright test"
+# end2end-dir = "end2end"
+
+# Build options
+[workspace.members.lib-features]
+
+[workspace.members.bin-features]
+
+# Environment variables for builds
+[workspace.members.env]
+LEPTOS_OUTPUT_NAME = "mira"
+LEPTOS_SITE_ROOT = "target/site"
+LEPTOS_SITE_PKG_DIR = "pkg"
+LEPTOS_SITE_ADDR = "127.0.0.1:3000"
+LEPTOS_RELOAD_PORT = "3001"

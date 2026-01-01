@@ -2,6 +2,7 @@
 // Claude Code hook handlers
 
 pub mod permission;
+pub mod session;
 
 use anyhow::Result;
 

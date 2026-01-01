@@ -413,6 +413,33 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// Get all preferences for a project
+    pub fn get_preferences(&self, project_id: Option<i64>) -> Result<Vec<MemoryFact>> {
+        let conn = self.conn();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+             FROM memory_facts
+             WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
+             ORDER BY category, created_at DESC"
+        )?;
+
+        let rows = stmt.query_map(params![project_id], |row| {
+            Ok(MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     /// Delete a memory by ID
     pub fn delete_memory(&self, id: i64) -> Result<bool> {
         let conn = self.conn();

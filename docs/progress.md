@@ -127,15 +127,16 @@ cargo build --release -p mira-server
 The binary is self-contained - assets and WASM are embedded via rust-embed.
 You can copy the binary anywhere and run it.
 
-## Remaining Work
-
 ### Phase 7: Terminal Mirror Enhancement
-- [ ] ANSI color parsing
-- [ ] Scrollback buffer
+- [x] ANSI color parsing (16 + 256 color support, bold/dim/italic/underline)
+- [x] Scrollback buffer (1000 lines with auto-scroll to bottom)
 
-### Phase 10: cargo-leptos Integration (Optional)
-- [ ] Replace wasm-pack with cargo-leptos
-- [ ] Hot reloading during development
+### Phase 10: cargo-leptos Integration
+- [x] Leptos.toml configuration for cargo-leptos
+- [x] Updated build-studio.sh with --leptos and --watch options
+- [x] Hot reloading support via `cargo leptos watch`
+
+## Remaining Work
 
 ### Deferred: Scout/Solve AI Pipeline
 - [ ] Scout mode (exploration/planning)

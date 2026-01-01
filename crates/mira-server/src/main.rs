@@ -48,6 +48,8 @@ enum Commands {
 enum HookAction {
     /// Handle PermissionRequest hooks
     Permission,
+    /// Handle SessionStart hooks - captures Claude's session_id
+    SessionStart,
     /// Legacy PostToolUse hook (no-op for compatibility)
     Posttool,
     /// Legacy PreToolUse hook (no-op for compatibility)
@@ -217,6 +219,9 @@ async fn main() -> Result<()> {
         Some(Commands::Hook { action }) => match action {
             HookAction::Permission => {
                 mira::hooks::permission::run().await?;
+            }
+            HookAction::SessionStart => {
+                mira::hooks::session::run()?;
             }
             HookAction::Posttool | HookAction::Pretool => {
                 // Legacy no-op hooks for compatibility
