@@ -252,6 +252,58 @@ pub enum WsEvent {
     },
     Ping,
     Pong,
+
+    // ═══════════════════════════════════════
+    // CHAT EVENTS (DeepSeek Reasoner)
+    // ═══════════════════════════════════════
+
+    /// Chat message from user started processing
+    ChatStart {
+        message: String,
+    },
+
+    /// Streaming content chunk from model
+    ChatChunk {
+        content: String,
+        model: String,
+    },
+
+    /// Chat completed with final response
+    ChatComplete {
+        content: String,
+        model: String,
+        usage: Option<ChatUsage>,
+    },
+
+    /// Chat error
+    ChatError {
+        message: String,
+    },
+
+    // ═══════════════════════════════════════
+    // CLAUDE CODE EVENTS
+    // ═══════════════════════════════════════
+
+    /// Claude Code instance spawned
+    ClaudeSpawned {
+        instance_id: String,
+        working_dir: String,
+    },
+
+    /// Claude Code instance stopped
+    ClaudeStopped {
+        instance_id: String,
+    },
+}
+
+/// Token usage statistics for chat
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub cache_hit_tokens: Option<u32>,
+    pub cache_miss_tokens: Option<u32>,
 }
 
 /// Client-to-server WebSocket message
@@ -264,6 +316,59 @@ pub enum WsCommand {
     Cancel,
     /// Ping for keepalive
     Ping,
+}
+
+// ═══════════════════════════════════════
+// CHAT API TYPES
+// ═══════════════════════════════════════
+
+/// Chat message role
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+/// Chat message for API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: ChatRole,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+/// Chat request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatRequest {
+    pub message: String,
+    #[serde(default)]
+    pub history: Vec<ChatMessage>,
+}
+
+/// Claude spawn request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeSpawnRequest {
+    pub initial_prompt: String,
+    pub working_directory: Option<String>,
+}
+
+/// Claude input request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeInputRequest {
+    pub message: String,
+}
+
+/// Claude spawn response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeSpawnResponse {
+    pub instance_id: String,
 }
 
 // ═══════════════════════════════════════

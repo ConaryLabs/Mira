@@ -1,0 +1,568 @@
+// src/web/deepseek.rs
+// DeepSeek API client for Reasoner (V3.2) with tool calling support
+
+use anyhow::{anyhow, Result};
+use futures::StreamExt;
+use reqwest_eventsource::{Event, EventSource};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::time::Instant;
+use tokio::sync::broadcast;
+use tracing::{debug, info, warn, error, instrument, Span};
+use uuid::Uuid;
+
+use mira_types::WsEvent;
+
+const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
+
+// ═══════════════════════════════════════
+// API TYPES
+// ═══════════════════════════════════════
+
+/// Message in a conversation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String, // "system" | "user" | "assistant" | "tool"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>, // Must preserve for multi-turn!
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>, // For tool responses
+}
+
+impl Message {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".into(),
+            content: Some(content.into()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".into(),
+            content: Some(content.into()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn assistant(content: Option<String>, reasoning: Option<String>) -> Self {
+        Self {
+            role: "assistant".into(),
+            content,
+            reasoning_content: reasoning,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".into(),
+            content: Some(content.into()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+        }
+    }
+}
+
+/// Tool call from the model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String, // "function"
+    pub function: FunctionCall,
+}
+
+/// Function call details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub name: String,
+    pub arguments: String, // JSON string
+}
+
+/// Tool definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tool {
+    #[serde(rename = "type")]
+    pub tool_type: String, // "function"
+    pub function: FunctionDef,
+}
+
+impl Tool {
+    pub fn function(name: impl Into<String>, description: impl Into<String>, parameters: Value) -> Self {
+        Self {
+            tool_type: "function".into(),
+            function: FunctionDef {
+                name: name.into(),
+                description: description.into(),
+                parameters,
+            },
+        }
+    }
+}
+
+/// Function definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionDef {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value, // JSON Schema
+}
+
+/// Chat completion request
+#[derive(Debug, Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<String>, // "auto" | "required" | "none"
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+}
+
+/// Streaming chunk
+#[derive(Debug, Deserialize)]
+struct ChatChunk {
+    choices: Vec<ChunkChoice>,
+    #[serde(default)]
+    usage: Option<Usage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChunkChoice {
+    delta: ChunkDelta,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ChunkDelta {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<ToolCallChunk>>,
+}
+
+/// Partial tool call in streaming
+#[derive(Debug, Deserialize)]
+struct ToolCallChunk {
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<FunctionChunk>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FunctionChunk {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+/// Usage statistics
+#[derive(Debug, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: Option<u32>,
+    #[serde(default)]
+    pub prompt_cache_miss_tokens: Option<u32>,
+}
+
+// ═══════════════════════════════════════
+// CLIENT
+// ═══════════════════════════════════════
+
+/// DeepSeek API client
+pub struct DeepSeekClient {
+    api_key: String,
+    client: reqwest::Client,
+    ws_tx: broadcast::Sender<WsEvent>,
+}
+
+/// Result of a chat completion
+pub struct ChatResult {
+    pub request_id: String,
+    pub content: Option<String>,
+    pub reasoning_content: Option<String>,
+    pub tool_calls: Option<Vec<ToolCall>>,
+    pub usage: Option<Usage>,
+    pub duration_ms: u64,
+}
+
+impl DeepSeekClient {
+    /// Create a new DeepSeek client
+    pub fn new(api_key: String, ws_tx: broadcast::Sender<WsEvent>) -> Self {
+        Self {
+            api_key,
+            client: reqwest::Client::new(),
+            ws_tx,
+        }
+    }
+
+    /// Chat with streaming, returns the complete response
+    /// Broadcasts ReasonerThinking and ChatChunk events via WebSocket
+    #[instrument(skip(self, messages, tools), fields(request_id, model = "deepseek-reasoner", message_count = messages.len()))]
+    pub async fn chat(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<Tool>>,
+    ) -> Result<ChatResult> {
+        let request_id = Uuid::new_v4().to_string();
+        let start_time = Instant::now();
+
+        // Record request ID in span
+        Span::current().record("request_id", &request_id);
+
+        info!(
+            request_id = %request_id,
+            message_count = messages.len(),
+            tool_count = tools.as_ref().map(|t| t.len()).unwrap_or(0),
+            "Starting DeepSeek chat request"
+        );
+
+        let request = ChatRequest {
+            model: "deepseek-reasoner".into(),
+            messages,
+            tools,
+            tool_choice: Some("auto".into()),
+            stream: true,
+            max_tokens: Some(8192),
+        };
+
+        debug!(request_id = %request_id, "DeepSeek request: {:?}", serde_json::to_string(&request)?);
+
+        let request_builder = self
+            .client
+            .post(DEEPSEEK_API_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request);
+
+        // Stream the response using EventSource
+        let mut es = match EventSource::new(request_builder) {
+            Ok(es) => es,
+            Err(e) => {
+                error!(request_id = %request_id, error = %e, "Failed to create EventSource");
+                return Err(anyhow!("Failed to create EventSource: {}", e));
+            }
+        };
+
+        debug!(request_id = %request_id, "DeepSeek stream opened");
+
+        let mut full_content = String::new();
+        let mut full_reasoning = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut usage: Option<Usage> = None;
+        let mut chunk_count = 0u32;
+
+        while let Some(event) = es.next().await {
+            match event {
+                Ok(Event::Open) => {
+                    debug!(request_id = %request_id, "DeepSeek SSE connection opened");
+                }
+                Ok(Event::Message(msg)) => {
+                    if msg.data == "[DONE]" {
+                        debug!(
+                            request_id = %request_id,
+                            chunks = chunk_count,
+                            duration_ms = start_time.elapsed().as_millis(),
+                            "DeepSeek stream complete"
+                        );
+                        break;
+                    }
+
+                    chunk_count += 1;
+                    let chunk: ChatChunk = match serde_json::from_str(&msg.data) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            warn!(
+                                request_id = %request_id,
+                                error = %e,
+                                chunk = chunk_count,
+                                "Failed to parse chunk"
+                            );
+                            debug!(request_id = %request_id, raw_data = %msg.data, "Raw chunk data");
+                            continue;
+                        }
+                    };
+
+                    // Capture usage from final chunk
+                    if let Some(u) = chunk.usage {
+                        info!(
+                            request_id = %request_id,
+                            prompt_tokens = u.prompt_tokens,
+                            completion_tokens = u.completion_tokens,
+                            cache_hit = ?u.prompt_cache_hit_tokens,
+                            cache_miss = ?u.prompt_cache_miss_tokens,
+                            "DeepSeek usage stats"
+                        );
+                        usage = Some(u);
+                    }
+
+                    for choice in chunk.choices {
+                        // Stream reasoning content
+                        if let Some(reasoning) = choice.delta.reasoning_content {
+                            if !reasoning.is_empty() {
+                                full_reasoning.push_str(&reasoning);
+                                // Broadcast thinking to UI
+                                let _ = self.ws_tx.send(WsEvent::Thinking {
+                                    content: reasoning,
+                                    phase: mira_types::ThinkingPhase::Analyzing,
+                                });
+                            }
+                        }
+
+                        // Stream content
+                        if let Some(content) = choice.delta.content {
+                            if !content.is_empty() {
+                                full_content.push_str(&content);
+                                // Broadcast content chunk to UI
+                                let _ = self.ws_tx.send(WsEvent::TerminalOutput {
+                                    content,
+                                    is_stderr: false,
+                                });
+                            }
+                        }
+
+                        // Accumulate tool calls
+                        if let Some(tc_chunks) = choice.delta.tool_calls {
+                            for tc_chunk in tc_chunks {
+                                // Ensure we have space for this tool call
+                                while tool_calls.len() <= tc_chunk.index {
+                                    tool_calls.push(ToolCall {
+                                        id: String::new(),
+                                        call_type: "function".into(),
+                                        function: FunctionCall {
+                                            name: String::new(),
+                                            arguments: String::new(),
+                                        },
+                                    });
+                                }
+
+                                let tc = &mut tool_calls[tc_chunk.index];
+
+                                if let Some(id) = tc_chunk.id {
+                                    tc.id = id;
+                                }
+                                if let Some(func) = tc_chunk.function {
+                                    if let Some(name) = func.name {
+                                        tc.function.name = name;
+                                    }
+                                    if let Some(args) = func.arguments {
+                                        tc.function.arguments.push_str(&args);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        request_id = %request_id,
+                        error = ?e,
+                        chunks_received = chunk_count,
+                        "DeepSeek stream error"
+                    );
+                    break;
+                }
+            }
+        }
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        // Log tool calls if any
+        if !tool_calls.is_empty() {
+            info!(
+                request_id = %request_id,
+                tool_count = tool_calls.len(),
+                tools = ?tool_calls.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
+                "DeepSeek requested tool calls"
+            );
+        }
+
+        // Broadcast tool calls to UI
+        for tc in &tool_calls {
+            let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
+            debug!(
+                request_id = %request_id,
+                tool = %tc.function.name,
+                call_id = %tc.id,
+                args = %args,
+                "Tool call"
+            );
+            let _ = self.ws_tx.send(WsEvent::ToolStart {
+                tool_name: tc.function.name.clone(),
+                arguments: args,
+                call_id: tc.id.clone(),
+            });
+        }
+
+        info!(
+            request_id = %request_id,
+            duration_ms = duration_ms,
+            content_len = full_content.len(),
+            reasoning_len = full_reasoning.len(),
+            tool_calls = tool_calls.len(),
+            "DeepSeek chat complete"
+        );
+
+        Ok(ChatResult {
+            request_id,
+            content: if full_content.is_empty() {
+                None
+            } else {
+                Some(full_content)
+            },
+            reasoning_content: if full_reasoning.is_empty() {
+                None
+            } else {
+                Some(full_reasoning)
+            },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+            usage,
+            duration_ms,
+        })
+    }
+}
+
+// ═══════════════════════════════════════
+// TOOL DEFINITIONS
+// ═══════════════════════════════════════
+
+/// Get the Mira tools available to DeepSeek
+pub fn mira_tools() -> Vec<Tool> {
+    vec![
+        Tool::function(
+            "recall_memories",
+            "Search semantic memory for relevant context, past decisions, and project knowledge",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language query to search memories"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default 5)",
+                        "default": 5
+                    }
+                },
+                "required": ["query"]
+            }),
+        ),
+        Tool::function(
+            "search_code",
+            "Semantic code search over the project codebase",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language description of code to find"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Filter by programming language (e.g., 'rust', 'python')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default 10)",
+                        "default": 10
+                    }
+                },
+                "required": ["query"]
+            }),
+        ),
+        Tool::function(
+            "list_tasks",
+            "Get current tasks and their status for the project",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed", "blocked"],
+                        "description": "Filter by task status"
+                    }
+                },
+                "required": []
+            }),
+        ),
+        Tool::function(
+            "list_goals",
+            "Get project goals and their progress",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["planning", "in_progress", "blocked", "completed", "abandoned"],
+                        "description": "Filter by goal status"
+                    }
+                },
+                "required": []
+            }),
+        ),
+        Tool::function(
+            "spawn_claude",
+            "Start a Claude Code instance for file/terminal work. Returns an instance ID for subsequent interactions.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "initial_prompt": {
+                        "type": "string",
+                        "description": "Initial task or question for Claude Code"
+                    },
+                    "working_directory": {
+                        "type": "string",
+                        "description": "Working directory for Claude Code (defaults to project root)"
+                    }
+                },
+                "required": ["initial_prompt"]
+            }),
+        ),
+        Tool::function(
+            "send_to_claude",
+            "Send a message to a running Claude Code instance",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "instance_id": {
+                        "type": "string",
+                        "description": "The Claude Code instance ID from spawn_claude"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message to send to Claude Code"
+                    }
+                },
+                "required": ["instance_id", "message"]
+            }),
+        ),
+    ]
+}

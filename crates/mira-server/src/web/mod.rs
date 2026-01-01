@@ -2,7 +2,11 @@
 // Web server layer for Mira Studio
 
 pub mod api;
+pub mod chat;
+pub mod claude;
+pub mod claude_api;
 pub mod components;
+pub mod deepseek;
 pub mod embedded;
 pub mod state;
 pub mod ws;
@@ -41,6 +45,14 @@ pub fn create_router(state: AppState) -> Router {
         .route("/project/set", post(api::set_project))
         // MCP → WebSocket bridge
         .route("/broadcast", post(api::broadcast_event))
+        // Chat with DeepSeek Reasoner
+        .route("/chat", post(api::chat))
+        // Test endpoint for debugging (returns detailed JSON)
+        .route("/chat/test", post(api::test_chat))
+        // Claude Code management
+        .route("/claude", post(api::spawn_claude))
+        .route("/claude/{id}", get(api::get_claude_status).delete(api::kill_claude))
+        .route("/claude/{id}/input", post(api::send_claude_input))
         .with_state(state.clone());
 
     Router::new()
@@ -63,6 +75,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/memories", get(embedded::index_html))
         .route("/code", get(embedded::index_html))
         .route("/tasks", get(embedded::index_html))
+        .route("/chat", get(embedded::index_html))
 
         .layer(cors)
         .layer(TraceLayer::new_for_http())

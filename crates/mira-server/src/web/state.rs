@@ -6,6 +6,8 @@ use tokio::sync::{broadcast, RwLock};
 
 use crate::db::Database;
 use crate::embeddings::Embeddings;
+use crate::web::claude::ClaudeManager;
+use crate::web::deepseek::DeepSeekClient;
 use mira_types::{ProjectContext, WsEvent};
 
 /// Shared application state
@@ -25,6 +27,12 @@ pub struct AppState {
 
     /// Current MCP session ID (shared with MCP server)
     pub session_id: Arc<RwLock<Option<String>>>,
+
+    /// DeepSeek client for chat (Reasoner)
+    pub deepseek: Option<Arc<DeepSeekClient>>,
+
+    /// Claude Code instance manager
+    pub claude_manager: Arc<ClaudeManager>,
 }
 
 impl AppState {
@@ -32,12 +40,21 @@ impl AppState {
     pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
         let (ws_tx, _) = broadcast::channel(256);
 
+        // Initialize DeepSeek client if API key is available
+        let deepseek = std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx.clone())));
+
+        let claude_manager = Arc::new(ClaudeManager::new(ws_tx.clone()));
+
         Self {
             db,
             embeddings,
             ws_tx,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
+            deepseek,
+            claude_manager,
         }
     }
 
@@ -48,12 +65,21 @@ impl AppState {
         ws_tx: broadcast::Sender<WsEvent>,
         session_id: Arc<RwLock<Option<String>>>,
     ) -> Self {
+        // Initialize DeepSeek client if API key is available
+        let deepseek = std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx.clone())));
+
+        let claude_manager = Arc::new(ClaudeManager::new(ws_tx.clone()));
+
         Self {
             db,
             embeddings,
             ws_tx,
             project: Arc::new(RwLock::new(None)),
             session_id,
+            deepseek,
+            claude_manager,
         }
     }
 
