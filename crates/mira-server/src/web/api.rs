@@ -605,16 +605,16 @@ pub async fn set_project(
 
     let name = req.get("name").and_then(|v| v.as_str());
 
-    // Get or create project
-    let project_id = match state.db.get_or_create_project(path, name) {
-        Ok(id) => id,
+    // Get or create project (now returns (id, detected_name))
+    let (project_id, project_name) = match state.db.get_or_create_project(path, name) {
+        Ok(result) => result,
         Err(e) => return Json(ApiResponse::err(e.to_string())),
     };
 
     let project = ProjectContext {
         id: project_id,
         path: path.to_string(),
-        name: name.map(|s| s.to_string()),
+        name: project_name,
     };
 
     state.set_project(project.clone()).await;

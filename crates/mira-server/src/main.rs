@@ -164,7 +164,7 @@ async fn run_index(path: Option<PathBuf>) -> Result<()> {
         .map(|key| Arc::new(Embeddings::new(key)));
 
     // Get or create project
-    let project_id = db.get_or_create_project(
+    let (project_id, _project_name) = db.get_or_create_project(
         path.to_string_lossy().as_ref(),
         path.file_name().and_then(|n| n.to_str()),
     )?;

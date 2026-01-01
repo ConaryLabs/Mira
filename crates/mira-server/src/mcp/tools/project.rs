@@ -10,8 +10,8 @@ pub async fn session_start(
     name: Option<String>,
     session_id: Option<String>,
 ) -> Result<String, String> {
-    // Set project
-    let project_id = server
+    // Set project - now returns (id, detected_name)
+    let (project_id, project_name) = server
         .db
         .get_or_create_project(&project_path, name.as_deref())
         .map_err(|e| e.to_string())?;
@@ -19,7 +19,7 @@ pub async fn session_start(
     let ctx = ProjectContext {
         id: project_id,
         path: project_path.clone(),
-        name: name.clone(),
+        name: project_name.clone(),
     };
 
     *server.project.write().await = Some(ctx);
@@ -29,9 +29,12 @@ pub async fn session_start(
     server.db.create_session(&sid, Some(project_id)).map_err(|e| e.to_string())?;
     *server.session_id.write().await = Some(sid.clone());
 
+    // Detect project type
+    let project_type = detect_project_type(&project_path);
+
     // Build response with context
-    let mut response = format!("Project: {} ({})\n", name.as_deref().unwrap_or("unnamed"),
-        if project_path.contains("Mira") { "rust" } else { "unknown" });
+    let display_name = project_name.as_deref().unwrap_or("unnamed");
+    let mut response = format!("Project: {} ({})\n", display_name, project_type);
 
     // Load recent memories
     let memories = server
@@ -55,13 +58,33 @@ pub async fn session_start(
     Ok(response)
 }
 
+/// Detect project type from path
+fn detect_project_type(path: &str) -> &'static str {
+    use std::path::Path;
+    let p = Path::new(path);
+
+    if p.join("Cargo.toml").exists() {
+        "rust"
+    } else if p.join("package.json").exists() {
+        "node"
+    } else if p.join("pyproject.toml").exists() || p.join("setup.py").exists() {
+        "python"
+    } else if p.join("go.mod").exists() {
+        "go"
+    } else if p.join("pom.xml").exists() || p.join("build.gradle").exists() {
+        "java"
+    } else {
+        "unknown"
+    }
+}
+
 /// Set active project
 pub async fn set_project(
     server: &MiraServer,
     project_path: String,
     name: Option<String>,
 ) -> Result<String, String> {
-    let project_id = server
+    let (project_id, project_name) = server
         .db
         .get_or_create_project(&project_path, name.as_deref())
         .map_err(|e| e.to_string())?;
@@ -69,16 +92,13 @@ pub async fn set_project(
     let ctx = ProjectContext {
         id: project_id,
         path: project_path.clone(),
-        name: name.clone(),
+        name: project_name.clone(),
     };
 
     *server.project.write().await = Some(ctx);
 
-    Ok(format!(
-        "Project set: {} (id: {})",
-        name.as_deref().unwrap_or(&project_path),
-        project_id
-    ))
+    let display_name = project_name.as_deref().unwrap_or(&project_path);
+    Ok(format!("Project set: {} (id: {})", display_name, project_id))
 }
 
 /// Get current project
