@@ -88,6 +88,9 @@ tokio-stream = "0.1"
 pdf-extract = "0.10"
 pulldown-cmark = "0.13"
 
+# Asset embedding
+rust-embed = "8"
+
 # Additional utilities
 glob = "0.3"
 urlencoding = "2.1"

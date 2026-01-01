@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod components;
+pub mod embedded;
 pub mod state;
 pub mod ws;
 
@@ -11,7 +12,6 @@ use axum::{
     routing::{get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use crate::web::state::AppState;
@@ -53,18 +53,16 @@ pub fn create_router(state: AppState) -> Router {
         // WebSocket for Ghost Mode
         .route("/ws", get(ws::handler))
 
-        // Static assets
-        .nest_service("/assets", ServeDir::new("assets"))
+        // Embedded static assets (single binary distribution)
+        .nest_service("/assets", embedded::EmbeddedAssets)
+        .nest_service("/pkg", embedded::EmbeddedPkg)
 
-        // WASM pkg files
-        .nest_service("/pkg", ServeDir::new("pkg"))
-
-        // Leptos SSR pages - fallback to home for now
-        .route("/", get(api::home))
-        .route("/ghost", get(api::home))
-        .route("/memories", get(api::home))
-        .route("/code", get(api::home))
-        .route("/tasks", get(api::home))
+        // SPA routes - all serve index.html, client-side routing handles the rest
+        .route("/", get(embedded::index_html))
+        .route("/ghost", get(embedded::index_html))
+        .route("/memories", get(embedded::index_html))
+        .route("/code", get(embedded::index_html))
+        .route("/tasks", get(embedded::index_html))
 
         .layer(cors)
         .layer(TraceLayer::new_for_http())

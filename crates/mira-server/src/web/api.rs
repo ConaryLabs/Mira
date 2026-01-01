@@ -3,7 +3,7 @@
 
 use axum::{
     extract::{Path, State},
-    response::{Html, IntoResponse},
+    response::IntoResponse,
     Json,
 };
 use mira_types::{
@@ -23,100 +23,6 @@ pub async fn health() -> impl IntoResponse {
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION")
     }))
-}
-
-/// Serve the WASM app HTML shell
-/// Falls back to static HTML if WASM is not built
-pub async fn home() -> impl IntoResponse {
-    // Check if WASM files exist
-    let wasm_exists = std::path::Path::new("pkg/mira_app_bg.wasm").exists();
-
-    if wasm_exists {
-        // Serve the WASM app
-        Html(r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>Mira Studio</title>
-    <meta name="description" content="Memory and Intelligence Layer for Claude Code"/>
-    <link rel="stylesheet" href="/assets/style.css"/>
-</head>
-<body class="bg-background text-foreground">
-    <script type="module">
-        import init from '/pkg/mira_app.js';
-        init('/pkg/mira_app_bg.wasm');
-    </script>
-    <noscript>
-        <div style="padding: 2rem; text-align: center;">
-            <h1>Mira Studio requires JavaScript</h1>
-            <p>Please enable JavaScript to use this application.</p>
-        </div>
-    </noscript>
-</body>
-</html>"#)
-    } else {
-        // Fallback to static HTML
-        Html(r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mira Studio</title>
-    <link rel="stylesheet" href="/assets/style.css">
-</head>
-<body class="bg-background text-foreground">
-    <nav class="border-b border-border px-4 py-3 flex items-center gap-6">
-        <a href="/" class="text-accent font-bold text-lg">Mira Studio</a>
-        <div class="flex gap-4 text-sm">
-            <a href="/ghost" class="hover:text-accent">Ghost Mode</a>
-            <a href="/memories" class="hover:text-accent">Memories</a>
-            <a href="/code" class="hover:text-accent">Code</a>
-            <a href="/tasks" class="hover:text-accent">Tasks</a>
-        </div>
-    </nav>
-
-    <main class="flex-1 p-4">
-        <div class="max-w-4xl mx-auto py-12 text-center">
-            <h1 class="text-4xl font-bold text-accent mb-4">Mira Studio</h1>
-            <p class="text-muted mb-8">Memory and Intelligence Layer for Claude Code</p>
-
-            <div class="grid grid-cols-2 gap-4 max-w-2xl mx-auto">
-                <a href="/ghost" class="card transition-colors">
-                    <h3 class="text-lg font-semibold mb-2">Ghost Mode</h3>
-                    <p class="text-sm text-muted">Real-time agent reasoning visualization</p>
-                </a>
-                <a href="/memories" class="card transition-colors">
-                    <h3 class="text-lg font-semibold mb-2">Memories</h3>
-                    <p class="text-sm text-muted">Semantic memory storage and search</p>
-                </a>
-                <a href="/code" class="card transition-colors">
-                    <h3 class="text-lg font-semibold mb-2">Code Intel</h3>
-                    <p class="text-sm text-muted">Code symbols and semantic search</p>
-                </a>
-                <a href="/tasks" class="card transition-colors">
-                    <h3 class="text-lg font-semibold mb-2">Tasks</h3>
-                    <p class="text-sm text-muted">Goals and task management</p>
-                </a>
-            </div>
-
-            <div class="mt-12 p-4 bg-card rounded-lg border border-border">
-                <h3 class="text-sm text-muted mb-2">Server Status</h3>
-                <p class="text-success">Connected</p>
-                <p class="text-xs text-muted mt-2">
-                    <a href="/health" class="hover:text-accent">/health</a> |
-                    <a href="/api/memories" class="hover:text-accent">/api/memories</a> |
-                    <a href="/ws" class="hover:text-accent">/ws</a>
-                </p>
-                <p class="text-xs text-warning mt-2">
-                    WASM frontend not built. Run: wasm-pack build --target web crates/mira-app -d ../../pkg
-                </p>
-            </div>
-        </div>
-    </main>
-</body>
-</html>"#)
-    }
 }
 
 // ═══════════════════════════════════════

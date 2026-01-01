@@ -62,6 +62,19 @@ Mira Studio is a Rust-native web frontend for Mira, built with Leptos (WASM). It
 - [x] `.env` file loading (`~/.mira/.env` and project root)
 - [ ] Approve/Edit/Reject buttons for diffs (deferred)
 
+### Phase 8: Session-Aware Event History
+- [x] `tool_history` table with session_id for event persistence
+- [x] `session_history` MCP tool (current, list_sessions, get_history)
+- [x] Shared session_id between MCP and web server
+- [x] Event replay on Ghost Mode connect (last 50 events)
+- [x] WebSocket sync protocol for reconnection
+- [x] Exponential backoff reconnection (1s → 30s)
+
+### Phase 9: Single Binary Packaging
+- [x] rust-embed for assets (`web/embedded.rs`)
+- [x] Embed WASM in server binary (24MB self-contained)
+- [x] Updated build script with correct build order
+
 ## Architecture
 
 ```
@@ -78,6 +91,7 @@ Mira Studio is a Rust-native web frontend for Mira, built with Leptos (WASM). It
 │   │       │   ├── mod.rs  # Router
 │   │       │   ├── api.rs  # REST endpoints + /api/broadcast
 │   │       │   ├── ws.rs   # WebSocket handler
+│   │       │   ├── embedded.rs # rust-embed assets (single binary)
 │   │       │   └── state.rs# AppState
 │   │       └── ...
 │   └── mira-app/           # WASM frontend
@@ -99,16 +113,19 @@ Browser ← WebSocket ← ws.rs ← AppState.broadcast() ←──────�
 ## Running
 
 ```bash
-# Build everything
+# Build everything (creates single 24MB binary)
 ./build-studio.sh
 
-# Or manually:
+# Or manually (order matters - WASM must be built first):
 wasm-pack build --target web crates/mira-app --out-dir ../../pkg
-cargo build --release
+cargo build --release -p mira-server
 
-# Run web server
+# Run web server (no external files needed)
 ./target/release/mira web --port 3000
 ```
+
+The binary is self-contained - assets and WASM are embedded via rust-embed.
+You can copy the binary anywhere and run it.
 
 ## Remaining Work
 
@@ -116,23 +133,9 @@ cargo build --release
 - [ ] ANSI color parsing
 - [ ] Scrollback buffer
 
-### Phase 8: Session-Aware Event History
-- [x] Add `sessions` table (id, started_at, project_path, summary) - already existed
-- [x] Add `tool_history` table (id, session_id, tool_name, arguments, result_summary, success)
-- [x] Persist events on broadcast (write to DB alongside WebSocket send)
-- [x] Load session history on Ghost Mode connect (replay up to 50 recent events)
-- [x] Add `session_history` MCP tool (actions: current, list_sessions, get_history)
-- [x] Shared session_id between MCP server and web server
-- [x] Optional session_id parameter in session_start for Claude Code correlation
-- [x] Client reconnection with event replay (Sync command)
-- [x] Sync protocol (`{ "sync": last_event_id }`)
-- [x] Exponential backoff reconnection (1s, 2s, 4s... max 30s)
-- [x] Client tracks last event_id from replayed events
-
-### Phase 9: Single Binary Packaging
-- [ ] rust-embed for assets
-- [ ] Embed WASM in server binary
-- [ ] cargo-leptos integration (optional)
+### Phase 10: cargo-leptos Integration (Optional)
+- [ ] Replace wasm-pack with cargo-leptos
+- [ ] Hot reloading during development
 
 ### Deferred: Scout/Solve AI Pipeline
 - [ ] Scout mode (exploration/planning)
