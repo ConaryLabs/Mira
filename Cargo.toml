@@ -1,105 +1,11 @@
 [workspace]
-members = ["."]
+members = [
+    "crates/mira-types",
+    "crates/mira-server",
+    "crates/mira-app",
+]
 resolver = "2"
 
-[package]
-name = "mira"
-version = "2.0.0"
+[workspace.package]
 edition = "2024"
 rust-version = "1.92"
-description = "Memory and Intelligence Layer for Claude Code"
-
-[lib]
-name = "mira"
-path = "src/lib.rs"
-
-[[bin]]
-name = "mira"
-path = "src/main.rs"
-
-[dependencies]
-# Async runtime
-tokio = { version = "1.38", features = ["full"] }
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Database (rusqlite + sqlite-vec for embeddings)
-rusqlite = { version = "0.32", features = ["bundled"] }
-sqlite-vec = "0.1.6"
-zerocopy = "0.7"
-
-# MCP Server
-rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
-schemars = "1"
-
-# HTTP server (for SSE transport)
-axum = "0.8"
-tower = "0.5"
-
-# CLI
-clap = { version = "4.4", features = ["derive", "env"] }
-
-# Core utilities
-anyhow = "1.0"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-uuid = { version = "1.8", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
-rand = "0.9"
-
-# HTTP client (for Gemini embeddings API)
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "multipart"] }
-mime_guess = "2.0"
-
-# Code parsing (tree-sitter for multi-language support)
-tree-sitter = "0.25"
-tree-sitter-rust = "0.24"
-tree-sitter-python = "0.23"
-tree-sitter-typescript = "0.23"
-tree-sitter-javascript = "0.23"
-
-# Git operations
-git2 = "0.20"
-
-# File system utilities
-walkdir = "2.5"
-notify = "8.0"
-ignore = "0.4"
-libc = "0.2"
-md5 = "0.8.0"
-dirs = "6.0.0"
-regex = "1.12.2"
-tower-http = { version = "0.6.8", features = ["trace", "timeout", "cors", "set-header"] }
-tree-sitter-go = "0.25.0"
-futures = "0.3.31"
-async-stream = "0.3"
-tokio-stream = "0.1"
-
-# Document processing
-pdf-extract = "0.10"
-pulldown-cmark = "0.13"
-
-# Chat module dependencies
-glob = "0.3"
-urlencoding = "2.1"
-similar = "2.6"
-dotenvy = "0.15.7"
-toml = "0.8"
-once_cell = "1.21"
-async-trait = "0.1"
-thiserror = "2.0"
-
-# Core utilities (previously in mira-core)
-sha2 = "0.10"
-tokio-util = "0.7.17"
-url = "2.5.7"
-reqwest-eventsource = "0.6.0"
-
-[dev-dependencies]
-tempfile = "3.8"
-dotenv = "0.15"
-tower = { version = "0.5", features = ["util"] }
-hyper = "1.0"
-http-body-util = "0.1"

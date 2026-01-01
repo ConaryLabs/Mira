@@ -10,3 +10,4 @@ pub mod embeddings;
 pub mod hooks;
 pub mod indexer;
 pub mod mcp;
+pub mod web;

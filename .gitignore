@@ -2,6 +2,7 @@
 /target
 /debug
 /release
+/pkg
 
 # Environment and config
 .env

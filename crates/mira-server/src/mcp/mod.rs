@@ -6,9 +6,14 @@ pub mod tools;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{ServerCapabilities, ServerInfo},
-    schemars, tool, tool_router, ServerHandler,
+    handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
+    model::{
+        CallToolRequestParam, CallToolResult, ListToolsResult, PaginatedRequestParam,
+        ServerCapabilities, ServerInfo,
+    },
+    schemars,
+    service::{RequestContext, RoleServer},
+    tool, tool_router, ErrorData, ServerHandler,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -308,7 +313,32 @@ impl ServerHandler for MiraServer {
                 icons: None,
                 website_url: None,
             },
-            instructions: Some("Mira provides semantic memory, code intelligence, and persistent context for Claude Code.".into()),
+            instructions: Some(
+                "Mira provides semantic memory, code intelligence, and persistent context for Claude Code.".into(),
+            ),
+        }
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
+        std::future::ready(Ok(ListToolsResult {
+            tools: self.tool_router.list_all(),
+            next_cursor: None,
+            meta: None,
+        }))
+    }
+
+    fn call_tool(
+        &self,
+        request: CallToolRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + Send + '_ {
+        async move {
+            let ctx = ToolCallContext::new(self, request, context);
+            self.tool_router.call(ctx).await
         }
     }
 }

@@ -1,0 +1,228 @@
+/* Mira Studio - Terminal Theme */
+
+:root {
+    --background: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --foreground: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #ff7b00;
+    --accent-faded: rgba(255, 123, 0, 0.2);
+    --success: #7ee787;
+    --error: #f85149;
+    --warning: #d29922;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+    background: var(--background);
+    color: var(--foreground);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+/* Layout */
+.min-h-screen { min-height: 100vh; }
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-1 { flex: 1; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.gap-2 { gap: 0.5rem; }
+.gap-4 { gap: 1rem; }
+.gap-6 { gap: 1.5rem; }
+.grid { display: grid; }
+.grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+.col-span-2 { grid-column: span 2; }
+
+/* Spacing */
+.p-3 { padding: 0.75rem; }
+.p-4 { padding: 1rem; }
+.p-6 { padding: 1.5rem; }
+.px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+.px-4 { padding-left: 1rem; padding-right: 1rem; }
+.py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+.py-12 { padding-top: 3rem; padding-bottom: 3rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mb-6 { margin-bottom: 1.5rem; }
+.mb-8 { margin-bottom: 2rem; }
+.mt-4 { margin-top: 1rem; }
+.mt-12 { margin-top: 3rem; }
+.mx-auto { margin-left: auto; margin-right: auto; }
+.max-w-2xl { max-width: 42rem; }
+.max-w-4xl { max-width: 56rem; }
+.max-w-6xl { max-width: 72rem; }
+.w-full { width: 100%; }
+.space-y-2 > * + * { margin-top: 0.5rem; }
+.space-y-4 > * + * { margin-top: 1rem; }
+
+/* Typography */
+.text-xs { font-size: 0.75rem; }
+.text-sm { font-size: 0.875rem; }
+.text-lg { font-size: 1.125rem; }
+.text-2xl { font-size: 1.5rem; }
+.text-4xl { font-size: 2.25rem; }
+.font-bold { font-weight: 700; }
+.font-semibold { font-weight: 600; }
+.text-center { text-align: center; }
+.italic { font-style: italic; }
+
+/* Colors */
+.bg-background { background-color: var(--background); }
+.bg-card { background-color: var(--card); }
+.text-foreground { color: var(--foreground); }
+.text-muted { color: var(--muted); }
+.text-accent { color: var(--accent); }
+.text-success { color: var(--success); }
+.text-error { color: var(--error); }
+.border-border { border-color: var(--border); }
+.border-accent { border-color: var(--accent); }
+
+/* Borders */
+.border { border-width: 1px; border-style: solid; }
+.border-b { border-bottom-width: 1px; border-bottom-style: solid; }
+.rounded { border-radius: 0.25rem; }
+.rounded-lg { border-radius: 0.5rem; }
+
+/* Interactivity */
+.outline-none { outline: none; }
+.transition-colors { transition: color 0.2s, background-color 0.2s, border-color 0.2s; }
+.hover\:text-accent:hover { color: var(--accent); }
+.hover\:border-accent:hover { border-color: var(--accent); }
+.focus\:border-accent:focus { border-color: var(--accent); }
+
+/* Links */
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+a:hover {
+    color: var(--accent);
+}
+
+/* Inputs */
+input {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    background: var(--card);
+    border: 1px solid var(--border);
+}
+
+input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+/* Navigation */
+nav {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+}
+
+/* Cards */
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1rem;
+}
+
+.card:hover {
+    border-color: var(--accent);
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.badge-accent {
+    background: var(--accent-faded);
+    color: var(--accent);
+}
+
+.badge-muted {
+    background: rgba(139, 148, 158, 0.2);
+    color: var(--muted);
+}
+
+/* Ghost Mode specific */
+.thinking-panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    min-height: 200px;
+}
+
+.tool-call {
+    background: var(--card);
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.tool-call.success {
+    border-left-color: var(--success);
+}
+
+.tool-call.error {
+    border-left-color: var(--error);
+}
+
+/* Diff viewer */
+.diff-add {
+    background: rgba(126, 231, 135, 0.15);
+    color: var(--success);
+}
+
+.diff-remove {
+    background: rgba(248, 81, 73, 0.15);
+    color: var(--error);
+}
+
+.diff-context {
+    color: var(--muted);
+}
+
+/* Terminal output */
+.terminal {
+    background: #000;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    font-size: 0.875rem;
+    overflow-x: auto;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+}

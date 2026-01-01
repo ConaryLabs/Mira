@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mira::{db::Database, embeddings::Embeddings, mcp::MiraServer};
+use mira::{db::Database, embeddings::Embeddings, mcp::MiraServer, web};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, Level};
@@ -22,6 +22,13 @@ struct Cli {
 enum Commands {
     /// Run as MCP server (default, for Claude Code)
     Serve,
+
+    /// Run web UI server (Mira Studio)
+    Web {
+        /// Port to listen on
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+    },
 
     /// Index a project
     Index {
@@ -80,6 +87,41 @@ async fn run_mcp_server() -> Result<()> {
     Ok(())
 }
 
+async fn run_web_server(port: u16) -> Result<()> {
+    // Open database
+    let db_path = get_db_path();
+    let db = Arc::new(Database::open(&db_path)?);
+
+    // Initialize embeddings if API key available
+    let embeddings = std::env::var("GEMINI_API_KEY")
+        .ok()
+        .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
+        .map(|key| Arc::new(Embeddings::new(key)));
+
+    if embeddings.is_some() {
+        info!("Semantic search enabled (Gemini API key found)");
+    } else {
+        info!("Semantic search disabled (no GEMINI_API_KEY)");
+    }
+
+    // Create app state
+    let state = web::state::AppState::new(db, embeddings);
+
+    // Create router
+    let app = web::create_router(state);
+
+    // Start server
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+
+    info!("Mira Studio running on http://localhost:{}", port);
+    println!("Mira Studio running on http://localhost:{}", port);
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
 async fn run_index(path: Option<PathBuf>) -> Result<()> {
     let path = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
@@ -117,7 +159,8 @@ async fn main() -> Result<()> {
     let log_level = match &cli.command {
         Some(Commands::Serve) | None => Level::WARN, // Quiet for MCP stdio
         Some(Commands::Hook { .. }) => Level::WARN,
-        _ => Level::INFO,
+        Some(Commands::Web { .. }) => Level::INFO,   // Verbose for web server
+        Some(Commands::Index { .. }) => Level::INFO,
     };
 
     let subscriber = FmtSubscriber::builder()
@@ -130,6 +173,9 @@ async fn main() -> Result<()> {
     match cli.command {
         None | Some(Commands::Serve) => {
             run_mcp_server().await?;
+        }
+        Some(Commands::Web { port }) => {
+            run_web_server(port).await?;
         }
         Some(Commands::Index { path }) => {
             run_index(path).await?;
