@@ -26,6 +26,9 @@ web-sys = { version = "0.3", features = [
     "Document",
     "Element",
     "HtmlElement",
+    "HtmlDivElement",
+    "Node",
+    "NodeList",
     "Window",
     "WebSocket",
     "MessageEvent",
@@ -45,5 +48,8 @@ console_log = "1.0"
 log = "0.4"
 
 # Utilities
-gloo-timers = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
 gloo-net = "0.6"
+
+# Syntax highlighting (pure Rust for WASM)
+syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy", "html"] }

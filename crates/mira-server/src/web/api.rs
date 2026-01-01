@@ -9,7 +9,7 @@ use axum::{
 use mira_types::{
     ApiResponse, CodeSearchRequest, CodeSearchResponse, CodeSearchResult,
     IndexRequest, IndexStats, MemoryFact, ProjectContext, RecallRequest,
-    RecallResponse, RememberRequest,
+    RecallResponse, RememberRequest, WsEvent,
 };
 
 use crate::web::state::AppState;
@@ -620,4 +620,17 @@ pub async fn set_project(
     state.set_project(project.clone()).await;
 
     Json(ApiResponse::ok(project))
+}
+
+// ═══════════════════════════════════════
+// BROADCAST API (for MCP → WebSocket bridge)
+// ═══════════════════════════════════════
+
+/// Receive an event from MCP server and broadcast to WebSocket clients
+pub async fn broadcast_event(
+    State(state): State<AppState>,
+    Json(event): Json<WsEvent>,
+) -> impl IntoResponse {
+    state.broadcast(event);
+    Json(ApiResponse::<()>::ok(()))
 }

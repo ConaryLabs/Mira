@@ -42,6 +42,16 @@ Set `GEMINI_API_KEY` for semantic search (embeddings).
 ### Session
 - **session_start** - Initialize session with project context
 - **set_project** / **get_project** - Manage active project
+- **session_history** - Query session and tool call history
+
+### Ghost Mode (Web UI)
+Real-time visualization of Claude Code activity:
+- Live tool call streaming via WebSocket
+- Session history replay on connect
+- Automatic reconnection with sync protocol
+- Diff preview with syntax highlighting
+
+Access at `http://localhost:3000` when running `mira web`.
 
 ## Architecture
 
@@ -61,6 +71,12 @@ Set `GEMINI_API_KEY` for semantic search (embeddings).
 │   │         MCP Server (rmcp)       │  │
 │   │   session_start, remember,      │  │
 │   │   recall, get_symbols, etc.     │  │
+│   └──────────────┬──────────────────┘  │
+│                  │ broadcast            │
+│   ┌──────────────▼──────────────────┐  │
+│   │      Web Server (mira web)      │  │
+│   │   Ghost Mode UI, WebSocket,     │  │
+│   │   REST API, session history     │  │
 │   └─────────────────────────────────┘  │
 │                    │                    │
 │   ┌────────────────┴────────────────┐  │
@@ -77,8 +93,8 @@ Set `GEMINI_API_KEY` for semantic search (embeddings).
 | Command | Description |
 |---------|-------------|
 | `mira` or `mira serve` | Run as MCP server (for Claude Code) |
+| `mira web` | Run web server with Ghost Mode UI (port 3000) |
 | `mira index --path /project` | Index a project's code |
-| `mira hook permission` | Permission auto-approval hook |
 
 ## Configuration
 

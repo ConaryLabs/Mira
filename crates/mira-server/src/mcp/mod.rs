@@ -33,6 +33,10 @@ pub struct MiraServer {
     pub db: Arc<Database>,
     pub embeddings: Option<Arc<Embeddings>>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
+    /// Current session ID (generated on first tool call or session_start)
+    pub session_id: Arc<RwLock<Option<String>>>,
+    /// WebSocket broadcaster (shared with web server)
+    pub ws_tx: Option<tokio::sync::broadcast::Sender<mira_types::WsEvent>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -42,7 +46,62 @@ impl MiraServer {
             db,
             embeddings,
             project: Arc::new(RwLock::new(None)),
+            session_id: Arc::new(RwLock::new(None)),
+            ws_tx: None,
             tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Create with a broadcast channel (for embedded web server mode)
+    pub fn with_broadcaster(
+        db: Arc<Database>,
+        embeddings: Option<Arc<Embeddings>>,
+        ws_tx: tokio::sync::broadcast::Sender<mira_types::WsEvent>,
+        session_id: Arc<RwLock<Option<String>>>,
+    ) -> Self {
+        Self {
+            db,
+            embeddings,
+            project: Arc::new(RwLock::new(None)),
+            session_id,
+            ws_tx: Some(ws_tx),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Get or create the current session ID
+    pub async fn get_or_create_session(&self) -> String {
+        let mut session_guard = self.session_id.write().await;
+        if let Some(ref id) = *session_guard {
+            return id.clone();
+        }
+
+        // Generate new session ID
+        let new_id = uuid::Uuid::new_v4().to_string();
+
+        // Get project_id if available
+        let project_id = self.project.read().await.as_ref().map(|p| p.id);
+
+        // Create session in database
+        if let Err(e) = self.db.create_session(&new_id, project_id) {
+            eprintln!("[SESSION] Failed to create session: {}", e);
+        }
+
+        *session_guard = Some(new_id.clone());
+        new_id
+    }
+
+    /// Broadcast an event to connected WebSocket clients
+    pub fn broadcast(&self, event: mira_types::WsEvent) {
+        if let Some(tx) = &self.ws_tx {
+            let receiver_count = tx.receiver_count();
+            eprintln!("[BROADCAST] Sending {:?} to {} receivers", event, receiver_count);
+            match tx.send(event) {
+                Ok(n) => eprintln!("[BROADCAST] Sent to {} receivers", n),
+                Err(e) => eprintln!("[BROADCAST] Error: {:?}", e),
+            }
+        } else {
+            eprintln!("[BROADCAST] No ws_tx configured!");
         }
     }
 }
@@ -54,6 +113,8 @@ pub struct SessionStartRequest {
     pub project_path: String,
     #[schemars(description = "Project name")]
     pub name: Option<String>,
+    #[schemars(description = "Session ID (from Claude Code). If not provided, one will be generated.")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -182,6 +243,16 @@ pub struct IndexRequest {
     pub max_workers: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SessionHistoryRequest {
+    #[schemars(description = "Action: list_sessions/get_history/current")]
+    pub action: String,
+    #[schemars(description = "Session ID (for get_history)")]
+    pub session_id: Option<String>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(description = "Initialize session: sets project, loads persona, context, corrections, goals. Call once at session start.")]
@@ -189,7 +260,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<SessionStartRequest>,
     ) -> Result<String, String> {
-        tools::project::session_start(self, req.project_path, req.name).await
+        tools::project::session_start(self, req.project_path, req.name, req.session_id).await
     }
 
     #[tool(description = "Set active project.")]
@@ -299,6 +370,77 @@ impl MiraServer {
     ) -> Result<String, String> {
         tools::code::index(self, req.action, req.path).await
     }
+
+    #[tool(description = "Query session history. Actions: list_sessions, get_history, current")]
+    async fn session_history(
+        &self,
+        Parameters(req): Parameters<SessionHistoryRequest>,
+    ) -> Result<String, String> {
+        let limit = req.limit.unwrap_or(20) as usize;
+
+        match req.action.as_str() {
+            "current" => {
+                let session_id = self.session_id.read().await;
+                match session_id.as_ref() {
+                    Some(id) => Ok(format!("Current session: {}", id)),
+                    None => Ok("No active session".to_string()),
+                }
+            }
+            "list_sessions" => {
+                let project = self.project.read().await;
+                let project_id = project.as_ref().map(|p| p.id).ok_or("No active project")?;
+
+                let sessions = self.db.get_recent_sessions(project_id, limit)
+                    .map_err(|e| e.to_string())?;
+
+                if sessions.is_empty() {
+                    return Ok("No sessions found.".to_string());
+                }
+
+                let mut output = format!("{} sessions:\n", sessions.len());
+                for s in sessions {
+                    output.push_str(&format!(
+                        "  [{}] {} - {} ({} tool calls)\n",
+                        &s.id[..8],
+                        s.started_at,
+                        s.status,
+                        s.summary.as_deref().unwrap_or("no summary")
+                    ));
+                }
+                Ok(output)
+            }
+            "get_history" => {
+                let session_id = req.session_id
+                    .or_else(|| {
+                        // Use current session if not specified
+                        futures::executor::block_on(self.session_id.read()).clone()
+                    })
+                    .ok_or("No session_id provided and no active session")?;
+
+                let history = self.db.get_session_history(&session_id, limit)
+                    .map_err(|e| e.to_string())?;
+
+                if history.is_empty() {
+                    return Ok(format!("No history for session {}", &session_id[..8]));
+                }
+
+                let mut output = format!("{} tool calls in session {}:\n", history.len(), &session_id[..8]);
+                for entry in history {
+                    let status = if entry.success { "✓" } else { "✗" };
+                    let preview = entry.result_summary
+                        .as_ref()
+                        .map(|s| if s.len() > 60 { format!("{}...", &s[..60]) } else { s.clone() })
+                        .unwrap_or_default();
+                    output.push_str(&format!(
+                        "  {} {} [{}] {}\n",
+                        status, entry.tool_name, entry.created_at, preview
+                    ));
+                }
+                Ok(output)
+            }
+            _ => Err(format!("Unknown action: {}. Use: list_sessions, get_history, current", req.action)),
+        }
+    }
 }
 
 impl ServerHandler for MiraServer {
@@ -337,8 +479,60 @@ impl ServerHandler for MiraServer {
         context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + Send + '_ {
         async move {
+            let tool_name = request.name.to_string();
+            let call_id = uuid::Uuid::new_v4().to_string();
+            let start = std::time::Instant::now();
+
+            // Get or create session for persistence
+            let session_id = self.get_or_create_session().await;
+
+            // Serialize arguments for storage
+            let args_json = request.arguments.as_ref()
+                .map(|a| serde_json::to_string(a).unwrap_or_default())
+                .unwrap_or_default();
+
+            // Broadcast tool start (direct, no HTTP)
+            self.broadcast(mira_types::WsEvent::ToolStart {
+                tool_name: tool_name.clone(),
+                arguments: serde_json::Value::Object(request.arguments.clone().unwrap_or_default()),
+                call_id: call_id.clone(),
+            });
+
             let ctx = ToolCallContext::new(self, request, context);
-            self.tool_router.call(ctx).await
+            let result = self.tool_router.call(ctx).await;
+
+            // Broadcast tool result
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let (success, result_text) = match &result {
+                Ok(r) => {
+                    let text = r.content.first()
+                        .and_then(|c| c.as_text())
+                        .map(|t| t.text.to_string())
+                        .unwrap_or_default();
+                    (true, text)
+                }
+                Err(e) => (false, e.message.to_string()),
+            };
+
+            self.broadcast(mira_types::WsEvent::ToolResult {
+                tool_name: tool_name.clone(),
+                result: result_text.clone(),
+                success,
+                call_id,
+                duration_ms,
+            });
+
+            // Persist to tool_history
+            let summary = if result_text.len() > 500 {
+                format!("{}...", &result_text[..500])
+            } else {
+                result_text
+            };
+            if let Err(e) = self.db.log_tool_call(&session_id, &tool_name, &args_json, &summary, success) {
+                eprintln!("[HISTORY] Failed to log tool call: {}", e);
+            }
+
+            result
         }
     }
 }

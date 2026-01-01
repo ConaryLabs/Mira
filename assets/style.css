@@ -187,16 +187,30 @@ nav {
 /* Diff viewer */
 .diff-add {
     background: rgba(126, 231, 135, 0.15);
-    color: var(--success);
 }
 
 .diff-remove {
     background: rgba(248, 81, 73, 0.15);
-    color: var(--error);
 }
 
 .diff-context {
-    color: var(--muted);
+    background: transparent;
+}
+
+/* Preserve diff backgrounds with hljs */
+.diff-add code,
+.diff-remove code,
+.diff-context code {
+    background: transparent !important;
+    padding: 0;
+}
+
+/* Override hljs background for inline code */
+.diff-add .hljs,
+.diff-remove .hljs,
+.diff-context .hljs {
+    background: transparent !important;
+    padding: 0;
 }
 
 /* Terminal output */

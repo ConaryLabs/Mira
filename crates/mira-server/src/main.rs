@@ -76,8 +76,36 @@ async fn run_mcp_server() -> Result<()> {
         info!("Semantic search disabled (no GEMINI_API_KEY)");
     }
 
-    // Create MCP server
-    let server = MiraServer::new(db, embeddings);
+    // Create shared broadcast channel for MCP <-> Web communication
+    let (ws_tx, _) = tokio::sync::broadcast::channel::<mira_types::WsEvent>(256);
+
+    // Shared session ID between MCP server and web server
+    let session_id: Arc<tokio::sync::RwLock<Option<String>>> = Arc::new(tokio::sync::RwLock::new(None));
+
+    // Spawn embedded web server in background
+    let web_port: u16 = std::env::var("MIRA_WEB_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3001);
+
+    let web_db = db.clone();
+    let web_embeddings = embeddings.clone();
+    let web_ws_tx = ws_tx.clone();
+    let web_session_id = session_id.clone();
+
+    tokio::spawn(async move {
+        let state = web::state::AppState::with_broadcaster(web_db, web_embeddings, web_ws_tx, web_session_id);
+        let app = web::create_router(state);
+        let addr = format!("0.0.0.0:{}", web_port);
+
+        if let Ok(listener) = tokio::net::TcpListener::bind(&addr).await {
+            eprintln!("Mira Studio running on http://localhost:{}", web_port);
+            let _ = axum::serve(listener, app).await;
+        }
+    });
+
+    // Create MCP server with broadcaster and shared session ID
+    let server = MiraServer::with_broadcaster(db, embeddings, ws_tx, session_id);
 
     // Run with stdio transport
     let transport = rmcp::transport::io::stdio();
@@ -153,6 +181,12 @@ async fn run_index(path: Option<PathBuf>) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env files (global first, then project - project overrides)
+    if let Some(home) = dirs::home_dir() {
+        let _ = dotenvy::from_path(home.join(".mira/.env"));
+    }
+    let _ = dotenvy::dotenv(); // Load .env from current directory
+
     let cli = Cli::parse();
 
     // Set up logging based on command

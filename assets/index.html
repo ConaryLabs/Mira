@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Mira Studio</title>
     <meta name="description" content="Memory and Intelligence Layer for Claude Code"/>
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg"/>
     <link rel="stylesheet" href="/assets/style.css"/>
 </head>
 <body class="bg-background text-foreground">
     <script type="module">
         import init from '/pkg/mira_app.js';
-        init('/pkg/mira_app_bg.wasm');
+        init({ module_or_path: '/pkg/mira_app_bg.wasm' });
     </script>
     <noscript>
         <div style="padding: 2rem; text-align: center;">

@@ -39,6 +39,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/goals", get(api::list_goals).post(api::create_goal))
         .route("/project", get(api::get_project))
         .route("/project/set", post(api::set_project))
+        // MCP → WebSocket bridge
+        .route("/broadcast", post(api::broadcast_event))
         .with_state(state.clone());
 
     Router::new()

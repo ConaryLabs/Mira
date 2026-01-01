@@ -22,6 +22,9 @@ pub struct AppState {
 
     /// Currently active project
     pub project: Arc<RwLock<Option<ProjectContext>>>,
+
+    /// Current MCP session ID (shared with MCP server)
+    pub session_id: Arc<RwLock<Option<String>>>,
 }
 
 impl AppState {
@@ -34,6 +37,23 @@ impl AppState {
             embeddings,
             ws_tx,
             project: Arc::new(RwLock::new(None)),
+            session_id: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create with an existing broadcast channel (for shared mode with MCP server)
+    pub fn with_broadcaster(
+        db: Arc<Database>,
+        embeddings: Option<Arc<Embeddings>>,
+        ws_tx: broadcast::Sender<WsEvent>,
+        session_id: Arc<RwLock<Option<String>>>,
+    ) -> Self {
+        Self {
+            db,
+            embeddings,
+            ws_tx,
+            project: Arc::new(RwLock::new(None)),
+            session_id,
         }
     }
 

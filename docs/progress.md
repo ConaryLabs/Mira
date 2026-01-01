@@ -4,7 +4,7 @@
 
 Mira Studio is a Rust-native web frontend for Mira, built with Leptos (WASM). It provides a visual interface for Ghost Mode (real-time agent reasoning visualization), memory management, code intelligence, and task tracking.
 
-## Completed (2024-12-31)
+## Completed (2025-12-31)
 
 ### Phase 1: Workspace Restructure
 - [x] Created `crates/` directory structure
@@ -52,6 +52,16 @@ Mira Studio is a Rust-native web frontend for Mira, built with Leptos (WASM). It
 - [x] Created `build-studio.sh` script
 - [x] Server auto-detects WASM files and serves appropriate HTML
 
+### Phase 6: Diff Viewer & MCP Bridge
+- [x] Syntax highlighting with highlight.js (CDN)
+- [x] Language detection from file extension
+- [x] MCP → WebSocket bridge (`broadcaster.rs`)
+- [x] `/api/broadcast` endpoint for event injection
+- [x] Tool calls stream to Ghost Mode in real-time
+- [x] Test Diff button for UI verification
+- [x] `.env` file loading (`~/.mira/.env` and project root)
+- [ ] Approve/Edit/Reject buttons for diffs (deferred)
+
 ## Architecture
 
 ```
@@ -63,18 +73,27 @@ Mira Studio is a Rust-native web frontend for Mira, built with Leptos (WASM). It
 │   ├── mira-server/        # HTTP server + MCP
 │   │   └── src/
 │   │       ├── main.rs     # CLI entry (serve, web, connect)
+│   │       ├── broadcaster.rs # MCP → WebSocket bridge
 │   │       ├── web/        # Web server layer
 │   │       │   ├── mod.rs  # Router
-│   │       │   ├── api.rs  # REST endpoints
+│   │       │   ├── api.rs  # REST endpoints + /api/broadcast
 │   │       │   ├── ws.rs   # WebSocket handler
 │   │       │   └── state.rs# AppState
 │   │       └── ...
 │   └── mira-app/           # WASM frontend
-│       └── src/lib.rs      # Leptos components
+│       └── src/lib.rs      # Leptos components + highlight.js bindings
 ├── assets/
-│   └── style.css           # Terminal theme
+│   ├── style.css           # Terminal theme
+│   └── index.html          # WASM shell + highlight.js CDN
 ├── pkg/                    # Built WASM output
 └── build-studio.sh         # Build script
+```
+
+### Event Flow (Ghost Mode)
+```
+Claude Code → mira serve (MCP) → broadcaster.rs → POST /api/broadcast
+                                                          ↓
+Browser ← WebSocket ← ws.rs ← AppState.broadcast() ←──────┘
 ```
 
 ## Running
@@ -93,18 +112,22 @@ cargo build --release
 
 ## Remaining Work
 
-### Phase 6: Diff Viewer Enhancement
-- [ ] Syntax highlighting (tree-sitter or highlight.js)
-- [ ] Approve/Edit/Reject buttons for diffs
-
 ### Phase 7: Terminal Mirror Enhancement
 - [ ] ANSI color parsing
 - [ ] Scrollback buffer
 
-### Phase 8: Queue & Sync (Resilience)
-- [ ] Add `events` table to schema for journaling
-- [ ] Client reconnection with event replay
-- [ ] Sync protocol (`{ "sync": last_event_id }`)
+### Phase 8: Session-Aware Event History
+- [x] Add `sessions` table (id, started_at, project_path, summary) - already existed
+- [x] Add `tool_history` table (id, session_id, tool_name, arguments, result_summary, success)
+- [x] Persist events on broadcast (write to DB alongside WebSocket send)
+- [x] Load session history on Ghost Mode connect (replay up to 50 recent events)
+- [x] Add `session_history` MCP tool (actions: current, list_sessions, get_history)
+- [x] Shared session_id between MCP server and web server
+- [x] Optional session_id parameter in session_start for Claude Code correlation
+- [x] Client reconnection with event replay (Sync command)
+- [x] Sync protocol (`{ "sync": last_event_id }`)
+- [x] Exponential backoff reconnection (1s, 2s, 4s... max 30s)
+- [x] Client tracks last event_id from replayed events
 
 ### Phase 9: Single Binary Packaging
 - [ ] rust-embed for assets

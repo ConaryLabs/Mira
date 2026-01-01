@@ -8,6 +8,7 @@ pub async fn session_start(
     server: &MiraServer,
     project_path: String,
     name: Option<String>,
+    session_id: Option<String>,
 ) -> Result<String, String> {
     // Set project
     let project_id = server
@@ -22,6 +23,11 @@ pub async fn session_start(
     };
 
     *server.project.write().await = Some(ctx);
+
+    // Set session ID (use provided or generate new)
+    let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    server.db.create_session(&sid, Some(project_id)).map_err(|e| e.to_string())?;
+    *server.session_id.write().await = Some(sid.clone());
 
     // Build response with context
     let mut response = format!("Project: {} ({})\n", name.as_deref().unwrap_or("unnamed"),
