@@ -10,6 +10,7 @@ use std::sync::Mutex;
 /// Database wrapper with sqlite-vec support
 pub struct Database {
     conn: Mutex<Connection>,
+    path: Option<String>,
 }
 
 impl Database {
@@ -35,6 +36,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            path: Some(path.to_string_lossy().into_owned()),
         };
 
         // Initialize schema
@@ -56,6 +58,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            path: None,
         };
         db.init_schema()?;
         Ok(db)
@@ -560,6 +563,38 @@ impl Database {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Get tool call count and unique tools for a session
+    pub fn get_session_stats(&self, session_id: &str) -> Result<(usize, Vec<String>)> {
+        let conn = self.conn();
+
+        // Get count
+        let count: usize = conn.query_row(
+            "SELECT COUNT(*) FROM tool_history WHERE session_id = ?",
+            params![session_id],
+            |row| row.get(0),
+        )?;
+
+        // Get unique tool names (top 5 most used)
+        let mut stmt = conn.prepare(
+            "SELECT tool_name, COUNT(*) as cnt FROM tool_history
+             WHERE session_id = ?
+             GROUP BY tool_name
+             ORDER BY cnt DESC
+             LIMIT 5",
+        )?;
+        let tools: Vec<String> = stmt
+            .query_map(params![session_id], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok((count, tools))
+    }
+
+    /// Get database file path
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
     }
 }
 

@@ -39,7 +39,48 @@ pub async fn session_start(
     let display_name = project_name.as_deref().unwrap_or("unnamed");
     let mut response = format!("Project: {} ({})\n", display_name, project_type);
 
-    // Load preferences first
+    // Show recent sessions (skip current, show last 3)
+    let recent_sessions = server
+        .db
+        .get_recent_sessions(project_id, 4)
+        .unwrap_or_default();
+
+    let previous_sessions: Vec<_> = recent_sessions
+        .iter()
+        .filter(|s| s.id != sid)
+        .take(3)
+        .collect();
+
+    if !previous_sessions.is_empty() {
+        response.push_str("\nRecent sessions:\n");
+        for sess in &previous_sessions {
+            let short_id = &sess.id[..8];
+            let timestamp = &sess.last_activity[..16]; // YYYY-MM-DD HH:MM
+
+            // Get session stats
+            let (tool_count, tools) = server
+                .db
+                .get_session_stats(&sess.id)
+                .unwrap_or((0, vec![]));
+
+            if let Some(ref summary) = sess.summary {
+                response.push_str(&format!("  [{}] {} - {}\n", short_id, timestamp, summary));
+            } else if tool_count > 0 {
+                let tools_str = tools.join(", ");
+                response.push_str(&format!(
+                    "  [{}] {} - {} tool calls ({})\n",
+                    short_id, timestamp, tool_count, tools_str
+                ));
+            } else {
+                response.push_str(&format!("  [{}] {} - (no activity)\n", short_id, timestamp));
+            }
+        }
+        response.push_str(&format!(
+            "  Use session_history(action=\"get_history\", session_id=\"...\") to view details\n"
+        ));
+    }
+
+    // Load preferences
     let preferences = server
         .db
         .get_preferences(Some(project_id))
@@ -75,6 +116,11 @@ pub async fn session_start(
             };
             response.push_str(&format!("  - {}\n", preview));
         }
+    }
+
+    // Show database path
+    if let Some(db_path) = server.db.path() {
+        response.push_str(&format!("\nDatabase: {}\n", db_path));
     }
 
     response.push_str("\nReady.");

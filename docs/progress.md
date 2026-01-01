@@ -136,6 +136,13 @@ You can copy the binary anywhere and run it.
 - [x] Updated build-studio.sh with --leptos and --watch options
 - [x] Hot reloading support via `cargo leptos watch`
 
+### Phase 11: Session Context on Startup
+- [x] session_start shows last 3 sessions with timestamps
+- [x] Tool call count and top tools per session
+- [x] Session summary display (when available)
+- [x] Database path in startup response
+- [x] Pointer to session_history tool for detailed inspection
+
 ## Remaining Work
 
 ### Deferred: Scout/Solve AI Pipeline
