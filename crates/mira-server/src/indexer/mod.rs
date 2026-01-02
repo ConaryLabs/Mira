@@ -85,8 +85,16 @@ pub async fn index_project(
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            // Skip hidden, node_modules, target, assets, .git
-            !name.starts_with('.') && name != "node_modules" && name != "target" && name != "assets"
+            // Skip hidden, build outputs, dependencies, assets
+            !name.starts_with('.')
+                && name != "node_modules"
+                && name != "target"
+                && name != "assets"
+                && name != "pkg"      // wasm-pack output
+                && name != "dist"     // common build output
+                && name != "build"    // common build output
+                && name != "vendor"   // vendored deps
+                && name != "__pycache__"
         })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
@@ -118,6 +126,10 @@ pub async fn index_project(
         )?;
         conn.execute(
             "DELETE FROM codebase_modules WHERE project_id = ?",
+            params![project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM pending_embeddings WHERE project_id = ?",
             params![project_id],
         )?;
     }
