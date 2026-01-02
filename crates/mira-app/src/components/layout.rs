@@ -1,13 +1,9 @@
-// crates/mira-app/src/components.rs
+// crates/mira-app/src/components/layout.rs
 // Shared layout components
 
 use leptos::prelude::*;
 
 use crate::ConnectionState;
-
-// ============================================================================
-// Layout Components
-// ============================================================================
 
 #[component]
 pub fn Layout(children: Children) -> impl IntoView {

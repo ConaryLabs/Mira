@@ -36,6 +36,8 @@ web-sys = { version = "0.3", features = [
     "ErrorEvent",
     "BinaryType",
     "Location",
+    "Navigator",
+    "Clipboard",
 ] }
 
 # Serialization

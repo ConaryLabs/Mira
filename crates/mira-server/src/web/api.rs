@@ -495,6 +495,34 @@ pub async fn create_goal(
 // PROJECT API
 // ═══════════════════════════════════════
 
+/// List all projects
+pub async fn list_projects(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let conn = state.db.conn();
+
+    let result: Result<Vec<ProjectContext>, _> = (|| {
+        let mut stmt = conn.prepare(
+            "SELECT id, path, name FROM projects ORDER BY name ASC"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(ProjectContext {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                name: row.get(2)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+    })();
+
+    match result {
+        Ok(projects) => Json(ApiResponse::ok(projects)),
+        Err(e) => Json(ApiResponse::err(e.to_string())),
+    }
+}
+
 pub async fn get_project(
     State(state): State<AppState>,
 ) -> impl IntoResponse {

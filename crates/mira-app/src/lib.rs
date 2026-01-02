@@ -23,7 +23,8 @@ pub mod websocket;
 pub use mira_types::*;
 
 // Re-export for use in submodules
-pub use components::{Layout, NotFound};
+pub use components::{Layout, Nav, NotFound, ProjectSidebar};
+pub use components::chat::{MessageBubble, TypingIndicator, ThinkingIndicator, Expandable, Markdown, CodeBlock};
 pub use pages::*;
 
 // ============================================================================

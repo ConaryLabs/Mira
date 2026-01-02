@@ -53,6 +53,14 @@ Full conversational memory system at `http://localhost:3000/chat`:
 - **Semantic Recall** - Context loaded based on message similarity
 - **KV Cache Optimization** - Context ordered static-to-volatile for cache efficiency
 
+#### Chat UI Features
+- **Project Sidebar** - Slide-out panel to switch between projects
+- **Message Bubbles** - User messages right-aligned (orange accent), assistant left-aligned
+- **Collapsible Sections** - Thinking and tool calls collapsed by default, expand to view
+- **Markdown Rendering** - Full markdown support with code blocks, lists, links
+- **Code Blocks** - Syntax highlighting with copy button
+- **Streaming Indicators** - Typing dots and thinking spinner during responses
+
 ### Ghost Mode (Web UI)
 Real-time visualization of Claude Code activity:
 - Live tool call streaming via WebSocket

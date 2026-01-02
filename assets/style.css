@@ -288,3 +288,611 @@ nav {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--muted);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Slide-out Sidebar
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+    z-index: 40;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.sidebar-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 320px;
+    height: 100vh;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar.open {
+    transform: translateX(0);
+}
+
+.sidebar-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.sidebar-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+}
+
+.sidebar-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    transition: color 0.2s;
+}
+
+.sidebar-close:hover {
+    color: var(--foreground);
+}
+
+.sidebar-search {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.sidebar-search input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+}
+
+.sidebar-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 0;
+}
+
+.sidebar-item {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all 0.15s ease;
+}
+
+.sidebar-item:hover {
+    background: rgba(255, 123, 0, 0.08);
+    border-left-color: var(--border);
+}
+
+.sidebar-item.selected {
+    background: rgba(255, 123, 0, 0.12);
+    border-left-color: var(--accent);
+}
+
+.sidebar-item-name {
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: 0.125rem;
+}
+
+.sidebar-item-path {
+    font-size: 0.75rem;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Message Bubbles
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    max-width: 56rem;
+    margin: 0 auto;
+}
+
+.message {
+    display: flex;
+    gap: 0.75rem;
+    max-width: 85%;
+}
+
+.message.user {
+    flex-direction: row-reverse;
+    margin-left: auto;
+}
+
+.message.assistant {
+    margin-right: auto;
+}
+
+.message-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.message.user .message-avatar {
+    background: var(--accent);
+    color: var(--background);
+}
+
+.message.assistant .message-avatar {
+    background: var(--border);
+    color: var(--foreground);
+}
+
+.message-bubble {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.message.user .message-bubble {
+    border-color: var(--accent);
+    border-width: 1px 3px 1px 1px;
+}
+
+.message.assistant .message-bubble {
+    border-width: 1px 1px 1px 3px;
+    border-left-color: var(--border);
+}
+
+.message-header {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+}
+
+.message-role {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.message.user .message-role {
+    color: var(--accent);
+}
+
+.message-time {
+    margin-left: auto;
+}
+
+.message-content {
+    padding: 0.75rem;
+    line-height: 1.6;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Expandable Sections
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.expandable {
+    border-top: 1px solid var(--border);
+}
+
+.expandable-header {
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: var(--muted);
+    transition: color 0.15s, background 0.15s;
+}
+
+.expandable-header:hover {
+    color: var(--foreground);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.expandable-icon {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+}
+
+.expandable.open .expandable-icon {
+    transform: rotate(90deg);
+}
+
+.expandable-label {
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.expandable-badge {
+    background: rgba(255, 123, 0, 0.15);
+    color: var(--accent);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+}
+
+.expandable-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.expandable.open .expandable-content {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.expandable-inner {
+    padding: 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--muted);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Typing & Thinking Indicators
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.typing-indicator {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.75rem;
+}
+
+.typing-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--muted);
+    border-radius: 50%;
+    animation: bounce 1.4s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(1) { animation-delay: 0s; }
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-6px); }
+}
+
+.thinking-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+}
+
+.thinking-ring {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.thinking-pulse {
+    position: relative;
+    width: 12px;
+    height: 12px;
+}
+
+.thinking-pulse::before,
+.thinking-pulse::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    animation: pulse-ring 1.5s ease-out infinite;
+}
+
+.thinking-pulse::after {
+    animation-delay: 0.75s;
+}
+
+@keyframes pulse-ring {
+    0% {
+        transform: scale(0.5);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1.5);
+        opacity: 0;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Code Blocks
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.code-block {
+    margin: 0.75rem 0;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    overflow: hidden;
+}
+
+.code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.375rem 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--border);
+}
+
+.code-block-lang {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+}
+
+.code-block-copy {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.6875rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.code-block-copy:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.code-block-copy.copied {
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.code-block pre {
+    margin: 0;
+    padding: 0.75rem;
+    overflow-x: auto;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+}
+
+.code-block code {
+    background: transparent;
+}
+
+/* Line numbers */
+.code-block.with-lines pre {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1rem;
+}
+
+.code-line-numbers {
+    text-align: right;
+    color: var(--border);
+    user-select: none;
+    padding-right: 0.5rem;
+    border-right: 1px solid var(--border);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Markdown Styling
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.markdown p {
+    margin: 0.5rem 0;
+}
+
+.markdown p:first-child {
+    margin-top: 0;
+}
+
+.markdown p:last-child {
+    margin-bottom: 0;
+}
+
+.markdown ul,
+.markdown ol {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+}
+
+.markdown li {
+    margin: 0.25rem 0;
+}
+
+.markdown code:not(.code-block code) {
+    background: rgba(255, 123, 0, 0.1);
+    color: var(--accent);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+}
+
+.markdown a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.markdown a:hover {
+    text-decoration-thickness: 2px;
+}
+
+.markdown blockquote {
+    margin: 0.75rem 0;
+    padding: 0.5rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: rgba(255, 123, 0, 0.05);
+    color: var(--muted);
+}
+
+.markdown hr {
+    margin: 1rem 0;
+    border: none;
+    border-top: 1px solid var(--border);
+}
+
+.markdown strong {
+    font-weight: 600;
+    color: var(--foreground);
+}
+
+.markdown em {
+    font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Chat Header & Input
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.chat-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+}
+
+.chat-menu-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 32px;
+    height: 32px;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+
+.chat-menu-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.chat-project-name {
+    font-size: 0.875rem;
+    color: var(--foreground);
+}
+
+.chat-project-name span {
+    color: var(--muted);
+}
+
+.chat-input-area {
+    padding: 1rem;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+}
+
+.chat-input-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    max-width: 56rem;
+    margin: 0 auto;
+}
+
+.chat-input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    resize: none;
+    min-height: 44px;
+    max-height: 200px;
+}
+
+.chat-send-btn {
+    background: var(--accent);
+    border: none;
+    color: var(--background);
+    padding: 0 1rem;
+    border-radius: 0.375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.chat-send-btn:hover {
+    opacity: 0.9;
+}
+
+.chat-send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHAT UI - Mobile Responsive
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+    .sidebar {
+        width: 100%;
+    }
+
+    .message {
+        max-width: 95%;
+    }
+
+    .chat-container {
+        padding: 0.75rem;
+    }
+}
