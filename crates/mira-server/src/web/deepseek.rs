@@ -7,11 +7,8 @@ use reqwest_eventsource::{Event, EventSource};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Instant;
-use tokio::sync::broadcast;
 use tracing::{debug, info, warn, error, instrument, Span};
 use uuid::Uuid;
-
-use mira_types::WsEvent;
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
 
@@ -176,7 +173,6 @@ struct ChatChunk {
 #[derive(Debug, Deserialize)]
 struct ChunkChoice {
     delta: ChunkDelta,
-    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -227,7 +223,6 @@ pub struct Usage {
 pub struct DeepSeekClient {
     api_key: String,
     client: reqwest::Client,
-    ws_tx: broadcast::Sender<WsEvent>,
 }
 
 /// Result of a chat completion
@@ -243,11 +238,10 @@ pub struct ChatResult {
 
 impl DeepSeekClient {
     /// Create a new DeepSeek client
-    pub fn new(api_key: String, ws_tx: broadcast::Sender<WsEvent>) -> Self {
+    pub fn new(api_key: String) -> Self {
         Self {
             api_key,
             client: reqwest::Client::new(),
-            ws_tx,
         }
     }
 

@@ -18,7 +18,7 @@ use super::summarization::maybe_spawn_summarization;
 use super::tools::execute_tools;
 use super::cleanup_response;
 
-use crate::web::deepseek::{Message, ToolCall, mira_tools};
+use crate::web::deepseek::{Message, mira_tools};
 use crate::web::state::AppState;
 
 /// SSE event types for chat streaming

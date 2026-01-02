@@ -50,7 +50,7 @@ impl AppState {
         // Initialize DeepSeek client if API key is available
         let deepseek = std::env::var("DEEPSEEK_API_KEY")
             .ok()
-            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx.clone())));
+            .map(|key| Arc::new(DeepSeekClient::new(key)));
 
         let claude_manager = Arc::new(ClaudeManager::new(ws_tx.clone()));
 
@@ -78,7 +78,7 @@ impl AppState {
         // Initialize DeepSeek client if API key is available
         let deepseek = std::env::var("DEEPSEEK_API_KEY")
             .ok()
-            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx.clone())));
+            .map(|key| Arc::new(DeepSeekClient::new(key)));
 
         let claude_manager = Arc::new(ClaudeManager::new(ws_tx.clone()));
 
@@ -105,7 +105,7 @@ impl AppState {
         // Initialize DeepSeek client if API key is available
         let deepseek = std::env::var("DEEPSEEK_API_KEY")
             .ok()
-            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx.clone())));
+            .map(|key| Arc::new(DeepSeekClient::new(key)));
 
         let claude_manager = Arc::new(ClaudeManager::new(ws_tx.clone()));
 

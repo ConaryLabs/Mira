@@ -2,10 +2,25 @@
 // Memory storage and retrieval operations
 
 use anyhow::Result;
+use mira_types::MemoryFact;
 use rusqlite::params;
 
-use super::types::MemoryFact;
 use super::Database;
+
+/// Parse MemoryFact from a rusqlite Row with standard column order:
+/// (id, project_id, key, content, fact_type, category, confidence, created_at)
+pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact> {
+    Ok(MemoryFact {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        key: row.get(2)?,
+        content: row.get(3)?,
+        fact_type: row.get(4)?,
+        category: row.get(5)?,
+        confidence: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
 
 impl Database {
     /// Store a memory fact
@@ -59,18 +74,7 @@ impl Database {
              LIMIT ?"
         )?;
 
-        let rows = stmt.query_map(params![project_id, pattern, limit as i64], |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![project_id, pattern, limit as i64], parse_memory_fact_row)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
@@ -86,18 +90,7 @@ impl Database {
              ORDER BY category, created_at DESC"
         )?;
 
-        let rows = stmt.query_map(params![project_id], |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![project_id], parse_memory_fact_row)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
@@ -157,18 +150,7 @@ impl Database {
         };
 
         let mut stmt = conn.prepare(query)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), parse_memory_fact_row)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }

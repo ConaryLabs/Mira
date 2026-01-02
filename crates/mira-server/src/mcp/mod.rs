@@ -45,10 +45,9 @@ pub struct MiraServer {
 impl MiraServer {
     pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
         // Try to create DeepSeek client from env
-        let ws_tx_dummy = tokio::sync::broadcast::channel(16).0;
         let deepseek = std::env::var("DEEPSEEK_API_KEY")
             .ok()
-            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx_dummy)));
+            .map(|key| Arc::new(DeepSeekClient::new(key)));
 
         Self {
             db,

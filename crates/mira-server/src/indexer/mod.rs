@@ -11,7 +11,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tree_sitter::Parser;
 use walkdir::WalkDir;
-use zerocopy::AsBytes;
 
 pub use parsers::{Import, Symbol};
 

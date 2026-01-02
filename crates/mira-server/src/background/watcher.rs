@@ -2,7 +2,6 @@
 // File system watcher for automatic incremental indexing
 
 use crate::db::Database;
-use crate::embeddings::EmbeddingClient;
 use crate::indexer;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
@@ -36,7 +35,6 @@ const DEBOUNCE_MS: u64 = 500;
 /// File watcher manages watching multiple project directories
 pub struct FileWatcher {
     db: Arc<Database>,
-    embeddings: Option<Arc<EmbeddingClient>>,
     /// Map of project_id -> project_path for active watches
     watched_projects: Arc<RwLock<HashMap<i64, PathBuf>>>,
     /// Pending file changes (debounced)
@@ -54,12 +52,10 @@ pub enum ChangeType {
 impl FileWatcher {
     pub fn new(
         db: Arc<Database>,
-        embeddings: Option<Arc<EmbeddingClient>>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         Self {
             db,
-            embeddings,
             watched_projects: Arc::new(RwLock::new(HashMap::new())),
             pending_changes: Arc::new(RwLock::new(HashMap::new())),
             shutdown,
@@ -402,7 +398,6 @@ impl WatcherHandle {
 /// Spawn the file watcher and return a handle for registering projects
 pub fn spawn(
     db: Arc<Database>,
-    embeddings: Option<Arc<EmbeddingClient>>,
     shutdown: watch::Receiver<bool>,
 ) -> WatcherHandle {
     let watched_projects = Arc::new(RwLock::new(HashMap::new()));
@@ -412,7 +407,6 @@ pub fn spawn(
 
     let watcher = FileWatcher {
         db,
-        embeddings,
         watched_projects,
         pending_changes: Arc::new(RwLock::new(HashMap::new())),
         shutdown,

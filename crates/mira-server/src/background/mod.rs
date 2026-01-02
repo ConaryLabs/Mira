@@ -41,7 +41,7 @@ impl BackgroundWorker {
     }
 
     /// Start the background worker loop
-    pub async fn run(mut self) {
+    pub async fn run(self) {
         tracing::info!("Background worker started");
 
         // Initial delay to let the service start up

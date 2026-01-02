@@ -12,6 +12,7 @@ use mira_types::{
     RecallResponse, RememberRequest, WsEvent,
 };
 
+use crate::db::parse_memory_fact_row;
 use crate::web::state::AppState;
 
 // Re-export handlers from split modules for router compatibility
@@ -75,18 +76,7 @@ pub async fn list_memories(
              LIMIT 100"
         )?;
 
-        let rows = stmt.query_map([project_id], |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map([project_id], parse_memory_fact_row)?;
 
         rows.collect::<Result<Vec<_>, _>>()
     })();
@@ -133,18 +123,7 @@ pub async fn get_memory(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
          FROM memory_facts WHERE id = ?1",
         [id],
-        |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        },
+        parse_memory_fact_row,
     );
 
     match result {
@@ -195,18 +174,7 @@ pub async fn recall(
 
                 let rows = stmt.query_map(
                     rusqlite::params![project_id, embedding_bytes, limit],
-                    |row| {
-                        Ok(MemoryFact {
-                            id: row.get(0)?,
-                            project_id: row.get(1)?,
-                            key: row.get(2)?,
-                            content: row.get(3)?,
-                            fact_type: row.get(4)?,
-                            category: row.get(5)?,
-                            confidence: row.get(6)?,
-                            created_at: row.get(7)?,
-                        })
-                    },
+                    parse_memory_fact_row,
                 )?;
 
                 rows.collect::<Result<Vec<_>, _>>()
@@ -237,18 +205,7 @@ pub async fn recall(
 
         let rows = stmt.query_map(
             rusqlite::params![project_id, pattern, limit],
-            |row| {
-                Ok(MemoryFact {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    key: row.get(2)?,
-                    content: row.get(3)?,
-                    fact_type: row.get(4)?,
-                    category: row.get(5)?,
-                    confidence: row.get(6)?,
-                    created_at: row.get(7)?,
-                })
-            },
+            parse_memory_fact_row,
         )?;
 
         rows.collect::<Result<Vec<_>, _>>()

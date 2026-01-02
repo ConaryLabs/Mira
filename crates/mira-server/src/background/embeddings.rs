@@ -7,7 +7,6 @@ use crate::embeddings::EmbeddingClient;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// OpenAI API base URL
 const OPENAI_API_URL: &str = "https://api.openai.com/v1";
@@ -33,13 +32,11 @@ struct BatchBody {
     input: String,
 }
 
-/// Batch status response
+/// Batch status response (serde ignores unknown fields)
 #[derive(Debug, Deserialize)]
 struct BatchStatus {
-    id: String,
     status: String,
     output_file_id: Option<String>,
-    error_file_id: Option<String>,
     request_counts: Option<RequestCounts>,
 }
 
@@ -47,7 +44,6 @@ struct BatchStatus {
 struct RequestCounts {
     total: i64,
     completed: i64,
-    failed: i64,
 }
 
 /// File upload response

@@ -121,7 +121,7 @@ async fn run_mcp_server() -> Result<()> {
     // Initialize DeepSeek client if API key available
     let deepseek = std::env::var("DEEPSEEK_API_KEY")
         .ok()
-        .map(|key| Arc::new(web::deepseek::DeepSeekClient::new(key, ws_tx.clone())));
+        .map(|key| Arc::new(web::deepseek::DeepSeekClient::new(key)));
 
     if deepseek.is_some() {
         info!("DeepSeek enabled (for chat and module summaries)");
@@ -189,10 +189,7 @@ async fn run_web_server(port: u16) -> Result<()> {
     // Initialize DeepSeek for background summaries
     let deepseek = std::env::var("DEEPSEEK_API_KEY")
         .ok()
-        .map(|key| {
-            let (tx, _) = tokio::sync::broadcast::channel(16);
-            Arc::new(web::deepseek::DeepSeekClient::new(key, tx))
-        });
+        .map(|key| Arc::new(web::deepseek::DeepSeekClient::new(key)));
 
     // Spawn background worker for batch processing
     let _shutdown_tx = background::spawn(db.clone(), embeddings.clone(), deepseek);
@@ -202,7 +199,6 @@ async fn run_web_server(port: u16) -> Result<()> {
     let (watcher_shutdown_tx, watcher_shutdown_rx) = tokio::sync::watch::channel(false);
     let watcher_handle = background::watcher::spawn(
         db.clone(),
-        embeddings.clone(),
         watcher_shutdown_rx,
     );
     info!("File watcher started");

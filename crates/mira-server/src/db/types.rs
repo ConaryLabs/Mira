@@ -1,18 +1,8 @@
 // db/types.rs
 // Data structures returned by database operations
 
-/// Memory fact record
-#[derive(Debug, Clone)]
-pub struct MemoryFact {
-    pub id: i64,
-    pub project_id: Option<i64>,
-    pub key: Option<String>,
-    pub content: String,
-    pub fact_type: String,
-    pub category: Option<String>,
-    pub confidence: f64,
-    pub created_at: String,
-}
+// Note: MemoryFact is in mira_types (shared crate)
+// Use parse_memory_fact_row() from db/memory.rs for row parsing
 
 /// Tool history entry
 #[derive(Debug, Clone)]

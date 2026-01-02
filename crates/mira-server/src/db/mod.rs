@@ -8,6 +8,7 @@ mod schema;
 mod session;
 mod types;
 
+pub use memory::parse_memory_fact_row;
 pub use types::*;
 
 use anyhow::{Context, Result};
