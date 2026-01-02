@@ -4,6 +4,7 @@
 mod scanner;
 mod embeddings;
 mod summaries;
+pub mod watcher;
 
 use crate::db::Database;
 use crate::embeddings::EmbeddingClient;

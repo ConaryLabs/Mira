@@ -198,8 +198,17 @@ async fn run_web_server(port: u16) -> Result<()> {
     let _shutdown_tx = background::spawn(db.clone(), embeddings.clone(), deepseek);
     info!("Background worker started");
 
-    // Create app state
-    let state = web::state::AppState::new(db, embeddings);
+    // Spawn file watcher for automatic incremental indexing
+    let (watcher_shutdown_tx, watcher_shutdown_rx) = tokio::sync::watch::channel(false);
+    let watcher_handle = background::watcher::spawn(
+        db.clone(),
+        embeddings.clone(),
+        watcher_shutdown_rx,
+    );
+    info!("File watcher started");
+
+    // Create app state with watcher handle
+    let state = web::state::AppState::with_watcher(db, embeddings, watcher_handle);
 
     // Create router
     let app = web::create_router(state);
@@ -212,6 +221,9 @@ async fn run_web_server(port: u16) -> Result<()> {
     println!("Mira Studio running on http://localhost:{}", port);
 
     axum::serve(listener, app).await?;
+
+    // Shutdown watcher on exit
+    let _ = watcher_shutdown_tx.send(true);
 
     Ok(())
 }

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
+use crate::background::watcher::WatcherHandle;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::web::claude::ClaudeManager;
@@ -33,6 +34,9 @@ pub struct AppState {
 
     /// Claude Code instance manager
     pub claude_manager: Arc<ClaudeManager>,
+
+    /// File watcher handle for registering projects
+    pub watcher: Option<WatcherHandle>,
 }
 
 impl AppState {
@@ -55,6 +59,34 @@ impl AppState {
             session_id: Arc::new(RwLock::new(None)),
             deepseek,
             claude_manager,
+            watcher: None,
+        }
+    }
+
+    /// Create with file watcher for automatic indexing
+    pub fn with_watcher(
+        db: Arc<Database>,
+        embeddings: Option<Arc<Embeddings>>,
+        watcher: WatcherHandle,
+    ) -> Self {
+        let (ws_tx, _) = broadcast::channel(256);
+
+        // Initialize DeepSeek client if API key is available
+        let deepseek = std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx.clone())));
+
+        let claude_manager = Arc::new(ClaudeManager::new(ws_tx.clone()));
+
+        Self {
+            db,
+            embeddings,
+            ws_tx,
+            project: Arc::new(RwLock::new(None)),
+            session_id: Arc::new(RwLock::new(None)),
+            deepseek,
+            claude_manager,
+            watcher: Some(watcher),
         }
     }
 
@@ -80,6 +112,7 @@ impl AppState {
             session_id,
             deepseek,
             claude_manager,
+            watcher: None,
         }
     }
 
@@ -89,8 +122,13 @@ impl AppState {
         let _ = self.ws_tx.send(event);
     }
 
-    /// Set the active project
+    /// Set the active project and register for file watching
     pub async fn set_project(&self, project: ProjectContext) {
+        // Register project with file watcher if available
+        if let Some(ref watcher) = self.watcher {
+            watcher.watch(project.id, std::path::PathBuf::from(&project.path)).await;
+        }
+
         let mut guard = self.project.write().await;
         *guard = Some(project);
     }

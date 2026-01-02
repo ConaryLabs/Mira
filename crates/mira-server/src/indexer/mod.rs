@@ -62,6 +62,85 @@ pub fn extract_all(path: &Path) -> Result<(Vec<Symbol>, Vec<Import>, Vec<parsers
     Ok(result)
 }
 
+/// Result of parsing file content for incremental updates
+pub struct FileParseResult {
+    pub symbols: Vec<ParsedSymbol>,
+    pub imports: Vec<ParsedImport>,
+    pub chunks: Vec<String>,
+}
+
+/// Simplified symbol for incremental indexing
+pub struct ParsedSymbol {
+    pub name: String,
+    pub kind: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub signature: Option<String>,
+}
+
+/// Simplified import for incremental indexing
+pub struct ParsedImport {
+    pub path: String,
+    pub is_external: bool,
+}
+
+/// Parse file content directly (for incremental updates)
+/// Returns symbols, imports, and content chunks for embedding
+pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
+    let ext = match language {
+        "rust" => "rs",
+        "python" => "py",
+        "typescript" | "javascript" => "ts",
+        "go" => "go",
+        _ => return Err(anyhow::anyhow!("Unsupported language: {}", language)),
+    };
+
+    let mut parser = create_parser(ext).ok_or_else(|| anyhow::anyhow!("Failed to create parser"))?;
+
+    let (symbols, imports, _) = match ext {
+        "rs" => parsers::rust::parse(&mut parser, content)?,
+        "py" => parsers::python::parse(&mut parser, content)?,
+        "ts" => parsers::typescript::parse(&mut parser, content)?,
+        "go" => parsers::go::parse(&mut parser, content)?,
+        _ => (vec![], vec![], vec![]),
+    };
+
+    // Convert to simplified types
+    let parsed_symbols: Vec<ParsedSymbol> = symbols
+        .into_iter()
+        .map(|s| ParsedSymbol {
+            name: s.name,
+            kind: s.symbol_type,
+            start_line: s.start_line,
+            end_line: s.end_line,
+            signature: s.signature,
+        })
+        .collect();
+
+    let parsed_imports: Vec<ParsedImport> = imports
+        .into_iter()
+        .map(|i| ParsedImport {
+            path: i.import_path,
+            is_external: i.is_external,
+        })
+        .collect();
+
+    // Create chunks (~500 chars each)
+    let chunks: Vec<String> = content
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(500)
+        .map(|c| c.iter().collect::<String>())
+        .filter(|c| !c.trim().is_empty())
+        .collect();
+
+    Ok(FileParseResult {
+        symbols: parsed_symbols,
+        imports: parsed_imports,
+        chunks,
+    })
+}
+
 /// Index an entire project
 pub async fn index_project(
     path: &Path,
