@@ -9,6 +9,7 @@ use mira_types::{ChatRequest, ChatUsage, WsEvent};
 use std::time::Instant;
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::persona;
 use crate::web::deepseek::{self, Message, mira_tools};
 use crate::web::state::AppState;
 
@@ -195,25 +196,18 @@ pub async fn test_chat(
     }
 }
 
-/// Build system prompt - minimal base, context added by tool results
-async fn build_system_prompt(_state: &AppState) -> String {
-    // Keep base prompt minimal for KV cache efficiency
-    // Project context is provided via tool descriptions
-    // Claude Code guide is injected when spawn_claude is used
-    BASE_SYSTEM_PROMPT.to_string()
+/// Build system prompt with persona overlays
+/// Layers: base persona -> project overlay -> session overlay -> capabilities
+async fn build_system_prompt(state: &AppState) -> String {
+    let project_id = state.project_id().await;
+    let session_persona = state.get_session_persona().await;
+
+    persona::build_system_prompt_with_persona(
+        &state.db,
+        project_id,
+        session_persona.as_deref(),
+    )
 }
-
-/// Base system prompt - kept minimal for KV cache efficiency
-/// Context is added situationally via tool results, not upfront
-const BASE_SYSTEM_PROMPT: &str = r#"You are an AI assistant integrated with Mira Studio.
-
-You have tools for:
-- Searching semantic memory and code
-- Managing tasks and goals
-- Spawning Claude Code for file/terminal work
-
-Use tools when helpful. Be concise in responses.
-"#;
 
 /// Claude Code usage guide - injected when spawn_claude is first used
 /// Provides DeepSeek with expert knowledge on how to use the Claude instance effectively

@@ -29,6 +29,9 @@ pub struct AppState {
     /// Current MCP session ID (shared with MCP server)
     pub session_id: Arc<RwLock<Option<String>>>,
 
+    /// Session-level persona overlay (ephemeral, clears on session end)
+    pub session_persona: Arc<RwLock<Option<String>>>,
+
     /// DeepSeek client for chat (Reasoner)
     pub deepseek: Option<Arc<DeepSeekClient>>,
 
@@ -57,6 +60,7 @@ impl AppState {
             ws_tx,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
+            session_persona: Arc::new(RwLock::new(None)),
             deepseek,
             claude_manager,
             watcher: None,
@@ -84,6 +88,7 @@ impl AppState {
             ws_tx,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
+            session_persona: Arc::new(RwLock::new(None)),
             deepseek,
             claude_manager,
             watcher: Some(watcher),
@@ -110,6 +115,7 @@ impl AppState {
             ws_tx,
             project: Arc::new(RwLock::new(None)),
             session_id,
+            session_persona: Arc::new(RwLock::new(None)),
             deepseek,
             claude_manager,
             watcher: None,
@@ -141,5 +147,16 @@ impl AppState {
     /// Get the active project ID
     pub async fn project_id(&self) -> Option<i64> {
         self.project.read().await.as_ref().map(|p| p.id)
+    }
+
+    /// Get the session persona overlay
+    pub async fn get_session_persona(&self) -> Option<String> {
+        self.session_persona.read().await.clone()
+    }
+
+    /// Set the session persona overlay (None to clear)
+    pub async fn set_session_persona(&self, persona: Option<String>) {
+        let mut guard = self.session_persona.write().await;
+        *guard = persona;
     }
 }

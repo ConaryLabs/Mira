@@ -53,6 +53,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/claude", post(api::spawn_claude))
         .route("/claude/{id}", get(api::get_claude_status).delete(api::kill_claude))
         .route("/claude/{id}/input", post(api::send_claude_input))
+        // Persona management
+        .route("/persona", get(api::get_persona))
+        .route("/persona/session", post(api::set_session_persona))
         .with_state(state.clone());
 
     Router::new()

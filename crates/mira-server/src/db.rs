@@ -526,6 +526,56 @@ impl Database {
     }
 
     // ═══════════════════════════════════════
+    // PERSONA
+    // ═══════════════════════════════════════
+
+    /// Get the base persona (global, no project)
+    pub fn get_base_persona(&self) -> Result<Option<String>> {
+        let conn = self.conn();
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT content FROM memory_facts WHERE key = 'base_persona' AND project_id IS NULL AND fact_type = 'persona'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(result)
+    }
+
+    /// Set the base persona (upserts by key)
+    pub fn set_base_persona(&self, content: &str) -> Result<i64> {
+        self.store_memory(None, Some("base_persona"), content, "persona", None, 1.0)
+    }
+
+    /// Get project-specific persona overlay
+    pub fn get_project_persona(&self, project_id: i64) -> Result<Option<String>> {
+        let conn = self.conn();
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT content FROM memory_facts WHERE key = 'project_persona' AND project_id = ? AND fact_type = 'persona'",
+                [project_id],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(result)
+    }
+
+    /// Set project-specific persona (upserts by key)
+    pub fn set_project_persona(&self, project_id: i64, content: &str) -> Result<i64> {
+        self.store_memory(Some(project_id), Some("project_persona"), content, "persona", None, 1.0)
+    }
+
+    /// Clear project-specific persona
+    pub fn clear_project_persona(&self, project_id: i64) -> Result<bool> {
+        let conn = self.conn();
+        let deleted = conn.execute(
+            "DELETE FROM memory_facts WHERE key = 'project_persona' AND project_id = ? AND fact_type = 'persona'",
+            [project_id],
+        )?;
+        Ok(deleted > 0)
+    }
+
+    // ═══════════════════════════════════════
     // SESSION & TOOL HISTORY
     // ═══════════════════════════════════════
 

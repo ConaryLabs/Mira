@@ -143,6 +143,16 @@ You can copy the binary anywhere and run it.
 - [x] Database path in startup response
 - [x] Pointer to session_history tool for detailed inspection
 
+### Phase 12: Persona Overlay System
+- [x] Stackable persona system for DeepSeek chat
+- [x] Base persona (OG Mira personality) - always active
+- [x] Project overlay - auto-applies when project is set
+- [x] Session overlay - ephemeral, manual via API
+- [x] Database methods: get/set_base_persona, get/set/clear_project_persona
+- [x] New module: `persona.rs` with DEFAULT_BASE_PERSONA
+- [x] API endpoints: GET /api/persona, POST /api/persona/session
+- [x] KV cache efficient (832/849 tokens cached on first request)
+
 ## Remaining Work
 
 ### Deferred: Scout/Solve AI Pipeline
