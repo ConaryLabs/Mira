@@ -64,15 +64,6 @@ Full conversational memory system at `http://localhost:3000/chat`:
 - **Code Blocks** - Syntax highlighting with copy button
 - **Streaming Indicators** - Typing dots and thinking spinner during responses
 
-### Ghost Mode (Web UI)
-Real-time visualization of Claude Code activity:
-- Live tool call streaming via WebSocket
-- Session history replay on connect
-- Automatic reconnection with sync protocol
-- Diff preview with syntax highlighting
-
-Access at `http://localhost:3000` when running `mira web`.
-
 ### Background Processing
 Automatic idle-time processing for cost savings:
 - **Embeddings**: Queued for OpenAI Batch API (50% cheaper)
@@ -101,8 +92,8 @@ Automatic idle-time processing for cost savings:
 │                  │ broadcast            │
 │   ┌──────────────▼──────────────────┐  │
 │   │        Web UI & APIs            │  │
-│   │   Ghost Mode, Chat, WebSocket,  │  │
-│   │   REST API, session history     │  │
+│   │   Chat, WebSocket, REST API,    │  │
+│   │   session history               │  │
 │   └─────────────────────────────────┘  │
 │                    │                    │
 │   ┌────────────────┴────────────────┐  │
@@ -118,7 +109,7 @@ Automatic idle-time processing for cost savings:
 
 | Command | Description |
 |---------|-------------|
-| `mira web` | Run server with MCP, Chat, and Ghost Mode (port 3000) |
+| `mira web` | Run server with MCP and Chat (port 3000) |
 | `mira index --path /project` | Index a project's code |
 | `mira test-chat "message"` | Test chat via HTTP (requires `mira web`) |
 

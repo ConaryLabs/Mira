@@ -107,13 +107,20 @@ pub async fn execute_tools(
 
                 match state
                     .claude_manager
-                    .spawn(working_dir, Some(initial_prompt.to_string()))
+                    .spawn(working_dir.clone(), Some(initial_prompt.to_string()))
                     .await
                 {
-                    Ok(id) => format!(
-                        "Claude instance started with ID: {}\n\n{}",
-                        id, CLAUDE_CODE_GUIDE
-                    ),
+                    Ok(id) => {
+                        // Broadcast to WebSocket so terminal tray can pick it up
+                        state.broadcast(mira_types::WsEvent::ClaudeSpawned {
+                            instance_id: id.clone(),
+                            working_dir,
+                        });
+                        format!(
+                            "Claude instance started with ID: {}\n\n{}",
+                            id, CLAUDE_CODE_GUIDE
+                        )
+                    }
                     Err(e) => format!("Error spawning Claude: {}", e),
                 }
             }

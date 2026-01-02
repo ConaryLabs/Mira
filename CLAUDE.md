@@ -48,7 +48,6 @@ journalctl --user -u mira -n 50 # View last 50 lines
 **URLs:**
 - Studio: http://localhost:3000
 - Chat (DeepSeek): http://localhost:3000/chat
-- Ghost Mode: http://localhost:3000/ghost
 
 ## Testing & Debugging
 

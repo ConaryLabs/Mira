@@ -38,12 +38,6 @@ axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6.8", features = ["trace", "timeout", "cors", "set-header", "fs"] }
 
-# Leptos (SSR)
-leptos = { version = "0.8", features = ["ssr"] }
-leptos_axum = "0.8"
-leptos_router = { version = "0.8", features = ["ssr"] }
-leptos_meta = { version = "0.8", features = ["ssr"] }
-
 # CLI
 clap = { version = "4.4", features = ["derive", "env"] }
 
@@ -87,9 +81,6 @@ tokio-stream = "0.1"
 # Document processing
 pdf-extract = "0.10"
 pulldown-cmark = "0.13"
-
-# Asset embedding
-rust-embed = "8"
 
 # Additional utilities
 glob = "0.3"

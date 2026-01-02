@@ -1,13 +1,11 @@
 // src/web/mod.rs
-// Web server layer for Mira Studio
+// Web server layer for Mira
 
 pub mod api;
 pub mod chat;
 pub mod claude;
 pub mod claude_api;
-pub mod components;
 pub mod deepseek;
-pub mod embedded;
 pub mod mcp_http;
 pub mod state;
 pub mod ws;
@@ -20,9 +18,6 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::web::state::AppState;
-
-// Note: Leptos SSR is deferred - we're serving a simple HTML shell
-// that loads the WASM frontend from mira-app
 
 /// Create the web server router
 pub fn create_router(state: AppState) -> Router {
@@ -75,20 +70,8 @@ pub fn create_router(state: AppState) -> Router {
         // MCP over HTTP (Streamable HTTP transport)
         .nest_service("/mcp", mcp_service)
 
-        // WebSocket for Ghost Mode / terminal
+        // WebSocket for real-time events
         .route("/ws", get(ws::handler))
-
-        // Embedded static assets (single binary distribution)
-        .nest_service("/assets", embedded::EmbeddedAssets)
-        .nest_service("/pkg", embedded::EmbeddedPkg)
-
-        // SPA routes - all serve index.html, client-side routing handles the rest
-        .route("/", get(embedded::index_html))
-        .route("/ghost", get(embedded::index_html))
-        .route("/memories", get(embedded::index_html))
-        .route("/code", get(embedded::index_html))
-        .route("/tasks", get(embedded::index_html))
-        .route("/chat", get(embedded::index_html))
 
         .layer(cors)
         .layer(TraceLayer::new_for_http())

@@ -208,6 +208,7 @@ impl ClaudeManager {
                 if !inst.is_running() {
                     info!("Claude instance {} stopped", instance_id);
                     let _ = ws_tx.send(WsEvent::TerminalOutput {
+                        instance_id: instance_id.clone(),
                         content: format!("\n[Claude instance {} stopped]\n", instance_id),
                         is_stderr: true,
                     });
@@ -219,6 +220,7 @@ impl ClaudeManager {
                     Ok(Some(output)) => {
                         debug!("Claude {} output: {}", instance_id, output);
                         let _ = ws_tx.send(WsEvent::TerminalOutput {
+                            instance_id: instance_id.clone(),
                             content: output,
                             is_stderr: false,
                         });
@@ -234,6 +236,7 @@ impl ClaudeManager {
 
         // Broadcast spawn event
         let _ = self.ws_tx.send(WsEvent::TerminalOutput {
+            instance_id: id.clone(),
             content: format!("[Started Claude Code instance {}]\n", id),
             is_stderr: false,
         });
@@ -265,6 +268,7 @@ impl ClaudeManager {
             info!("Killed Claude instance {}", instance_id);
 
             let _ = self.ws_tx.send(WsEvent::TerminalOutput {
+                instance_id: instance_id.to_string(),
                 content: format!("[Claude instance {} killed]\n", instance_id),
                 is_stderr: true,
             });

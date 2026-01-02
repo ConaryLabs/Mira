@@ -147,10 +147,10 @@ pub struct Milestone {
 }
 
 // ═══════════════════════════════════════
-// WEBSOCKET EVENTS (Ghost Mode)
+// WEBSOCKET EVENTS
 // ═══════════════════════════════════════
 
-/// Thinking phase for Ghost Mode
+/// Thinking phase for streaming
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingPhase {
@@ -230,6 +230,7 @@ pub enum WsEvent {
 
     // Terminal output
     TerminalOutput {
+        instance_id: String,
         content: String,
         is_stderr: bool,
     },

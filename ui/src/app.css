@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/* Catppuccin Mocha Theme */
+:root {
+  /* Base colors */
+  --crust: #11111b;
+  --mantle: #181825;
+  --base: #1e1e2e;
+  --surface0: #313244;
+  --surface1: #45475a;
+  --surface2: #585b70;
+
+  /* Text colors */
+  --text: #cdd6f4;
+  --subtext1: #bac2de;
+  --subtext0: #a6adc8;
+  --overlay2: #9399b2;
+  --overlay1: #7f849c;
+  --overlay0: #6c7086;
+
+  /* Accent colors */
+  --rosewater: #f5e0dc;
+  --flamingo: #f2cdcd;
+  --pink: #f5c2e7;
+  --mauve: #cba6f7;
+  --red: #f38ba8;
+  --maroon: #eba0ac;
+  --peach: #fab387;
+  --yellow: #f9e2af;
+  --green: #a6e3a1;
+  --teal: #94e2d5;
+  --sky: #89dceb;
+  --sapphire: #74c7ec;
+  --blue: #89b4fa;
+  --lavender: #b4befe;
+
+  /* Semantic mappings */
+  --background: var(--base);
+  --background-alt: var(--mantle);
+  --card: var(--surface0);
+  --card-hover: var(--surface1);
+  --border: var(--surface1);
+  --border-subtle: rgba(69, 71, 90, 0.5);
+
+  --foreground: var(--text);
+  --muted: var(--subtext0);
+  --muted-foreground: var(--overlay1);
+
+  --accent: var(--blue);
+  --accent-hover: var(--sapphire);
+  --accent-faded: rgba(137, 180, 250, 0.15);
+  --success: var(--green);
+  --success-faded: rgba(166, 227, 161, 0.15);
+  --warning: var(--peach);
+  --warning-faded: rgba(250, 179, 135, 0.15);
+  --error: var(--red);
+  --error-faded: rgba(243, 139, 168, 0.15);
+
+  /* Glass effects */
+  --glass: rgba(30, 30, 46, 0.8);
+  --glass-heavy: rgba(30, 30, 46, 0.92);
+  --glass-border: rgba(180, 190, 254, 0.08);
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--background);
+  color: var(--foreground);
+  line-height: 1.6;
+  margin: 0;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface2);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+/* Animations */
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-6px); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
