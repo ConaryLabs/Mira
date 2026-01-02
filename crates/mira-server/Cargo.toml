@@ -30,7 +30,7 @@ sqlite-vec = "0.1.6"
 zerocopy = "0.7"
 
 # MCP Server
-rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
+rmcp = { version = "0.12", features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }
 schemars = "1"
 
 # HTTP server

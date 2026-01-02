@@ -1,21 +1,19 @@
 // crates/mira-app/src/pages/chat.rs
-// Chat page - DeepSeek Reasoner integration with enhanced UI
+// Chat page - DeepSeek Reasoner integration with SSE streaming
 
 use leptos::prelude::*;
 use leptos::html;
-use std::cell::RefCell;
-use std::rc::Rc;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::WebSocket;
-use mira_types::{WsEvent, ProjectContext};
-use crate::api::{send_chat_message, fetch_projects, fetch_current_project, set_project};
-use crate::websocket::connect_websocket;
+use mira_types::ProjectContext;
+use crate::api::{fetch_projects, fetch_current_project, set_project, fetch_chat_history, get_api_url};
 use crate::components::chat::{MessageBubble, TypingIndicator, ThinkingIndicator, ToolCallInfo};
 use crate::ProjectSidebar;
 
-// ═══════════════════════════════════════
+// =============================================
 // DATA STRUCTURES
-// ═══════════════════════════════════════
+// =============================================
 
 #[derive(Clone, Debug)]
 pub struct ChatDisplayMessage {
@@ -34,9 +32,33 @@ fn chrono_now() -> String {
     format!("{:02}:{:02}", hours, minutes)
 }
 
-// ═══════════════════════════════════════
+fn extract_time(timestamp: &str) -> String {
+    if let Some(time_part) = timestamp.split(' ').nth(1) {
+        time_part.chars().take(5).collect()
+    } else {
+        timestamp.chars().take(5).collect()
+    }
+}
+
+// =============================================
+// SSE EVENT TYPES (must match server)
+// =============================================
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ChatEvent {
+    Start,
+    Delta { content: String },
+    Reasoning { content: String },
+    ToolStart { name: String, call_id: String },
+    ToolResult { name: String, call_id: String, success: bool },
+    Done { content: String },
+    Error { message: String },
+}
+
+// =============================================
 // CHAT PAGE COMPONENT
-// ═══════════════════════════════════════
+// =============================================
 
 #[component]
 pub fn ChatPage() -> impl IntoView {
@@ -44,25 +66,19 @@ pub fn ChatPage() -> impl IntoView {
     let (messages, set_messages) = signal(Vec::<ChatDisplayMessage>::new());
     let (input, set_input) = signal(String::new());
     let (loading, set_loading) = signal(false);
-    let (current_thinking, set_current_thinking) = signal(String::new());
+    let (is_thinking, set_is_thinking) = signal(false);
     let (message_id_counter, set_message_id_counter) = signal(0usize);
 
-    // Tool calls accumulator (for current assistant response)
+    // Tool calls accumulator
     let (pending_tool_calls, set_pending_tool_calls) = signal(Vec::<ToolCallInfo>::new());
-    // Store tool start time as f64 (js timestamp) to avoid Send issues with js_sys::Date
-    let (current_tool, set_current_tool) = signal(Option::<(String, f64)>::None);
+    let (current_tool, set_current_tool) = signal(Option::<String>::None);
 
     // Project state
     let (projects, set_projects) = signal(Vec::<ProjectContext>::new());
     let (current_project, set_current_project) = signal(Option::<ProjectContext>::None);
     let sidebar_open = RwSignal::new(false);
 
-    // WebSocket state
-    let (events, set_events) = signal(Vec::<WsEvent>::new());
-    let (ws_connected, set_ws_connected) = signal(false);
-    let ws_ref: Rc<RefCell<Option<WebSocket>>> = Rc::new(RefCell::new(None));
-
-    // Load projects on mount
+    // Load projects and chat history on mount
     Effect::new(move |_| {
         spawn_local(async move {
             if let Ok(projs) = fetch_projects().await {
@@ -71,139 +87,33 @@ pub fn ChatPage() -> impl IntoView {
             if let Ok(Some(proj)) = fetch_current_project().await {
                 set_current_project.set(Some(proj));
             }
-        });
-    });
 
-    // Connect to WebSocket
-    let ws_ref_clone = ws_ref.clone();
-    Effect::new(move |_| {
-        let ws_ref = ws_ref_clone.clone();
-        spawn_local(async move {
-            connect_websocket(ws_ref, set_events, set_ws_connected);
-        });
-    });
-
-    // Process incoming events
-    Effect::new(move |_| {
-        let evts = events.get();
-        for event in evts.iter() {
-            match event {
-                WsEvent::Thinking { content, .. } => {
-                    set_current_thinking.update(|t| t.push_str(content));
-                }
-                WsEvent::ChatChunk { content, .. } => {
-                    set_messages.update(|msgs| {
-                        if let Some(last) = msgs.last_mut() {
-                            if last.role == "assistant" {
-                                last.content.push_str(content);
-                                return;
-                            }
-                        }
-                        // New assistant message
-                        set_message_id_counter.update(|id| *id += 1);
-                        let id = message_id_counter.get();
-                        msgs.push(ChatDisplayMessage {
-                            id,
-                            role: "assistant".to_string(),
-                            content: content.clone(),
-                            timestamp: chrono_now(),
+            if let Ok(history) = fetch_chat_history().await {
+                let mut counter = 0usize;
+                let loaded_messages: Vec<ChatDisplayMessage> = history
+                    .into_iter()
+                    .map(|msg| {
+                        counter += 1;
+                        ChatDisplayMessage {
+                            id: counter,
+                            role: msg.role,
+                            content: msg.content,
+                            timestamp: extract_time(&msg.timestamp),
                             thinking: None,
                             tool_calls: vec![],
-                        });
-                    });
-                }
-                WsEvent::ChatComplete { content, .. } => {
-                    set_loading.set(false);
-
-                    // Get accumulated thinking and tool calls
-                    let think_content = current_thinking.get();
-                    let tool_calls = pending_tool_calls.get();
-
-                    // Update the last assistant message with thinking and tool calls
-                    set_messages.update(|msgs| {
-                        if let Some(last) = msgs.last_mut() {
-                            if last.role == "assistant" {
-                                if !content.is_empty() {
-                                    last.content = content.clone();
-                                }
-                                if !think_content.is_empty() {
-                                    last.thinking = Some(think_content.clone());
-                                }
-                                if !tool_calls.is_empty() {
-                                    last.tool_calls = tool_calls.clone();
-                                }
-                            }
                         }
-                    });
+                    })
+                    .collect();
 
-                    // Clear accumulators
-                    set_current_thinking.set(String::new());
-                    set_pending_tool_calls.set(vec![]);
-                    set_current_tool.set(None);
+                if !loaded_messages.is_empty() {
+                    set_message_id_counter.set(counter);
+                    set_messages.set(loaded_messages);
                 }
-                WsEvent::ToolStart { tool_name, arguments, .. } => {
-                    set_current_tool.set(Some((tool_name.clone(), js_sys::Date::now())));
-
-                    // Add pending tool call - convert serde_json::Value to String
-                    let args_str = serde_json::to_string_pretty(arguments).unwrap_or_default();
-                    set_pending_tool_calls.update(|calls| {
-                        calls.push(ToolCallInfo {
-                            name: tool_name.clone(),
-                            arguments: args_str,
-                            result: None,
-                            success: true,
-                            duration_ms: 0,
-                        });
-                    });
-                }
-                WsEvent::ToolResult { tool_name, result, success, .. } => {
-                    // Calculate duration
-                    let duration_ms = if let Some((name, start_time)) = current_tool.get() {
-                        if name == *tool_name {
-                            (js_sys::Date::now() - start_time) as u64
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
-
-                    // Update the last tool call with result
-                    set_pending_tool_calls.update(|calls| {
-                        if let Some(last) = calls.last_mut() {
-                            if last.name == *tool_name {
-                                last.result = Some(result.clone());
-                                last.success = *success;
-                                last.duration_ms = duration_ms;
-                            }
-                        }
-                    });
-
-                    set_current_tool.set(None);
-                }
-                WsEvent::ChatError { message } => {
-                    set_loading.set(false);
-                    set_message_id_counter.update(|id| *id += 1);
-                    let id = message_id_counter.get();
-                    set_messages.update(|msgs| {
-                        msgs.push(ChatDisplayMessage {
-                            id,
-                            role: "error".to_string(),
-                            content: message.clone(),
-                            timestamp: chrono_now(),
-                            thinking: None,
-                            tool_calls: vec![],
-                        });
-                    });
-                    set_current_thinking.set(String::new());
-                    set_pending_tool_calls.set(vec![]);
-                }
-                _ => {}
             }
-        }
+        });
     });
 
-    // Send message handler
+    // Send message handler using SSE
     let send_message = move |_| {
         let msg = input.get();
         if msg.is_empty() || loading.get() {
@@ -212,10 +122,10 @@ pub fn ChatPage() -> impl IntoView {
 
         // Add user message
         set_message_id_counter.update(|id| *id += 1);
-        let id = message_id_counter.get();
+        let user_id = message_id_counter.get();
         set_messages.update(|msgs| {
             msgs.push(ChatDisplayMessage {
-                id,
+                id: user_id,
                 role: "user".to_string(),
                 content: msg.clone(),
                 timestamp: chrono_now(),
@@ -227,25 +137,186 @@ pub fn ChatPage() -> impl IntoView {
         // Clear input and set loading
         set_input.set(String::new());
         set_loading.set(true);
-        set_current_thinking.set(String::new());
+        set_is_thinking.set(false);
         set_pending_tool_calls.set(vec![]);
+        set_current_tool.set(None);
 
-        // Send to API
+        // Create assistant message placeholder
+        set_message_id_counter.update(|id| *id += 1);
+        let assistant_id = message_id_counter.get();
+        set_messages.update(|msgs| {
+            msgs.push(ChatDisplayMessage {
+                id: assistant_id,
+                role: "assistant".to_string(),
+                content: String::new(),
+                timestamp: chrono_now(),
+                thinking: None,
+                tool_calls: vec![],
+            });
+        });
+
+        // Open SSE connection
+        let url = get_api_url("/api/chat/stream");
+
         spawn_local(async move {
-            if let Err(e) = send_chat_message(&msg).await {
-                set_loading.set(false);
-                set_message_id_counter.update(|id| *id += 1);
-                let id = message_id_counter.get();
-                set_messages.update(|msgs| {
-                    msgs.push(ChatDisplayMessage {
-                        id,
-                        role: "error".to_string(),
-                        content: e,
-                        timestamp: chrono_now(),
-                        thinking: None,
-                        tool_calls: vec![],
+            // We need to POST with body, but EventSource only supports GET
+            // So we'll use fetch with streaming instead
+            let window = web_sys::window().unwrap();
+            let request_init = web_sys::RequestInit::new();
+            request_init.set_method("POST");
+
+            let headers = web_sys::Headers::new().unwrap();
+            headers.set("Content-Type", "application/json").unwrap();
+            request_init.set_headers(&headers);
+
+            let body = serde_json::json!({ "message": msg });
+            request_init.set_body(&JsValue::from_str(&body.to_string()));
+
+            let request = web_sys::Request::new_with_str_and_init(&url, &request_init).unwrap();
+
+            let resp_promise = window.fetch_with_request(&request);
+            let resp = wasm_bindgen_futures::JsFuture::from(resp_promise).await;
+
+            match resp {
+                Ok(resp_value) => {
+                    let response: web_sys::Response = resp_value.dyn_into().unwrap();
+
+                    if !response.ok() {
+                        set_loading.set(false);
+                        set_messages.update(|msgs| {
+                            if let Some(last) = msgs.last_mut() {
+                                if last.role == "assistant" {
+                                    last.content = format!("Error: HTTP {}", response.status());
+                                }
+                            }
+                        });
+                        return;
+                    }
+
+                    // Get the response body as a ReadableStream
+                    if let Some(body) = response.body() {
+                        let reader: web_sys::ReadableStreamDefaultReader = body.get_reader().unchecked_into();
+                        let decoder = web_sys::TextDecoder::new().unwrap();
+                        let mut buffer = String::new();
+
+                        loop {
+                            let read_promise: js_sys::Promise = reader.read();
+                            let result = wasm_bindgen_futures::JsFuture::from(read_promise).await;
+
+                            match result {
+                                Ok(chunk) => {
+                                    let done = js_sys::Reflect::get(&chunk, &JsValue::from_str("done"))
+                                        .unwrap()
+                                        .as_bool()
+                                        .unwrap_or(true);
+
+                                    if done {
+                                        break;
+                                    }
+
+                                    let value = js_sys::Reflect::get(&chunk, &JsValue::from_str("value")).unwrap();
+                                    if !value.is_undefined() {
+                                        let array = js_sys::Uint8Array::new(&value);
+                                        let text = decoder.decode_with_buffer_source(&array).unwrap_or_default();
+                                        buffer.push_str(&text);
+
+                                        // Process SSE events in buffer
+                                        while let Some(pos) = buffer.find("\n\n") {
+                                            let event_str = buffer[..pos].to_string();
+                                            buffer = buffer[pos + 2..].to_string();
+
+                                            // Parse SSE event
+                                            for line in event_str.lines() {
+                                                if let Some(data) = line.strip_prefix("data: ") {
+                                                    if let Ok(event) = serde_json::from_str::<ChatEvent>(data) {
+                                                        match event {
+                                                            ChatEvent::Start => {
+                                                                set_is_thinking.set(true);
+                                                            }
+                                                            ChatEvent::Delta { content } => {
+                                                                set_is_thinking.set(false);
+                                                                set_messages.update(|msgs| {
+                                                                    if let Some(last) = msgs.last_mut() {
+                                                                        if last.role == "assistant" {
+                                                                            last.content.push_str(&content);
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }
+                                                            ChatEvent::Reasoning { .. } => {
+                                                                // Could store for display
+                                                            }
+                                                            ChatEvent::ToolStart { name, call_id } => {
+                                                                set_current_tool.set(Some(name.clone()));
+                                                                set_pending_tool_calls.update(|calls| {
+                                                                    calls.push(ToolCallInfo {
+                                                                        name,
+                                                                        arguments: String::new(),
+                                                                        result: None,
+                                                                        success: true,
+                                                                        duration_ms: 0,
+                                                                    });
+                                                                });
+                                                            }
+                                                            ChatEvent::ToolResult { name, success, .. } => {
+                                                                set_current_tool.set(None);
+                                                                set_pending_tool_calls.update(|calls| {
+                                                                    if let Some(last) = calls.last_mut() {
+                                                                        if last.name == name {
+                                                                            last.success = success;
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }
+                                                            ChatEvent::Done { content } => {
+                                                                set_loading.set(false);
+                                                                set_is_thinking.set(false);
+                                                                let tool_calls = pending_tool_calls.get();
+                                                                set_messages.update(|msgs| {
+                                                                    if let Some(last) = msgs.last_mut() {
+                                                                        if last.role == "assistant" {
+                                                                            last.content = content;
+                                                                            if !tool_calls.is_empty() {
+                                                                                last.tool_calls = tool_calls;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                });
+                                                                set_pending_tool_calls.set(vec![]);
+                                                            }
+                                                            ChatEvent::Error { message } => {
+                                                                set_loading.set(false);
+                                                                set_is_thinking.set(false);
+                                                                set_messages.update(|msgs| {
+                                                                    if let Some(last) = msgs.last_mut() {
+                                                                        if last.role == "assistant" {
+                                                                            last.content = format!("Error: {}", message);
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    set_loading.set(false);
+                    set_messages.update(|msgs| {
+                        if let Some(last) = msgs.last_mut() {
+                            if last.role == "assistant" {
+                                last.content = format!("Connection error: {:?}", e);
+                            }
+                        }
                     });
-                });
+                }
             }
         });
     };
@@ -275,7 +346,6 @@ pub fn ChatPage() -> impl IntoView {
     });
 
     view! {
-        // Project Sidebar
         <ProjectSidebar
             open=sidebar_open
             projects=Signal::derive(move || projects.get())
@@ -306,13 +376,6 @@ pub fn ChatPage() -> impl IntoView {
                 </div>
 
                 <div class="ml-auto flex items-center gap-2">
-                    <div class=move || {
-                        if ws_connected.get() {
-                            "w-2 h-2 rounded-full bg-success"
-                        } else {
-                            "w-2 h-2 rounded-full bg-error"
-                        }
-                    }></div>
                     <span class="text-xs text-muted">"DeepSeek Reasoner"</span>
                 </div>
             </div>
@@ -353,35 +416,46 @@ pub fn ChatPage() -> impl IntoView {
                                 />
 
                                 // Loading state
-                                {move || loading.get().then(|| {
-                                    let think = current_thinking.get();
+                                {move || {
+                                    let is_loading = loading.get();
+                                    let thinking = is_thinking.get();
                                     let has_tool = current_tool.get().is_some();
 
-                                    view! {
-                                        <div class="message assistant">
-                                            <div class="message-avatar">"A"</div>
-                                            <div class="message-bubble">
-                                                <div class="message-header">
-                                                    <span class="message-role">"Assistant"</span>
+                                    // Only show loading indicator if we're loading AND the last message has no content yet
+                                    let show_loading = is_loading && {
+                                        let msgs = messages.get();
+                                        msgs.last()
+                                            .map(|m| m.role == "assistant" && m.content.is_empty())
+                                            .unwrap_or(false)
+                                    };
+
+                                    show_loading.then(|| {
+                                        view! {
+                                            <div class="message assistant">
+                                                <div class="message-avatar">"A"</div>
+                                                <div class="message-bubble">
+                                                    <div class="message-header">
+                                                        <span class="message-role">"Assistant"</span>
+                                                    </div>
+                                                    {if thinking {
+                                                        view! {
+                                                            <ThinkingIndicator label="Reasoning..."/>
+                                                        }.into_any()
+                                                    } else if has_tool {
+                                                        let tool_name = current_tool.get().unwrap_or_default();
+                                                        view! {
+                                                            <ThinkingIndicator label=Box::leak(format!("Using {}...", tool_name).into_boxed_str())/>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! {
+                                                            <TypingIndicator/>
+                                                        }.into_any()
+                                                    }}
                                                 </div>
-                                                {if !think.is_empty() {
-                                                    view! {
-                                                        <ThinkingIndicator label="Reasoning..."/>
-                                                    }.into_any()
-                                                } else if has_tool {
-                                                    let tool_name = current_tool.get().map(|(n, _)| n).unwrap_or_default();
-                                                    view! {
-                                                        <ThinkingIndicator label=Box::leak(format!("Using {}...", tool_name).into_boxed_str())/>
-                                                    }.into_any()
-                                                } else {
-                                                    view! {
-                                                        <TypingIndicator/>
-                                                    }.into_any()
-                                                }}
                                             </div>
-                                        </div>
-                                    }
-                                })}
+                                        }
+                                    })
+                                }}
                             </div>
                         }.into_any()
                     }

@@ -38,6 +38,14 @@ web-sys = { version = "0.3", features = [
     "Location",
     "Navigator",
     "Clipboard",
+    # For fetch streaming
+    "Headers",
+    "Request",
+    "RequestInit",
+    "Response",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "TextDecoder",
 ] }
 
 # Serialization

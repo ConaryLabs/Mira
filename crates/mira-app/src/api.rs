@@ -147,6 +147,38 @@ pub async fn send_chat_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Chat history message from server
+#[derive(Clone, Debug, Deserialize)]
+pub struct ChatHistoryMessage {
+    pub id: i64,
+    pub role: String,
+    pub content: String,
+    pub timestamp: String,
+}
+
+/// Fetch chat history from server
+pub async fn fetch_chat_history() -> Result<Vec<ChatHistoryMessage>, String> {
+    let url = get_api_url("/api/chat/history");
+    let resp = gloo_net::http::Request::get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("{:?}", e))?;
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        data: Option<Vec<ChatHistoryMessage>>,
+        error: Option<String>,
+    }
+
+    let data: ApiResponse = resp.json().await.map_err(|e| format!("{:?}", e))?;
+
+    if let Some(err) = data.error {
+        return Err(err);
+    }
+
+    Ok(data.data.unwrap_or_default())
+}
+
 // ═══════════════════════════════════════
 // PROJECT API
 // ═══════════════════════════════════════

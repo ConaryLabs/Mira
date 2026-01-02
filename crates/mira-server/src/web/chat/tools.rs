@@ -1,7 +1,6 @@
 // web/chat/tools.rs
 // Tool execution for DeepSeek chat
 
-use mira_types::WsEvent;
 use std::time::Instant;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -157,14 +156,8 @@ pub async fn execute_tools(
             );
         }
 
-        // Broadcast tool result
-        state.broadcast(WsEvent::ToolResult {
-            tool_name: tc.function.name.clone(),
-            result: result.clone(),
-            success,
-            call_id: tc.id.clone(),
-            duration_ms,
-        });
+        // Log tool result (don't broadcast - causes UI flooding with large results)
+        // Tool calls are shown in final message via tool_calls field
 
         results.push((tc.id.clone(), result));
     }

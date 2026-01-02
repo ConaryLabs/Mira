@@ -8,6 +8,7 @@ pub mod claude_api;
 pub mod components;
 pub mod deepseek;
 pub mod embedded;
+pub mod mcp_http;
 pub mod state;
 pub mod ws;
 
@@ -48,6 +49,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/broadcast", post(api::broadcast_event))
         // Chat with DeepSeek Reasoner
         .route("/chat", post(api::chat))
+        .route("/chat/stream", post(chat::chat_stream))
+        .route("/chat/history", get(api::get_chat_history))
         // Test endpoint for debugging (returns detailed JSON)
         .route("/chat/test", post(api::test_chat))
         // Claude Code management
@@ -59,6 +62,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/persona/session", post(api::set_session_persona))
         .with_state(state.clone());
 
+    // MCP over HTTP service
+    let mcp_service = mcp_http::create_mcp_service(state.clone());
+
     Router::new()
         // Health check at root level
         .route("/health", get(api::health))
@@ -66,7 +72,10 @@ pub fn create_router(state: AppState) -> Router {
         // API routes
         .nest("/api", api_router)
 
-        // WebSocket for Ghost Mode
+        // MCP over HTTP (Streamable HTTP transport)
+        .nest_service("/mcp", mcp_service)
+
+        // WebSocket for Ghost Mode / terminal
         .route("/ws", get(ws::handler))
 
         // Embedded static assets (single binary distribution)

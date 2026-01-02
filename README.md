@@ -10,12 +10,15 @@ Mira provides persistent semantic memory and code intelligence for Claude Code v
 # Build
 cargo build --release
 
+# Run the server
+mira web
+
 # Add to your project's .mcp.json
 {
   "mcpServers": {
     "mira": {
-      "command": "/path/to/mira",
-      "args": ["serve"]
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
@@ -83,22 +86,22 @@ Automatic idle-time processing for cost savings:
 │              Claude Code                │
 │                   │                     │
 │                   ▼                     │
-│         MCP Protocol (stdio)            │
+│       MCP Protocol (HTTP transport)     │
 └─────────────────────────────────────────┘
                     │
                     ▼
 ┌─────────────────────────────────────────┐
-│              Mira (mira serve)          │
+│              Mira (mira web)            │
 │                                         │
 │   ┌─────────────────────────────────┐  │
-│   │         MCP Server (rmcp)       │  │
+│   │  MCP over HTTP (/mcp endpoint)  │  │
 │   │   session_start, remember,      │  │
 │   │   recall, get_symbols, etc.     │  │
 │   └──────────────┬──────────────────┘  │
 │                  │ broadcast            │
 │   ┌──────────────▼──────────────────┐  │
-│   │      Web Server (mira web)      │  │
-│   │   Ghost Mode UI, WebSocket,     │  │
+│   │        Web UI & APIs            │  │
+│   │   Ghost Mode, Chat, WebSocket,  │  │
 │   │   REST API, session history     │  │
 │   └─────────────────────────────────┘  │
 │                    │                    │
@@ -115,8 +118,7 @@ Automatic idle-time processing for cost savings:
 
 | Command | Description |
 |---------|-------------|
-| `mira` or `mira serve` | Run as MCP server (for Claude Code) |
-| `mira web` | Run web server with Ghost Mode UI (port 3000) |
+| `mira web` | Run server with MCP, Chat, and Ghost Mode (port 3000) |
 | `mira index --path /project` | Index a project's code |
 | `mira test-chat "message"` | Test chat via HTTP (requires `mira web`) |
 
@@ -126,8 +128,8 @@ Automatic idle-time processing for cost savings:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | For semantic search | OpenAI API key for embeddings |
-| `GOOGLE_API_KEY` | Fallback | Alternative to OPENAI_API_KEY |
+| `OPENAI_API_KEY` | Yes | OpenAI API key for embeddings |
+| `DEEPSEEK_API_KEY` | For Chat | DeepSeek API key for Chat features |
 
 ### Data Storage
 
@@ -195,7 +197,8 @@ Simplified schema with 17 tables + 2 vector tables:
 ## Requirements
 
 - Rust toolchain (for building)
-- Gemini API key (free tier) for semantic search
+- OpenAI API key for embeddings (text-embedding-3-small)
+- DeepSeek API key for Chat features (optional)
 
 ## License
 

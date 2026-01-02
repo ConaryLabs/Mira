@@ -254,33 +254,6 @@ pub enum WsEvent {
     Pong,
 
     // ═══════════════════════════════════════
-    // CHAT EVENTS (DeepSeek Reasoner)
-    // ═══════════════════════════════════════
-
-    /// Chat message from user started processing
-    ChatStart {
-        message: String,
-    },
-
-    /// Streaming content chunk from model
-    ChatChunk {
-        content: String,
-        model: String,
-    },
-
-    /// Chat completed with final response
-    ChatComplete {
-        content: String,
-        model: String,
-        usage: Option<ChatUsage>,
-    },
-
-    /// Chat error
-    ChatError {
-        message: String,
-    },
-
-    // ═══════════════════════════════════════
     // CLAUDE CODE EVENTS
     // ═══════════════════════════════════════
 
@@ -294,16 +267,6 @@ pub enum WsEvent {
     ClaudeStopped {
         instance_id: String,
     },
-}
-
-/// Token usage statistics for chat
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ChatUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-    pub cache_hit_tokens: Option<u32>,
-    pub cache_miss_tokens: Option<u32>,
 }
 
 /// Client-to-server WebSocket message

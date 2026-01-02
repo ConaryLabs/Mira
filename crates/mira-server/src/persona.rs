@@ -36,7 +36,9 @@ const CAPABILITIES: &str = r#"You have tools for:
 - Managing tasks and goals
 - Spawning Claude Code for file/terminal work
 
-Use tools when helpful. Be concise in responses."#;
+Use tools when helpful. Be concise in responses.
+
+IMPORTANT: Never output raw JSON in your responses. If you want to remember something about the user, that happens automatically - just respond naturally in plain text."#;
 
 /// Build the complete system prompt with persona overlays
 ///

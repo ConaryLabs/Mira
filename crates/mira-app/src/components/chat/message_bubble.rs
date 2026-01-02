@@ -28,8 +28,8 @@ pub fn MessageBubble(
     let message_class = if is_user { "message user" } else { "message assistant" };
 
     let tool_count = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0);
-    let has_thinking = thinking.is_some();
     let has_tools = tool_count > 0;
+    let _ = thinking; // Unused - reasoning stored in DB but not displayed
 
     view! {
         <div class=message_class>
@@ -43,16 +43,6 @@ pub fn MessageBubble(
                 <div class="message-content">
                     <Markdown content=content.clone()/>
                 </div>
-
-                // Thinking section (collapsed by default)
-                {has_thinking.then(|| {
-                    let thinking_text = thinking.clone().unwrap_or_default();
-                    view! {
-                        <Expandable label="Thinking">
-                            <pre class="whitespace-pre-wrap text-xs">{thinking_text}</pre>
-                        </Expandable>
-                    }
-                })}
 
                 // Tool calls section (collapsed by default)
                 {has_tools.then(|| {

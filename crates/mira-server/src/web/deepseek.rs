@@ -15,6 +15,37 @@ use mira_types::WsEvent;
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
 
+/// Check if content looks like garbage (JSON fragments, brackets, etc.)
+/// Returns true if content should be streamed to UI, false if it should be suppressed
+fn is_streamable_content(content: &str) -> bool {
+    let trimmed = content.trim();
+
+    // Empty or whitespace-only
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Single brackets/braces - likely tool call leakage
+    if matches!(trimmed, "[" | "]" | "{" | "}" | "[]" | "{}") {
+        return false;
+    }
+
+    // Just JSON punctuation
+    if trimmed.chars().all(|c| matches!(c, '[' | ']' | '{' | '}' | ',' | ':' | '"' | ' ' | '\n' | '\t')) {
+        return false;
+    }
+
+    // Short content starting with JSON structure - likely tool call JSON fragment
+    if (trimmed.starts_with('[') || trimmed.starts_with('{')) && trimmed.len() < 100 {
+        // But allow markdown lists that start with [
+        if !trimmed.contains("](") {
+            return false;
+        }
+    }
+
+    true
+}
+
 // ═══════════════════════════════════════
 // API TYPES
 // ═══════════════════════════════════════
@@ -177,7 +208,7 @@ struct FunctionChunk {
 }
 
 /// Usage statistics
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
@@ -200,6 +231,7 @@ pub struct DeepSeekClient {
 }
 
 /// Result of a chat completion
+#[derive(Clone)]
 pub struct ChatResult {
     pub request_id: String,
     pub content: Option<String>,
@@ -220,7 +252,6 @@ impl DeepSeekClient {
     }
 
     /// Chat with streaming, returns the complete response
-    /// Broadcasts ReasonerThinking and ChatChunk events via WebSocket
     #[instrument(skip(self, messages, tools), fields(request_id, model = "deepseek-reasoner", message_count = messages.len()))]
     pub async fn chat(
         &self,
@@ -320,27 +351,17 @@ impl DeepSeekClient {
                     }
 
                     for choice in chunk.choices {
-                        // Stream reasoning content
+                        // Accumulate reasoning content (don't stream - too many events)
                         if let Some(reasoning) = choice.delta.reasoning_content {
                             if !reasoning.is_empty() {
                                 full_reasoning.push_str(&reasoning);
-                                // Broadcast thinking to UI
-                                let _ = self.ws_tx.send(WsEvent::Thinking {
-                                    content: reasoning,
-                                    phase: mira_types::ThinkingPhase::Analyzing,
-                                });
                             }
                         }
 
-                        // Stream content
+                        // Accumulate content
                         if let Some(content) = choice.delta.content {
                             if !content.is_empty() {
                                 full_content.push_str(&content);
-                                // Broadcast content chunk to UI
-                                let _ = self.ws_tx.send(WsEvent::TerminalOutput {
-                                    content,
-                                    is_stderr: false,
-                                });
                             }
                         }
 
@@ -400,7 +421,7 @@ impl DeepSeekClient {
             );
         }
 
-        // Broadcast tool calls to UI
+        // Log tool calls (don't broadcast - causes UI flooding)
         for tc in &tool_calls {
             let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
             debug!(
@@ -410,11 +431,6 @@ impl DeepSeekClient {
                 args = %args,
                 "Tool call"
             );
-            let _ = self.ws_tx.send(WsEvent::ToolStart {
-                tool_name: tc.function.name.clone(),
-                arguments: args,
-                call_id: tc.id.clone(),
-            });
         }
 
         info!(
@@ -443,6 +459,127 @@ impl DeepSeekClient {
             } else {
                 Some(tool_calls)
             },
+            usage,
+            duration_ms,
+        })
+    }
+
+    /// Chat with streaming to a channel (for SSE endpoints)
+    /// Sends Delta events to the channel instead of WebSocket broadcast
+    pub async fn chat_to_channel(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<Tool>>,
+        tx: tokio::sync::mpsc::Sender<crate::web::chat::stream::ChatEvent>,
+    ) -> Result<ChatResult> {
+        use crate::web::chat::stream::ChatEvent;
+
+        let request_id = Uuid::new_v4().to_string();
+        let start_time = Instant::now();
+
+        let request = ChatRequest {
+            model: "deepseek-reasoner".into(),
+            messages,
+            tools,
+            tool_choice: Some("auto".into()),
+            stream: true,
+            max_tokens: Some(8192),
+        };
+
+        let request_builder = self
+            .client
+            .post(DEEPSEEK_API_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request);
+
+        let mut es = EventSource::new(request_builder)
+            .map_err(|e| anyhow!("Failed to create EventSource: {}", e))?;
+
+        let mut full_content = String::new();
+        let mut full_reasoning = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut usage: Option<Usage> = None;
+
+        while let Some(event) = es.next().await {
+            match event {
+                Ok(Event::Open) => {}
+                Ok(Event::Message(msg)) => {
+                    if msg.data == "[DONE]" {
+                        break;
+                    }
+
+                    let chunk: ChatChunk = match serde_json::from_str(&msg.data) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    if let Some(u) = chunk.usage {
+                        usage = Some(u);
+                    }
+
+                    for choice in chunk.choices {
+                        // Stream reasoning (don't send to channel - too noisy)
+                        if let Some(reasoning) = choice.delta.reasoning_content {
+                            if !reasoning.is_empty() {
+                                full_reasoning.push_str(&reasoning);
+                            }
+                        }
+
+                        // Stream content deltas to channel
+                        if let Some(content) = choice.delta.content {
+                            if !content.is_empty() {
+                                full_content.push_str(&content);
+                                // Filter garbage before sending
+                                if is_streamable_content(&content) {
+                                    let _ = tx.send(ChatEvent::Delta {
+                                        content,
+                                    }).await;
+                                }
+                            }
+                        }
+
+                        // Accumulate tool calls
+                        if let Some(tc_chunks) = choice.delta.tool_calls {
+                            for tc_chunk in tc_chunks {
+                                while tool_calls.len() <= tc_chunk.index {
+                                    tool_calls.push(ToolCall {
+                                        id: String::new(),
+                                        call_type: "function".into(),
+                                        function: FunctionCall {
+                                            name: String::new(),
+                                            arguments: String::new(),
+                                        },
+                                    });
+                                }
+
+                                let tc = &mut tool_calls[tc_chunk.index];
+                                if let Some(id) = tc_chunk.id {
+                                    tc.id = id;
+                                }
+                                if let Some(func) = tc_chunk.function {
+                                    if let Some(name) = func.name {
+                                        tc.function.name = name;
+                                    }
+                                    if let Some(args) = func.arguments {
+                                        tc.function.arguments.push_str(&args);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        Ok(ChatResult {
+            request_id,
+            content: if full_content.is_empty() { None } else { Some(full_content) },
+            reasoning_content: if full_reasoning.is_empty() { None } else { Some(full_reasoning) },
+            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
             usage,
             duration_ms,
         })

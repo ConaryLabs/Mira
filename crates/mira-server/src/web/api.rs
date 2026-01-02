@@ -19,6 +19,33 @@ pub use crate::web::chat::{chat, test_chat};
 pub use crate::web::claude_api::{get_claude_status, kill_claude, send_claude_input, spawn_claude};
 
 // ═══════════════════════════════════════
+// CHAT HISTORY
+// ═══════════════════════════════════════
+
+/// Get recent chat history for the UI
+pub async fn get_chat_history(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.db.get_recent_messages(20) {
+        Ok(messages) => {
+            let history: Vec<serde_json::Value> = messages
+                .into_iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.id,
+                        "role": m.role,
+                        "content": m.content,
+                        "timestamp": m.created_at,
+                    })
+                })
+                .collect();
+            Json(ApiResponse::ok(history))
+        }
+        Err(e) => Json(ApiResponse::err(e.to_string())),
+    }
+}
+
+// ═══════════════════════════════════════
 // HEALTH & HOME
 // ═══════════════════════════════════════
 

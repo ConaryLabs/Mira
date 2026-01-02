@@ -3,16 +3,18 @@
 
 mod context;
 mod extraction;
+pub mod stream;
 mod summarization;
 mod tools;
 
+pub use stream::chat_stream;
 pub use summarization::get_summary_context;
 
 use axum::{
     extract::State,
     Json,
 };
-use mira_types::{ChatRequest, ChatUsage, WsEvent};
+use mira_types::ChatRequest;
 use std::time::Instant;
 use tracing::{error, info, instrument, warn};
 
@@ -24,7 +26,50 @@ use tools::execute_tools;
 use crate::web::deepseek::{Message, mira_tools};
 use crate::web::state::AppState;
 
-/// Chat with DeepSeek Reasoner
+/// Clean up response content by removing JSON garbage
+/// (model sometimes outputs JSON fragments during tool calls)
+pub fn cleanup_response(content: String) -> String {
+    let mut result = content.trim().to_string();
+
+    // Remove trailing brackets/braces
+    while result.ends_with("[]") || result.ends_with("{}") {
+        result = result[..result.len()-2].trim().to_string();
+    }
+    while result.ends_with('[') || result.ends_with(']')
+        || result.ends_with('{') || result.ends_with('}') {
+        result = result[..result.len()-1].trim().to_string();
+    }
+
+    // Remove leading brackets/braces
+    while result.starts_with("[]") || result.starts_with("{}") {
+        result = result[2..].trim().to_string();
+    }
+    while result.starts_with('[') || result.starts_with(']')
+        || result.starts_with('{') || result.starts_with('}') {
+        result = result[1..].trim().to_string();
+    }
+
+    // Remove fact-extraction JSON: [ {"content":..., "category":...} ]
+    for (i, c) in result.clone().char_indices().rev() {
+        if c == '[' {
+            let trailing = &result[i..];
+            if trailing.contains("\"content\":") && trailing.contains("\"category\":") {
+                result = result[..i].trim().to_string();
+                break;
+            }
+        }
+    }
+
+    // If result is just JSON-like punctuation, return empty
+    if result.chars().all(|c| matches!(c, '[' | ']' | '{' | '}' | ',' | ':' | '"' | ' ' | '\n' | '\t')) {
+        return String::new();
+    }
+
+    result
+}
+
+/// Chat with DeepSeek Reasoner (non-streaming HTTP endpoint)
+/// For streaming, use /api/chat/stream instead
 pub async fn chat(
     State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
@@ -37,11 +82,6 @@ pub async fn chat(
             ))
         }
     };
-
-    // Broadcast chat start
-    state.broadcast(WsEvent::ChatStart {
-        message: req.message.clone(),
-    });
 
     // Store user message in history
     if let Err(e) = state.db.store_chat_message("user", &req.message, None) {
@@ -91,43 +131,71 @@ pub async fn chat(
     // Get tools
     let tools = mira_tools();
 
-    // Call DeepSeek
-    match deepseek.chat(messages, Some(tools)).await {
-        Ok(result) => {
-            // Handle tool calls if present
-            if let Some(tool_calls) = &result.tool_calls {
-                // Execute tools and continue conversation
-                let _tool_results = execute_tools(&state, tool_calls).await;
+    // Tool call loop - continue until we get a final response
+    const MAX_TOOL_ROUNDS: usize = 8;
+    let mut current_messages = messages;
+    let mut final_result = None;
+    let mut last_result = None; // Keep track of last result for fallback
 
-                // For now, return the partial result - full tool loop TBD
-                info!("Chat completed with {} tool calls", tool_calls.len());
+    for round in 0..MAX_TOOL_ROUNDS {
+        // Call DeepSeek
+        match deepseek.chat(current_messages.clone(), Some(tools.clone())).await {
+            Ok(result) => {
+                // Check if we have tool calls to process
+                if let Some(ref tool_calls) = result.tool_calls {
+                    if tool_calls.is_empty() {
+                        final_result = Some(result);
+                        break;
+                    }
+
+                    info!("Tool round {}: {} tool calls", round + 1, tool_calls.len());
+
+                    // Save this result as fallback in case we exhaust rounds
+                    last_result = Some(result.clone());
+
+                    // Execute tools
+                    let tool_results = execute_tools(&state, tool_calls).await;
+
+                    // Add assistant message with tool calls to history
+                    current_messages.push(Message {
+                        role: "assistant".to_string(),
+                        content: result.content.clone(),
+                        reasoning_content: result.reasoning_content.clone(),
+                        tool_calls: Some(tool_calls.clone()),
+                        tool_call_id: None,
+                    });
+
+                    // Add tool result messages
+                    for (call_id, result_content) in tool_results {
+                        current_messages.push(Message::tool_result(call_id, result_content));
+                    }
+
+                    // Continue to next round
+                } else {
+                    // No tool calls, we're done
+                    final_result = Some(result);
+                    break;
+                }
+            }
+            Err(e) => {
+                return Json(mira_types::ApiResponse::err(e.to_string()));
+            }
+        }
+    }
+
+    // Handle final result
+    match final_result {
+        Some(result) => {
+            let raw_content = result.content.clone().unwrap_or_default();
+            let response_content = cleanup_response(raw_content.clone());
+
+            if raw_content != response_content {
+                info!("Cleaned up response: {} chars -> {} chars", raw_content.len(), response_content.len());
             }
 
-            // Broadcast completion
-            let usage = result.usage.map(|u| ChatUsage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: u.completion_tokens,
-                total_tokens: u.total_tokens,
-                cache_hit_tokens: u.prompt_cache_hit_tokens,
-                cache_miss_tokens: u.prompt_cache_miss_tokens,
-            });
-
-            let response_content = result.content.clone().unwrap_or_default();
-
-            state.broadcast(WsEvent::ChatComplete {
-                content: response_content.clone(),
-                model: "deepseek-reasoner".to_string(),
-                usage,
-            });
-
             // Store assistant response in history
-            // Use content if available, fall back to reasoning_content
-            let assistant_content = if !response_content.is_empty() {
-                response_content.clone()
-            } else {
-                result.reasoning_content.clone().unwrap_or_default()
-            };
-            if !assistant_content.is_empty() {
+            if !response_content.is_empty() {
+                let assistant_content = response_content.clone();
                 if let Err(e) = state.db.store_chat_message(
                     "assistant",
                     &assistant_content,
@@ -148,16 +216,28 @@ pub async fn chat(
             }
 
             Json(mira_types::ApiResponse::ok(serde_json::json!({
-                "content": result.content,
+                "content": response_content,
                 "reasoning_content": result.reasoning_content,
                 "tool_calls": result.tool_calls,
             })))
         }
-        Err(e) => {
-            state.broadcast(WsEvent::ChatError {
-                message: e.to_string(),
-            });
-            Json(mira_types::ApiResponse::err(e.to_string()))
+        None => {
+            // Exhausted tool rounds - use last result if it has content
+            if let Some(result) = last_result {
+                let content = result.content.unwrap_or_default();
+                if !content.is_empty() {
+                    let response_content = cleanup_response(content);
+                    return Json(mira_types::ApiResponse::ok(serde_json::json!({
+                        "content": response_content,
+                        "note": "Response after max tool rounds",
+                    })));
+                }
+            }
+
+            // No usable content
+            Json(mira_types::ApiResponse::ok(serde_json::json!({
+                "content": "I got a bit carried away with tools there. Could you rephrase your question?",
+            })))
         }
     }
 }
@@ -269,10 +349,8 @@ pub async fn test_chat(
             );
 
             // Store assistant response and spawn background tasks
-            // Use content if available, fall back to reasoning_content (reasoner quirk)
-            let assistant_content = result.content.clone()
-                .or_else(|| result.reasoning_content.clone())
-                .unwrap_or_default();
+            // Only store actual content, not reasoning (reasoning stored separately)
+            let assistant_content = cleanup_response(result.content.clone().unwrap_or_default());
             if !assistant_content.is_empty() {
                 if let Err(e) = state.db.store_chat_message(
                     "assistant",
