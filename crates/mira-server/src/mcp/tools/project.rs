@@ -1,6 +1,7 @@
 // src/mcp/tools/project.rs
 // Project management tools
 
+use crate::cartographer;
 use crate::hooks::session::read_claude_session_id;
 use crate::mcp::{MiraServer, ProjectContext};
 
@@ -115,6 +116,22 @@ pub async fn session_start(
                 mem.content.clone()
             };
             response.push_str(&format!("  - {}\n", preview));
+        }
+    }
+
+    // Load codebase map (only for Rust projects for now)
+    if project_type == "rust" {
+        if let Ok(map) = cartographer::get_or_generate_map(
+            &server.db,
+            project_id,
+            &project_path,
+            display_name,
+            project_type,
+        ) {
+            if !map.modules.is_empty() {
+                let formatted = cartographer::format_compact(&map);
+                response.push_str(&formatted);
+            }
         }
     }
 

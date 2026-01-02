@@ -3,11 +3,19 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mira::{db::Database, embeddings::Embeddings, mcp::MiraServer, web};
+use mira::{background, db::Database, embeddings::Embeddings, mcp::MiraServer, web};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+
+/// Get embeddings client if API key is available (filters empty keys)
+fn get_embeddings() -> Option<Arc<Embeddings>> {
+    std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .map(|key| Arc::new(Embeddings::new(key)))
+}
 
 #[derive(Parser)]
 #[command(name = "mira")]
@@ -35,6 +43,10 @@ enum Commands {
         /// Project path (default: current directory)
         #[arg(short, long)]
         path: Option<PathBuf>,
+
+        /// Skip embeddings (faster, no semantic search)
+        #[arg(long)]
+        no_embed: bool,
     },
 
     /// Claude Code hook handlers
@@ -55,6 +67,20 @@ enum Commands {
         /// Project path to set context
         #[arg(short, long)]
         project: Option<PathBuf>,
+    },
+
+    /// Debug cartographer module detection
+    DebugCarto {
+        /// Project path to analyze
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Debug session_start output
+    DebugSession {
+        /// Project path
+        #[arg(short, long)]
+        path: Option<PathBuf>,
     },
 }
 
@@ -81,19 +107,27 @@ async fn run_mcp_server() -> Result<()> {
     let db = Arc::new(Database::open(&db_path)?);
 
     // Initialize embeddings if API key available
-    let embeddings = std::env::var("GEMINI_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-        .map(|key| Arc::new(Embeddings::new(key)));
+    let embeddings = get_embeddings();
 
     if embeddings.is_some() {
-        info!("Semantic search enabled (Gemini API key found)");
+        info!("Semantic search enabled (OpenAI embeddings)");
     } else {
-        info!("Semantic search disabled (no GEMINI_API_KEY)");
+        info!("Semantic search disabled (no OPENAI_API_KEY)");
     }
 
     // Create shared broadcast channel for MCP <-> Web communication
     let (ws_tx, _) = tokio::sync::broadcast::channel::<mira_types::WsEvent>(256);
+
+    // Initialize DeepSeek client if API key available
+    let deepseek = std::env::var("DEEPSEEK_API_KEY")
+        .ok()
+        .map(|key| Arc::new(web::deepseek::DeepSeekClient::new(key, ws_tx.clone())));
+
+    if deepseek.is_some() {
+        info!("DeepSeek enabled (for chat and module summaries)");
+    } else {
+        info!("DeepSeek disabled (no DEEPSEEK_API_KEY)");
+    }
 
     // Shared session ID between MCP server and web server
     let session_id: Arc<tokio::sync::RwLock<Option<String>>> = Arc::new(tokio::sync::RwLock::new(None));
@@ -120,8 +154,15 @@ async fn run_mcp_server() -> Result<()> {
         }
     });
 
+    // Spawn background worker for batch processing
+    let bg_db = db.clone();
+    let bg_embeddings = embeddings.clone();
+    let bg_deepseek = deepseek.clone();
+    let _shutdown_tx = background::spawn(bg_db, bg_embeddings, bg_deepseek);
+    info!("Background worker started");
+
     // Create MCP server with broadcaster and shared session ID
-    let server = MiraServer::with_broadcaster(db, embeddings, ws_tx, session_id);
+    let server = MiraServer::with_broadcaster(db, embeddings, deepseek, ws_tx, session_id);
 
     // Run with stdio transport
     let transport = rmcp::transport::io::stdio();
@@ -137,16 +178,25 @@ async fn run_web_server(port: u16) -> Result<()> {
     let db = Arc::new(Database::open(&db_path)?);
 
     // Initialize embeddings if API key available
-    let embeddings = std::env::var("GEMINI_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-        .map(|key| Arc::new(Embeddings::new(key)));
+    let embeddings = get_embeddings();
 
     if embeddings.is_some() {
-        info!("Semantic search enabled (Gemini API key found)");
+        info!("Semantic search enabled (OpenAI embeddings)");
     } else {
-        info!("Semantic search disabled (no GEMINI_API_KEY)");
+        info!("Semantic search disabled (no OPENAI_API_KEY)");
     }
+
+    // Initialize DeepSeek for background summaries
+    let deepseek = std::env::var("DEEPSEEK_API_KEY")
+        .ok()
+        .map(|key| {
+            let (tx, _) = tokio::sync::broadcast::channel(16);
+            Arc::new(web::deepseek::DeepSeekClient::new(key, tx))
+        });
+
+    // Spawn background worker for batch processing
+    let _shutdown_tx = background::spawn(db.clone(), embeddings.clone(), deepseek);
+    info!("Background worker started");
 
     // Create app state
     let state = web::state::AppState::new(db, embeddings);
@@ -166,7 +216,7 @@ async fn run_web_server(port: u16) -> Result<()> {
     Ok(())
 }
 
-async fn run_index(path: Option<PathBuf>) -> Result<()> {
+async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
     let path = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     info!("Indexing project at {}", path.display());
@@ -174,10 +224,7 @@ async fn run_index(path: Option<PathBuf>) -> Result<()> {
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
 
-    let embeddings = std::env::var("GEMINI_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-        .map(|key| Arc::new(Embeddings::new(key)));
+    let embeddings = if no_embed { None } else { get_embeddings() };
 
     // Get or create project
     let (project_id, _project_name) = db.get_or_create_project(
@@ -213,6 +260,8 @@ async fn main() -> Result<()> {
         Some(Commands::Index { .. }) => Level::INFO,
         Some(Commands::TestChat { verbose: true, .. }) => Level::DEBUG, // Full debug for verbose test
         Some(Commands::TestChat { .. }) => Level::INFO,
+        Some(Commands::DebugCarto { .. }) => Level::DEBUG,
+        Some(Commands::DebugSession { .. }) => Level::DEBUG,
     };
 
     let subscriber = FmtSubscriber::builder()
@@ -229,8 +278,8 @@ async fn main() -> Result<()> {
         Some(Commands::Web { port }) => {
             run_web_server(port).await?;
         }
-        Some(Commands::Index { path }) => {
-            run_index(path).await?;
+        Some(Commands::Index { path, no_embed }) => {
+            run_index(path, no_embed).await?;
         }
         Some(Commands::Hook { action }) => match action {
             HookAction::Permission => {
@@ -245,6 +294,93 @@ async fn main() -> Result<()> {
         },
         Some(Commands::TestChat { message, verbose, project }) => {
             run_test_chat(message, verbose, project).await?;
+        }
+        Some(Commands::DebugCarto { path }) => {
+            run_debug_carto(path)?;
+        }
+        Some(Commands::DebugSession { path }) => {
+            run_debug_session(path).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Debug session_start output
+async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
+    use std::sync::Arc;
+
+    let project_path = path.unwrap_or_else(|| std::env::current_dir().unwrap());
+    println!("=== Debug Session Start ===\n");
+    println!("Project: {:?}\n", project_path);
+
+    let db_path = get_db_path();
+    let db = Arc::new(Database::open(&db_path)?);
+
+    // Create a minimal MCP server context
+    let server = mira::mcp::MiraServer::new(db.clone(), None);
+
+    // Call session_start
+    let result = mira::mcp::tools::project::session_start(
+        &server,
+        project_path.to_string_lossy().to_string(),
+        None,
+        None,
+    ).await;
+
+    match result {
+        Ok(output) => {
+            println!("--- Session Start Output ({} chars) ---\n", output.len());
+            println!("{}", output);
+        }
+        Err(e) => {
+            println!("ERROR: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Debug cartographer module detection
+fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
+    let project_path = path.unwrap_or_else(|| std::env::current_dir().unwrap());
+    println!("=== Cartographer Debug ===\n");
+    println!("Project path: {:?}\n", project_path);
+
+    // Test module detection
+    let modules = mira::cartographer::detect_rust_modules(&project_path);
+    println!("Detected {} modules:\n", modules.len());
+
+    for m in &modules {
+        println!("  {} ({})", m.id, m.path);
+        if let Some(ref purpose) = m.purpose {
+            println!("    Purpose: {}", purpose);
+        }
+    }
+
+    // Try full map generation with database
+    println!("\n--- Database Integration ---\n");
+    let db_path = get_db_path();
+    let db = Database::open(&db_path)?;
+    let (project_id, name) = db.get_or_create_project(
+        project_path.to_str().unwrap(),
+        None,
+    )?;
+    println!("Project ID: {}, Name: {:?}", project_id, name);
+
+    match mira::cartographer::get_or_generate_map(
+        &db,
+        project_id,
+        project_path.to_str().unwrap(),
+        name.as_deref().unwrap_or("unknown"),
+        "rust",
+    ) {
+        Ok(map) => {
+            println!("\nCodebase map generated with {} modules", map.modules.len());
+            println!("\n{}", mira::cartographer::format_compact(&map));
+        }
+        Err(e) => {
+            println!("\nError generating map: {}", e);
         }
     }
 
@@ -263,10 +399,7 @@ async fn run_test_chat(message: String, verbose: bool, project: Option<PathBuf>)
     let db = Arc::new(Database::open(&db_path)?);
 
     // Initialize embeddings
-    let embeddings = std::env::var("GEMINI_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-        .map(|key| Arc::new(Embeddings::new(key)));
+    let embeddings = get_embeddings();
 
     // Create broadcast channel (we'll listen to it for events)
     let (ws_tx, mut ws_rx) = broadcast::channel::<WsEvent>(256);

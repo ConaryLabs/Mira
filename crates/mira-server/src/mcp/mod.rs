@@ -1,10 +1,11 @@
-// src/mcp/mod.rs
+// crates/mira-server/src/mcp/mod.rs
 // MCP Server implementation
 
 pub mod tools;
 
 use crate::db::Database;
 use crate::embeddings::Embeddings;
+use crate::web::deepseek::DeepSeekClient;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::{
@@ -32,6 +33,7 @@ pub struct ProjectContext {
 pub struct MiraServer {
     pub db: Arc<Database>,
     pub embeddings: Option<Arc<Embeddings>>,
+    pub deepseek: Option<Arc<DeepSeekClient>>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
     /// Current session ID (generated on first tool call or session_start)
     pub session_id: Arc<RwLock<Option<String>>>,
@@ -42,9 +44,16 @@ pub struct MiraServer {
 
 impl MiraServer {
     pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
+        // Try to create DeepSeek client from env
+        let ws_tx_dummy = tokio::sync::broadcast::channel(16).0;
+        let deepseek = std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .map(|key| Arc::new(DeepSeekClient::new(key, ws_tx_dummy)));
+
         Self {
             db,
             embeddings,
+            deepseek,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
             ws_tx: None,
@@ -56,12 +65,14 @@ impl MiraServer {
     pub fn with_broadcaster(
         db: Arc<Database>,
         embeddings: Option<Arc<Embeddings>>,
+        deepseek: Option<Arc<DeepSeekClient>>,
         ws_tx: tokio::sync::broadcast::Sender<mira_types::WsEvent>,
         session_id: Arc<RwLock<Option<String>>>,
     ) -> Self {
         Self {
             db,
             embeddings,
+            deepseek,
             project: Arc::new(RwLock::new(None)),
             session_id,
             ws_tx: Some(ws_tx),
@@ -369,6 +380,11 @@ impl MiraServer {
         Parameters(req): Parameters<IndexRequest>,
     ) -> Result<String, String> {
         tools::code::index(self, req.action, req.path).await
+    }
+
+    #[tool(description = "Generate LLM-powered summaries for codebase modules. Uses DeepSeek to analyze code and create descriptions.")]
+    async fn summarize_codebase(&self) -> Result<String, String> {
+        tools::code::summarize_codebase(self).await
     }
 
     #[tool(description = "Query session history. Actions: list_sessions, get_history, current")]

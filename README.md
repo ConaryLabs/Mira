@@ -21,7 +21,7 @@ cargo build --release
 }
 ```
 
-Set `GEMINI_API_KEY` for semantic search (embeddings).
+Set `OPENAI_API_KEY` for semantic search (embeddings).
 
 ## Features
 
@@ -34,6 +34,7 @@ Set `GEMINI_API_KEY` for semantic search (embeddings).
 - **get_symbols** - Extract functions, structs, classes from files
 - **semantic_code_search** - Find code by meaning
 - **index** - Index project code for search
+- **summarize_codebase** - Generate LLM-powered module descriptions
 
 ### Project Management
 - **task** - Create/list/update/complete tasks
@@ -52,6 +53,12 @@ Real-time visualization of Claude Code activity:
 - Diff preview with syntax highlighting
 
 Access at `http://localhost:3000` when running `mira web`.
+
+### Background Processing
+Automatic idle-time processing for cost savings:
+- **Embeddings**: Queued for OpenAI Batch API (50% cheaper)
+- **Module Summaries**: Rate-limited DeepSeek calls
+- **Real-time Fallback**: Immediate embedding if needed before batch completes
 
 ## Architecture
 
@@ -102,8 +109,8 @@ Access at `http://localhost:3000` when running `mira web`.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GEMINI_API_KEY` | For semantic search | Gemini API key for embeddings |
-| `GOOGLE_API_KEY` | Fallback | Alternative to GEMINI_API_KEY |
+| `OPENAI_API_KEY` | For semantic search | OpenAI API key for embeddings |
+| `GOOGLE_API_KEY` | Fallback | Alternative to OPENAI_API_KEY |
 
 ### Data Storage
 
@@ -143,7 +150,7 @@ Then use naturally:
 
 ## Database Schema
 
-Simplified schema with 12 tables + 2 vector tables:
+Simplified schema with 15 tables + 2 vector tables:
 
 ### Core Tables
 - `projects` - Project paths and names
@@ -152,15 +159,18 @@ Simplified schema with 12 tables + 2 vector tables:
 - `code_symbols` - Indexed code symbols
 - `call_graph` - Function call relationships
 - `imports` - Import/dependency tracking
+- `codebase_modules` - Module structure with LLM summaries
 - `sessions` - Session history
 - `tool_history` - MCP tool call history
 - `goals` - High-level goals
 - `milestones` - Goal milestones
 - `tasks` - Task tracking
 - `permission_rules` - Auto-approval rules
+- `pending_embeddings` - Queue for batch embedding
+- `background_batches` - Track active batch jobs
 
 ### Vector Tables (sqlite-vec)
-- `vec_memory` - Memory embeddings (3072 dimensions)
+- `vec_memory` - Memory embeddings (1536 dimensions)
 - `vec_code` - Code chunk embeddings
 
 ## Requirements

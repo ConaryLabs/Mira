@@ -20,8 +20,67 @@ Then `recall("preferences")` before writing code.
 | Check past decisions | `recall` |
 | File structure | `get_symbols` |
 
-## Build
+## Build & Deploy
 
 ```bash
 cargo build --release
+systemctl --user restart mira
 ```
+
+## Service Management
+
+Mira runs as a systemd user service (auto-starts on boot):
+
+```bash
+systemctl --user status mira    # Check status
+systemctl --user restart mira   # Restart after rebuild
+systemctl --user stop mira      # Stop
+systemctl --user start mira     # Start
+journalctl --user -u mira -f    # View logs (follow)
+journalctl --user -u mira -n 50 # View last 50 lines
+```
+
+**URLs:**
+- Studio: http://localhost:3000
+- Chat (DeepSeek): http://localhost:3000/chat
+- Ghost Mode: http://localhost:3000/ghost
+
+## Testing & Debugging
+
+Test chat without UI (for debugging):
+
+```bash
+# Simple test
+mira test-chat "Hello, what tools do you have?"
+
+# Verbose (shows reasoning, tool args, results)
+mira test-chat -v "Search for authentication code"
+
+# With project context
+mira test-chat -p /home/peter/Mira "What are the recent goals?"
+```
+
+API endpoint for programmatic testing:
+
+```bash
+curl -X POST http://localhost:3000/api/chat/test \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What is 2+2?","history":[]}'
+```
+
+Returns detailed JSON with request_id, duration, reasoning, tool calls, usage stats.
+
+## Tracing
+
+All chat requests include structured logging with:
+- `request_id` - UUID for tracking through system
+- `duration_ms` - Timing at each stage
+- Tool execution with timing and results
+
+View logs: `journalctl --user -u mira -f`
+
+## Environment
+
+API keys are in `/home/peter/Mira/.env`:
+- `DEEPSEEK_API_KEY` - Chat/Reasoner
+- `OPENAI_API_KEY` - Embeddings (text-embedding-3-small)

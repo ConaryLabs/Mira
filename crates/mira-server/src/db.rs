@@ -72,7 +72,45 @@ impl Database {
     /// Initialize schema (idempotent)
     fn init_schema(&self) -> Result<()> {
         let conn = self.conn();
+
+        // Check if vec tables need migration (dimension change)
+        self.migrate_vec_tables(&conn)?;
+
         conn.execute_batch(SCHEMA)?;
+        Ok(())
+    }
+
+    /// Migrate vector tables if dimensions changed
+    fn migrate_vec_tables(&self, conn: &Connection) -> Result<()> {
+        // Check if vec_memory exists and has wrong dimensions
+        let needs_migration: bool = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_memory_info'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if needs_migration {
+            // Check current dimension by looking at chunk info
+            let current_dim: Result<i64, _> = conn.query_row(
+                "SELECT vector_column_size FROM vec_memory_info WHERE vector_column_name='embedding'",
+                [],
+                |row| row.get(0),
+            );
+
+            if let Ok(dim) = current_dim {
+                if dim != 1536 {
+                    tracing::info!("Migrating vector tables from {} to 1536 dimensions", dim);
+                    // Drop old tables - CASCADE not supported, drop in order
+                    let _ = conn.execute_batch(
+                        "DROP TABLE IF EXISTS vec_memory;
+                         DROP TABLE IF EXISTS vec_code;"
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -153,6 +191,22 @@ CREATE TABLE IF NOT EXISTS imports (
 );
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(project_id, file_path);
 
+CREATE TABLE IF NOT EXISTS codebase_modules (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER REFERENCES projects(id),
+    module_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    purpose TEXT,
+    exports TEXT,
+    depends_on TEXT,
+    symbol_count INTEGER DEFAULT 0,
+    line_count INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, module_id)
+);
+CREATE INDEX IF NOT EXISTS idx_modules_project ON codebase_modules(project_id);
+
 -- ═══════════════════════════════════════
 -- SESSIONS & HISTORY
 -- ═══════════════════════════════════════
@@ -225,16 +279,37 @@ CREATE TABLE IF NOT EXISTS permission_rules (
 );
 
 -- ═══════════════════════════════════════
+-- BACKGROUND PROCESSING
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS pending_embeddings (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER,
+    file_path TEXT NOT NULL,
+    chunk_content TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pending_embeddings_status ON pending_embeddings(status);
+
+CREATE TABLE IF NOT EXISTS background_batches (
+    id INTEGER PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    item_ids TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ═══════════════════════════════════════
 -- VECTOR TABLES (sqlite-vec)
 -- ═══════════════════════════════════════
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
-    embedding float[3072],
+    embedding float[1536],
     +fact_id INTEGER,
     +content TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
-    embedding float[3072],
+    embedding float[1536],
     +file_path TEXT,
     +chunk_content TEXT,
     +project_id INTEGER

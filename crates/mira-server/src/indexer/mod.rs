@@ -13,7 +13,7 @@ use tree_sitter::Parser;
 use walkdir::WalkDir;
 use zerocopy::AsBytes;
 
-pub use parsers::Symbol;
+pub use parsers::{Import, Symbol};
 
 /// Index statistics
 pub struct IndexStats {
@@ -38,6 +38,12 @@ fn create_parser(ext: &str) -> Option<Parser> {
 
 /// Extract symbols from a single file
 pub fn extract_symbols(path: &Path) -> Result<Vec<Symbol>> {
+    let (symbols, _, _) = extract_all(path)?;
+    Ok(symbols)
+}
+
+/// Extract symbols, imports, and calls from a single file
+pub fn extract_all(path: &Path) -> Result<(Vec<Symbol>, Vec<Import>, Vec<parsers::FunctionCall>)> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
 
@@ -45,15 +51,15 @@ pub fn extract_symbols(path: &Path) -> Result<Vec<Symbol>> {
 
     let mut parser = create_parser(ext).ok_or_else(|| anyhow::anyhow!("Unsupported file type"))?;
 
-    let (symbols, _, _) = match ext {
+    let result = match ext {
         "rs" => parsers::rust::parse(&mut parser, &content)?,
         "py" => parsers::python::parse(&mut parser, &content)?,
         "ts" | "tsx" | "js" | "jsx" => parsers::typescript::parse(&mut parser, &content)?,
         "go" => parsers::go::parse(&mut parser, &content)?,
-        _ => return Ok(vec![]),
+        _ => return Ok((vec![], vec![], vec![])),
     };
 
-    Ok(symbols)
+    Ok(result)
 }
 
 /// Index an entire project
@@ -63,11 +69,15 @@ pub async fn index_project(
     embeddings: Option<Arc<Embeddings>>,
     project_id: Option<i64>,
 ) -> Result<IndexStats> {
+    tracing::info!("Starting index_project for {:?}", path);
+
     let mut stats = IndexStats {
         files: 0,
         symbols: 0,
         chunks: 0,
     };
+
+    tracing::info!("Collecting files...");
 
     // Collect files to index
     let files: Vec<_> = WalkDir::new(path)
@@ -75,8 +85,8 @@ pub async fn index_project(
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            // Skip hidden, node_modules, target, .git
-            !name.starts_with('.') && name != "node_modules" && name != "target"
+            // Skip hidden, node_modules, target, assets, .git
+            !name.starts_with('.') && name != "node_modules" && name != "target" && name != "assets"
         })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
@@ -88,7 +98,10 @@ pub async fn index_project(
         })
         .collect();
 
-    // Clear existing symbols for this project
+    tracing::info!("Found {} files to index", files.len());
+
+    // Clear existing data for this project
+    tracing::info!("Clearing existing data...");
     {
         let conn = db.conn();
         conn.execute(
@@ -99,10 +112,20 @@ pub async fn index_project(
             "DELETE FROM vec_code WHERE project_id = ?",
             params![project_id],
         )?;
+        conn.execute(
+            "DELETE FROM imports WHERE project_id = ?",
+            params![project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM codebase_modules WHERE project_id = ?",
+            params![project_id],
+        )?;
     }
 
+    tracing::info!("Processing files...");
+
     // Index each file
-    for entry in files {
+    for (i, entry) in files.iter().enumerate() {
         let file_path = entry.path();
         let relative_path = file_path
             .strip_prefix(path)
@@ -110,12 +133,21 @@ pub async fn index_project(
             .to_string_lossy()
             .to_string();
 
-        match extract_symbols(file_path) {
-            Ok(symbols) => {
+        let start = std::time::Instant::now();
+        tracing::info!("[{}/{}] Parsing {}", i+1, files.len(), relative_path);
+
+        match extract_all(file_path) {
+            Ok((symbols, imports, _calls)) => {
+                let parse_time = start.elapsed();
                 stats.files += 1;
                 stats.symbols += symbols.len();
 
+                tracing::info!("  Parsed in {:?} ({} symbols, {} imports)", parse_time, symbols.len(), imports.len());
+
+                let db_start = std::time::Instant::now();
                 let conn = db.conn();
+
+                // Store symbols
                 for sym in &symbols {
                     conn.execute(
                         "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
@@ -131,15 +163,33 @@ pub async fn index_project(
                         ],
                     )?;
                 }
+
+                // Store imports
+                for import in &imports {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
+                         VALUES (?, ?, ?, ?)",
+                        params![
+                            project_id,
+                            relative_path,
+                            import.import_path,
+                            import.is_external as i32
+                        ],
+                    )?;
+                }
+
+                tracing::debug!("  DB inserts in {:?}", db_start.elapsed());
             }
             Err(e) => {
                 tracing::warn!("Failed to parse {}: {}", file_path.display(), e);
             }
         }
 
-        // Index code chunks for semantic search
-        if let Some(ref emb) = embeddings {
+        // Queue code chunks for batch embedding (50% cheaper via OpenAI Batch API)
+        // The background worker will process these
+        if embeddings.is_some() {
             if let Ok(content) = std::fs::read_to_string(file_path) {
+                let conn = db.conn();
                 // Simple chunking: split into ~500 char chunks
                 for chunk in content.chars().collect::<Vec<_>>().chunks(500) {
                     let chunk_text: String = chunk.iter().collect();
@@ -147,29 +197,21 @@ pub async fn index_project(
                         continue;
                     }
 
-                    match emb.embed(&chunk_text).await {
-                        Ok(embedding) => {
-                            let conn = db.conn();
-                            conn.execute(
-                                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id)
-                                 VALUES (?, ?, ?, ?)",
-                                params![
-                                    embedding.as_bytes(),
-                                    relative_path,
-                                    chunk_text,
-                                    project_id
-                                ],
-                            )?;
-                            stats.chunks += 1;
-                        }
-                        Err(e) => {
-                            tracing::debug!("Failed to embed chunk: {}", e);
-                        }
+                    // Queue for batch processing instead of embedding inline
+                    if let Err(e) = conn.execute(
+                        "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, status)
+                         VALUES (?, ?, ?, 'pending')",
+                        params![project_id, relative_path, chunk_text],
+                    ) {
+                        tracing::debug!("Failed to queue chunk for embedding: {}", e);
+                    } else {
+                        stats.chunks += 1;
                     }
                 }
             }
         }
     }
 
+    tracing::info!("Indexing complete: {} files, {} symbols", stats.files, stats.symbols);
     Ok(stats)
 }

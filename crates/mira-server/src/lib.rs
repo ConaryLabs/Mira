@@ -5,6 +5,8 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 
+pub mod background;
+pub mod cartographer;
 pub mod db;
 pub mod embeddings;
 pub mod hooks;

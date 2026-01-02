@@ -1,7 +1,7 @@
 # Mira Architecture
 
-**Version**: 3.0.0
-**Last Updated**: 2025-12-31
+**Version**: 3.1.0
+**Last Updated**: 2026-01-01
 
 ## Overview
 
@@ -14,14 +14,21 @@ src/
 ├── main.rs           # CLI entry point (serve, index, hook)
 ├── lib.rs            # Library exports
 ├── db.rs             # Database (rusqlite + sqlite-vec)
-├── embeddings.rs     # Gemini embeddings API client
+├── embeddings.rs     # OpenAI embeddings API client
+├── background/       # Background worker for batch processing
+│   ├── mod.rs        # Worker loop, spawns on service start
+│   ├── scanner.rs    # Finds pending work items
+│   ├── embeddings.rs # OpenAI Batch API (50% cheaper)
+│   └── summaries.rs  # Rate-limited DeepSeek summaries
+├── cartographer/     # Codebase structure mapping
+│   └── mod.rs        # Module detection, dependency graphs
 ├── mcp/
 │   ├── mod.rs        # MCP server (rmcp)
 │   └── tools/        # Tool implementations
 │       ├── mod.rs
 │       ├── project.rs   # session_start, set_project, get_project
 │       ├── memory.rs    # remember, recall, forget
-│       ├── code.rs      # get_symbols, semantic_code_search, index
+│       ├── code.rs      # get_symbols, semantic_code_search, index, summarize_codebase
 │       └── tasks.rs     # task, goal
 ├── indexer/
 │   ├── mod.rs        # Code indexing orchestration
@@ -66,7 +73,7 @@ Claude Code
 
 ## Database Schema
 
-### Regular Tables (12)
+### Regular Tables (15)
 
 ```sql
 -- Projects
@@ -80,6 +87,7 @@ corrections (id, project_id, what_was_wrong, what_is_right, correction_type, sco
 code_symbols (id, project_id, file_path, name, symbol_type, start_line, end_line, signature, indexed_at)
 call_graph (id, caller_id, callee_name, callee_id, call_count)
 imports (id, project_id, file_path, import_path, is_external)
+codebase_modules (id, project_id, module_id, name, path, purpose, exports, dependencies, line_count)
 
 -- Sessions
 sessions (id, project_id, status, summary, started_at, last_activity)
@@ -92,12 +100,16 @@ tasks (id, project_id, goal_id, title, description, status, priority, created_at
 
 -- Permissions
 permission_rules (id, tool_name, pattern, match_type, scope, created_at)
+
+-- Background Processing
+pending_embeddings (id, project_id, file_path, chunk_content, status, created_at)
+background_batches (id, batch_id, item_ids, status, created_at)
 ```
 
 ### Vector Tables (2)
 
 ```sql
--- sqlite-vec virtual tables with 3072-dimension Gemini embeddings
+-- sqlite-vec virtual tables with 3072-dimension OpenAI embeddings
 vec_memory (embedding, fact_id, content)
 vec_code (embedding, file_path, chunk_content, project_id)
 ```
@@ -133,7 +145,7 @@ vec_code (embedding, file_path, chunk_content, project_id)
 ## Embeddings
 
 Uses Gemini `text-embedding-004` model:
-- 3072 dimensions
+- 1536 dimensions
 - Free tier available
 - Batching support (up to 100 texts)
 
@@ -183,8 +195,8 @@ Reads from stdin, checks `permission_rules` table, outputs allow/deny.
 
 | Variable | Description |
 |----------|-------------|
-| `GEMINI_API_KEY` | Gemini API key for embeddings |
-| `GOOGLE_API_KEY` | Alternative to GEMINI_API_KEY |
+| `OPENAI_API_KEY` | OpenAI API key for embeddings |
+| `GOOGLE_API_KEY` | Alternative to OPENAI_API_KEY |
 
 ### File Paths
 
@@ -221,3 +233,39 @@ New architecture:
 - Incremental parsing
 - Multi-language support
 - Static analysis (no runtime needed)
+
+## Background Worker
+
+The background worker runs when the service starts and processes work during idle time:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Background Worker (spawns on service start)                   │
+│                                                                 │
+│  Every 60s (idle) / 5s (active):                               │
+│    1. Check for pending embeddings                             │
+│       - Create OpenAI Batch API job (50% cheaper)              │
+│       - Poll for completion, store results                     │
+│    2. Check for modules without summaries                      │
+│       - Rate-limited DeepSeek calls                            │
+│       - Update codebase_modules.purpose                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Real-time Fallback
+
+When `semantic_code_search` is called before batch completes:
+1. Check `pending_embeddings` for active project
+2. Embed up to 50 chunks inline (immediate)
+3. Delete from pending queue
+4. Search runs with fresh embeddings
+
+This ensures search always works, even if user starts before batch completes.
+
+### Cost Savings
+
+| Operation | Normal API | Batch API | Savings |
+|-----------|-----------|-----------|---------|
+| Embeddings | $0.02/1M tokens | $0.01/1M tokens | 50% |
+
+Batch API has 24h turnaround but is processed faster in practice.

@@ -1,18 +1,24 @@
-// src/embeddings.rs
-// Gemini embeddings API client
+// crates/mira-server/src/embeddings.rs
+// OpenAI embeddings API client
 
 use anyhow::{Context, Result};
 use std::time::Duration;
 use tracing::debug;
 
-/// Embedding dimensions (Gemini text-embedding-004)
-pub const EMBEDDING_DIM: usize = 3072;
+/// Embedding dimensions (OpenAI text-embedding-3-small)
+pub const EMBEDDING_DIM: usize = 1536;
+
+/// Model to use
+const MODEL: &str = "text-embedding-3-small";
+
+/// API endpoint
+const API_URL: &str = "https://api.openai.com/v1/embeddings";
 
 /// Max characters to embed (truncate longer text)
 const MAX_TEXT_CHARS: usize = 8000;
 
-/// Max batch size for batch embedding
-const MAX_BATCH_SIZE: usize = 50;
+/// Max batch size for batch embedding (OpenAI supports up to 2048)
+const MAX_BATCH_SIZE: usize = 100;
 
 /// HTTP timeout
 const TIMEOUT_SECS: u64 = 30;
@@ -25,6 +31,9 @@ pub struct Embeddings {
     api_key: String,
     http_client: reqwest::Client,
 }
+
+/// Type alias for clarity
+pub type EmbeddingClient = Embeddings;
 
 impl Embeddings {
     /// Create new embeddings client
@@ -40,6 +49,11 @@ impl Embeddings {
         }
     }
 
+    /// Get the API key (for batch API)
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     /// Embed a single text
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         // Truncate if too long
@@ -50,17 +64,9 @@ impl Embeddings {
             text
         };
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={}",
-            self.api_key
-        );
-
         let body = serde_json::json!({
-            "model": "models/gemini-embedding-001",
-            "content": {
-                "parts": [{"text": text}]
-            },
-            "outputDimensionality": EMBEDDING_DIM
+            "model": MODEL,
+            "input": text
         });
 
         // Retry logic
@@ -70,17 +76,28 @@ impl Embeddings {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
 
-            match self.http_client.post(&url).json(&body).send().await {
+            match self
+                .http_client
+                .post(API_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .json(&body)
+                .send()
+                .await
+            {
                 Ok(response) => {
                     if response.status().is_success() {
                         let json: serde_json::Value = response.json().await?;
-                        if let Some(values) = json["embedding"]["values"].as_array() {
-                            let embedding: Vec<f32> = values
-                                .iter()
-                                .filter_map(|v| v.as_f64().map(|f| f as f32))
-                                .collect();
-                            if embedding.len() == EMBEDDING_DIM {
-                                return Ok(embedding);
+                        if let Some(data) = json["data"].as_array() {
+                            if let Some(first) = data.first() {
+                                if let Some(values) = first["embedding"].as_array() {
+                                    let embedding: Vec<f32> = values
+                                        .iter()
+                                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                        .collect();
+                                    if embedding.len() == EMBEDDING_DIM {
+                                        return Ok(embedding);
+                                    }
+                                }
                             }
                         }
                         anyhow::bail!("Invalid embedding response");
@@ -126,34 +143,27 @@ impl Embeddings {
 
     /// Internal batch embedding
     async fn embed_batch_inner(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key={}",
-            self.api_key
-        );
-
-        let requests: Vec<_> = texts
+        // Truncate texts and collect into array
+        let inputs: Vec<&str> = texts
             .iter()
             .map(|text| {
-                let text = if text.len() > MAX_TEXT_CHARS {
+                if text.len() > MAX_TEXT_CHARS {
                     &text[..MAX_TEXT_CHARS]
                 } else {
                     text.as_str()
-                };
-                serde_json::json!({
-                    "model": "models/gemini-embedding-001",
-                    "content": {
-                        "parts": [{"text": text}]
-                    },
-                    "outputDimensionality": EMBEDDING_DIM
-                })
+                }
             })
             .collect();
 
-        let body = serde_json::json!({ "requests": requests });
+        let body = serde_json::json!({
+            "model": MODEL,
+            "input": inputs
+        });
 
         let response = self
             .http_client
-            .post(&url)
+            .post(API_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&body)
             .send()
             .await
@@ -166,22 +176,25 @@ impl Embeddings {
         }
 
         let json: serde_json::Value = response.json().await?;
-        let embeddings = json["embeddings"]
+        let data = json["data"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Invalid batch response"))?;
 
-        let mut results = Vec::with_capacity(embeddings.len());
-        for emb in embeddings {
-            if let Some(values) = emb["values"].as_array() {
+        // OpenAI returns results with index field, sort by index to maintain order
+        let mut indexed: Vec<(usize, Vec<f32>)> = Vec::with_capacity(data.len());
+        for item in data {
+            let index = item["index"].as_u64().unwrap_or(0) as usize;
+            if let Some(values) = item["embedding"].as_array() {
                 let vec: Vec<f32> = values
                     .iter()
                     .filter_map(|v| v.as_f64().map(|f| f as f32))
                     .collect();
-                results.push(vec);
+                indexed.push((index, vec));
             }
         }
+        indexed.sort_by_key(|(i, _)| *i);
 
-        Ok(results)
+        Ok(indexed.into_iter().map(|(_, v)| v).collect())
     }
 }
 
