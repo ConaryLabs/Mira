@@ -10,15 +10,22 @@ session_start(project_path="/home/peter/Mira")
 
 Then `recall("preferences")` before writing code.
 
-## Quick Reference
+## Code Navigation (Use These First)
 
-| Need | Tool |
-|------|------|
-| Find definition | `cclsp_find_definition` |
-| Find usages | `cclsp_find_references` |
-| Search by meaning | `semantic_code_search` |
-| Check past decisions | `recall` |
-| File structure | `get_symbols` |
+**Always prefer Mira tools over Grep/Glob for code exploration:**
+
+| Need | Tool | Why |
+|------|------|-----|
+| Find definition | `cclsp_find_definition` | Instant, precise |
+| Find usages | `cclsp_find_references` | All references, not just text matches |
+| Search by meaning | `semantic_code_search` | Understands intent, not just keywords |
+| File structure | `get_symbols` | Functions, structs, classes in a file |
+| Check past decisions | `recall` | What we decided and why |
+| Codebase overview | `session_start` output | Module map with summaries |
+
+**When to use Grep:** Only for literal string searches (error messages, specific constants, config values).
+
+**When to use Glob:** Only for finding files by exact name pattern.
 
 ## Build & Deploy
 
