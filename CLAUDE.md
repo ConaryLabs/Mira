@@ -16,8 +16,6 @@ Then `recall("preferences")` before writing code.
 
 | Need | Tool | Why |
 |------|------|-----|
-| Find definition | `cclsp_find_definition` | Instant, precise |
-| Find usages | `cclsp_find_references` | All references, not just text matches |
 | Search by meaning | `semantic_code_search` | Understands intent, not just keywords |
 | File structure | `get_symbols` | Functions, structs, classes in a file |
 | Check past decisions | `recall` | What we decided and why |
