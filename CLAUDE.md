@@ -47,7 +47,7 @@ journalctl --user -u mira -n 50 # View last 50 lines
 
 ## Testing & Debugging
 
-Test chat without UI (for debugging):
+Test chat without UI (requires `mira web` running):
 
 ```bash
 # Simple test
@@ -59,6 +59,8 @@ mira test-chat -v "Search for authentication code"
 # With project context
 mira test-chat -p /home/peter/Mira "What are the recent goals?"
 ```
+
+Note: `test-chat` uses HTTP to call the web server, ensuring messages are stored and background tasks (fact extraction, summarization) run properly.
 
 API endpoint for programmatic testing:
 

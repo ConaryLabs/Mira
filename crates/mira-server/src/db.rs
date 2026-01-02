@@ -300,6 +300,29 @@ CREATE TABLE IF NOT EXISTS background_batches (
 );
 
 -- ═══════════════════════════════════════
+-- CHAT MESSAGES (conversation history)
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY,
+    role TEXT NOT NULL,  -- 'user', 'assistant'
+    content TEXT NOT NULL,
+    reasoning_content TEXT,  -- for deepseek reasoner responses
+    summarized INTEGER DEFAULT 0,  -- 1 if included in a summary
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS chat_summaries (
+    id INTEGER PRIMARY KEY,
+    summary TEXT NOT NULL,
+    message_range_start INTEGER,  -- first message id covered
+    message_range_end INTEGER,    -- last message id covered
+    summary_level INTEGER DEFAULT 1,  -- 1=session, 2=daily, 3=weekly
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_summaries_level ON chat_summaries(summary_level, created_at DESC);
+
+-- ═══════════════════════════════════════
 -- VECTOR TABLES (sqlite-vec)
 -- ═══════════════════════════════════════
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
@@ -523,6 +546,298 @@ impl Database {
         let conn = self.conn();
         let deleted = conn.execute("DELETE FROM memory_facts WHERE id = ?", [id])?;
         Ok(deleted > 0)
+    }
+
+    // ═══════════════════════════════════════
+    // GLOBAL MEMORY (for chat personal context)
+    // ═══════════════════════════════════════
+
+    /// Store a global memory (not tied to any project)
+    /// Used for personal facts, user preferences, etc.
+    pub fn store_global_memory(
+        &self,
+        content: &str,
+        category: &str,
+        key: Option<&str>,
+        confidence: Option<f64>,
+    ) -> Result<i64> {
+        self.store_memory(
+            None, // project_id = NULL = global
+            key,
+            content,
+            "personal", // fact_type for global memories
+            Some(category),
+            confidence.unwrap_or(1.0),
+        )
+    }
+
+    /// Get global memories by category
+    pub fn get_global_memories(&self, category: Option<&str>, limit: usize) -> Result<Vec<MemoryFact>> {
+        let conn = self.conn();
+
+        let (query, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(cat) = category {
+            (
+                "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+                 FROM memory_facts
+                 WHERE project_id IS NULL AND category = ?
+                 ORDER BY confidence DESC, updated_at DESC
+                 LIMIT ?",
+                vec![Box::new(cat.to_string()), Box::new(limit as i64)],
+            )
+        } else {
+            (
+                "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+                 FROM memory_facts
+                 WHERE project_id IS NULL AND fact_type = 'personal'
+                 ORDER BY confidence DESC, updated_at DESC
+                 LIMIT ?",
+                vec![Box::new(limit as i64)],
+            )
+        };
+
+        let mut stmt = conn.prepare(query)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok(MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Get user profile (high-confidence core facts)
+    pub fn get_user_profile(&self) -> Result<Vec<MemoryFact>> {
+        self.get_global_memories(Some("profile"), 20)
+    }
+
+    /// Semantic search over global memories only
+    /// Returns (fact_id, content, distance) tuples
+    pub fn recall_global_semantic(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<(i64, String, f32)>> {
+        let conn = self.conn();
+
+        let embedding_bytes: Vec<u8> = embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.content, vec_distance_cosine(v.embedding, ?1) as distance
+             FROM memory_facts f
+             JOIN vec_memory v ON f.id = v.fact_id
+             WHERE f.project_id IS NULL
+             ORDER BY distance
+             LIMIT ?2"
+        )?;
+
+        let results = stmt
+            .query_map(params![embedding_bytes, limit as i64], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(results)
+    }
+
+    // ═══════════════════════════════════════
+    // CHAT MESSAGES
+    // ═══════════════════════════════════════
+
+    /// Store a chat message
+    pub fn store_chat_message(
+        &self,
+        role: &str,
+        content: &str,
+        reasoning_content: Option<&str>,
+    ) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO chat_messages (role, content, reasoning_content) VALUES (?, ?, ?)",
+            params![role, content, reasoning_content],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get recent chat messages (for context window)
+    pub fn get_recent_messages(&self, limit: usize) -> Result<Vec<ChatMessage>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, role, content, reasoning_content, created_at
+             FROM chat_messages
+             WHERE summarized = 0
+             ORDER BY id DESC
+             LIMIT ?"
+        )?;
+
+        let rows = stmt.query_map([limit as i64], |row| {
+            Ok(ChatMessage {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                content: row.get(2)?,
+                reasoning_content: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+
+        // Collect and reverse to get chronological order
+        let mut messages: Vec<ChatMessage> = rows.filter_map(|r| r.ok()).collect();
+        messages.reverse();
+        Ok(messages)
+    }
+
+    /// Get messages older than a certain ID (for summarization)
+    pub fn get_messages_before(&self, before_id: i64, limit: usize) -> Result<Vec<ChatMessage>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, role, content, reasoning_content, created_at
+             FROM chat_messages
+             WHERE id < ? AND summarized = 0
+             ORDER BY id DESC
+             LIMIT ?"
+        )?;
+
+        let rows = stmt.query_map(params![before_id, limit as i64], |row| {
+            Ok(ChatMessage {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                content: row.get(2)?,
+                reasoning_content: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+
+        let mut messages: Vec<ChatMessage> = rows.filter_map(|r| r.ok()).collect();
+        messages.reverse();
+        Ok(messages)
+    }
+
+    /// Mark messages as summarized
+    pub fn mark_messages_summarized(&self, start_id: i64, end_id: i64) -> Result<usize> {
+        let conn = self.conn();
+        let updated = conn.execute(
+            "UPDATE chat_messages SET summarized = 1 WHERE id >= ? AND id <= ?",
+            params![start_id, end_id],
+        )?;
+        Ok(updated)
+    }
+
+    /// Store a chat summary
+    pub fn store_chat_summary(
+        &self,
+        summary: &str,
+        range_start: i64,
+        range_end: i64,
+        level: i32,
+    ) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO chat_summaries (summary, message_range_start, message_range_end, summary_level)
+             VALUES (?, ?, ?, ?)",
+            params![summary, range_start, range_end, level],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get recent summaries
+    pub fn get_recent_summaries(&self, level: i32, limit: usize) -> Result<Vec<ChatSummary>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, summary, message_range_start, message_range_end, summary_level, created_at
+             FROM chat_summaries
+             WHERE summary_level = ?
+             ORDER BY id DESC
+             LIMIT ?"
+        )?;
+
+        let rows = stmt.query_map(params![level, limit as i64], |row| {
+            Ok(ChatSummary {
+                id: row.get(0)?,
+                summary: row.get(1)?,
+                message_range_start: row.get(2)?,
+                message_range_end: row.get(3)?,
+                summary_level: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+
+        let mut summaries: Vec<ChatSummary> = rows.filter_map(|r| r.ok()).collect();
+        summaries.reverse();
+        Ok(summaries)
+    }
+
+    /// Get count of unsummarized messages
+    pub fn count_unsummarized_messages(&self) -> Result<i64> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM chat_messages WHERE summarized = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Count summaries at a given level
+    pub fn count_summaries_at_level(&self, level: i32) -> Result<i64> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM chat_summaries WHERE summary_level = ?",
+            [level],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Get oldest summaries at a level (for promotion to next level)
+    pub fn get_oldest_summaries(&self, level: i32, limit: usize) -> Result<Vec<ChatSummary>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, summary, message_range_start, message_range_end, summary_level, created_at
+             FROM chat_summaries
+             WHERE summary_level = ?
+             ORDER BY id ASC
+             LIMIT ?"
+        )?;
+
+        let rows = stmt.query_map(params![level, limit as i64], |row| {
+            Ok(ChatSummary {
+                id: row.get(0)?,
+                summary: row.get(1)?,
+                message_range_start: row.get(2)?,
+                message_range_end: row.get(3)?,
+                summary_level: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Delete summaries by IDs (after promotion)
+    pub fn delete_summaries(&self, ids: &[i64]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn();
+        let placeholders: Vec<_> = ids.iter().map(|_| "?").collect();
+        let sql = format!(
+            "DELETE FROM chat_summaries WHERE id IN ({})",
+            placeholders.join(",")
+        );
+
+        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let deleted = conn.execute(&sql, params.as_slice())?;
+        Ok(deleted)
     }
 
     // ═══════════════════════════════════════
@@ -757,6 +1072,27 @@ pub struct SessionInfo {
     pub summary: Option<String>,
     pub started_at: String,
     pub last_activity: String,
+}
+
+/// Chat message record
+#[derive(Debug, Clone)]
+pub struct ChatMessage {
+    pub id: i64,
+    pub role: String,
+    pub content: String,
+    pub reasoning_content: Option<String>,
+    pub created_at: String,
+}
+
+/// Chat summary record
+#[derive(Debug, Clone)]
+pub struct ChatSummary {
+    pub id: i64,
+    pub summary: String,
+    pub message_range_start: i64,
+    pub message_range_end: i64,
+    pub summary_level: i32,
+    pub created_at: String,
 }
 
 #[cfg(test)]

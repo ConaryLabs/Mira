@@ -45,6 +45,14 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 - **set_project** / **get_project** - Manage active project
 - **session_history** - Query session and tool call history
 
+### Chat (DeepSeek Integration)
+Full conversational memory system at `http://localhost:3000/chat`:
+- **Message Storage** - All messages persisted to database
+- **Rolling Summaries** - Older messages automatically summarized (L1 session → L2 daily → L3 weekly)
+- **Fact Extraction** - Personal facts extracted via LLM and stored globally
+- **Semantic Recall** - Context loaded based on message similarity
+- **KV Cache Optimization** - Context ordered static-to-volatile for cache efficiency
+
 ### Ghost Mode (Web UI)
 Real-time visualization of Claude Code activity:
 - Live tool call streaming via WebSocket
@@ -102,6 +110,7 @@ Automatic idle-time processing for cost savings:
 | `mira` or `mira serve` | Run as MCP server (for Claude Code) |
 | `mira web` | Run web server with Ghost Mode UI (port 3000) |
 | `mira index --path /project` | Index a project's code |
+| `mira test-chat "message"` | Test chat via HTTP (requires `mira web`) |
 
 ## Configuration
 
@@ -150,7 +159,7 @@ Then use naturally:
 
 ## Database Schema
 
-Simplified schema with 15 tables + 2 vector tables:
+Simplified schema with 17 tables + 2 vector tables:
 
 ### Core Tables
 - `projects` - Project paths and names
@@ -168,6 +177,8 @@ Simplified schema with 15 tables + 2 vector tables:
 - `permission_rules` - Auto-approval rules
 - `pending_embeddings` - Queue for batch embedding
 - `background_batches` - Track active batch jobs
+- `chat_messages` - Stored conversation history
+- `chat_summaries` - Multi-level conversation summaries
 
 ### Vector Tables (sqlite-vec)
 - `vec_memory` - Memory embeddings (1536 dimensions)

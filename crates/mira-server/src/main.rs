@@ -400,297 +400,134 @@ fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
 }
 
 /// Test chat endpoint without UI - useful for debugging
+/// Uses HTTP to call the web server so messages are stored and background tasks run
 async fn run_test_chat(message: String, verbose: bool, project: Option<PathBuf>) -> Result<()> {
-    use tokio::sync::broadcast;
-    use mira_types::WsEvent;
+    use mira_types::{ApiResponse, ChatRequest};
 
     println!("=== Mira Chat Test ===\n");
 
-    // Open database
-    let db_path = get_db_path();
-    let db = Arc::new(Database::open(&db_path)?);
-
-    // Initialize embeddings
-    let embeddings = get_embeddings();
-
-    // Create broadcast channel (we'll listen to it for events)
-    let (ws_tx, mut ws_rx) = broadcast::channel::<WsEvent>(256);
-
-    // Get DeepSeek API key
-    let api_key = match std::env::var("DEEPSEEK_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            eprintln!("ERROR: DEEPSEEK_API_KEY not set");
-            std::process::exit(1);
-        }
-    };
-
-    // Create DeepSeek client
-    let deepseek = Arc::new(web::deepseek::DeepSeekClient::new(api_key, ws_tx.clone()));
-
-    // Create Claude manager
-    let claude_manager = Arc::new(web::claude::ClaudeManager::new(ws_tx.clone()));
-
-    // Set up project if specified
+    // Show project if specified
     if let Some(ref path) = project {
-        let path_str = path.to_string_lossy();
-        let name = path.file_name().and_then(|n| n.to_str());
-        if let Ok((id, detected_name)) = db.get_or_create_project(&path_str, name) {
-            let display_name = detected_name.unwrap_or_else(|| "Unknown".to_string());
-            println!("Project: {} (id={}) @ {}", display_name, id, path_str);
-        }
+        println!("Project: {}", path.display());
     }
-
     println!("Message: {}\n", message);
     println!("---");
 
-    // Spawn event listener in background
-    let verbose_clone = verbose;
-    let event_task = tokio::spawn(async move {
-        while let Ok(event) = ws_rx.recv().await {
-            match event {
-                WsEvent::Thinking { content, phase } => {
-                    if verbose_clone {
-                        eprintln!("[THINKING:{:?}] {}", phase, content);
+    // Build request
+    let request = ChatRequest {
+        message: message.clone(),
+        history: vec![], // Let server load from DB
+    };
+
+    // Make HTTP request to local server
+    let client = reqwest::Client::new();
+    let response = client
+        .post("http://localhost:3000/api/chat/test")
+        .json(&request)
+        .send()
+        .await;
+
+    match response {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                eprintln!("\n=== Error ===");
+                eprintln!("HTTP {}: {}", resp.status(), resp.text().await.unwrap_or_default());
+                std::process::exit(1);
+            }
+
+            let body: ApiResponse<serde_json::Value> = resp.json().await?;
+
+            if !body.success {
+                eprintln!("\n=== Error ===");
+                eprintln!("{}", body.error.unwrap_or_else(|| "Unknown error".to_string()));
+                std::process::exit(1);
+            }
+
+            if let Some(data) = body.data {
+                // Print reasoning if verbose
+                if verbose {
+                    if let Some(reasoning) = data.get("reasoning_content").and_then(|v| v.as_str()) {
+                        if !reasoning.is_empty() {
+                            println!("\n=== Reasoning ===");
+                            println!("{}", reasoning);
+                        }
                     }
                 }
-                WsEvent::TerminalOutput { content, is_stderr } => {
-                    if is_stderr {
-                        eprint!("{}", content);
-                    } else {
-                        print!("{}", content);
+
+                // Print tool calls if any
+                if let Some(tool_calls) = data.get("tool_calls").and_then(|v| v.as_array()) {
+                    if !tool_calls.is_empty() {
+                        println!("\n=== Tool Calls ===");
+                        for tc in tool_calls {
+                            let name = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("?");
+                            let id = tc.get("id").and_then(|i| i.as_str()).unwrap_or("?");
+                            println!("[{}] id={}", name, id);
+                            if verbose {
+                                if let Some(args) = tc.get("function").and_then(|f| f.get("arguments")).and_then(|a| a.as_str()) {
+                                    println!("  args: {}", args);
+                                }
+                            }
+                        }
                     }
                 }
-                WsEvent::ToolStart { tool_name, arguments, call_id } => {
-                    println!("\n[TOOL:{}] id={}", tool_name, call_id);
-                    if verbose_clone {
-                        println!("  args: {}", arguments);
+
+                // Print tool results if any
+                if let Some(tool_results) = data.get("tool_results").and_then(|v| v.as_array()) {
+                    if !tool_results.is_empty() {
+                        println!("\n=== Tool Results ===");
+                        for tr in tool_results {
+                            let call_id = tr.get("call_id").and_then(|i| i.as_str()).unwrap_or("?");
+                            let result = tr.get("result").and_then(|r| r.as_str()).unwrap_or("?");
+                            println!("[{}] {}", call_id, if result.len() > 100 { &result[..100] } else { result });
+                        }
                     }
                 }
-                WsEvent::ToolResult { tool_name, result, success, call_id, duration_ms } => {
-                    let status = if success { "OK" } else { "ERR" };
-                    println!("[TOOL:{}:{}] {} ({}ms)", tool_name, status, call_id, duration_ms);
-                    if verbose_clone {
-                        println!("  result: {}", result);
-                    }
-                }
-                WsEvent::ChatComplete { content, model, usage } => {
-                    println!("\n=== Response ({}) ===", model);
+
+                // Print final response
+                if let Some(content) = data.get("content").and_then(|v| v.as_str()) {
+                    println!("\n=== Response ===");
                     println!("{}", content);
-                    if let Some(u) = usage {
-                        println!("\n[Usage: {} prompt, {} completion, cache hit: {:?}]",
-                            u.prompt_tokens, u.completion_tokens, u.cache_hit_tokens);
+                } else if let Some(reasoning) = data.get("reasoning_content").and_then(|v| v.as_str()) {
+                    // DeepSeek reasoner sometimes puts response in reasoning_content
+                    if !verbose {
+                        println!("\n=== Response ===");
+                        println!("{}", reasoning);
                     }
                 }
-                WsEvent::ChatError { message } => {
-                    eprintln!("\n[ERROR] {}", message);
-                }
-                WsEvent::ClaudeSpawned { instance_id, working_dir } => {
-                    println!("\n[CLAUDE:{}] spawned in {}", instance_id, working_dir);
-                }
-                WsEvent::ClaudeStopped { instance_id } => {
-                    println!("\n[CLAUDE:{}] stopped", instance_id);
-                }
-                _ => {
-                    if verbose_clone {
-                        eprintln!("[EVENT] {:?}", event);
+
+                // Print usage
+                if let Some(usage) = data.get("usage") {
+                    println!("\n=== Usage ===");
+                    if let Some(prompt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
+                        println!("Prompt tokens: {}", prompt);
+                    }
+                    if let Some(completion) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
+                        println!("Completion tokens: {}", completion);
+                    }
+                    if let Some(hit) = usage.get("cache_hit_tokens").and_then(|v| v.as_u64()) {
+                        println!("Cache hit: {} tokens", hit);
+                    }
+                    if let Some(miss) = usage.get("cache_miss_tokens").and_then(|v| v.as_u64()) {
+                        println!("Cache miss: {} tokens", miss);
                     }
                 }
-            }
-        }
-    });
 
-    // Build messages
-    let mut messages = vec![web::deepseek::Message::system(
-        "You are an AI assistant integrated with Mira Studio.\n\
-         You have tools for searching memory, code, and spawning Claude Code.\n\
-         Use tools when helpful. Be concise."
-    )];
-    messages.push(web::deepseek::Message::user(&message));
-
-    // Get tools
-    let tools = web::deepseek::mira_tools();
-
-    // Call DeepSeek
-    match deepseek.chat(messages, Some(tools)).await {
-        Ok(result) => {
-            // Execute any tool calls
-            if let Some(ref tool_calls) = result.tool_calls {
-                println!("\n=== Executing {} tool calls ===", tool_calls.len());
-
-                for tc in tool_calls {
-                    let args: serde_json::Value =
-                        serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
-
-                    let tool_result = match tc.function.name.as_str() {
-                        "recall_memories" => {
-                            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                            execute_recall_test(&db, embeddings.as_ref(), query, 5).await
-                        }
-                        "search_code" => {
-                            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                            execute_code_search_test(&db, embeddings.as_ref(), query, 10).await
-                        }
-                        "spawn_claude" => {
-                            let prompt = args.get("initial_prompt").and_then(|v| v.as_str()).unwrap_or("");
-                            let working_dir = args.get("working_directory")
-                                .and_then(|v| v.as_str())
-                                .map(String::from)
-                                .or_else(|| project.as_ref().map(|p| p.to_string_lossy().to_string()))
-                                .unwrap_or_else(|| ".".to_string());
-
-                            match claude_manager.spawn(working_dir, Some(prompt.to_string())).await {
-                                Ok(id) => format!("Claude spawned with ID: {}", id),
-                                Err(e) => format!("Error: {}", e),
-                            }
-                        }
-                        "send_to_claude" => {
-                            let id = args.get("instance_id").and_then(|v| v.as_str()).unwrap_or("");
-                            let msg = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-
-                            match claude_manager.send_input(id, msg).await {
-                                Ok(_) => "Message sent".to_string(),
-                                Err(e) => format!("Error: {}", e),
-                            }
-                        }
-                        _ => format!("Unknown tool: {}", tc.function.name),
-                    };
-
-                    let _ = ws_tx.send(WsEvent::ToolResult {
-                        tool_name: tc.function.name.clone(),
-                        result: tool_result,
-                        success: true,
-                        call_id: tc.id.clone(),
-                        duration_ms: 0,
-                    });
-                }
-            }
-
-            // Print reasoning if verbose
-            if verbose {
-                if let Some(reasoning) = &result.reasoning_content {
-                    println!("\n=== Reasoning ===");
-                    println!("{}", reasoning);
-                }
-            }
-
-            // Print final response
-            if let Some(content) = &result.content {
-                println!("\n=== Final Response ===");
-                println!("{}", content);
-            }
-
-            // Print usage
-            if let Some(usage) = &result.usage {
-                println!("\n=== Usage ===");
-                println!("Prompt tokens: {}", usage.prompt_tokens);
-                println!("Completion tokens: {}", usage.completion_tokens);
-                if let Some(hit) = usage.prompt_cache_hit_tokens {
-                    println!("Cache hit: {} tokens", hit);
-                }
-                if let Some(miss) = usage.prompt_cache_miss_tokens {
-                    println!("Cache miss: {} tokens", miss);
+                // Print timing
+                if let Some(duration) = data.get("duration_ms").and_then(|v| v.as_u64()) {
+                    println!("\n[Total: {}ms]", duration);
                 }
             }
         }
         Err(e) => {
             eprintln!("\n=== Error ===");
-            eprintln!("{}", e);
+            eprintln!("Failed to connect to Mira server at localhost:3000");
+            eprintln!("Make sure 'mira web' is running");
+            eprintln!("\nDetails: {}", e);
             std::process::exit(1);
         }
     }
-
-    // Give events time to flush
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    event_task.abort();
 
     println!("\n=== Test Complete ===");
     Ok(())
 }
 
-/// Execute recall for test CLI
-async fn execute_recall_test(
-    db: &Arc<Database>,
-    embeddings: Option<&Arc<Embeddings>>,
-    query: &str,
-    limit: i64,
-) -> String {
-    if let Some(embeddings) = embeddings {
-        if let Ok(query_embedding) = embeddings.embed(query).await {
-            let conn = db.conn();
-
-            let embedding_bytes: Vec<u8> = query_embedding
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
-
-            let result: Result<Vec<String>, _> = (|| {
-                let mut stmt = conn.prepare(
-                    "SELECT content FROM memory_facts f
-                     JOIN vec_memory v ON f.id = v.fact_id
-                     ORDER BY vec_distance_cosine(v.embedding, ?1)
-                     LIMIT ?2"
-                )?;
-
-                let rows = stmt.query_map(
-                    rusqlite::params![embedding_bytes, limit],
-                    |row| row.get(0),
-                )?;
-
-                rows.collect::<Result<Vec<_>, _>>()
-            })();
-
-            if let Ok(memories) = result {
-                if !memories.is_empty() {
-                    return format!("Found {} memories:\n{}", memories.len(), memories.join("\n---\n"));
-                }
-            }
-        }
-    }
-    "No memories found".to_string()
-}
-
-/// Execute code search for test CLI
-async fn execute_code_search_test(
-    db: &Arc<Database>,
-    embeddings: Option<&Arc<Embeddings>>,
-    query: &str,
-    limit: i64,
-) -> String {
-    if let Some(embeddings) = embeddings {
-        if let Ok(query_embedding) = embeddings.embed(query).await {
-            let conn = db.conn();
-
-            let embedding_bytes: Vec<u8> = query_embedding
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
-
-            let result: Result<Vec<String>, _> = (|| {
-                let mut stmt = conn.prepare(
-                    "SELECT file_path, chunk_content FROM vec_code
-                     ORDER BY vec_distance_cosine(embedding, ?1)
-                     LIMIT ?2"
-                )?;
-
-                let rows = stmt.query_map(
-                    rusqlite::params![embedding_bytes, limit],
-                    |row| {
-                        let path: String = row.get(0)?;
-                        let content: String = row.get(1)?;
-                        Ok(format!("## {}\n```\n{}\n```", path, content))
-                    },
-                )?;
-
-                rows.collect::<Result<Vec<_>, _>>()
-            })();
-
-            if let Ok(results) = result {
-                if !results.is_empty() {
-                    return format!("Found {} matches:\n{}", results.len(), results.join("\n\n"));
-                }
-            }
-        }
-    }
-    "No code found".to_string()
-}
