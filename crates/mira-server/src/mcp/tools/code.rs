@@ -6,112 +6,12 @@ use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::indexer;
 use crate::mcp::MiraServer;
+use crate::search::{expand_context, hybrid_search};
 use crate::web::deepseek::{DeepSeekClient, Message};
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
 use zerocopy::AsBytes;
-
-/// Keyword-based code search fallback
-/// Searches chunk content and symbol names using LIKE matching
-fn keyword_code_search(
-    conn: &rusqlite::Connection,
-    query: &str,
-    project_id: Option<i64>,
-    limit: usize,
-    project_path: Option<&str>,
-) -> Vec<(String, String, f32)> {
-    let mut results = Vec::new();
-
-    // Split query into terms for flexible matching
-    let terms: Vec<&str> = query.split_whitespace().collect();
-    if terms.is_empty() {
-        return results;
-    }
-
-    // Build LIKE pattern - match any term
-    let like_patterns: Vec<String> = terms
-        .iter()
-        .map(|t| format!("%{}%", t.to_lowercase()))
-        .collect();
-
-    // Search vec_code chunk_content
-    if let Some(pid) = project_id {
-        for pattern in &like_patterns {
-            let query_sql = "SELECT file_path, chunk_content FROM vec_code
-                             WHERE project_id = ? AND LOWER(chunk_content) LIKE ?
-                             LIMIT ?";
-            if let Ok(mut stmt) = conn.prepare(query_sql) {
-                if let Ok(rows) = stmt.query_map(params![pid, pattern, limit as i64], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                }) {
-                    for row in rows.flatten() {
-                        // Avoid duplicates
-                        if !results.iter().any(|(f, c, _)| f == &row.0 && c == &row.1) {
-                            results.push((row.0, row.1, 0.5)); // Fixed score for keyword matches
-                        }
-                    }
-                }
-            }
-            if results.len() >= limit {
-                break;
-            }
-        }
-    }
-
-    // Also search symbol names for direct matches
-    if let Some(pid) = project_id {
-        for pattern in &like_patterns {
-            let query_sql = "SELECT file_path, name, signature, start_line, end_line
-                             FROM code_symbols
-                             WHERE project_id = ? AND LOWER(name) LIKE ?
-                             LIMIT ?";
-            if let Ok(mut stmt) = conn.prepare(query_sql) {
-                if let Ok(rows) = stmt.query_map(params![pid, pattern, limit as i64], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                        row.get::<_, Option<i64>>(3)?,
-                        row.get::<_, Option<i64>>(4)?,
-                    ))
-                }) {
-                    for row in rows.flatten() {
-                        let (file_path, name, signature, start_line, end_line) = row;
-
-                        // Try to read the actual code from file
-                        let content = if let (Some(proj_path), Some(start), Some(end)) =
-                            (project_path, start_line, end_line)
-                        {
-                            let full_path = Path::new(proj_path).join(&file_path);
-                            if let Ok(file_content) = std::fs::read_to_string(&full_path) {
-                                let lines: Vec<&str> = file_content.lines().collect();
-                                let start_idx = (start as usize).saturating_sub(1);
-                                let end_idx = (end as usize).min(lines.len());
-                                lines[start_idx..end_idx].join("\n")
-                            } else {
-                                signature.unwrap_or_else(|| name.clone())
-                            }
-                        } else {
-                            signature.unwrap_or_else(|| name.clone())
-                        };
-
-                        // Avoid duplicates
-                        if !results.iter().any(|(f, _, _)| f == &file_path && content.contains(&name)) {
-                            results.push((file_path, content, 0.6)); // Slightly higher score for symbol matches
-                        }
-                    }
-                }
-            }
-            if results.len() >= limit {
-                break;
-            }
-        }
-    }
-
-    results.truncate(limit);
-    results
-}
 
 /// Process pending embeddings for a project inline (real-time fallback)
 /// Only called if no embeddings exist yet - otherwise batch API handles it
@@ -254,7 +154,7 @@ pub async fn get_symbols(
     Ok(response)
 }
 
-/// Semantic code search with context expansion
+/// Semantic code search with hybrid fallback
 pub async fn semantic_code_search(
     server: &MiraServer,
     query: String,
@@ -263,13 +163,7 @@ pub async fn semantic_code_search(
 ) -> Result<String, String> {
     let limit = limit.unwrap_or(10) as usize;
 
-    // Check if embeddings available
-    let embeddings = server
-        .embeddings
-        .as_ref()
-        .ok_or("Semantic search requires OPENAI_API_KEY")?;
-
-    // Get project context for file reading and hybrid fallback
+    // Get project context
     let (project_path, project_id) = {
         let proj = server.project.read().await;
         (
@@ -279,101 +173,46 @@ pub async fn semantic_code_search(
     };
 
     // Process any pending embeddings for the active project (real-time fallback)
-    // This ensures we have up-to-date search results even if batch hasn't completed
-    if let Some(ref project) = *server.project.read().await {
-        if let Err(e) = process_pending_embeddings_inline(&server.db, embeddings, project.id).await {
-            tracing::debug!("Failed to process pending embeddings: {}", e);
+    if let Some(ref embeddings) = server.embeddings {
+        if let Some(ref project) = *server.project.read().await {
+            if let Err(e) = process_pending_embeddings_inline(&server.db, embeddings, project.id).await {
+                tracing::debug!("Failed to process pending embeddings: {}", e);
+            }
         }
     }
 
-    // Get query embedding
-    let query_embedding = embeddings
-        .embed(&query)
-        .await
-        .map_err(|e| format!("Embedding failed: {}", e))?;
+    // Use shared hybrid search
+    let result = hybrid_search(
+        &server.db,
+        server.embeddings.as_ref(),
+        &query,
+        project_id,
+        project_path.as_deref(),
+        limit,
+    )
+    .await?;
 
-    let conn = server.db.conn();
+    // Format with context expansion (MCP style with box drawing)
+    if result.results.is_empty() {
+        return Ok("No code matches found. Have you run 'index' yet?".to_string());
+    }
 
-    // Search vec_code
-    let mut stmt = conn
-        .prepare(
-            "SELECT file_path, chunk_content, distance
-             FROM vec_code
-             WHERE embedding MATCH ?
-             ORDER BY distance
-             LIMIT ?",
-        )
-        .map_err(|e| e.to_string())?;
+    let mut response = format!(
+        "{} results ({} search):\n\n",
+        result.results.len(),
+        result.search_type
+    );
 
-    let semantic_results: Vec<(String, String, f32)> = stmt
-        .query_map(
-            params![query_embedding.as_bytes(), limit as i64],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+    for r in &result.results {
+        // Use shared context expansion
+        let expanded = expand_context(&r.file_path, &r.content, project_path.as_deref());
 
-    // Convert distance to score and check quality
-    let semantic_with_scores: Vec<(String, String, f32)> = semantic_results
-        .into_iter()
-        .map(|(f, c, d)| (f, c, 1.0 - d))
-        .collect();
-
-    // Determine if we need keyword fallback
-    // Fallback if: no results, or best score is below threshold
-    let best_score = semantic_with_scores
-        .iter()
-        .map(|(_, _, s)| *s)
-        .fold(0.0f32, |a, b| a.max(b));
-
-    let (results, used_fallback) = if semantic_with_scores.is_empty() || best_score < 0.25 {
-        // Try keyword fallback
-        let keyword_results = keyword_code_search(
-            &conn,
-            &query,
-            project_id,
-            limit,
-            project_path.as_deref(),
-        );
-
-        if !keyword_results.is_empty() {
-            tracing::debug!(
-                "Semantic search poor (best_score={:.2}), using {} keyword results",
-                best_score,
-                keyword_results.len()
-            );
-            (keyword_results, true)
-        } else if !semantic_with_scores.is_empty() {
-            // Keep semantic results even if low quality
-            (semantic_with_scores, false)
-        } else {
-            return Ok("No code matches found. Have you run 'index' yet?".to_string());
-        }
-    } else {
-        (semantic_with_scores, false)
-    };
-
-    let search_type = if used_fallback { "keyword" } else { "semantic" };
-    let mut response = format!("{} results ({} search):\n\n", results.len(), search_type);
-    for (file_path, chunk_content, score) in results {
-
-        // Try to expand context
-        let expanded = expand_search_context(
-            &conn,
-            &file_path,
-            &chunk_content,
-            project_path.as_deref(),
-        );
-
-        response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", file_path, score));
+        response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", r.file_path, r.score));
 
         if let Some((symbol_info, full_code)) = expanded {
-            // Show symbol info if available
             if let Some(info) = symbol_info {
                 response.push_str(&format!("{}\n", info));
             }
-            // Show full code (up to reasonable limit)
             let code_display = if full_code.len() > 1500 {
                 format!("{}...\n[truncated]", &full_code[..1500])
             } else {
@@ -381,70 +220,16 @@ pub async fn semantic_code_search(
             };
             response.push_str(&format!("```\n{}\n```\n\n", code_display));
         } else {
-            // Fallback to chunk content
-            let display = if chunk_content.len() > 500 {
-                format!("{}...", &chunk_content[..500])
+            let display = if r.content.len() > 500 {
+                format!("{}...", &r.content[..500])
             } else {
-                chunk_content
+                r.content.clone()
             };
             response.push_str(&format!("```\n{}\n```\n\n", display));
         }
     }
 
     Ok(response)
-}
-
-/// Expand search result with containing symbol and surrounding context
-fn expand_search_context(
-    conn: &rusqlite::Connection,
-    file_path: &str,
-    chunk_content: &str,
-    project_path: Option<&str>,
-) -> Option<(Option<String>, String)> {
-    // Try to find the containing symbol for this chunk
-    // Look for a symbol whose line range contains part of the chunk
-
-    // First, try to identify which symbol this chunk belongs to
-    // by checking if the chunk starts with our context header (e.g., "// function foo:")
-    let symbol_info = if chunk_content.starts_with("// ") {
-        // Extract the first line as symbol info
-        chunk_content.lines().next().map(|s| s.to_string())
-    } else {
-        None
-    };
-
-    // Try to read full file and find the matching section
-    if let Some(proj_path) = project_path {
-        let full_path = std::path::Path::new(proj_path).join(file_path);
-        if let Ok(file_content) = std::fs::read_to_string(&full_path) {
-            // The chunk content (minus our added header) should be in the file
-            // Strip the header comment if present
-            let search_content = if chunk_content.starts_with("// ") {
-                chunk_content.lines().skip(1).collect::<Vec<_>>().join("\n")
-            } else {
-                chunk_content.to_string()
-            };
-
-            // Find the position in the file
-            if let Some(pos) = file_content.find(&search_content) {
-                // Count lines to this position
-                let lines_before = file_content[..pos].matches('\n').count();
-
-                // Get surrounding context (5 lines before, full match, 5 lines after)
-                let all_lines: Vec<&str> = file_content.lines().collect();
-                let match_lines = search_content.matches('\n').count() + 1;
-
-                let start_line = lines_before.saturating_sub(5);
-                let end_line = std::cmp::min(lines_before + match_lines + 5, all_lines.len());
-
-                let context_code: String = all_lines[start_line..end_line].join("\n");
-                return Some((symbol_info, context_code));
-            }
-        }
-    }
-
-    // If we couldn't expand, just return the chunk content with its header
-    Some((symbol_info, chunk_content.to_string()))
 }
 
 /// Index project
