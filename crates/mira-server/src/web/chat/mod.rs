@@ -294,10 +294,9 @@ pub async fn test_chat(
 
     info!(message = %req.message, "Test chat request received");
 
-    // Store user message in history
-    if let Err(e) = state.db.store_chat_message("user", &req.message, None) {
-        warn!("Failed to store user message: {}", e);
-    }
+    // Note: test_chat does NOT store messages to chat history
+    // It's for debugging/testing, not real conversations
+    // Use the streaming /api/chat/stream endpoint for persistent chat
 
     // Build messages (includes personal context based on user message)
     let mut messages = vec![Message::system(build_system_prompt(&state, &req.message).await)];
@@ -380,28 +379,8 @@ pub async fn test_chat(
                 "Test chat complete"
             );
 
-            // Store assistant response and spawn background tasks
-            // Only store actual content, not reasoning (reasoning stored separately)
-            let assistant_content = cleanup_response(result.content.clone().unwrap_or_default());
-            if !assistant_content.is_empty() {
-                if let Err(e) = state.db.store_chat_message(
-                    "assistant",
-                    &assistant_content,
-                    result.reasoning_content.as_deref(),
-                ) {
-                    warn!("Failed to store assistant message: {}", e);
-                }
-
-                // Spawn background tasks (non-blocking)
-                spawn_fact_extraction(
-                    state.clone(),
-                    req.message.clone(),
-                    assistant_content,
-                );
-
-                // Check if we need to roll up older messages into summaries
-                maybe_spawn_summarization(state.clone());
-            }
+            // Note: test_chat does NOT store responses or spawn background tasks
+            // It's for debugging/testing only
 
             Json(mira_types::ApiResponse::ok(response))
         }

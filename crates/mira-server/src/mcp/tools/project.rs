@@ -2,9 +2,11 @@
 // Project management tools
 
 use crate::cartographer;
+use crate::db::Database;
 use crate::hooks::session::read_claude_session_id;
 use crate::mcp::MiraServer;
 use mira_types::ProjectContext;
+use std::process::Command;
 
 /// Initialize session with project
 pub async fn session_start(
@@ -38,6 +40,9 @@ pub async fn session_start(
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     server.db.create_session(&sid, Some(project_id)).map_err(|e| e.to_string())?;
     *server.session_id.write().await = Some(sid.clone());
+
+    // Gather and store system context (for bash tool awareness)
+    gather_system_context(&server.db);
 
     // Detect project type
     let project_type = detect_project_type(&project_path);
@@ -148,6 +153,100 @@ pub async fn session_start(
 
     response.push_str("\nReady.");
     Ok(response)
+}
+
+/// Gather and store system context for bash tool usage
+fn gather_system_context(db: &Database) {
+    let mut context_parts = Vec::new();
+
+    // OS info
+    if let Ok(output) = Command::new("uname").args(["-s", "-r"]).output() {
+        if output.status.success() {
+            let os = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            context_parts.push(format!("OS: {}", os));
+        }
+    }
+
+    // Distro (Linux)
+    if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+        for line in content.lines() {
+            if line.starts_with("PRETTY_NAME=") {
+                let name = line
+                    .trim_start_matches("PRETTY_NAME=")
+                    .trim_matches('"');
+                context_parts.push(format!("Distro: {}", name));
+                break;
+            }
+        }
+    }
+
+    // Shell
+    if let Ok(shell) = std::env::var("SHELL") {
+        context_parts.push(format!("Shell: {}", shell));
+    }
+
+    // User (try env, fallback to whoami)
+    if let Ok(user) = std::env::var("USER") {
+        if !user.is_empty() {
+            context_parts.push(format!("User: {}", user));
+        }
+    } else if let Ok(output) = Command::new("whoami").output() {
+        if output.status.success() {
+            let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            context_parts.push(format!("User: {}", user));
+        }
+    }
+
+    // Home directory (try env, fallback to ~)
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            context_parts.push(format!("Home: {}", home));
+        }
+    } else if let Ok(output) = Command::new("sh").args(["-c", "echo ~"]).output() {
+        if output.status.success() {
+            let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            context_parts.push(format!("Home: {}", home));
+        }
+    }
+
+    // Timezone
+    if let Ok(output) = Command::new("date").arg("+%Z (UTC%:z)").output() {
+        if output.status.success() {
+            let tz = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            context_parts.push(format!("Timezone: {}", tz));
+        }
+    }
+
+    // Available tools (check common ones with single command)
+    let tools_to_check = "git cargo rustc npm node python3 docker systemctl curl jq";
+    if let Ok(output) = Command::new("sh")
+        .args(["-c", &format!("which {} 2>/dev/null | xargs -n1 basename", tools_to_check)])
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            let tools: Vec<&str> = output_str
+                .lines()
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !tools.is_empty() {
+                context_parts.push(format!("Available tools: {}", tools.join(", ")));
+            }
+        }
+    }
+
+    // Store as memory with key for upsert
+    if !context_parts.is_empty() {
+        let content = context_parts.join("\n");
+        let _ = db.store_memory(
+            None, // global, not project-specific
+            Some("system_context"),
+            &content,
+            "context",
+            Some("system"),
+            1.0,
+        );
+    }
 }
 
 /// Detect project type from path

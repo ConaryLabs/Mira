@@ -10,24 +10,19 @@ use super::summarization::get_summary_context;
 
 /// Build system prompt with persona overlays and personal context
 /// KV-cache optimized ordering (static → semi-static → dynamic → volatile)
-/// Layers: date -> base persona -> capabilities -> profile -> project -> summaries -> semantic recall
+/// Most stable content first, most volatile (date/time) last
 pub async fn build_system_prompt(state: &AppState, user_message: &str) -> String {
     let project_id = state.project_id().await;
     let session_persona = state.get_session_persona().await;
 
     tracing::info!("Building system prompt with project_id: {:?}", project_id);
 
-    // Start with current date and time (important for research/current events)
-    let now = Local::now();
-    let datetime = now.format("%A, %B %d, %Y at %I:%M %p %Z").to_string();
-    let mut prompt = format!("Current date/time: {}\n\n", datetime);
-
-    // Get base persona stack (includes persona, project context, session, capabilities)
-    prompt.push_str(&persona::build_system_prompt_with_persona(
+    // Start with base persona stack (most stable - includes persona, project context, capabilities)
+    let mut prompt = persona::build_system_prompt_with_persona(
         &state.db,
         project_id,
         session_persona.as_deref(),
-    ));
+    );
 
     // Add conversation summaries (semi-dynamic, changes less frequently)
     let summary_context = get_summary_context(&state.db, 5);
@@ -35,11 +30,17 @@ pub async fn build_system_prompt(state: &AppState, user_message: &str) -> String
         prompt.push_str(&format!("\n\n=== CONVERSATION HISTORY ===\n{}", summary_context));
     }
 
-    // Inject personal context (global memories) - most dynamic part of system prompt
+    // Inject personal context (global memories) - dynamic but query-dependent
     let personal_context = build_personal_context(state, user_message).await;
     if !personal_context.is_empty() {
         prompt.push_str(&format!("\n\n=== ABOUT THE USER ===\n{}", personal_context));
     }
+
+    // Current date at the END (most volatile - changes daily, not per-minute)
+    // Using just date, not time, to maximize cache hits within a day
+    let now = Local::now();
+    let date = now.format("%A, %B %d, %Y (%Z)").to_string();
+    prompt.push_str(&format!("\n\nCurrent date: {}", date));
 
     prompt
 }

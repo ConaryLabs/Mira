@@ -86,6 +86,19 @@
     return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   }
 
+  // Format UTC timestamp from DB to local time
+  function formatTimestamp(utcTimestamp: string | undefined): string {
+    if (!utcTimestamp) return '';
+    try {
+      // DB stores as "2026-01-03 04:15:37" (UTC, no timezone indicator)
+      // Parse as UTC and convert to local
+      const utcDate = new Date(utcTimestamp.replace(' ', 'T') + 'Z');
+      return `${utcDate.getHours().toString().padStart(2, '0')}:${utcDate.getMinutes().toString().padStart(2, '0')}`;
+    } catch {
+      return '';
+    }
+  }
+
   // Scroll to bottom
   async function scrollToBottom() {
     await tick();
@@ -136,7 +149,7 @@
             id: i + 1,
             role: msg.role,
             content: msg.content,
-            timestamp: msg.timestamp?.split(' ')[1]?.slice(0, 5) || '',
+            timestamp: formatTimestamp(msg.timestamp),
             toolCalls: [],
           }));
           messageIdCounter = messages.length;
