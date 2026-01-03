@@ -274,6 +274,7 @@ async fn execute_recall(state: &AppState, query: &str, limit: i64) -> anyhow::Re
 async fn execute_code_search(state: &AppState, query: &str, limit: i64) -> anyhow::Result<String> {
     let project_id = state.project_id().await;
     let project = state.get_project().await;
+    let project_path = project.as_ref().map(|p| p.path.clone());
 
     // Add project context header if project is set
     let context_header = match &project {
@@ -285,43 +286,172 @@ async fn execute_code_search(state: &AppState, query: &str, limit: i64) -> anyho
         None => String::new(),
     };
 
+    // Try semantic search first - get embedding before acquiring connection
+    let mut semantic_results: Vec<(String, String, f32)> = Vec::new();
     if let Some(ref embeddings) = state.embeddings {
         if let Ok(query_embedding) = embeddings.embed(query).await {
-            let conn = state.db.conn();
-
             let embedding_bytes: Vec<u8> = query_embedding
                 .iter()
                 .flat_map(|f| f.to_le_bytes())
                 .collect();
 
+            let conn = state.db.conn();
             let mut stmt = conn.prepare(
-                "SELECT file_path, chunk_content FROM vec_code
+                "SELECT file_path, chunk_content, vec_distance_cosine(embedding, ?2) as distance
+                 FROM vec_code
                  WHERE project_id = ?1 OR ?1 IS NULL
-                 ORDER BY vec_distance_cosine(embedding, ?2)
+                 ORDER BY distance
                  LIMIT ?3",
             )?;
 
-            let results: Vec<String> = stmt
+            semantic_results = stmt
                 .query_map(rusqlite::params![project_id, embedding_bytes, limit], |row| {
                     let path: String = row.get(0)?;
                     let content: String = row.get(1)?;
-                    Ok(format!("## {}\n```\n{}\n```", path, content))
+                    let distance: f32 = row.get(2)?;
+                    Ok((path, content, 1.0 - distance)) // Convert to score
                 })?
                 .filter_map(|r| r.ok())
                 .collect();
+        }
+    }
 
-            if !results.is_empty() {
-                return Ok(format!(
-                    "{}Found {} code matches:\n{}",
-                    context_header,
-                    results.len(),
-                    results.join("\n\n")
-                ));
+    // Check semantic result quality
+    let best_score = semantic_results
+        .iter()
+        .map(|(_, _, s)| *s)
+        .fold(0.0f32, |a, b| a.max(b));
+
+    // If semantic results are poor, try keyword fallback
+    let (results, search_type) = if semantic_results.is_empty() || best_score < 0.25 {
+        let conn = state.db.conn();
+        let keyword_results = keyword_search_fallback(&conn, query, project_id, project_path.as_deref(), limit as usize);
+
+        if !keyword_results.is_empty() {
+            tracing::debug!(
+                "Semantic search poor (best_score={:.2}), using {} keyword results",
+                best_score,
+                keyword_results.len()
+            );
+            (keyword_results, "keyword")
+        } else if !semantic_results.is_empty() {
+            (semantic_results, "semantic")
+        } else {
+            return Ok(format!("{}No code matches found", context_header));
+        }
+    } else {
+        (semantic_results, "semantic")
+    };
+
+    let formatted: Vec<String> = results
+        .into_iter()
+        .map(|(path, content, score)| format!("## {} (score: {:.2})\n```\n{}\n```", path, score, content))
+        .collect();
+
+    Ok(format!(
+        "{}Found {} code matches ({} search):\n{}",
+        context_header,
+        formatted.len(),
+        search_type,
+        formatted.join("\n\n")
+    ))
+}
+
+/// Keyword-based fallback when semantic search yields poor results
+fn keyword_search_fallback(
+    conn: &rusqlite::Connection,
+    query: &str,
+    project_id: Option<i64>,
+    project_path: Option<&str>,
+    limit: usize,
+) -> Vec<(String, String, f32)> {
+    let mut results = Vec::new();
+
+    // Split query into terms for flexible matching
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    if terms.is_empty() {
+        return results;
+    }
+
+    let like_patterns: Vec<String> = terms
+        .iter()
+        .map(|t| format!("%{}%", t.to_lowercase()))
+        .collect();
+
+    // Search vec_code chunk_content
+    if let Some(pid) = project_id {
+        for pattern in &like_patterns {
+            let sql = "SELECT file_path, chunk_content FROM vec_code
+                       WHERE project_id = ? AND LOWER(chunk_content) LIKE ?
+                       LIMIT ?";
+            if let Ok(mut stmt) = conn.prepare(sql) {
+                if let Ok(rows) = stmt.query_map(rusqlite::params![pid, pattern, limit as i64], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                }) {
+                    for row in rows.flatten() {
+                        if !results.iter().any(|(f, c, _)| f == &row.0 && c == &row.1) {
+                            results.push((row.0, row.1, 0.5));
+                        }
+                    }
+                }
+            }
+            if results.len() >= limit {
+                break;
             }
         }
     }
 
-    Ok(format!("{}No code matches found", context_header))
+    // Also search symbol names
+    if let Some(pid) = project_id {
+        for pattern in &like_patterns {
+            let sql = "SELECT file_path, name, signature, start_line, end_line
+                       FROM code_symbols
+                       WHERE project_id = ? AND LOWER(name) LIKE ?
+                       LIMIT ?";
+            if let Ok(mut stmt) = conn.prepare(sql) {
+                if let Ok(rows) = stmt.query_map(rusqlite::params![pid, pattern, limit as i64], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                    ))
+                }) {
+                    for row in rows.flatten() {
+                        let (file_path, name, signature, start_line, end_line) = row;
+
+                        // Try to read actual code from file
+                        let content = if let (Some(proj_path), Some(start), Some(end)) =
+                            (project_path, start_line, end_line)
+                        {
+                            let full_path = std::path::Path::new(proj_path).join(&file_path);
+                            if let Ok(file_content) = std::fs::read_to_string(&full_path) {
+                                let lines: Vec<&str> = file_content.lines().collect();
+                                let start_idx = (start as usize).saturating_sub(1);
+                                let end_idx = (end as usize).min(lines.len());
+                                lines[start_idx..end_idx].join("\n")
+                            } else {
+                                signature.unwrap_or_else(|| name.clone())
+                            }
+                        } else {
+                            signature.unwrap_or_else(|| name.clone())
+                        };
+
+                        if !results.iter().any(|(f, _, _)| f == &file_path && content.contains(&name)) {
+                            results.push((file_path, content, 0.6));
+                        }
+                    }
+                }
+            }
+            if results.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    results.truncate(limit);
+    results
 }
 
 async fn execute_list_tasks(state: &AppState) -> anyhow::Result<String> {
