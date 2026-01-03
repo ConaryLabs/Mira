@@ -147,6 +147,18 @@ pub struct Milestone {
 }
 
 // ═══════════════════════════════════════
+// AGENT COLLABORATION
+// ═══════════════════════════════════════
+
+/// Agent role in collaboration
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    Mira,
+    Claude,
+}
+
+// ═══════════════════════════════════════
 // WEBSOCKET EVENTS
 // ═══════════════════════════════════════
 
@@ -267,6 +279,27 @@ pub enum WsEvent {
     /// Claude Code instance stopped
     ClaudeStopped {
         instance_id: String,
+    },
+
+    // ═══════════════════════════════════════
+    // AGENT COLLABORATION EVENTS
+    // ═══════════════════════════════════════
+
+    /// Agent-to-agent message
+    AgentMessage {
+        message_id: String,
+        from: AgentRole,
+        to: AgentRole,
+        content: String,
+        thread_id: String,
+    },
+
+    /// Agent-to-agent response
+    AgentResponse {
+        in_reply_to: String,
+        from: AgentRole,
+        content: String,
+        complete: bool,
     },
 }
 

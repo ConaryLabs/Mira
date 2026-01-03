@@ -4,9 +4,15 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [svelte(), tailwindcss()],
+  plugins: [
+    tailwindcss(),
+    svelte(),
+  ],
   server: {
     port: 5173,
     strictPort: true,
+    hmr: {
+      overlay: false,
+    },
   },
 })

@@ -3,7 +3,8 @@
 
 use crate::cartographer;
 use crate::hooks::session::read_claude_session_id;
-use crate::mcp::{MiraServer, ProjectContext};
+use crate::mcp::MiraServer;
+use mira_types::ProjectContext;
 
 /// Initialize session with project
 pub async fn session_start(
@@ -25,6 +26,11 @@ pub async fn session_start(
     };
 
     *server.project.write().await = Some(ctx);
+
+    // Register project with file watcher for automatic incremental indexing
+    if let Some(ref watcher) = server.watcher {
+        watcher.watch(project_id, std::path::PathBuf::from(&project_path)).await;
+    }
 
     // Set session ID (use provided, or Claude's from hook, or generate new)
     let sid = session_id
@@ -182,6 +188,11 @@ pub async fn set_project(
     };
 
     *server.project.write().await = Some(ctx);
+
+    // Register project with file watcher for automatic incremental indexing
+    if let Some(ref watcher) = server.watcher {
+        watcher.watch(project_id, std::path::PathBuf::from(&project_path)).await;
+    }
 
     let display_name = project_name.as_deref().unwrap_or(&project_path);
     Ok(format!("Project set: {} (id: {})", display_name, project_id))

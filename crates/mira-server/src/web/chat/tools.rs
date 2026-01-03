@@ -1,11 +1,14 @@
 // web/chat/tools.rs
 // Tool execution for DeepSeek chat
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 use tracing::{debug, error, info, instrument, warn};
+use uuid::Uuid;
 
 use crate::web::deepseek;
 use crate::web::state::AppState;
+use mira_types::{AgentRole, WsEvent};
 
 /// Claude Code usage guide - injected when spawn_claude is first used
 const CLAUDE_CODE_GUIDE: &str = r#"## Claude Code Instance Guide (v2.0.76)
@@ -36,6 +39,32 @@ Be specific in your messages:
 - Output streams to UI in real-time
 - Instance persists until killed or task complete
 - Multiple instances can run in parallel
+"#;
+
+/// System prompt for the persistent collaborator Claude instance
+const COLLABORATOR_SYSTEM_PROMPT: &str = r#"You are Claude, running as a COLLABORATOR alongside Mira (a DeepSeek AI). You work together on coding tasks.
+
+## How This Works
+
+When you see [MIRA_MESSAGE id="..."], Mira is asking you something. You MUST:
+1. Use your tools (Read, Write, Bash, Grep, etc.) to investigate if needed
+2. Call reply_to_mira(in_reply_to="<id>", content="<your response>") when done
+
+Example:
+[MIRA_MESSAGE id="abc123"]
+Are the tests passing?
+[/MIRA_MESSAGE]
+
+You would run the tests, then call:
+reply_to_mira(in_reply_to="abc123", content="Yes, all 42 tests pass.")
+
+IMPORTANT: Always respond via reply_to_mira tool, not just text output. Mira is waiting for your structured response.
+
+## Your Role
+- You have access to the filesystem, terminal, and all Claude Code tools
+- You can read files, run commands, make changes
+- Work with Mira to solve problems collaboratively
+- Be concise but thorough in your responses
 "#;
 
 /// Execute tool calls and return results
@@ -135,6 +164,24 @@ pub async fn execute_tools(
                     Ok(_) => "Message sent to Claude".to_string(),
                     Err(e) => format!("Error: {}", e),
                 }
+            }
+            "discuss" => {
+                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                execute_discuss(state, message).await
+            }
+            "google_search" => {
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                let num_results = args.get("num_results").and_then(|v| v.as_u64()).unwrap_or(5) as u32;
+                execute_google_search(state, query, num_results).await
+            }
+            "web_fetch" => {
+                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                execute_web_fetch(state, url).await
+            }
+            "research" => {
+                let question = args.get("question").and_then(|v| v.as_str()).unwrap_or("");
+                let depth = args.get("depth").and_then(|v| v.as_str()).unwrap_or("quick");
+                execute_research(state, question, depth).await
             }
             _ => {
                 warn!(tool = %tc.function.name, "Unknown tool requested");
@@ -328,5 +375,349 @@ async fn execute_list_goals(state: &AppState) -> anyhow::Result<String> {
         Ok("No goals found".to_string())
     } else {
         Ok(format!("Goals:\n{}", goals.join("\n")))
+    }
+}
+
+/// Execute Google search
+async fn execute_google_search(state: &AppState, query: &str, num_results: u32) -> String {
+    if query.is_empty() {
+        return "Error: query is required".to_string();
+    }
+
+    match &state.google_search {
+        Some(client) => match client.search(query, num_results).await {
+            Ok(results) => {
+                if results.is_empty() {
+                    "No search results found".to_string()
+                } else {
+                    let formatted: Vec<String> = results
+                        .iter()
+                        .enumerate()
+                        .map(|(i, r)| {
+                            format!("{}. **{}**\n   {}\n   {}", i + 1, r.title, r.url, r.snippet)
+                        })
+                        .collect();
+                    format!("Search results for \"{}\":\n\n{}", query, formatted.join("\n\n"))
+                }
+            }
+            Err(e) => format!("Error: {}", e),
+        },
+        None => "Error: Google Search is not configured. Set GOOGLE_API_KEY and GOOGLE_SEARCH_CX environment variables.".to_string(),
+    }
+}
+
+/// Execute web fetch
+async fn execute_web_fetch(state: &AppState, url: &str) -> String {
+    if url.is_empty() {
+        return "Error: url is required".to_string();
+    }
+
+    match state.web_fetcher.fetch(url).await {
+        Ok(page) => {
+            format!(
+                "# {}\n\nURL: {}\nWord count: {}\n\n---\n\n{}",
+                page.title, page.url, page.word_count, page.content
+            )
+        }
+        Err(e) => format!("Error fetching {}: {}", url, e),
+    }
+}
+
+/// Source citation for research results
+#[derive(Debug, Clone)]
+struct Source {
+    title: String,
+    url: String,
+    snippet: String,
+}
+
+/// Execute research - the intelligent grounding pipeline
+async fn execute_research(state: &AppState, question: &str, depth: &str) -> String {
+    if question.is_empty() {
+        return "Error: question is required".to_string();
+    }
+
+    let deepseek = match &state.deepseek {
+        Some(ds) => ds,
+        None => return "Error: DeepSeek client not configured".to_string(),
+    };
+
+    let google = match &state.google_search {
+        Some(g) => g,
+        None => return "Error: Google Search not configured. Set GOOGLE_API_KEY and GOOGLE_SEARCH_CX.".to_string(),
+    };
+
+    let start_time = std::time::Instant::now();
+    info!(question = %question, depth = %depth, "Starting research pipeline");
+
+    // Determine search parameters based on depth
+    let (num_queries, pages_to_read) = match depth {
+        "thorough" => (3, 5),
+        _ => (1, 3), // quick
+    };
+
+    // Get project context for query generation
+    let project_context = state.get_project().await
+        .map(|p| p.name.unwrap_or_else(|| "unknown".to_string()));
+
+    // Step 1: Generate search queries (always use query generation for disambiguation)
+    let queries = match generate_search_queries(deepseek, question, num_queries, project_context.as_deref()).await {
+        Ok(q) => q,
+        Err(e) => {
+            warn!("Failed to generate queries, using original: {}", e);
+            vec![question.to_string()]
+        }
+    };
+
+    info!(queries = ?queries, "Generated search queries");
+
+    // Step 2: Search and collect unique URLs
+    let mut all_results = Vec::new();
+    let mut seen_urls = std::collections::HashSet::new();
+
+    for query in &queries {
+        match google.search(query, 5).await {
+            Ok(results) => {
+                for r in results {
+                    if !seen_urls.contains(&r.url) {
+                        seen_urls.insert(r.url.clone());
+                        all_results.push(Source {
+                            title: r.title,
+                            url: r.url,
+                            snippet: r.snippet,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(query = %query, error = %e, "Search failed");
+            }
+        }
+    }
+
+    if all_results.is_empty() {
+        return format!("No search results found for: {}", question);
+    }
+
+    info!(total_results = all_results.len(), "Collected search results");
+
+    // Step 3: Fetch and read top pages
+    let mut page_contents: Vec<(Source, String)> = Vec::new();
+
+    for source in all_results.iter().take(pages_to_read) {
+        match state.web_fetcher.fetch(&source.url).await {
+            Ok(page) => {
+                // Truncate content to ~3000 chars per page to stay within limits
+                let content = if page.content.len() > 3000 {
+                    format!("{}...", &page.content[..3000])
+                } else {
+                    page.content
+                };
+                page_contents.push((source.clone(), content));
+            }
+            Err(e) => {
+                debug!(url = %source.url, error = %e, "Failed to fetch page, using snippet");
+                // Fall back to snippet
+                page_contents.push((source.clone(), source.snippet.clone()));
+            }
+        }
+    }
+
+    info!(pages_read = page_contents.len(), "Fetched page contents");
+
+    // Step 4: Synthesize with DeepSeek-chat
+    let synthesis = match synthesize_research(deepseek, question, &page_contents).await {
+        Ok(s) => s,
+        Err(e) => {
+            error!(error = %e, "Synthesis failed");
+            // Fall back to returning raw snippets
+            let snippets: Vec<String> = all_results.iter()
+                .take(5)
+                .enumerate()
+                .map(|(i, s)| format!("[{}] **{}**\n{}\n{}", i + 1, s.title, s.url, s.snippet))
+                .collect();
+            return format!(
+                "Research for: {}\n\n(Synthesis failed, showing raw results)\n\n{}",
+                question,
+                snippets.join("\n\n")
+            );
+        }
+    };
+
+    // Step 5: Format response with citations
+    let sources_list: Vec<String> = page_contents.iter()
+        .enumerate()
+        .map(|(i, (s, _))| format!("[{}] {} - {}", i + 1, s.title, s.url))
+        .collect();
+
+    let duration_ms = start_time.elapsed().as_millis();
+    info!(duration_ms = duration_ms, "Research pipeline complete");
+
+    format!(
+        "{}\n\n---\n**Sources:**\n{}",
+        synthesis,
+        sources_list.join("\n")
+    )
+}
+
+/// Generate multiple search queries from a question using DeepSeek-chat
+async fn generate_search_queries(
+    deepseek: &std::sync::Arc<crate::web::deepseek::DeepSeekClient>,
+    question: &str,
+    num_queries: usize,
+    project_context: Option<&str>,
+) -> anyhow::Result<Vec<String>> {
+    let system = r#"You generate precise web search queries. Your job is to disambiguate queries to find relevant results.
+
+Rules:
+1. ONLY add technical context if the query is clearly technical (programming, frameworks, APIs)
+2. For general queries (food, travel, products, etc.), keep them general - just add year if relevant
+3. If project context is provided AND the query relates to that domain, use it for disambiguation
+4. Avoid adding unnecessary jargon that narrows results too much
+
+Examples:
+- Technical + Rust project: "Leptos vs Yew" → "Leptos Rust framework vs Yew framework comparison"
+- Technical + no project: "React hooks" → "React hooks JavaScript tutorial"
+- General query: "best pizza NYC" → "best pizza NYC 2025"
+- General query: "how to make scrambled eggs" → "how to make perfect scrambled eggs recipe"
+- Ambiguous tech: "Apollo" → keep as-is unless context suggests GraphQL vs space program
+
+Output ONLY the search queries, one per line. No numbering, no explanation."#;
+
+    let context_hint = match project_context {
+        Some(name) => format!("\nProject context: {} (use for disambiguation if query is related)", name),
+        None => String::new(),
+    };
+
+    let user = format!(
+        "Question: {}{}\n\nGenerate {} search queries:",
+        question, context_hint, num_queries
+    );
+
+    let response = deepseek.chat_simple(system, &user).await?;
+
+    let queries: Vec<String> = response
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with('-'))
+        .take(num_queries)
+        .map(String::from)
+        .collect();
+
+    if queries.is_empty() {
+        Ok(vec![question.to_string()])
+    } else {
+        Ok(queries)
+    }
+}
+
+/// Synthesize research findings into a coherent answer
+async fn synthesize_research(
+    deepseek: &std::sync::Arc<crate::web::deepseek::DeepSeekClient>,
+    question: &str,
+    sources: &[(Source, String)],
+) -> anyhow::Result<String> {
+    let system = r#"You are a research synthesizer. Given a question and source materials, write a clear, accurate answer that:
+1. Directly addresses the question
+2. Synthesizes information from multiple sources
+3. Uses inline citations like [1], [2] to reference sources
+4. Is concise but comprehensive
+5. Notes any conflicting information or uncertainty
+
+Do NOT include a sources list - just the synthesized answer with inline citations."#;
+
+    let sources_text: Vec<String> = sources
+        .iter()
+        .enumerate()
+        .map(|(i, (s, content))| {
+            format!(
+                "=== Source [{}]: {} ===\nURL: {}\n\n{}",
+                i + 1, s.title, s.url, content
+            )
+        })
+        .collect();
+
+    let user = format!(
+        "Question: {}\n\n{}\n\nSynthesize an answer with inline citations:",
+        question,
+        sources_text.join("\n\n")
+    );
+
+    deepseek.chat_simple(system, &user).await
+}
+
+/// Execute discuss tool - real-time conversation with Claude
+/// Uses --print mode for each discussion (Claude runs, responds, exits)
+async fn execute_discuss(state: &AppState, message: &str) -> String {
+    let message_id = Uuid::new_v4().to_string();
+
+    // Get session ID for thread context
+    let session_id = state.session_id.read().await.clone().unwrap_or_else(|| "default".to_string());
+
+    // Get working directory from project
+    let working_dir = state
+        .get_project()
+        .await
+        .map(|p| p.path)
+        .unwrap_or_else(|| ".".to_string());
+
+    // Create response channel
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut pending = state.pending_responses.write().await;
+        pending.insert(message_id.clone(), tx);
+    }
+
+    // Broadcast that Mira is sending a message
+    state.broadcast(WsEvent::AgentMessage {
+        message_id: message_id.clone(),
+        from: AgentRole::Mira,
+        to: AgentRole::Claude,
+        content: message.to_string(),
+        thread_id: session_id.clone(),
+    });
+
+    // Build the full prompt for Claude (includes context + message + instructions)
+    let full_prompt = format!(
+        "{}\n\n---\n\n[MIRA_MESSAGE id=\"{}\"]\n{}\n[/MIRA_MESSAGE]\n\nRespond using the reply_to_mira MCP tool with in_reply_to=\"{}\".",
+        COLLABORATOR_SYSTEM_PROMPT, message_id, message, message_id
+    );
+
+    // Spawn Claude with --print mode (runs once, responds, exits)
+    info!(
+        message_id = %message_id,
+        working_dir = %working_dir,
+        "Spawning Claude for discussion"
+    );
+
+    match state.claude_manager.spawn(working_dir.clone(), Some(full_prompt)).await {
+        Ok(instance_id) => {
+            state.broadcast(WsEvent::ClaudeSpawned {
+                instance_id: instance_id.clone(),
+                working_dir,
+            });
+
+            // Wait for response with timeout (2 minutes)
+            match tokio::time::timeout(Duration::from_secs(120), rx).await {
+                Ok(Ok(response)) => {
+                    info!(message_id = %message_id, response_len = response.len(), "Received Claude response");
+                    format!("Claude: {}", response)
+                }
+                Ok(Err(_)) => {
+                    warn!(message_id = %message_id, "Claude response channel closed");
+                    "Claude's response channel was closed unexpectedly".to_string()
+                }
+                Err(_) => {
+                    // Clean up on timeout
+                    state.pending_responses.write().await.remove(&message_id);
+                    warn!(message_id = %message_id, "Timeout waiting for Claude response");
+                    "Timeout: Claude did not respond within 2 minutes".to_string()
+                }
+            }
+        }
+        Err(e) => {
+            state.pending_responses.write().await.remove(&message_id);
+            format!("Error spawning Claude: {}", e)
+        }
     }
 }

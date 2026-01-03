@@ -35,6 +35,7 @@
   let ws: WebSocket | null = null;
   let reconnectTimer: number | null = null;
   let terminalContainers: Map<string, HTMLDivElement> = new Map();
+  let cleanupTimers: Map<string, number> = new Map();
 
   const WS_URL = 'ws://localhost:3000/ws';
 
@@ -100,8 +101,42 @@
     if (reconnectTimer) return;
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
+      // Clear stale instances on reconnect
+      clearAllInstances();
       connect();
     }, 2000);
+  }
+
+  // Schedule auto-cleanup of a stopped instance
+  function scheduleCleanup(id: string, delayMs: number) {
+    // Cancel existing timer if any
+    const existing = cleanupTimers.get(id);
+    if (existing) clearTimeout(existing);
+
+    const timer = window.setTimeout(() => {
+      cleanupTimers.delete(id);
+      const instance = instances.get(id);
+      // Only cleanup if still inactive
+      if (instance && !instance.isActive) {
+        closeInstance(id);
+      }
+    }, delayMs);
+
+    cleanupTimers.set(id, timer);
+  }
+
+  // Clear all instances (used on reconnect)
+  function clearAllInstances() {
+    for (const instance of instances.values()) {
+      instance.terminal?.dispose();
+    }
+    instances = new Map();
+    expandedId = null;
+    // Clear all cleanup timers
+    for (const timer of cleanupTimers.values()) {
+      clearTimeout(timer);
+    }
+    cleanupTimers.clear();
   }
 
   // Handle WebSocket events
@@ -129,6 +164,8 @@
         if (instance) {
           instance.isActive = false;
           instances = new Map(instances);
+          // Auto-cleanup after 30 seconds
+          scheduleCleanup(id, 30000);
         }
         break;
       }
@@ -242,6 +279,13 @@
 
   // Close instance
   function closeInstance(id: string) {
+    // Cancel any pending cleanup timer
+    const timer = cleanupTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      cleanupTimers.delete(id);
+    }
+
     const instance = instances.get(id);
     if (instance?.terminal) {
       instance.terminal.dispose();
@@ -272,6 +316,11 @@
 
   onDestroy(() => {
     if (reconnectTimer) clearTimeout(reconnectTimer);
+    // Clear all cleanup timers
+    for (const timer of cleanupTimers.values()) {
+      clearTimeout(timer);
+    }
+    cleanupTimers.clear();
     ws?.close();
     window.removeEventListener('resize', handleResize);
     for (const instance of instances.values()) {

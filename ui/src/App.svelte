@@ -4,6 +4,7 @@
   import hljs from 'highlight.js';
   import 'highlight.js/styles/github-dark.css';
   import TerminalTray from './lib/TerminalTray.svelte';
+  import ProjectsView from './lib/ProjectsView.svelte';
 
   const API_BASE = 'http://localhost:3000';
   const WS_URL = 'ws://localhost:3000/ws';
@@ -20,6 +21,8 @@
   interface ToolCall {
     name: string;
     success: boolean;
+    args?: Record<string, any>;
+    result?: string;
   }
 
   interface Project {
@@ -41,11 +44,17 @@
   let currentProject = $state<Project | null>(null);
   let sidebarOpen = $state(false);
 
+  // View state
+  let activeView = $state<'chat' | 'projects'>('chat');
+
   // Server status
   let serverStatus = $state<'checking' | 'connected' | 'disconnected'>('checking');
 
   // Terminal tray state
   let terminalTrayOpen = $state(false);
+
+  // Tool expansion state (tracks which message's tools are expanded)
+  let expandedToolsMessageId = $state<number | null>(null);
 
   // Claude instances (for indicator)
   let claudeInstances = $state<Map<string, { id: string; active: boolean }>>(new Map());
@@ -187,6 +196,14 @@
         if (inst) {
           inst.active = false;
           claudeInstances = new Map(claudeInstances);
+          // Auto-cleanup after 30 seconds
+          setTimeout(() => {
+            const instance = claudeInstances.get(event.instance_id);
+            if (instance && !instance.active) {
+              claudeInstances.delete(event.instance_id);
+              claudeInstances = new Map(claudeInstances);
+            }
+          }, 30000);
         }
         break;
       case 'tool_start':
@@ -194,6 +211,22 @@
         if (!claudeInstances.has('tools')) {
           claudeInstances.set('tools', { id: 'tools', active: true });
           claudeInstances = new Map(claudeInstances);
+        }
+        break;
+      case 'tool_result':
+        // Mark tools instance as inactive after tool completes
+        const toolsInst = claudeInstances.get('tools');
+        if (toolsInst) {
+          toolsInst.active = false;
+          claudeInstances = new Map(claudeInstances);
+          // Auto-cleanup after 10 seconds (shorter for tools)
+          setTimeout(() => {
+            const ti = claudeInstances.get('tools');
+            if (ti && !ti.active) {
+              claudeInstances.delete('tools');
+              claudeInstances = new Map(claudeInstances);
+            }
+          }, 10000);
         }
         break;
     }
@@ -409,6 +442,7 @@
     class="flex items-center gap-3 px-5 py-3"
     style="background: var(--glass-heavy); backdrop-filter: blur(16px); border-bottom: 1px solid var(--glass-border);"
   >
+    <!-- Project selector button -->
     <button
       class="w-9 h-9 rounded-lg flex items-center justify-center transition-colors"
       style="border: 1px solid var(--border-subtle); color: var(--muted);"
@@ -420,13 +454,41 @@
       </svg>
     </button>
 
-    <div class="text-sm font-medium" style="color: var(--foreground);">
-      {#if currentProject}
-        {currentProject.name}
-      {:else}
-        <span style="color: var(--muted);">No Project</span>
-      {/if}
+    <!-- Current project indicator -->
+    <div class="project-indicator">
+      <div class="project-dot" class:active={!!currentProject}></div>
+      <span class="project-label">
+        {#if currentProject}
+          {currentProject.name}
+        {:else}
+          No Project
+        {/if}
+      </span>
     </div>
+
+    <!-- Navigation tabs -->
+    <nav class="nav-tabs">
+      <button
+        class="nav-tab"
+        class:active={activeView === 'chat'}
+        onclick={() => activeView = 'chat'}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v8a1 1 0 01-1 1H5l-3 3V3z"/>
+        </svg>
+        <span>Chat</span>
+      </button>
+      <button
+        class="nav-tab"
+        class:active={activeView === 'projects'}
+        onclick={() => activeView = 'projects'}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 4a1 1 0 011-1h3.5l1 1H14a1 1 0 011 1v8a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/>
+        </svg>
+        <span>Projects</span>
+      </button>
+    </nav>
 
     <div class="ml-auto flex items-center gap-3">
       <!-- Claude Indicator -->
@@ -464,122 +526,152 @@
     </div>
   </header>
 
-  <!-- Messages -->
-  <div class="flex-1 overflow-y-auto" bind:this={messagesContainer}>
-    {#if messages.length === 0 && !loading}
-      <div class="h-full flex items-center justify-center">
-        <div class="text-center py-12">
-          <div class="text-4xl mb-4" style="color: var(--overlay0);">&gt;</div>
-          <p class="mb-2" style="color: var(--muted);">Start a conversation</p>
-          <p class="text-xs max-w-md" style="color: var(--overlay0);">
-            I can search memories, code, manage tasks, and spawn Claude Code for file operations.
-          </p>
-        </div>
-      </div>
-    {:else}
-      <div class="flex flex-col gap-5 p-6 max-w-4xl mx-auto">
-        {#each messages as msg (msg.id)}
-          <div class="flex gap-3.5 {msg.role === 'user' ? 'flex-row-reverse ml-auto' : 'mr-auto'}" style="max-width: 85%;">
-            <!-- Avatar -->
-            <div
-              class="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0"
-              style="background: linear-gradient(135deg, {msg.role === 'user' ? 'var(--blue), var(--sapphire)' : 'var(--mauve), var(--pink)'}); color: var(--crust);"
-            >
-              {msg.role === 'user' ? 'U' : 'M'}
-            </div>
-
-            <!-- Bubble -->
-            <div
-              class="rounded-xl overflow-hidden shadow-sm"
-              style="background: var(--card); border: 1px solid {msg.role === 'user' ? 'rgba(137, 180, 250, 0.3)' : 'rgba(203, 166, 247, 0.2)'};"
-            >
-              <!-- Header -->
-              <div class="px-4 py-2.5 flex items-center gap-2 text-xs" style="border-bottom: 1px solid var(--border-subtle); color: var(--muted);">
-                <span class="font-semibold uppercase tracking-wide" style="color: {msg.role === 'user' ? 'var(--blue)' : 'var(--mauve)'};">
-                  {msg.role === 'user' ? 'You' : 'Mira'}
-                </span>
-                {#if msg.timestamp}
-                  <span class="ml-auto" style="color: var(--overlay0);">{msg.timestamp}</span>
-                {/if}
-              </div>
-
-              <!-- Content -->
-              <div class="p-4 leading-relaxed prose prose-invert prose-sm max-w-none">
-                {#if msg.content}
-                  {@html renderMarkdown(msg.content)}
-                {:else if loading && msg.role === 'assistant'}
-                  <!-- Loading state -->
-                  {#if isThinking}
-                    <div class="flex items-center gap-2.5 text-xs" style="color: var(--muted);">
-                      <div class="w-4 h-4 rounded-full border-2 animate-spin" style="border-color: var(--surface1); border-top-color: var(--mauve);"></div>
-                      <span>Reasoning...</span>
-                    </div>
-                  {:else if currentTool}
-                    <div class="flex items-center gap-2.5 text-xs" style="color: var(--muted);">
-                      <div class="w-4 h-4 rounded-full border-2 animate-spin" style="border-color: var(--surface1); border-top-color: var(--mauve);"></div>
-                      <span>Using {currentTool}...</span>
-                    </div>
-                  {:else}
-                    <div class="flex gap-1 py-2">
-                      <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0s;"></div>
-                      <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0.2s;"></div>
-                      <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0.4s;"></div>
-                    </div>
-                  {/if}
-                {/if}
-              </div>
-
-              <!-- Tool calls -->
-              {#if msg.toolCalls && msg.toolCalls.length > 0}
-                <div style="border-top: 1px solid var(--border-subtle);">
-                  <div class="px-4 py-2.5 flex items-center gap-2 text-xs cursor-pointer" style="color: var(--muted);">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M6 4l4 4-4 4"/>
-                    </svg>
-                    <span class="font-medium uppercase tracking-wide">Tools</span>
-                    <span class="px-2 py-0.5 rounded text-xs font-semibold" style="background: var(--accent-faded); color: var(--accent);">
-                      {msg.toolCalls.length}
-                    </span>
-                  </div>
-                </div>
-              {/if}
-            </div>
+  <!-- Main Content Area -->
+  {#if activeView === 'chat'}
+    <!-- Messages -->
+    <div class="flex-1 overflow-y-auto" bind:this={messagesContainer}>
+      {#if messages.length === 0 && !loading}
+        <div class="h-full flex items-center justify-center">
+          <div class="text-center py-12">
+            <div class="text-4xl mb-4" style="color: var(--overlay0);">&gt;</div>
+            <p class="mb-2" style="color: var(--muted);">Start a conversation</p>
+            <p class="text-xs max-w-md" style="color: var(--overlay0);">
+              I can search memories, code, manage tasks, and spawn Claude Code for file operations.
+            </p>
           </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
+        </div>
+      {:else}
+        <div class="flex flex-col gap-5 p-6 max-w-4xl mx-auto">
+          {#each messages as msg (msg.id)}
+            <div class="flex gap-3.5 {msg.role === 'user' ? 'flex-row-reverse ml-auto' : 'mr-auto'}" style="max-width: 85%;">
+              <!-- Avatar -->
+              <div
+                class="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0"
+                style="background: linear-gradient(135deg, {msg.role === 'user' ? 'var(--blue), var(--sapphire)' : 'var(--mauve), var(--pink)'}); color: var(--crust);"
+              >
+                {msg.role === 'user' ? 'U' : 'M'}
+              </div>
 
-  <!-- Input -->
-  <div
-    class="px-5 py-4"
-    style="background: var(--glass-heavy); backdrop-filter: blur(16px); border-top: 1px solid var(--glass-border);"
-  >
-    <div class="flex gap-3 max-w-4xl mx-auto">
-      <input
-        type="text"
-        placeholder="Ask anything..."
-        class="flex-1 px-4 py-3 rounded-xl outline-none transition-all"
-        style="background: var(--mantle); border: 1px solid var(--border-subtle); color: var(--foreground);"
-        bind:this={inputEl}
-        bind:value={input}
-        disabled={loading}
-        onkeydown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-        onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
-        onblur={(e) => e.currentTarget.style.borderColor = 'var(--border-subtle)'}
-      />
-      <button
-        class="px-5 rounded-xl font-semibold transition-all"
-        style="background: linear-gradient(135deg, var(--blue), var(--sapphire)); color: var(--crust);"
-        disabled={loading || !input.trim()}
-        onclick={sendMessage}
-        class:opacity-50={loading || !input.trim()}
-        class:cursor-not-allowed={loading || !input.trim()}
-      >
-        Send
-      </button>
+              <!-- Bubble -->
+              <div
+                class="rounded-xl overflow-hidden shadow-sm"
+                style="background: var(--card); border: 1px solid {msg.role === 'user' ? 'rgba(137, 180, 250, 0.3)' : 'rgba(203, 166, 247, 0.2)'};"
+              >
+                <!-- Header -->
+                <div class="px-4 py-2.5 flex items-center gap-2 text-xs" style="border-bottom: 1px solid var(--border-subtle); color: var(--muted);">
+                  <span class="font-semibold uppercase tracking-wide" style="color: {msg.role === 'user' ? 'var(--blue)' : 'var(--mauve)'};">
+                    {msg.role === 'user' ? 'You' : 'Mira'}
+                  </span>
+                  {#if msg.timestamp}
+                    <span class="ml-auto" style="color: var(--overlay0);">{msg.timestamp}</span>
+                  {/if}
+                </div>
+
+                <!-- Content -->
+                <div class="p-4 leading-relaxed prose prose-invert prose-sm max-w-none">
+                  {#if msg.content}
+                    {@html renderMarkdown(msg.content)}
+                  {:else if loading && msg.role === 'assistant'}
+                    <!-- Loading state -->
+                    {#if isThinking}
+                      <div class="flex items-center gap-2.5 text-xs" style="color: var(--muted);">
+                        <div class="w-4 h-4 rounded-full border-2 animate-spin" style="border-color: var(--surface1); border-top-color: var(--mauve);"></div>
+                        <span>Reasoning...</span>
+                      </div>
+                    {:else if currentTool}
+                      <div class="flex items-center gap-2.5 text-xs" style="color: var(--muted);">
+                        <div class="w-4 h-4 rounded-full border-2 animate-spin" style="border-color: var(--surface1); border-top-color: var(--mauve);"></div>
+                        <span>Using {currentTool}...</span>
+                      </div>
+                    {:else}
+                      <div class="flex gap-1 py-2">
+                        <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0s;"></div>
+                        <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0.2s;"></div>
+                        <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0.4s;"></div>
+                      </div>
+                    {/if}
+                  {/if}
+                </div>
+
+                <!-- Tool calls -->
+                {#if msg.toolCalls && msg.toolCalls.length > 0}
+                  <div style="border-top: 1px solid var(--border-subtle);">
+                    <button
+                      class="w-full px-4 py-2.5 flex items-center gap-2 text-xs cursor-pointer hover:bg-[var(--surface0)] transition-colors"
+                      style="color: var(--muted);"
+                      onclick={() => expandedToolsMessageId = expandedToolsMessageId === msg.id ? null : msg.id}
+                    >
+                      <svg
+                        width="16" height="16" viewBox="0 0 16 16" fill="currentColor"
+                        class="transition-transform"
+                        class:rotate-90={expandedToolsMessageId === msg.id}
+                      >
+                        <path d="M6 4l4 4-4 4"/>
+                      </svg>
+                      <span class="font-medium uppercase tracking-wide">Tools</span>
+                      <span class="px-2 py-0.5 rounded text-xs font-semibold" style="background: var(--accent-faded); color: var(--accent);">
+                        {msg.toolCalls.length}
+                      </span>
+                    </button>
+                    {#if expandedToolsMessageId === msg.id}
+                      <div class="px-4 pb-3 space-y-2">
+                        {#each msg.toolCalls as tool}
+                          <div class="flex items-center gap-2 text-xs py-1.5 px-3 rounded-lg" style="background: var(--surface0);">
+                            <div
+                              class="w-2 h-2 rounded-full flex-shrink-0"
+                              style="background: {tool.success ? 'var(--green)' : 'var(--red)'};"
+                            ></div>
+                            <span class="font-mono" style="color: var(--foreground);">{tool.name}</span>
+                            <span style="color: {tool.success ? 'var(--green)' : 'var(--red)'};">
+                              {tool.success ? 'success' : 'failed'}
+                            </span>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
-  </div>
+
+    <!-- Input -->
+    <div
+      class="px-5 py-4"
+      style="background: var(--glass-heavy); backdrop-filter: blur(16px); border-top: 1px solid var(--glass-border);"
+    >
+      <div class="flex gap-3 max-w-4xl mx-auto">
+        <input
+          type="text"
+          placeholder="Ask anything..."
+          class="flex-1 px-4 py-3 rounded-xl outline-none transition-all"
+          style="background: var(--mantle); border: 1px solid var(--border-subtle); color: var(--foreground);"
+          bind:this={inputEl}
+          bind:value={input}
+          disabled={loading}
+          onkeydown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+          onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+          onblur={(e) => e.currentTarget.style.borderColor = 'var(--border-subtle)'}
+        />
+        <button
+          class="px-5 rounded-xl font-semibold transition-all"
+          style="background: linear-gradient(135deg, var(--blue), var(--sapphire)); color: var(--crust);"
+          disabled={loading || !input.trim()}
+          onclick={sendMessage}
+          class:opacity-50={loading || !input.trim()}
+          class:cursor-not-allowed={loading || !input.trim()}
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  {:else if activeView === 'projects'}
+    <!-- Projects View -->
+    <ProjectsView {currentProject} onProjectChange={(p) => currentProject = p} />
+  {/if}
 
   <!-- Terminal Tray -->
   <TerminalTray bind:isOpen={terminalTrayOpen} onClose={() => terminalTrayOpen = false} />
@@ -666,5 +758,92 @@
 
   .animate-bounce {
     animation: bounce 1.4s ease-in-out infinite;
+  }
+
+  /* Project indicator in header */
+  .project-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    background: var(--surface0);
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+  }
+
+  .project-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--overlay0);
+    transition: all 0.2s;
+  }
+
+  .project-dot.active {
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+
+  .project-label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+
+  /* Navigation tabs */
+  .nav-tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: 1rem;
+    padding: 0.25rem;
+    background: var(--mantle);
+    border-radius: 10px;
+    border: 1px solid var(--glass-border);
+  }
+
+  .nav-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--muted);
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .nav-tab:hover {
+    color: var(--foreground);
+    background: var(--surface0);
+  }
+
+  .nav-tab.active {
+    color: var(--foreground);
+    background: var(--surface0);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+
+  .nav-tab svg {
+    opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+
+  .nav-tab:hover svg,
+  .nav-tab.active svg {
+    opacity: 1;
+  }
+
+  .nav-tab.active svg {
+    color: var(--blue);
+  }
+
+  /* Rotation for expand chevrons */
+  .rotate-90 {
+    transform: rotate(90deg);
   }
 </style>

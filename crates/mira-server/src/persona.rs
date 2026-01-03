@@ -36,9 +36,11 @@ const CAPABILITIES: &str = r#"You have tools for:
 - Managing tasks and goals
 - Spawning Claude Code for file/terminal work
 
-Use tools when helpful. Be concise in responses.
+IMPORTANT: The PROJECT CONTEXT section above tells you which project is currently active. You already know this - don't use tools to figure out which project is selected.
 
-IMPORTANT: Never output raw JSON in your responses. If you want to remember something about the user, that happens automatically - just respond naturally in plain text."#;
+Use tools when you need to search code, recall memories, or make changes. Be concise in responses.
+
+Never output raw JSON. If you want to remember something about the user, that happens automatically."#;
 
 /// Build the complete system prompt with persona overlays
 ///
@@ -62,10 +64,20 @@ pub fn build_system_prompt_with_persona(
         .unwrap_or_else(|| DEFAULT_BASE_PERSONA.to_string());
     sections.push(format!("=== PERSONA ===\n{}", base));
 
-    // 2. Project overlay (if active)
+    // 2. Project context (if active)
     if let Some(pid) = project_id {
-        if let Ok(Some(overlay)) = db.get_project_persona(pid) {
-            sections.push(format!("=== PROJECT CONTEXT ===\n{}", overlay));
+        // Get project name/path
+        if let Ok(Some((name, path))) = db.get_project_info(pid) {
+            let project_name = name.clone().unwrap_or_else(|| path.clone());
+            tracing::info!("Adding PROJECT CONTEXT: name={:?}, path={}", name, path);
+            let mut project_section = format!("Current project: {} ({})", project_name, path);
+
+            // Add project persona overlay if set
+            if let Ok(Some(overlay)) = db.get_project_persona(pid) {
+                project_section.push_str(&format!("\n\n{}", overlay));
+            }
+
+            sections.push(format!("=== PROJECT CONTEXT ===\n{}", project_section));
         }
     }
 

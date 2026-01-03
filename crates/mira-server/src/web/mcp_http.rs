@@ -22,6 +22,9 @@ pub fn create_mcp_service(
     let deepseek = state.deepseek.clone();
     let ws_tx = state.ws_tx.clone();
     let session_id = state.session_id.clone();
+    let project = state.project.clone();
+    let pending_responses = state.pending_responses.clone();
+    let watcher = state.watcher.clone();
 
     // Service factory - creates a new MiraServer for each session
     let service_factory = move || {
@@ -31,6 +34,9 @@ pub fn create_mcp_service(
             deepseek.clone(),
             ws_tx.clone(),
             session_id.clone(),
+            project.clone(),
+            pending_responses.clone(),
+            watcher.clone(),
         ))
     };
 

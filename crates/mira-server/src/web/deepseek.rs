@@ -236,6 +236,23 @@ pub struct ChatResult {
     pub duration_ms: u64,
 }
 
+/// Non-streaming response for simple chat
+#[derive(Debug, Deserialize)]
+struct SimpleChatResponse {
+    choices: Vec<SimpleChoice>,
+    usage: Option<Usage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SimpleChoice {
+    message: SimpleMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct SimpleMessage {
+    content: Option<String>,
+}
+
 impl DeepSeekClient {
     /// Create a new DeepSeek client
     pub fn new(api_key: String) -> Self {
@@ -243,6 +260,60 @@ impl DeepSeekClient {
             api_key,
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Simple non-streaming chat using deepseek-chat model (fast, cheap)
+    /// Used for summarization, query generation, etc.
+    pub async fn chat_simple(&self, system: &str, user: &str) -> Result<String> {
+        let start_time = Instant::now();
+
+        let request = serde_json::json!({
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ],
+            "stream": false,
+            "max_tokens": 2048
+        });
+
+        debug!("DeepSeek chat_simple request");
+
+        let response = self
+            .client
+            .post(DEEPSEEK_API_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Request failed: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!("DeepSeek API error {}: {}", status, body));
+        }
+
+        let data: SimpleChatResponse = response
+            .json()
+            .await
+            .map_err(|e| anyhow!("Failed to parse response: {}", e))?;
+
+        let content = data
+            .choices
+            .first()
+            .and_then(|c| c.message.content.clone())
+            .unwrap_or_default();
+
+        let duration_ms = start_time.elapsed().as_millis();
+        info!(
+            duration_ms = duration_ms,
+            content_len = content.len(),
+            "DeepSeek chat_simple complete"
+        );
+
+        Ok(content)
     }
 
     /// Chat with streaming, returns the complete response
@@ -693,6 +764,73 @@ pub fn mira_tools() -> Vec<Tool> {
                     }
                 },
                 "required": ["instance_id", "message"]
+            }),
+        ),
+        Tool::function(
+            "discuss",
+            "Have a real-time conversation with Claude. Send a message and wait for Claude's structured response. Use this for code review, debugging together, getting Claude's expert analysis, or collaborating on complex tasks.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "What to discuss with Claude"
+                    }
+                },
+                "required": ["message"]
+            }),
+        ),
+        Tool::function(
+            "google_search",
+            "Search the web using Google Custom Search. Returns titles, URLs, and snippets from search results.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    },
+                    "num_results": {
+                        "type": "integer",
+                        "description": "Number of results to return (1-10, default 5)",
+                        "default": 5
+                    }
+                },
+                "required": ["query"]
+            }),
+        ),
+        Tool::function(
+            "web_fetch",
+            "Fetch and extract content from a web page. Returns the page title and main text content.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to fetch"
+                    }
+                },
+                "required": ["url"]
+            }),
+        ),
+        Tool::function(
+            "research",
+            "Research a topic by searching the web, reading top results, and synthesizing findings into a grounded answer with citations. Use this when you need current information, technical comparisons, or factual verification.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question or topic to research"
+                    },
+                    "depth": {
+                        "type": "string",
+                        "enum": ["quick", "thorough"],
+                        "description": "Research depth: 'quick' (1 query, 3 pages) or 'thorough' (3 queries, 5 pages)",
+                        "default": "quick"
+                    }
+                },
+                "required": ["question"]
             }),
         ),
     ]

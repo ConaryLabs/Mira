@@ -48,6 +48,15 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 - **set_project** / **get_project** - Manage active project
 - **session_history** - Query session and tool call history
 
+### Web Search & Research
+Intelligent web research with grounded answers:
+- **google_search** - Raw Google Custom Search results
+- **web_fetch** - Fetch and parse web page content
+- **research** - Full research pipeline: generates queries, searches, reads pages, synthesizes answer with citations
+  - `quick` mode: 1 query, 3 pages
+  - `thorough` mode: 3 queries, 5 pages
+  - Project-context-aware query generation
+
 ### Chat (DeepSeek Integration)
 Full conversational memory system at `http://localhost:3000/chat`:
 - **Message Storage** - All messages persisted to database
@@ -55,6 +64,7 @@ Full conversational memory system at `http://localhost:3000/chat`:
 - **Fact Extraction** - Personal facts extracted via LLM and stored globally
 - **Semantic Recall** - Context loaded based on message similarity
 - **KV Cache Optimization** - Context ordered static-to-volatile for cache efficiency
+- **Date/Time Context** - Current date/time always included in system prompt
 
 #### Chat UI Features
 - **Project Sidebar** - Slide-out panel to switch between projects
@@ -121,6 +131,8 @@ Automatic idle-time processing for cost savings:
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | Yes | OpenAI API key for embeddings |
 | `DEEPSEEK_API_KEY` | For Chat | DeepSeek API key for Chat features |
+| `GOOGLE_API_KEY` | For Search | Google Custom Search API key |
+| `GOOGLE_SEARCH_CX` | For Search | Google Custom Search Engine ID |
 
 ### Data Storage
 

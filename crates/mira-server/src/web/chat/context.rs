@@ -1,6 +1,8 @@
 // web/chat/context.rs
 // System prompt and personal context building
 
+use chrono::Local;
+
 use crate::persona;
 use crate::web::state::AppState;
 
@@ -8,17 +10,24 @@ use super::summarization::get_summary_context;
 
 /// Build system prompt with persona overlays and personal context
 /// KV-cache optimized ordering (static → semi-static → dynamic → volatile)
-/// Layers: base persona -> capabilities -> profile -> project -> summaries -> semantic recall
+/// Layers: date -> base persona -> capabilities -> profile -> project -> summaries -> semantic recall
 pub async fn build_system_prompt(state: &AppState, user_message: &str) -> String {
     let project_id = state.project_id().await;
     let session_persona = state.get_session_persona().await;
 
+    tracing::info!("Building system prompt with project_id: {:?}", project_id);
+
+    // Start with current date and time (important for research/current events)
+    let now = Local::now();
+    let datetime = now.format("%A, %B %d, %Y at %I:%M %p %Z").to_string();
+    let mut prompt = format!("Current date/time: {}\n\n", datetime);
+
     // Get base persona stack (includes persona, project context, session, capabilities)
-    let mut prompt = persona::build_system_prompt_with_persona(
+    prompt.push_str(&persona::build_system_prompt_with_persona(
         &state.db,
         project_id,
         session_persona.as_deref(),
-    );
+    ));
 
     // Add conversation summaries (semi-dynamic, changes less frequently)
     let summary_context = get_summary_context(&state.db, 5);

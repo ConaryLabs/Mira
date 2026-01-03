@@ -129,8 +129,11 @@ async fn run_mcp_server() -> Result<()> {
         info!("DeepSeek disabled (no DEEPSEEK_API_KEY)");
     }
 
-    // Shared session ID between MCP server and web server
+    // Shared state between MCP server and web server
     let session_id: Arc<tokio::sync::RwLock<Option<String>>> = Arc::new(tokio::sync::RwLock::new(None));
+    let project: Arc<tokio::sync::RwLock<Option<mira_types::ProjectContext>>> = Arc::new(tokio::sync::RwLock::new(None));
+    let pending_responses: Arc<tokio::sync::RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<String>>>> =
+        Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
     // Spawn embedded web server in background
     let web_port: u16 = std::env::var("MIRA_WEB_PORT")
@@ -142,9 +145,11 @@ async fn run_mcp_server() -> Result<()> {
     let web_embeddings = embeddings.clone();
     let web_ws_tx = ws_tx.clone();
     let web_session_id = session_id.clone();
+    let web_project = project.clone();
+    let web_pending = pending_responses.clone();
 
     tokio::spawn(async move {
-        let state = web::state::AppState::with_broadcaster(web_db, web_embeddings, web_ws_tx, web_session_id);
+        let state = web::state::AppState::with_broadcaster(web_db, web_embeddings, web_ws_tx, web_session_id, web_project, web_pending);
         let app = web::create_router(state);
         let addr = format!("0.0.0.0:{}", web_port);
 
@@ -161,8 +166,9 @@ async fn run_mcp_server() -> Result<()> {
     let _shutdown_tx = background::spawn(bg_db, bg_embeddings, bg_deepseek);
     info!("Background worker started");
 
-    // Create MCP server with broadcaster and shared session ID
-    let server = MiraServer::with_broadcaster(db, embeddings, deepseek, ws_tx, session_id);
+    // Create MCP server with broadcaster and shared state
+    // Note: In combined mode, file watcher is not available (use `mira web` for full functionality)
+    let server = MiraServer::with_broadcaster(db, embeddings, deepseek, ws_tx, session_id, project, pending_responses, None);
 
     // Run with stdio transport
     let transport = rmcp::transport::io::stdio();

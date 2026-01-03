@@ -91,20 +91,22 @@ pub async fn recall(
         if let Ok(query_embedding) = embeddings.embed(&query).await {
             let conn = server.db.conn();
 
-            // Search vec_memory
+            // Search vec_memory with project scoping
+            // Join with memory_facts to filter by project_id
             let mut stmt = conn
                 .prepare(
-                    "SELECT fact_id, content, distance
-                     FROM vec_memory
-                     WHERE embedding MATCH ?
+                    "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
+                     FROM vec_memory v
+                     JOIN memory_facts f ON v.fact_id = f.id
+                     WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
                      ORDER BY distance
-                     LIMIT ?",
+                     LIMIT ?3",
                 )
                 .map_err(|e| e.to_string())?;
 
             let results: Vec<(i64, String, f32)> = stmt
                 .query_map(
-                    params![query_embedding.as_bytes(), limit as i64],
+                    params![query_embedding.as_bytes(), project_id, limit as i64],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| e.to_string())?

@@ -3,9 +3,14 @@
 
 pub mod tools;
 
+use std::collections::HashMap;
+use tokio::sync::oneshot;
+
+use crate::background::watcher::WatcherHandle;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::web::deepseek::DeepSeekClient;
+use mira_types::{AgentRole, ProjectContext, WsEvent};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::{
@@ -20,14 +25,6 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Active project context
-#[derive(Debug, Clone)]
-pub struct ProjectContext {
-    pub id: i64,
-    pub path: String,
-    pub name: Option<String>,
-}
-
 /// MCP Server state
 #[derive(Clone)]
 pub struct MiraServer {
@@ -39,6 +36,10 @@ pub struct MiraServer {
     pub session_id: Arc<RwLock<Option<String>>>,
     /// WebSocket broadcaster (shared with web server)
     pub ws_tx: Option<tokio::sync::broadcast::Sender<mira_types::WsEvent>>,
+    /// File watcher handle for registering projects
+    pub watcher: Option<WatcherHandle>,
+    /// Pending responses for agent collaboration (message_id -> response sender)
+    pub pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -56,25 +57,32 @@ impl MiraServer {
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
             ws_tx: None,
+            watcher: None,
+            pending_responses: Arc::new(RwLock::new(HashMap::new())),
             tool_router: Self::tool_router(),
         }
     }
 
-    /// Create with a broadcast channel (for embedded web server mode)
+    /// Create with a broadcast channel and watcher (for embedded web server mode)
     pub fn with_broadcaster(
         db: Arc<Database>,
         embeddings: Option<Arc<Embeddings>>,
         deepseek: Option<Arc<DeepSeekClient>>,
         ws_tx: tokio::sync::broadcast::Sender<mira_types::WsEvent>,
         session_id: Arc<RwLock<Option<String>>>,
+        project: Arc<RwLock<Option<ProjectContext>>>,
+        pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>,
+        watcher: Option<WatcherHandle>,
     ) -> Self {
         Self {
             db,
             embeddings,
             deepseek,
-            project: Arc::new(RwLock::new(None)),
+            project,
             session_id,
             ws_tx: Some(ws_tx),
+            watcher,
+            pending_responses,
             tool_router: Self::tool_router(),
         }
     }
@@ -261,6 +269,16 @@ pub struct SessionHistoryRequest {
     pub session_id: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReplyToMiraRequest {
+    #[schemars(description = "The message_id you are replying to")]
+    pub in_reply_to: String,
+    #[schemars(description = "Your response content")]
+    pub content: String,
+    #[schemars(description = "Is your response complete? Set to false if you need more information.")]
+    pub complete: Option<bool>,
 }
 
 #[tool_router]
@@ -454,6 +472,43 @@ impl MiraServer {
                 Ok(output)
             }
             _ => Err(format!("Unknown action: {}. Use: list_sessions, get_history, current", req.action)),
+        }
+    }
+
+    #[tool(description = "Send a response back to Mira during collaboration. Use this when Mira asks you a question via discuss().")]
+    async fn reply_to_mira(
+        &self,
+        Parameters(req): Parameters<ReplyToMiraRequest>,
+    ) -> Result<String, String> {
+        let complete = req.complete.unwrap_or(true);
+
+        // Try to find and fulfill the pending response
+        let sender = {
+            let mut pending = self.pending_responses.write().await;
+            pending.remove(&req.in_reply_to)
+        };
+
+        match sender {
+            Some(tx) => {
+                // Send response through the channel
+                if tx.send(req.content.clone()).is_err() {
+                    return Err("Response channel was closed".to_string());
+                }
+
+                // Broadcast AgentResponse event for frontend
+                self.broadcast(WsEvent::AgentResponse {
+                    in_reply_to: req.in_reply_to.clone(),
+                    from: AgentRole::Claude,
+                    content: req.content,
+                    complete,
+                });
+
+                Ok("Response sent to Mira".to_string())
+            }
+            None => {
+                // No pending request found - might be stale or wrong ID
+                Err(format!("No pending request found for message_id: {}. It may have timed out or been answered already.", req.in_reply_to))
+            }
         }
     }
 }

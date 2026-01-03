@@ -7,6 +7,7 @@ pub mod claude;
 pub mod claude_api;
 pub mod deepseek;
 pub mod mcp_http;
+pub mod search;
 pub mod state;
 pub mod ws;
 
@@ -40,6 +41,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/project", get(api::get_project))
         .route("/project/set", post(api::set_project))
         .route("/projects", get(api::list_projects))
+        // Session history
+        .route("/sessions", get(api::list_sessions))
+        .route("/sessions/{id}", get(api::get_session))
+        .route("/sessions/{id}/history", get(api::get_session_history))
+        .route("/sessions/{id}/export", get(api::export_session))
         // MCP → WebSocket bridge
         .route("/broadcast", post(api::broadcast_event))
         // Chat with DeepSeek Reasoner

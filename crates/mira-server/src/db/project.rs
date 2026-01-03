@@ -112,6 +112,22 @@ impl Database {
         dir_name()
     }
 
+    /// Get project info by ID (name, path)
+    pub fn get_project_info(&self, project_id: i64) -> Result<Option<(Option<String>, String)>> {
+        let conn = self.conn();
+        let result = conn.query_row(
+            "SELECT name, path FROM projects WHERE id = ?",
+            [project_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        );
+
+        match result {
+            Ok(info) => Ok(Some(info)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Get database file path
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
