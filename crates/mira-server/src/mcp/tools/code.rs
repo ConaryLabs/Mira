@@ -6,7 +6,7 @@ use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::indexer;
 use crate::mcp::MiraServer;
-use crate::search::{expand_context, hybrid_search};
+use crate::search::{expand_context_with_db, hybrid_search};
 use crate::web::deepseek::{DeepSeekClient, Message};
 use rusqlite::params;
 use std::path::Path;
@@ -204,8 +204,14 @@ pub async fn semantic_code_search(
     );
 
     for r in &result.results {
-        // Use shared context expansion
-        let expanded = expand_context(&r.file_path, &r.content, project_path.as_deref());
+        // Use shared context expansion with DB for full symbol bounds
+        let expanded = expand_context_with_db(
+            &r.file_path,
+            &r.content,
+            project_path.as_deref(),
+            Some(&server.db),
+            project_id,
+        );
 
         response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", r.file_path, r.score));
 

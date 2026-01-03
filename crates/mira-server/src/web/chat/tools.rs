@@ -284,7 +284,7 @@ async fn execute_recall(state: &AppState, query: &str, limit: i64) -> anyhow::Re
 }
 
 async fn execute_code_search(state: &AppState, query: &str, limit: i64) -> anyhow::Result<String> {
-    use crate::search::{hybrid_search, format_project_header};
+    use crate::search::{expand_context_with_db, hybrid_search, format_project_header};
 
     let project_id = state.project_id().await;
     let project = state.get_project().await;
@@ -307,10 +307,32 @@ async fn execute_code_search(state: &AppState, query: &str, limit: i64) -> anyho
         return Ok(format!("{}No code matches found", context_header));
     }
 
+    // Expand each result to full symbol using code_symbols table
     let formatted: Vec<String> = result
         .results
         .iter()
-        .map(|r| format!("## {} (score: {:.2})\n```\n{}\n```", r.file_path, r.score, r.content))
+        .map(|r| {
+            let expanded = expand_context_with_db(
+                &r.file_path,
+                &r.content,
+                project_path.as_deref(),
+                Some(&state.db),
+                project_id,
+            );
+
+            match expanded {
+                Some((symbol_info, full_code)) => {
+                    let header = symbol_info.unwrap_or_default();
+                    let code_display = if full_code.len() > 2000 {
+                        format!("{}...\n[truncated]", &full_code[..2000])
+                    } else {
+                        full_code
+                    };
+                    format!("## {} (score: {:.2})\n{}\n```\n{}\n```", r.file_path, r.score, header, code_display)
+                }
+                None => format!("## {} (score: {:.2})\n```\n{}\n```", r.file_path, r.score, r.content),
+            }
+        })
         .collect();
 
     Ok(format!(
