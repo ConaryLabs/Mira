@@ -731,39 +731,33 @@ pub fn mira_tools() -> Vec<Tool> {
             }),
         ),
         Tool::function(
-            "spawn_claude",
-            "Start a Claude Code instance for file/terminal work. Returns an instance ID for subsequent interactions.",
+            "claude_task",
+            "Send a coding task to Claude Code for the current project. Claude will edit files, run commands, and complete the task. Spawns a new instance if none exists.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "initial_prompt": {
+                    "task": {
                         "type": "string",
-                        "description": "Initial task or question for Claude Code"
-                    },
-                    "working_directory": {
-                        "type": "string",
-                        "description": "Working directory for Claude Code (defaults to project root)"
+                        "description": "The coding task for Claude Code to complete"
                     }
                 },
-                "required": ["initial_prompt"]
+                "required": ["task"]
             }),
         ),
         Tool::function(
-            "send_to_claude",
-            "Send a message to a running Claude Code instance",
+            "claude_close",
+            "Close the current project's Claude Code instance when done with coding tasks.",
             serde_json::json!({
                 "type": "object",
-                "properties": {
-                    "instance_id": {
-                        "type": "string",
-                        "description": "The Claude Code instance ID from spawn_claude"
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "Message to send to Claude Code"
-                    }
-                },
-                "required": ["instance_id", "message"]
+                "properties": {}
+            }),
+        ),
+        Tool::function(
+            "claude_status",
+            "Check if Claude Code is running for the current project.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {}
             }),
         ),
         Tool::function(
@@ -831,6 +825,29 @@ pub fn mira_tools() -> Vec<Tool> {
                     }
                 },
                 "required": ["question"]
+            }),
+        ),
+        Tool::function(
+            "bash",
+            "Execute shell commands on the system. Use for file operations, git, builds, system tasks, and anything outside of code editing.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The bash command to execute"
+                    },
+                    "working_directory": {
+                        "type": "string",
+                        "description": "Working directory for the command (defaults to project root)"
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Command timeout in seconds (default 60)",
+                        "default": 60
+                    }
+                },
+                "required": ["command"]
             }),
         ),
     ]

@@ -118,51 +118,62 @@ pub async fn execute_tools(
                     Err(e) => format!("Error: {}", e),
                 }
             }
-            "spawn_claude" => {
-                let initial_prompt = args
-                    .get("initial_prompt")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let working_dir = args
-                    .get("working_directory")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
-                    .or_else(|| {
-                        // Use project path if available
-                        futures::executor::block_on(state.get_project())
-                            .map(|p| p.path)
-                    })
-                    .unwrap_or_else(|| ".".to_string());
-
-                match state
-                    .claude_manager
-                    .spawn(working_dir.clone(), Some(initial_prompt.to_string()))
-                    .await
-                {
-                    Ok(id) => {
-                        // Broadcast to WebSocket so terminal tray can pick it up
-                        state.broadcast(mira_types::WsEvent::ClaudeSpawned {
-                            instance_id: id.clone(),
-                            working_dir,
-                        });
-                        format!(
-                            "Claude instance started with ID: {}\n\n{}",
-                            id, CLAUDE_CODE_GUIDE
-                        )
+            "claude_task" => {
+                let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+                if task.is_empty() {
+                    "Error: task is required".to_string()
+                } else {
+                    match state.get_project().await {
+                        Some(project) => {
+                            match state.claude_manager.send_task(&project.path, task).await {
+                                Ok(id) => {
+                                    format!(
+                                        "Task sent to Claude Code for project '{}' (instance {})\n\n{}",
+                                        project.name.unwrap_or_else(|| project.path.clone()),
+                                        id,
+                                        CLAUDE_CODE_GUIDE
+                                    )
+                                }
+                                Err(e) => format!("Error: {}", e),
+                            }
+                        }
+                        None => "Error: No project selected. Use set_project first.".to_string(),
                     }
-                    Err(e) => format!("Error spawning Claude: {}", e),
                 }
             }
-            "send_to_claude" => {
-                let instance_id = args
-                    .get("instance_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-
-                match state.claude_manager.send_input(instance_id, message).await {
-                    Ok(_) => "Message sent to Claude".to_string(),
-                    Err(e) => format!("Error: {}", e),
+            "claude_close" => {
+                match state.get_project().await {
+                    Some(project) => {
+                        match state.claude_manager.close_project(&project.path).await {
+                            Ok(_) => format!(
+                                "Claude Code closed for project '{}'",
+                                project.name.unwrap_or_else(|| project.path.clone())
+                            ),
+                            Err(e) => format!("Error: {}", e),
+                        }
+                    }
+                    None => "Error: No project selected".to_string(),
+                }
+            }
+            "claude_status" => {
+                match state.get_project().await {
+                    Some(project) => {
+                        let has_instance = state.claude_manager.has_instance(&project.path).await;
+                        let instance_id = state.claude_manager.get_instance_id(&project.path).await;
+                        if has_instance {
+                            format!(
+                                "Claude Code is running for '{}' (instance {})",
+                                project.name.unwrap_or_else(|| project.path.clone()),
+                                instance_id.unwrap_or_else(|| "unknown".to_string())
+                            )
+                        } else {
+                            format!(
+                                "No Claude Code running for '{}'",
+                                project.name.unwrap_or_else(|| project.path.clone())
+                            )
+                        }
+                    }
+                    None => "Error: No project selected".to_string(),
                 }
             }
             "discuss" => {
@@ -182,6 +193,18 @@ pub async fn execute_tools(
                 let question = args.get("question").and_then(|v| v.as_str()).unwrap_or("");
                 let depth = args.get("depth").and_then(|v| v.as_str()).unwrap_or("quick");
                 execute_research(state, question, depth).await
+            }
+            "bash" => {
+                let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                let timeout = args.get("timeout_seconds").and_then(|v| v.as_u64()).unwrap_or(60);
+                let working_dir = args
+                    .get("working_directory")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| {
+                        futures::executor::block_on(state.get_project()).map(|p| p.path)
+                    });
+                execute_bash(command, working_dir.as_deref(), timeout).await
             }
             _ => {
                 warn!(tool = %tc.function.name, "Unknown tool requested");
@@ -693,6 +716,56 @@ async fn execute_discuss(state: &AppState, message: &str) -> String {
         Err(e) => {
             state.pending_responses.write().await.remove(&message_id);
             format!("Error spawning Claude: {}", e)
+        }
+    }
+}
+
+/// Execute bash command
+async fn execute_bash(command: &str, working_dir: Option<&str>, timeout_seconds: u64) -> String {
+    if command.is_empty() {
+        return "Error: command is required".to_string();
+    }
+
+    use tokio::process::Command;
+
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c").arg(command);
+
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
+
+    info!(command = %command, working_dir = ?working_dir, timeout = timeout_seconds, "Executing bash command");
+
+    match tokio::time::timeout(Duration::from_secs(timeout_seconds), cmd.output()).await {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let exit_code = output.status.code().unwrap_or(-1);
+
+            let result = if stderr.is_empty() {
+                format!("Exit: {}\n{}", exit_code, stdout)
+            } else if stdout.is_empty() {
+                format!("Exit: {}\n{}", exit_code, stderr)
+            } else {
+                format!("Exit: {}\nstdout:\n{}\nstderr:\n{}", exit_code, stdout, stderr)
+            };
+
+            if exit_code == 0 {
+                info!(exit_code = exit_code, "Bash command completed successfully");
+            } else {
+                warn!(exit_code = exit_code, "Bash command exited with non-zero status");
+            }
+
+            result
+        }
+        Ok(Err(e)) => {
+            error!(error = %e, "Failed to execute bash command");
+            format!("Error: {}", e)
+        }
+        Err(_) => {
+            warn!(timeout = timeout_seconds, "Bash command timed out");
+            format!("Error: Command timed out after {}s", timeout_seconds)
         }
     }
 }

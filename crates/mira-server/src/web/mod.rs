@@ -54,10 +54,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/chat/history", get(api::get_chat_history))
         // Test endpoint for debugging (returns detailed JSON)
         .route("/chat/test", post(api::test_chat))
-        // Claude Code management
-        .route("/claude", post(api::spawn_claude))
-        .route("/claude/{id}", get(api::get_claude_status).delete(api::kill_claude))
-        .route("/claude/{id}/input", post(api::send_claude_input))
+        // Claude Code management (project-scoped)
+        .route("/claude/instances", get(claude_api::list_instances))
+        .route("/claude/project", get(claude_api::get_project_instance).delete(claude_api::close_project_instance))
+        .route("/claude/task", post(claude_api::send_task))
+        .route("/claude/close", post(claude_api::close_by_path))
+        // Claude Code legacy endpoints (by instance ID)
+        .route("/claude/{id}", get(claude_api::get_claude_status).delete(claude_api::kill_claude))
         // Persona management
         .route("/persona", get(api::get_persona))
         .route("/persona/session", post(api::set_session_persona))

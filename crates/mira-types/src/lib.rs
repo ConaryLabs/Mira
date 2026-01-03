@@ -349,25 +349,6 @@ pub struct ChatRequest {
     pub history: Vec<ChatMessage>,
 }
 
-/// Claude spawn request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaudeSpawnRequest {
-    pub initial_prompt: String,
-    pub working_directory: Option<String>,
-}
-
-/// Claude input request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaudeInputRequest {
-    pub message: String,
-}
-
-/// Claude spawn response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaudeSpawnResponse {
-    pub instance_id: String,
-}
-
 // ═══════════════════════════════════════
 // API REQUEST/RESPONSE TYPES
 // ═══════════════════════════════════════

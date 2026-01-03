@@ -1,4 +1,4 @@
-// src/web/claude_api.rs
+// crates/mira-server/src/web/claude_api.rs
 // Claude Code instance management API handlers
 
 use axum::{
@@ -6,51 +6,120 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use mira_types::{ApiResponse, ClaudeInputRequest, ClaudeSpawnRequest, ClaudeSpawnResponse, WsEvent};
+use mira_types::{ApiResponse, WsEvent};
 
 use crate::web::state::AppState;
 
-/// Spawn a new Claude Code instance
-pub async fn spawn_claude(
-    State(state): State<AppState>,
-    Json(req): Json<ClaudeSpawnRequest>,
-) -> impl IntoResponse {
-    let working_dir = req
-        .working_directory
-        .or_else(|| {
-            futures::executor::block_on(state.get_project()).map(|p| p.path)
-        })
-        .unwrap_or_else(|| ".".to_string());
+/// List all running Claude instances
+pub async fn list_instances(State(state): State<AppState>) -> impl IntoResponse {
+    let instances = state.claude_manager.list_all().await;
+    Json(ApiResponse::ok(instances))
+}
 
-    match state
-        .claude_manager
-        .spawn(working_dir.clone(), Some(req.initial_prompt))
-        .await
-    {
-        Ok(instance_id) => {
-            state.broadcast(WsEvent::ClaudeSpawned {
-                instance_id: instance_id.clone(),
-                working_dir,
-            });
-            Json(ApiResponse::ok(ClaudeSpawnResponse { instance_id }))
+/// Get Claude instance for current project
+pub async fn get_project_instance(State(state): State<AppState>) -> impl IntoResponse {
+    match state.get_project().await {
+        Some(project) => {
+            let has_instance = state.claude_manager.has_instance(&project.path).await;
+            let instance_id = state.claude_manager.get_instance_id(&project.path).await;
+            Json(ApiResponse::ok(serde_json::json!({
+                "project_path": project.path,
+                "project_name": project.name,
+                "has_instance": has_instance,
+                "instance_id": instance_id,
+            })))
         }
+        None => Json(ApiResponse::err("No project selected")),
+    }
+}
+
+/// Send task to current project's Claude (spawns if needed)
+#[derive(serde::Deserialize)]
+pub struct TaskRequest {
+    pub task: String,
+}
+
+pub async fn send_task(
+    State(state): State<AppState>,
+    Json(req): Json<TaskRequest>,
+) -> impl IntoResponse {
+    match state.get_project().await {
+        Some(project) => {
+            match state.claude_manager.send_task(&project.path, &req.task).await {
+                Ok(instance_id) => Json(ApiResponse::ok(serde_json::json!({
+                    "instance_id": instance_id,
+                    "project_path": project.path,
+                    "task_sent": true,
+                }))),
+                Err(e) => Json(ApiResponse::err(e.to_string())),
+            }
+        }
+        None => Json(ApiResponse::err("No project selected")),
+    }
+}
+
+/// Close current project's Claude instance
+pub async fn close_project_instance(State(state): State<AppState>) -> impl IntoResponse {
+    match state.get_project().await {
+        Some(project) => {
+            match state.claude_manager.close_project(&project.path).await {
+                Ok(_) => Json(ApiResponse::ok(serde_json::json!({
+                    "project_path": project.path,
+                    "closed": true,
+                }))),
+                Err(e) => Json(ApiResponse::err(e.to_string())),
+            }
+        }
+        None => Json(ApiResponse::err("No project selected")),
+    }
+}
+
+/// Close Claude instance by project path
+#[derive(serde::Deserialize)]
+pub struct CloseByPathRequest {
+    pub project_path: String,
+}
+
+pub async fn close_by_path(
+    State(state): State<AppState>,
+    Json(req): Json<CloseByPathRequest>,
+) -> impl IntoResponse {
+    match state.claude_manager.close_project(&req.project_path).await {
+        Ok(_) => Json(ApiResponse::ok(serde_json::json!({
+            "project_path": req.project_path,
+            "closed": true,
+        }))),
         Err(e) => Json(ApiResponse::err(e.to_string())),
     }
 }
 
-/// Get Claude instance status
+// ═══════════════════════════════════════
+// LEGACY ENDPOINTS (kept for backwards compatibility)
+// ═══════════════════════════════════════
+
+/// Get Claude instance status by ID (legacy)
 pub async fn get_claude_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let running = state.claude_manager.is_running(&id).await;
-    Json(ApiResponse::ok(serde_json::json!({
-        "instance_id": id,
-        "running": running,
-    })))
+    // Search through all instances for the ID
+    let instances = state.claude_manager.list_all().await;
+    let found = instances.iter().find(|i| i.id == id);
+
+    match found {
+        Some(info) => Json(ApiResponse::ok(serde_json::json!({
+            "instance_id": id,
+            "running": info.is_running,
+            "project_path": info.project_path,
+        }))),
+        None => Json(ApiResponse::ok(serde_json::json!({
+            "instance_id": id,
+            "running": false,
+        }))),
+    }
 }
 
-/// Kill a Claude instance
+/// Kill a Claude instance by ID (legacy)
 pub async fn kill_claude(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -65,20 +134,6 @@ pub async fn kill_claude(
                 "killed": true,
             })))
         }
-        Err(e) => Json(ApiResponse::err(e.to_string())),
-    }
-}
-
-/// Send input to a Claude instance
-pub async fn send_claude_input(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<ClaudeInputRequest>,
-) -> impl IntoResponse {
-    match state.claude_manager.send_input(&id, &req.message).await {
-        Ok(_) => Json(ApiResponse::ok(serde_json::json!({
-            "sent": true,
-        }))),
         Err(e) => Json(ApiResponse::err(e.to_string())),
     }
 }

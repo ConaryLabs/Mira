@@ -1,9 +1,13 @@
+<!-- ui/src/lib/TerminalTray.svelte -->
+<!-- Terminal tray showing project-scoped Claude Code instances -->
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { Terminal } from 'xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import 'xterm/css/xterm.css';
+
+  const API_BASE = 'http://localhost:3000';
 
   // Props
   let {
@@ -17,7 +21,8 @@
   // Types
   interface ClaudeInstance {
     id: string;
-    workingDir: string;
+    projectPath: string;
+    projectName: string;
     lines: { content: string; isStderr: boolean }[];
     isActive: boolean;
     terminal?: Terminal;
@@ -29,9 +34,9 @@
     [key: string]: any;
   }
 
-  // State
+  // State - keyed by project path
   let instances = $state<Map<string, ClaudeInstance>>(new Map());
-  let expandedId = $state<string | null>(null);
+  let expandedPath = $state<string | null>(null);
   let ws: WebSocket | null = null;
   let reconnectTimer: number | null = null;
   let terminalContainers: Map<string, HTMLDivElement> = new Map();
@@ -65,8 +70,41 @@
   };
 
   // Derived state
-  let instanceList = $derived(Array.from(instances.values()).sort((a, b) => a.id.localeCompare(b.id)));
+  let instanceList = $derived(Array.from(instances.values()).sort((a, b) => a.projectName.localeCompare(b.projectName)));
   let activeCount = $derived(instanceList.filter(i => i.isActive).length);
+
+  // Get project name from path
+  function getProjectName(path: string): string {
+    if (!path || path === 'tools') return 'Tool Calls';
+    const parts = path.split('/');
+    return parts[parts.length - 1] || path;
+  }
+
+  // Load existing instances from API
+  async function loadInstances() {
+    try {
+      const res = await fetch(`${API_BASE}/api/claude/instances`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) {
+          for (const inst of data.data) {
+            if (!instances.has(inst.project_path)) {
+              instances.set(inst.project_path, {
+                id: inst.id,
+                projectPath: inst.project_path,
+                projectName: getProjectName(inst.project_path),
+                lines: [],
+                isActive: inst.is_running,
+              });
+            }
+          }
+          instances = new Map(instances);
+        }
+      }
+    } catch (e) {
+      console.error('[Terminal] Failed to load instances:', e);
+    }
+  }
 
   // Connect to WebSocket
   function connect() {
@@ -76,6 +114,7 @@
 
     ws.onopen = () => {
       console.log('[Terminal] WebSocket connected');
+      loadInstances();
     };
 
     ws.onmessage = (event) => {
@@ -101,28 +140,8 @@
     if (reconnectTimer) return;
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
-      // Clear stale instances on reconnect
-      clearAllInstances();
       connect();
     }, 2000);
-  }
-
-  // Schedule auto-cleanup of a stopped instance
-  function scheduleCleanup(id: string, delayMs: number) {
-    // Cancel existing timer if any
-    const existing = cleanupTimers.get(id);
-    if (existing) clearTimeout(existing);
-
-    const timer = window.setTimeout(() => {
-      cleanupTimers.delete(id);
-      const instance = instances.get(id);
-      // Only cleanup if still inactive
-      if (instance && !instance.isActive) {
-        closeInstance(id);
-      }
-    }, delayMs);
-
-    cleanupTimers.set(id, timer);
   }
 
   // Clear all instances (used on reconnect)
@@ -131,8 +150,7 @@
       instance.terminal?.dispose();
     }
     instances = new Map();
-    expandedId = null;
-    // Clear all cleanup timers
+    expandedPath = null;
     for (const timer of cleanupTimers.values()) {
       clearTimeout(timer);
     }
@@ -144,28 +162,29 @@
     switch (event.type) {
       case 'claude_spawned': {
         const id = event.instance_id;
-        const workingDir = event.working_dir || '';
-        instances.set(id, {
+        const projectPath = event.working_dir || id;
+        instances.set(projectPath, {
           id,
-          workingDir,
+          projectPath,
+          projectName: getProjectName(projectPath),
           lines: [],
           isActive: true,
         });
         instances = new Map(instances);
-        expandedId = id;
-        // Initialize terminal after DOM update
-        tick().then(() => initTerminal(id));
+        expandedPath = projectPath;
+        tick().then(() => initTerminal(projectPath));
         break;
       }
 
       case 'claude_stopped': {
         const id = event.instance_id;
-        const instance = instances.get(id);
-        if (instance) {
-          instance.isActive = false;
-          instances = new Map(instances);
-          // Auto-cleanup after 30 seconds
-          scheduleCleanup(id, 30000);
+        // Find instance by ID
+        for (const [path, instance] of instances.entries()) {
+          if (instance.id === id) {
+            instance.isActive = false;
+            instances = new Map(instances);
+            break;
+          }
         }
         break;
       }
@@ -174,42 +193,44 @@
         const id = event.instance_id;
         const content = event.content || '';
         const isStderr = event.is_stderr || false;
-        const instance = instances.get(id);
-        if (instance) {
-          instance.lines.push({ content, isStderr });
-          // Trim to max lines
-          if (instance.lines.length > 1000) {
-            instance.lines = instance.lines.slice(-1000);
-          }
-          instance.isActive = true;
-          instances = new Map(instances);
-          // Write to terminal
-          if (instance.terminal) {
-            const text = isStderr ? `\x1b[31m${content}\x1b[0m` : content;
-            instance.terminal.write(text);
+
+        // Find instance by ID
+        for (const instance of instances.values()) {
+          if (instance.id === id) {
+            instance.lines.push({ content, isStderr });
+            if (instance.lines.length > 1000) {
+              instance.lines = instance.lines.slice(-1000);
+            }
+            instance.isActive = true;
+            instances = new Map(instances);
+            if (instance.terminal) {
+              const text = isStderr ? `\x1b[31m${content}\x1b[0m` : content;
+              instance.terminal.write(text);
+            }
+            break;
           }
         }
         break;
       }
 
       case 'tool_start': {
-        // Show tool calls in an auto-created instance if none exist
-        if (instances.size === 0) {
-          const id = 'tools';
-          instances.set(id, {
-            id,
-            workingDir: 'Tool Calls',
+        // Show tool calls in a special "tools" instance
+        if (!instances.has('tools')) {
+          instances.set('tools', {
+            id: 'tools',
+            projectPath: 'tools',
+            projectName: 'Tool Calls',
             lines: [],
             isActive: true,
           });
           instances = new Map(instances);
-          expandedId = id;
-          tick().then(() => initTerminal(id));
+          expandedPath = 'tools';
+          tick().then(() => initTerminal('tools'));
         }
         const toolsInstance = instances.get('tools');
         if (toolsInstance?.terminal) {
           const name = event.tool_name || event.name || 'unknown';
-          toolsInstance.terminal.writeln(`\x1b[36m▶ ${name}\x1b[0m`);
+          toolsInstance.terminal.writeln(`\x1b[36m> ${name}\x1b[0m`);
         }
         break;
       }
@@ -220,8 +241,8 @@
           const name = event.tool_name || event.name || 'unknown';
           const success = event.success !== false;
           const color = success ? '32' : '31';
-          const symbol = success ? '✓' : '✗';
-          toolsInstance.terminal.writeln(`\x1b[${color}m${symbol} ${name}\x1b[0m`);
+          const symbol = success ? 'ok' : 'err';
+          toolsInstance.terminal.writeln(`\x1b[${color}m  ${symbol}\x1b[0m`);
         }
         break;
       }
@@ -229,10 +250,10 @@
   }
 
   // Initialize xterm for an instance
-  async function initTerminal(id: string) {
+  async function initTerminal(projectPath: string) {
     await tick();
-    const container = terminalContainers.get(id);
-    const instance = instances.get(id);
+    const container = terminalContainers.get(projectPath);
+    const instance = instances.get(projectPath);
     if (!container || !instance || instance.terminal) return;
 
     const terminal = new Terminal({
@@ -272,39 +293,55 @@
   }
 
   // Toggle expanded
-  function toggleExpanded(id: string) {
-    expandedId = expandedId === id ? null : id;
+  function toggleExpanded(projectPath: string) {
+    expandedPath = expandedPath === projectPath ? null : projectPath;
     tick().then(handleResize);
   }
 
-  // Close instance
-  function closeInstance(id: string) {
+  // Close instance via API
+  async function closeInstance(projectPath: string) {
     // Cancel any pending cleanup timer
-    const timer = cleanupTimers.get(id);
+    const timer = cleanupTimers.get(projectPath);
     if (timer) {
       clearTimeout(timer);
-      cleanupTimers.delete(id);
+      cleanupTimers.delete(projectPath);
     }
 
-    const instance = instances.get(id);
+    // Dispose terminal
+    const instance = instances.get(projectPath);
     if (instance?.terminal) {
       instance.terminal.dispose();
     }
-    instances.delete(id);
+
+    // Remove from local state
+    instances.delete(projectPath);
     instances = new Map(instances);
-    if (expandedId === id) {
-      expandedId = instances.keys().next().value || null;
+    if (expandedPath === projectPath) {
+      expandedPath = instances.keys().next().value || null;
+    }
+
+    // Call API to close (if it's a real project, not tools)
+    if (projectPath !== 'tools') {
+      try {
+        await fetch(`${API_BASE}/api/claude/close`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_path: projectPath }),
+        });
+      } catch (e) {
+        console.error('[Terminal] Failed to close instance:', e);
+      }
     }
   }
 
   // Svelte action to bind terminal container refs
-  function bindContainer(node: HTMLDivElement, id: string) {
-    terminalContainers.set(id, node);
-    initTerminal(id);
+  function bindContainer(node: HTMLDivElement, projectPath: string) {
+    terminalContainers.set(projectPath, node);
+    initTerminal(projectPath);
 
     return {
       destroy() {
-        terminalContainers.delete(id);
+        terminalContainers.delete(projectPath);
       }
     };
   }
@@ -316,7 +353,6 @@
 
   onDestroy(() => {
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    // Clear all cleanup timers
     for (const timer of cleanupTimers.values()) {
       clearTimeout(timer);
     }
@@ -349,7 +385,7 @@
   <!-- Header -->
   <div class="px-4 py-3 flex items-center justify-between" style="border-bottom: 1px solid var(--glass-border);">
     <div class="flex items-center gap-2">
-      <span class="text-xs font-semibold uppercase tracking-wider" style="color: var(--mauve);">Terminals</span>
+      <span class="text-xs font-semibold uppercase tracking-wider" style="color: var(--mauve);">Claude Instances</span>
       {#if instanceList.length > 0}
         <span class="px-2 py-0.5 rounded text-xs font-semibold" style="background: var(--accent-faded); color: var(--accent);">
           {instanceList.length}
@@ -372,19 +408,19 @@
   <div class="flex-1 overflow-y-auto">
     {#if instanceList.length === 0}
       <div class="p-6 text-center">
-        <div class="text-2xl mb-2" style="color: var(--overlay0);">⌘</div>
+        <div class="text-2xl mb-2" style="color: var(--overlay0);">C</div>
         <p class="text-sm" style="color: var(--muted);">No Claude instances running</p>
-        <p class="text-xs mt-1" style="color: var(--overlay0);">Instances will appear here when spawned</p>
+        <p class="text-xs mt-1" style="color: var(--overlay0);">Instances will appear when Mira sends tasks</p>
       </div>
     {:else}
-      {#each instanceList as instance (instance.id)}
+      {#each instanceList as instance (instance.projectPath)}
         <div style="border-bottom: 1px solid var(--glass-border);">
           <!-- Instance header row -->
           <div class="flex items-center px-4 py-3 transition-colors hover:bg-[var(--surface0)]">
             <!-- Clickable expand area -->
             <button
               class="flex-1 flex items-center gap-3 text-left"
-              onclick={() => toggleExpanded(instance.id)}
+              onclick={() => toggleExpanded(instance.projectPath)}
             >
               <!-- Status dot -->
               <div
@@ -396,18 +432,20 @@
               <!-- Info -->
               <div class="flex-1 min-w-0">
                 <div class="text-sm font-medium truncate" style="color: var(--foreground);">
-                  {instance.id === 'tools' ? 'Tool Calls' : instance.id}
+                  {instance.projectName}
                 </div>
-                <div class="text-xs truncate" style="color: var(--muted);">
-                  {instance.workingDir || 'No directory'}
-                </div>
+                {#if instance.projectPath !== 'tools'}
+                  <div class="text-xs truncate" style="color: var(--muted);">
+                    {instance.projectPath}
+                  </div>
+                {/if}
               </div>
 
               <!-- Chevron -->
               <svg
                 class="w-4 h-4 transition-transform flex-shrink-0"
                 style="color: var(--muted);"
-                class:rotate-90={expandedId === instance.id}
+                class:rotate-90={expandedPath === instance.projectPath}
                 viewBox="0 0 16 16"
                 fill="currentColor"
               >
@@ -419,8 +457,9 @@
             <button
               class="p-1 ml-2 rounded hover:bg-[var(--surface1)] flex-shrink-0"
               style="color: var(--muted);"
-              onclick={() => closeInstance(instance.id)}
+              onclick={() => closeInstance(instance.projectPath)}
               aria-label="Close instance"
+              title="Close Claude for this project"
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 4L4 12M4 4l8 8"/>
@@ -429,11 +468,11 @@
           </div>
 
           <!-- Terminal content -->
-          {#if expandedId === instance.id}
+          {#if expandedPath === instance.projectPath}
             <div
               class="h-64"
               style="background: var(--crust);"
-              use:bindContainer={instance.id}
+              use:bindContainer={instance.projectPath}
             ></div>
           {/if}
         </div>

@@ -17,7 +17,6 @@ use crate::web::state::AppState;
 
 // Re-export handlers from split modules for router compatibility
 pub use crate::web::chat::{chat, test_chat};
-pub use crate::web::claude_api::{get_claude_status, kill_claude, send_claude_input, spawn_claude};
 
 // ═══════════════════════════════════════
 // CHAT HISTORY
