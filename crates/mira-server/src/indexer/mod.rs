@@ -83,6 +83,95 @@ pub struct ParsedImport {
     pub is_external: bool,
 }
 
+/// Create semantic chunks based on symbol boundaries
+/// Each chunk is a complete function/struct/etc with context metadata
+fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut chunks = Vec::new();
+    let mut covered_lines: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+    // Sort symbols by start line
+    let mut sorted_symbols: Vec<&ParsedSymbol> = symbols.iter().collect();
+    sorted_symbols.sort_by_key(|s| s.start_line);
+
+    // Create a chunk for each symbol
+    for sym in &sorted_symbols {
+        let start = sym.start_line.saturating_sub(1) as usize; // 1-indexed to 0-indexed
+        let end = std::cmp::min(sym.end_line as usize, lines.len());
+
+        if start >= lines.len() {
+            continue;
+        }
+
+        // Mark lines as covered
+        for line in sym.start_line..=sym.end_line {
+            covered_lines.insert(line);
+        }
+
+        // Extract symbol code
+        let symbol_code: String = lines[start..end].join("\n");
+
+        // Skip empty symbols
+        if symbol_code.trim().is_empty() {
+            continue;
+        }
+
+        // Add context header for better semantic matching
+        let context = match sym.signature.as_ref() {
+            Some(sig) => format!("// {} {}: {}\n{}", sym.kind, sym.name, sig, symbol_code),
+            None => format!("// {} {}\n{}", sym.kind, sym.name, symbol_code),
+        };
+
+        // If symbol is very large (>2000 chars), split at logical boundaries
+        if context.len() > 2000 {
+            // Split into ~1000 char chunks at line boundaries
+            let mut current_chunk = String::new();
+            for line in context.lines() {
+                if current_chunk.len() + line.len() > 1000 && !current_chunk.is_empty() {
+                    chunks.push(current_chunk);
+                    current_chunk = format!("// {} {} (continued)\n", sym.kind, sym.name);
+                }
+                current_chunk.push_str(line);
+                current_chunk.push('\n');
+            }
+            if !current_chunk.trim().is_empty() {
+                chunks.push(current_chunk);
+            }
+        } else {
+            chunks.push(context);
+        }
+    }
+
+    // Handle orphan code (not part of any symbol) - typically module-level items
+    let total_lines = lines.len() as u32;
+    let mut orphan_start: Option<u32> = None;
+
+    for line_num in 1..=total_lines {
+        if !covered_lines.contains(&line_num) {
+            if orphan_start.is_none() {
+                orphan_start = Some(line_num);
+            }
+        } else if let Some(start) = orphan_start {
+            // End of orphan region - create chunk if substantial
+            let orphan_code: String = lines[(start - 1) as usize..(line_num - 1) as usize].join("\n");
+            if orphan_code.trim().len() > 50 {
+                chunks.push(format!("// module-level code\n{}", orphan_code));
+            }
+            orphan_start = None;
+        }
+    }
+
+    // Handle trailing orphan code
+    if let Some(start) = orphan_start {
+        let orphan_code: String = lines[(start - 1) as usize..].join("\n");
+        if orphan_code.trim().len() > 50 {
+            chunks.push(format!("// module-level code\n{}", orphan_code));
+        }
+    }
+
+    chunks
+}
+
 /// Parse file content directly (for incremental updates)
 /// Returns symbols, imports, and content chunks for embedding
 pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
@@ -124,14 +213,8 @@ pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
         })
         .collect();
 
-    // Create chunks (~500 chars each)
-    let chunks: Vec<String> = content
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(500)
-        .map(|c| c.iter().collect::<String>())
-        .filter(|c| !c.trim().is_empty())
-        .collect();
+    // AST-aware chunking: chunk at symbol boundaries
+    let chunks = create_semantic_chunks(content, &parsed_symbols);
 
     Ok(FileParseResult {
         symbols: parsed_symbols,
@@ -269,35 +352,47 @@ pub async fn index_project(
                 }
 
                 tracing::debug!("  DB inserts in {:?}", db_start.elapsed());
+
+                // Queue AST-aware code chunks for batch embedding
+                // Chunks are based on symbol boundaries for better semantic search
+                if embeddings.is_some() {
+                    if let Ok(content) = std::fs::read_to_string(file_path) {
+                        // Convert symbols to ParsedSymbol format for chunking
+                        let parsed_symbols: Vec<ParsedSymbol> = symbols
+                            .iter()
+                            .map(|s| ParsedSymbol {
+                                name: s.name.clone(),
+                                kind: s.symbol_type.clone(),
+                                start_line: s.start_line,
+                                end_line: s.end_line,
+                                signature: s.signature.clone(),
+                            })
+                            .collect();
+
+                        // Create AST-aware chunks
+                        let chunks = create_semantic_chunks(&content, &parsed_symbols);
+
+                        for chunk in chunks {
+                            if chunk.trim().is_empty() {
+                                continue;
+                            }
+
+                            // Queue for batch processing
+                            if let Err(e) = conn.execute(
+                                "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, status)
+                                 VALUES (?, ?, ?, 'pending')",
+                                params![project_id, relative_path, chunk],
+                            ) {
+                                tracing::debug!("Failed to queue chunk for embedding: {}", e);
+                            } else {
+                                stats.chunks += 1;
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!("Failed to parse {}: {}", file_path.display(), e);
-            }
-        }
-
-        // Queue code chunks for batch embedding (50% cheaper via OpenAI Batch API)
-        // The background worker will process these
-        if embeddings.is_some() {
-            if let Ok(content) = std::fs::read_to_string(file_path) {
-                let conn = db.conn();
-                // Simple chunking: split into ~500 char chunks
-                for chunk in content.chars().collect::<Vec<_>>().chunks(500) {
-                    let chunk_text: String = chunk.iter().collect();
-                    if chunk_text.trim().is_empty() {
-                        continue;
-                    }
-
-                    // Queue for batch processing instead of embedding inline
-                    if let Err(e) = conn.execute(
-                        "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, status)
-                         VALUES (?, ?, ?, 'pending')",
-                        params![project_id, relative_path, chunk_text],
-                    ) {
-                        tracing::debug!("Failed to queue chunk for embedding: {}", e);
-                    } else {
-                        stats.chunks += 1;
-                    }
-                }
             }
         }
     }

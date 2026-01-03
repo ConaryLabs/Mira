@@ -13,13 +13,31 @@ use std::sync::Arc;
 use zerocopy::AsBytes;
 
 /// Process pending embeddings for a project inline (real-time fallback)
-/// This is called when semantic search is requested but batch hasn't completed
+/// Only called if no embeddings exist yet - otherwise batch API handles it
 async fn process_pending_embeddings_inline(
     db: &Arc<Database>,
     embeddings: &Arc<Embeddings>,
     project_id: i64,
 ) -> Result<usize, String> {
-    // Get pending embeddings for this project (limit to avoid blocking too long)
+    // First check if we already have some embeddings - if so, skip inline processing
+    // and let the batch API handle the rest
+    {
+        let conn = db.conn();
+        let existing: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM vec_code WHERE project_id = ?",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if existing > 0 {
+            // Already have embeddings, don't block on more
+            return Ok(0);
+        }
+    }
+
+    // No embeddings exist yet - process a small batch to bootstrap search
     // Note: Must drop conn before await to satisfy Send requirement
     let pending: Vec<(i64, String, String)> = {
         let conn = db.conn();
@@ -29,7 +47,7 @@ async fn process_pending_embeddings_inline(
                  FROM pending_embeddings
                  WHERE project_id = ? AND status = 'pending'
                  ORDER BY id ASC
-                 LIMIT 50",
+                 LIMIT 10",
             )
             .map_err(|e| e.to_string())?;
 
@@ -45,7 +63,7 @@ async fn process_pending_embeddings_inline(
         return Ok(0);
     }
 
-    tracing::info!("Processing {} pending embeddings inline for project {}", pending.len(), project_id);
+    tracing::info!("Bootstrapping {} embeddings inline for project {}", pending.len(), project_id);
 
     let mut processed = 0;
     for (id, file_path, chunk_content) in pending {
@@ -80,7 +98,7 @@ async fn process_pending_embeddings_inline(
     }
 
     if processed > 0 {
-        tracing::info!("Processed {} embeddings inline", processed);
+        tracing::info!("Bootstrapped {} embeddings inline", processed);
     }
 
     Ok(processed)
@@ -135,7 +153,7 @@ pub async fn get_symbols(
     Ok(response)
 }
 
-/// Semantic code search
+/// Semantic code search with context expansion
 pub async fn semantic_code_search(
     server: &MiraServer,
     query: String,
@@ -149,6 +167,14 @@ pub async fn semantic_code_search(
         .embeddings
         .as_ref()
         .ok_or("Semantic search requires OPENAI_API_KEY")?;
+
+    // Get project context for file reading
+    let project_path = server
+        .project
+        .read()
+        .await
+        .as_ref()
+        .map(|p| p.path.clone());
 
     // Process any pending embeddings for the active project (real-time fallback)
     // This ensures we have up-to-date search results even if batch hasn't completed
@@ -190,18 +216,97 @@ pub async fn semantic_code_search(
         return Ok("No code matches found. Have you run 'index' yet?".to_string());
     }
 
-    let mut response = format!("{} results:\n", results.len());
-    for (file_path, content, distance) in results {
+    let mut response = format!("{} results:\n\n", results.len());
+    for (file_path, chunk_content, distance) in results {
         let score = 1.0 - distance;
-        let preview = if content.len() > 80 {
-            format!("{}...", &content[..80].replace('\n', " "))
+
+        // Try to expand context
+        let expanded = expand_search_context(
+            &conn,
+            &file_path,
+            &chunk_content,
+            project_path.as_deref(),
+        );
+
+        response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", file_path, score));
+
+        if let Some((symbol_info, full_code)) = expanded {
+            // Show symbol info if available
+            if let Some(info) = symbol_info {
+                response.push_str(&format!("{}\n", info));
+            }
+            // Show full code (up to reasonable limit)
+            let code_display = if full_code.len() > 1500 {
+                format!("{}...\n[truncated]", &full_code[..1500])
+            } else {
+                full_code
+            };
+            response.push_str(&format!("```\n{}\n```\n\n", code_display));
         } else {
-            content.replace('\n', " ")
-        };
-        response.push_str(&format!("  {} (score: {:.2})\n    {}\n", file_path, score, preview));
+            // Fallback to chunk content
+            let display = if chunk_content.len() > 500 {
+                format!("{}...", &chunk_content[..500])
+            } else {
+                chunk_content
+            };
+            response.push_str(&format!("```\n{}\n```\n\n", display));
+        }
     }
 
     Ok(response)
+}
+
+/// Expand search result with containing symbol and surrounding context
+fn expand_search_context(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+    chunk_content: &str,
+    project_path: Option<&str>,
+) -> Option<(Option<String>, String)> {
+    // Try to find the containing symbol for this chunk
+    // Look for a symbol whose line range contains part of the chunk
+
+    // First, try to identify which symbol this chunk belongs to
+    // by checking if the chunk starts with our context header (e.g., "// function foo:")
+    let symbol_info = if chunk_content.starts_with("// ") {
+        // Extract the first line as symbol info
+        chunk_content.lines().next().map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    // Try to read full file and find the matching section
+    if let Some(proj_path) = project_path {
+        let full_path = std::path::Path::new(proj_path).join(file_path);
+        if let Ok(file_content) = std::fs::read_to_string(&full_path) {
+            // The chunk content (minus our added header) should be in the file
+            // Strip the header comment if present
+            let search_content = if chunk_content.starts_with("// ") {
+                chunk_content.lines().skip(1).collect::<Vec<_>>().join("\n")
+            } else {
+                chunk_content.to_string()
+            };
+
+            // Find the position in the file
+            if let Some(pos) = file_content.find(&search_content) {
+                // Count lines to this position
+                let lines_before = file_content[..pos].matches('\n').count();
+
+                // Get surrounding context (5 lines before, full match, 5 lines after)
+                let all_lines: Vec<&str> = file_content.lines().collect();
+                let match_lines = search_content.matches('\n').count() + 1;
+
+                let start_line = lines_before.saturating_sub(5);
+                let end_line = std::cmp::min(lines_before + match_lines + 5, all_lines.len());
+
+                let context_code: String = all_lines[start_line..end_line].join("\n");
+                return Some((symbol_info, context_code));
+            }
+        }
+    }
+
+    // If we couldn't expand, just return the chunk content with its header
+    Some((symbol_info, chunk_content.to_string()))
 }
 
 /// Index project

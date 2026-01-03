@@ -120,10 +120,11 @@ async fn process_chat_stream(
     let tools = mira_tools();
 
     // Tool call loop
-    const MAX_TOOL_ROUNDS: usize = 8;
+    const MAX_TOOL_ROUNDS: usize = 30; // High limit - trust the model to stop when done
     let mut current_messages = messages;
     let mut final_content = String::new();
     let mut final_reasoning: Option<String> = None;
+    let mut total_tool_calls = 0;
 
     for round in 0..MAX_TOOL_ROUNDS {
         // Call DeepSeek with channel-based streaming
@@ -137,7 +138,8 @@ async fn process_chat_stream(
                         break;
                     }
 
-                    info!("Tool round {}: {} tool calls", round + 1, tool_calls.len());
+                    total_tool_calls += tool_calls.len();
+                    info!("Tool round {}: {} tool calls (total: {})", round + 1, tool_calls.len(), total_tool_calls);
 
                     // Execute tools and send events
                     for tc in tool_calls {
@@ -185,6 +187,25 @@ async fn process_chat_stream(
                     message: e.to_string(),
                 }).await;
                 return;
+            }
+        }
+    }
+
+    // If we exhausted rounds with no content, force a summary
+    if final_content.is_empty() && total_tool_calls > 0 {
+        warn!("Exhausted {} tool rounds with {} total tool calls, forcing summary", MAX_TOOL_ROUNDS, total_tool_calls);
+
+        current_messages.push(Message::user(
+            "Please provide a brief summary of what you found from the tools you used."
+        ));
+
+        match deepseek.chat_to_channel(current_messages, None, tx.clone()).await {
+            Ok(summary_result) => {
+                final_content = summary_result.content.unwrap_or_default();
+                final_reasoning = summary_result.reasoning_content;
+            }
+            Err(e) => {
+                warn!("Failed to get summary: {}", e);
             }
         }
     }

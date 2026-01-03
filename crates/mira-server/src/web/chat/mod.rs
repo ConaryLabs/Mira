@@ -132,10 +132,11 @@ pub async fn chat(
     let tools = mira_tools();
 
     // Tool call loop - continue until we get a final response
-    const MAX_TOOL_ROUNDS: usize = 8;
+    const MAX_TOOL_ROUNDS: usize = 30; // High limit - trust the model to stop when done
     let mut current_messages = messages;
     let mut final_result = None;
     let mut last_result = None; // Keep track of last result for fallback
+    let mut total_tool_calls = 0;
 
     for round in 0..MAX_TOOL_ROUNDS {
         // Call DeepSeek
@@ -148,10 +149,16 @@ pub async fn chat(
                         break;
                     }
 
-                    info!("Tool round {}: {} tool calls", round + 1, tool_calls.len());
+                    total_tool_calls += tool_calls.len();
+                    info!("Tool round {}: {} tool calls (total: {})", round + 1, tool_calls.len(), total_tool_calls);
 
                     // Save this result as fallback in case we exhaust rounds
                     last_result = Some(result.clone());
+
+                    // Warn if we're getting close to the limit
+                    if round >= MAX_TOOL_ROUNDS - 2 {
+                        warn!("Approaching tool round limit ({}/{})", round + 1, MAX_TOOL_ROUNDS);
+                    }
 
                     // Execute tools
                     let tool_results = execute_tools(&state, tool_calls).await;
@@ -222,21 +229,46 @@ pub async fn chat(
             })))
         }
         None => {
-            // Exhausted tool rounds - use last result if it has content
+            // Exhausted tool rounds - try to get a final summary
+            warn!("Exhausted {} tool rounds with {} total tool calls", MAX_TOOL_ROUNDS, total_tool_calls);
+
+            // Ask model to summarize what it found
+            current_messages.push(Message::user(
+                "Please provide a brief summary of what you found from the tools you used."
+            ));
+
+            match deepseek.chat(current_messages, None).await {
+                Ok(summary_result) => {
+                    let content = cleanup_response(summary_result.content.unwrap_or_default());
+                    if !content.is_empty() {
+                        if let Err(e) = state.db.store_chat_message("assistant", &content, None) {
+                            warn!("Failed to store summary: {}", e);
+                        }
+                        return Json(mira_types::ApiResponse::ok(serde_json::json!({
+                            "content": content,
+                            "note": "Summary after max tool rounds",
+                        })));
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to get summary: {}", e);
+                }
+            }
+
+            // Last resort - use last result if it has any content
             if let Some(result) = last_result {
                 let content = result.content.unwrap_or_default();
                 if !content.is_empty() {
                     let response_content = cleanup_response(content);
                     return Json(mira_types::ApiResponse::ok(serde_json::json!({
                         "content": response_content,
-                        "note": "Response after max tool rounds",
                     })));
                 }
             }
 
-            // No usable content
+            // Return empty - no canned responses
             Json(mira_types::ApiResponse::ok(serde_json::json!({
-                "content": "I got a bit carried away with tools there. Could you rephrase your question?",
+                "content": "",
             })))
         }
     }
