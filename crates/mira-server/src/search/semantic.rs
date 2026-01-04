@@ -613,6 +613,65 @@ pub fn find_callers(
     results
 }
 
+/// Check if a function name is a stdlib/utility call that should be filtered
+fn is_stdlib_call(name: &str) -> bool {
+    // Common Rust std methods and traits
+    const STDLIB_NAMES: &[&str] = &[
+        // Iterator/collection methods
+        "map", "filter", "collect", "iter", "into_iter", "for_each", "fold", "reduce",
+        "find", "any", "all", "count", "take", "skip", "chain", "zip", "enumerate",
+        "filter_map", "flat_map", "flatten", "peekable", "rev", "cycle",
+        // Option/Result methods
+        "unwrap", "unwrap_or", "unwrap_or_else", "unwrap_or_default", "expect",
+        "ok", "err", "is_some", "is_none", "is_ok", "is_err", "ok_or", "ok_or_else",
+        "map_err", "and_then", "or_else", "transpose", "as_ref", "as_mut",
+        // Common traits/constructors
+        "new", "default", "clone", "to_string", "to_owned", "into", "from",
+        "as_str", "as_bytes", "as_slice", "to_vec", "push", "pop", "insert", "remove",
+        "get", "get_mut", "contains", "len", "is_empty", "clear", "extend",
+        // Result/Option constructors
+        "Ok", "Err", "Some", "None",
+        // Formatting
+        "format", "write", "writeln", "print", "println", "eprint", "eprintln",
+        // Logging (without prefix)
+        "debug", "info", "warn", "error", "trace",
+        // Common string methods
+        "split", "join", "trim", "replace", "starts_with", "ends_with", "contains",
+        "to_lowercase", "to_uppercase", "parse", "chars", "bytes", "lines",
+        // Sync primitives
+        "lock", "read", "write", "try_lock", "try_read", "try_write",
+        // Async
+        "await", "poll", "spawn", "block_on",
+        // Math/comparison
+        "max", "min", "abs", "cmp", "partial_cmp", "eq", "ne", "lt", "le", "gt", "ge",
+        // Database/connection
+        "conn", "connection", "execute", "query", "prepare", "query_row", "query_map",
+        // Misc
+        "drop", "take", "swap", "mem", "ptr", "Box", "Rc", "Arc", "Vec", "String",
+        "HashMap", "HashSet", "BTreeMap", "BTreeSet", "VecDeque",
+    ];
+
+    // Check exact match
+    if STDLIB_NAMES.contains(&name) {
+        return true;
+    }
+
+    // Check prefixes (logging crates, std types, etc.)
+    let prefixes = [
+        "tracing::", "log::", "std::", "core::",
+        "Vec::", "String::", "HashMap::", "HashSet::", "BTreeMap::", "BTreeSet::",
+        "Option::", "Result::", "Box::", "Rc::", "Arc::", "Cell::", "RefCell::",
+        "Mutex::", "RwLock::", "Path::", "PathBuf::", "OsStr::", "OsString::",
+    ];
+    for prefix in prefixes {
+        if name.starts_with(prefix) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Find functions called by a given symbol
 pub fn find_callees(
     db: &crate::db::Database,
@@ -671,7 +730,10 @@ pub fn find_callees(
             .unwrap_or_default()
     };
 
-    results
+    // Filter out stdlib/utility calls
+    results.into_iter()
+        .filter(|r| !is_stdlib_call(&r.symbol_name))
+        .collect()
 }
 
 /// Cross-reference search: find callers or callees based on query
