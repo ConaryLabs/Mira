@@ -27,10 +27,16 @@ use crate::web::state::AppState;
 pub enum ChatEvent {
     /// Stream is starting
     Start,
+    /// Model is reasoning/thinking
+    Thinking,
     /// Text content delta
     Delta { content: String },
     /// Reasoning content (not streamed, sent at end)
     Reasoning { content: String },
+    /// Model is planning tool calls (count may increase as more are detected)
+    ToolPlanning { tools: Vec<String> },
+    /// Starting a new round of tool execution
+    RoundStart { round: usize, tool_count: usize },
     /// Tool call starting
     ToolStart { name: String, call_id: String },
     /// Tool call completed
@@ -140,6 +146,12 @@ async fn process_chat_stream(
 
                     total_tool_calls += tool_calls.len();
                     info!("Tool round {}: {} tool calls (total: {})", round + 1, tool_calls.len(), total_tool_calls);
+
+                    // Send round start event
+                    let _ = tx.send(ChatEvent::RoundStart {
+                        round: round + 1,
+                        tool_count: tool_calls.len(),
+                    }).await;
 
                     // Execute tools and send events
                     for tc in tool_calls {

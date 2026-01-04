@@ -565,6 +565,8 @@ impl DeepSeekClient {
         let mut full_reasoning = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut usage: Option<Usage> = None;
+        let mut sent_thinking = false;
+        let mut last_tool_names: Vec<String> = Vec::new();
 
         while let Some(event) = es.next().await {
             match event {
@@ -584,9 +586,13 @@ impl DeepSeekClient {
                     }
 
                     for choice in chunk.choices {
-                        // Stream reasoning (don't send to channel - too noisy)
+                        // Send Thinking event on first reasoning content
                         if let Some(reasoning) = choice.delta.reasoning_content {
                             if !reasoning.is_empty() {
+                                if !sent_thinking {
+                                    sent_thinking = true;
+                                    let _ = tx.send(ChatEvent::Thinking).await;
+                                }
                                 full_reasoning.push_str(&reasoning);
                             }
                         }
@@ -604,7 +610,7 @@ impl DeepSeekClient {
                             }
                         }
 
-                        // Accumulate tool calls
+                        // Accumulate tool calls and send ToolPlanning as names are detected
                         if let Some(tc_chunks) = choice.delta.tool_calls {
                             for tc_chunk in tc_chunks {
                                 while tool_calls.len() <= tc_chunk.index {
@@ -630,6 +636,20 @@ impl DeepSeekClient {
                                         tc.function.arguments.push_str(&args);
                                     }
                                 }
+                            }
+
+                            // Check if we have new tool names to report
+                            let current_names: Vec<String> = tool_calls
+                                .iter()
+                                .filter(|tc| !tc.function.name.is_empty())
+                                .map(|tc| tc.function.name.clone())
+                                .collect();
+
+                            if current_names != last_tool_names && !current_names.is_empty() {
+                                last_tool_names = current_names.clone();
+                                let _ = tx.send(ChatEvent::ToolPlanning {
+                                    tools: current_names,
+                                }).await;
                             }
                         }
                     }
