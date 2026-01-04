@@ -194,6 +194,22 @@ pub struct SemanticCodeSearchRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct FindCallersRequest {
+    #[schemars(description = "Function name to find callers for")]
+    pub function_name: String,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct FindCalleesRequest {
+    #[schemars(description = "Function name to find callees for")]
+    pub function_name: String,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TaskRequest {
     #[schemars(description = "Action: create/list/get/update/complete/delete")]
     pub action: String,
@@ -350,6 +366,22 @@ impl MiraServer {
         Parameters(req): Parameters<SemanticCodeSearchRequest>,
     ) -> Result<String, String> {
         tools::code::semantic_code_search(self, req.query, req.language, req.limit).await
+    }
+
+    #[tool(description = "Find all functions that call a given function.")]
+    async fn find_callers(
+        &self,
+        Parameters(req): Parameters<FindCallersRequest>,
+    ) -> Result<String, String> {
+        tools::code::mcp_find_callers(self, req.function_name, req.limit).await
+    }
+
+    #[tool(description = "Find all functions called by a given function.")]
+    async fn find_callees(
+        &self,
+        Parameters(req): Parameters<FindCalleesRequest>,
+    ) -> Result<String, String> {
+        tools::code::mcp_find_callees(self, req.function_name, req.limit).await
     }
 
     #[tool(description = "Manage tasks. Actions: create/list/get/update/complete/delete")]

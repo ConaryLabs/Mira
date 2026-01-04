@@ -6,7 +6,7 @@ use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::indexer;
 use crate::mcp::MiraServer;
-use crate::search::{crossref_search, expand_context_with_db, format_crossref_results, hybrid_search};
+use crate::search::{crossref_search, expand_context_with_db, find_callers, find_callees, format_crossref_results, hybrid_search, CrossRefType};
 use crate::web::deepseek::{DeepSeekClient, Message};
 use rusqlite::params;
 use std::path::Path;
@@ -427,4 +427,38 @@ pub async fn summarize_codebase(server: &MiraServer) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join("\n")
     ))
+}
+
+/// Find all functions that call a given function
+pub async fn mcp_find_callers(
+    server: &MiraServer,
+    function_name: String,
+    limit: Option<i64>,
+) -> Result<String, String> {
+    if function_name.is_empty() {
+        return Err("function_name is required".to_string());
+    }
+
+    let limit = limit.unwrap_or(20) as usize;
+    let project_id = server.project.read().await.as_ref().map(|p| p.id);
+
+    let results = find_callers(&server.db, project_id, &function_name, limit);
+    Ok(format_crossref_results(&function_name, CrossRefType::Caller, &results))
+}
+
+/// Find all functions called by a given function
+pub async fn mcp_find_callees(
+    server: &MiraServer,
+    function_name: String,
+    limit: Option<i64>,
+) -> Result<String, String> {
+    if function_name.is_empty() {
+        return Err("function_name is required".to_string());
+    }
+
+    let limit = limit.unwrap_or(20) as usize;
+    let project_id = server.project.read().await.as_ref().map(|p| p.id);
+
+    let results = find_callees(&server.db, project_id, &function_name, limit);
+    Ok(format_crossref_results(&function_name, CrossRefType::Callee, &results))
 }
