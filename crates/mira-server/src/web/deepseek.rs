@@ -701,6 +701,25 @@ pub fn mira_tools() -> Vec<Tool> {
             }),
         ),
         Tool::function(
+            "find_callers",
+            "Find all functions that call a specific function. Use this when user asks 'who calls X' or 'callers of X'.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "function_name": {
+                        "type": "string",
+                        "description": "Name of the function to find callers for"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default 20)",
+                        "default": 20
+                    }
+                },
+                "required": ["function_name"]
+            }),
+        ),
+        Tool::function(
             "list_tasks",
             "Get current tasks and their status for the project",
             serde_json::json!({

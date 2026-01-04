@@ -408,9 +408,20 @@ async fn run_test_chat(message: String, verbose: bool, project: Option<PathBuf>)
 
     println!("=== Mira Chat Test ===\n");
 
-    // Show project if specified
+    let client = reqwest::Client::new();
+
+    // Set project if specified
     if let Some(ref path) = project {
         println!("Project: {}", path.display());
+        let project_request = serde_json::json!({
+            "path": path.to_string_lossy(),
+            "name": path.file_name().and_then(|n| n.to_str()).unwrap_or("project")
+        });
+        let _ = client
+            .post("http://localhost:3000/api/project/set")
+            .json(&project_request)
+            .send()
+            .await;
     }
     println!("Message: {}\n", message);
     println!("---");
@@ -422,7 +433,6 @@ async fn run_test_chat(message: String, verbose: bool, project: Option<PathBuf>)
     };
 
     // Make HTTP request to local server
-    let client = reqwest::Client::new();
     let response = client
         .post("http://localhost:3000/api/chat/test")
         .json(&request)
@@ -480,7 +490,7 @@ async fn run_test_chat(message: String, verbose: bool, project: Option<PathBuf>)
                         for tr in tool_results {
                             let call_id = tr.get("call_id").and_then(|i| i.as_str()).unwrap_or("?");
                             let result = tr.get("result").and_then(|r| r.as_str()).unwrap_or("?");
-                            println!("[{}] {}", call_id, if result.len() > 100 { &result[..100] } else { result });
+                            println!("[{}] {}", call_id, if result.len() > 500 { &result[..500] } else { result });
                         }
                     }
                 }

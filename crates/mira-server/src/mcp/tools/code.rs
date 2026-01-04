@@ -6,7 +6,7 @@ use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::indexer;
 use crate::mcp::MiraServer;
-use crate::search::{expand_context_with_db, hybrid_search};
+use crate::search::{crossref_search, expand_context_with_db, format_crossref_results, hybrid_search};
 use crate::web::deepseek::{DeepSeekClient, Message};
 use rusqlite::params;
 use std::path::Path;
@@ -154,7 +154,7 @@ pub async fn get_symbols(
     Ok(response)
 }
 
-/// Semantic code search with hybrid fallback
+/// Semantic code search with hybrid fallback and cross-reference support
 pub async fn semantic_code_search(
     server: &MiraServer,
     query: String,
@@ -171,6 +171,11 @@ pub async fn semantic_code_search(
             proj.as_ref().map(|p| p.id),
         )
     };
+
+    // Check for cross-reference query patterns first ("who calls X", "callers of X", etc.)
+    if let Some((target, ref_type, results)) = crossref_search(&server.db, &query, project_id, limit) {
+        return Ok(format_crossref_results(&target, ref_type, &results));
+    }
 
     // Process any pending embeddings for the active project (real-time fallback)
     if let Some(ref embeddings) = server.embeddings {

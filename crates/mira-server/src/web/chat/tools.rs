@@ -106,6 +106,12 @@ pub async fn execute_tools(
                     Err(e) => format!("Error: {}", e),
                 }
             }
+            "find_callers" => {
+                let function_name = args.get("function_name").and_then(|v| v.as_str()).unwrap_or("");
+                let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20) as usize;
+
+                execute_find_callers(state, function_name, limit).await
+            }
             "list_tasks" => {
                 match execute_list_tasks(state).await {
                     Ok(r) => r,
@@ -283,13 +289,33 @@ async fn execute_recall(state: &AppState, query: &str, limit: i64) -> anyhow::Re
     Ok(format!("{}No memories found", context_header))
 }
 
+async fn execute_find_callers(state: &AppState, function_name: &str, limit: usize) -> String {
+    use crate::search::{find_callers, format_crossref_results, format_project_header, CrossRefType};
+
+    if function_name.is_empty() {
+        return "Error: function_name is required".to_string();
+    }
+
+    let project_id = state.project_id().await;
+    let project = state.get_project().await;
+    let context_header = format_project_header(project.as_ref());
+
+    let results = find_callers(&state.db, project_id, function_name, limit);
+    format!("{}{}", context_header, format_crossref_results(function_name, CrossRefType::Caller, &results))
+}
+
 async fn execute_code_search(state: &AppState, query: &str, limit: i64) -> anyhow::Result<String> {
-    use crate::search::{expand_context_with_db, hybrid_search, format_project_header};
+    use crate::search::{crossref_search, expand_context_with_db, format_crossref_results, hybrid_search, format_project_header};
 
     let project_id = state.project_id().await;
     let project = state.get_project().await;
     let project_path = project.as_ref().map(|p| p.path.clone());
     let context_header = format_project_header(project.as_ref());
+
+    // Check for cross-reference query patterns first ("who calls X", "callers of X", etc.)
+    if let Some((target, ref_type, results)) = crossref_search(&state.db, query, project_id, limit as usize) {
+        return Ok(format!("{}{}", context_header, format_crossref_results(&target, ref_type, &results)));
+    }
 
     // Use shared hybrid search
     let result = hybrid_search(

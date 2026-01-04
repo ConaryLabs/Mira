@@ -273,6 +273,11 @@ pub async fn index_project(
     tracing::info!("Clearing existing data...");
     {
         let conn = db.conn();
+        // Delete call_graph first (references code_symbols)
+        conn.execute(
+            "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
+            params![project_id],
+        )?;
         conn.execute(
             "DELETE FROM code_symbols WHERE project_id = ?",
             params![project_id],
@@ -310,7 +315,7 @@ pub async fn index_project(
         tracing::info!("[{}/{}] Parsing {}", i+1, files.len(), relative_path);
 
         match extract_all(file_path) {
-            Ok((symbols, imports, _calls)) => {
+            Ok((symbols, imports, calls)) => {
                 let parse_time = start.elapsed();
                 stats.files += 1;
                 stats.symbols += symbols.len();
@@ -351,7 +356,37 @@ pub async fn index_project(
                     )?;
                 }
 
-                tracing::debug!("  DB inserts in {:?}", db_start.elapsed());
+                // Store function calls for call graph
+                // Build a map of symbol names to IDs for caller lookup
+                let mut symbol_ids: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+                {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, name FROM code_symbols WHERE project_id = ? AND file_path = ?"
+                    )?;
+                    let rows = stmt.query_map(params![project_id, &relative_path], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                    })?;
+                    for row in rows {
+                        if let Ok((id, name)) = row {
+                            symbol_ids.insert(name, id);
+                        }
+                    }
+                }
+
+                for call in &calls {
+                    if let Some(&caller_id) = symbol_ids.get(&call.caller_name) {
+                        // Try to resolve callee_id if it's in this file
+                        let callee_id = symbol_ids.get(&call.callee_name).copied();
+
+                        conn.execute(
+                            "INSERT INTO call_graph (caller_id, callee_name, callee_id)
+                             VALUES (?, ?, ?)",
+                            params![caller_id, call.callee_name, callee_id],
+                        )?;
+                    }
+                }
+
+                tracing::debug!("  DB inserts in {:?} ({} calls)", db_start.elapsed(), calls.len());
 
                 // Queue AST-aware code chunks for batch embedding
                 // Chunks are based on symbol boundaries for better semantic search
