@@ -37,6 +37,7 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 - **get_symbols** - Extract functions, structs, classes from files
 - **semantic_code_search** - Find code by meaning (hybrid semantic + keyword search)
 - **find_callers** - Find all functions that call a given function (uses call graph)
+- **find_callees** - Find all functions called by a given function
 - **index** - Index project code for search
 - **summarize_codebase** - Generate LLM-powered module descriptions
 

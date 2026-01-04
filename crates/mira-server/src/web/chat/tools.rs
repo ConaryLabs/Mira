@@ -112,6 +112,12 @@ pub async fn execute_tools(
 
                 execute_find_callers(state, function_name, limit).await
             }
+            "find_callees" => {
+                let function_name = args.get("function_name").and_then(|v| v.as_str()).unwrap_or("");
+                let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20) as usize;
+
+                execute_find_callees(state, function_name, limit).await
+            }
             "list_tasks" => {
                 match execute_list_tasks(state).await {
                     Ok(r) => r,
@@ -302,6 +308,21 @@ async fn execute_find_callers(state: &AppState, function_name: &str, limit: usiz
 
     let results = find_callers(&state.db, project_id, function_name, limit);
     format!("{}{}", context_header, format_crossref_results(function_name, CrossRefType::Caller, &results))
+}
+
+async fn execute_find_callees(state: &AppState, function_name: &str, limit: usize) -> String {
+    use crate::search::{find_callees, format_crossref_results, format_project_header, CrossRefType};
+
+    if function_name.is_empty() {
+        return "Error: function_name is required".to_string();
+    }
+
+    let project_id = state.project_id().await;
+    let project = state.get_project().await;
+    let context_header = format_project_header(project.as_ref());
+
+    let results = find_callees(&state.db, project_id, function_name, limit);
+    format!("{}{}", context_header, format_crossref_results(function_name, CrossRefType::Callee, &results))
 }
 
 async fn execute_code_search(state: &AppState, query: &str, limit: i64) -> anyhow::Result<String> {
