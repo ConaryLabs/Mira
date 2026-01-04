@@ -218,6 +218,13 @@ pub async fn execute_tools(
                     });
                 execute_bash(command, working_dir.as_deref(), timeout).await
             }
+            "set_project" => {
+                let name_or_path = args.get("name_or_path").and_then(|v| v.as_str()).unwrap_or("");
+                execute_set_project(state, name_or_path).await
+            }
+            "list_projects" => {
+                execute_list_projects(state).await
+            }
             _ => {
                 warn!(tool = %tc.function.name, "Unknown tool requested");
                 format!("Unknown tool: {}", tc.function.name)
@@ -836,5 +843,145 @@ async fn execute_bash(command: &str, working_dir: Option<&str>, timeout_seconds:
             warn!(timeout = timeout_seconds, "Bash command timed out");
             format!("Error: Command timed out after {}s", timeout_seconds)
         }
+    }
+}
+
+/// Execute set_project - switch to a different project
+async fn execute_set_project(state: &AppState, name_or_path: &str) -> String {
+    use mira_types::ProjectContext;
+    use rusqlite::params;
+
+    if name_or_path.is_empty() {
+        return "Error: name_or_path is required".to_string();
+    }
+
+    // Find project and get summary data before any async operations
+    let (project_result, summary_or_error) = {
+        let conn = state.db.conn();
+
+        // Try to find project by name first (case-insensitive), then by path
+        let result: Option<(i64, String, Option<String>)> = conn
+            .query_row(
+                "SELECT id, path, name FROM projects
+                 WHERE LOWER(name) = LOWER(?1) OR path = ?1
+                 ORDER BY CASE WHEN LOWER(name) = LOWER(?1) THEN 0 ELSE 1 END
+                 LIMIT 1",
+                params![name_or_path],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .ok();
+
+        match result {
+            Some((id, path, name)) => {
+                let display_name = name.clone().unwrap_or_else(|| path.clone());
+
+                // Get project summary (tasks, goals)
+                let mut summary_parts = Vec::new();
+
+                // Count pending/in_progress tasks
+                if let Ok(task_count) = conn.query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND status IN ('pending', 'in_progress')",
+                    [id],
+                    |row| row.get(0),
+                ) {
+                    if task_count > 0 {
+                        summary_parts.push(format!("{} active task{}", task_count, if task_count == 1 { "" } else { "s" }));
+                    }
+                }
+
+                // Count active goals
+                if let Ok(goal_count) = conn.query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM goals WHERE project_id = ? AND status NOT IN ('completed', 'abandoned')",
+                    [id],
+                    |row| row.get(0),
+                ) {
+                    if goal_count > 0 {
+                        summary_parts.push(format!("{} active goal{}", goal_count, if goal_count == 1 { "" } else { "s" }));
+                    }
+                }
+
+                let summary = if summary_parts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", summary_parts.join(", "))
+                };
+
+                (
+                    Some(ProjectContext { id, path: path.clone(), name }),
+                    Ok((display_name, path, summary)),
+                )
+            }
+            None => {
+                // List available projects to help the user
+                let projects: Vec<String> = conn
+                    .prepare("SELECT name, path FROM projects ORDER BY name ASC LIMIT 10")
+                    .ok()
+                    .and_then(|mut stmt| {
+                        stmt.query_map([], |row| {
+                            let name: Option<String> = row.get(0)?;
+                            let path: String = row.get(1)?;
+                            Ok(name.unwrap_or(path))
+                        })
+                        .ok()
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    })
+                    .unwrap_or_default();
+
+                let error_msg = if projects.is_empty() {
+                    format!("Project '{}' not found. No projects in database.", name_or_path)
+                } else {
+                    format!(
+                        "Project '{}' not found. Available projects: {}",
+                        name_or_path,
+                        projects.join(", ")
+                    )
+                };
+
+                (None, Err(error_msg))
+            }
+        }
+    }; // conn is dropped here
+
+    // Now do the async operation
+    match (project_result, summary_or_error) {
+        (Some(project), Ok((display_name, path, summary))) => {
+            state.set_project(project).await;
+            info!(project = %display_name, path = %path, "Switched project");
+            format!("Switched to project: {}{}", display_name, summary)
+        }
+        (_, Err(error_msg)) => error_msg,
+        _ => unreachable!(),
+    }
+}
+
+/// Execute list_projects - show all available projects
+async fn execute_list_projects(state: &AppState) -> String {
+    let current_project_id = state.project_id().await;
+
+    let result: Result<Vec<(i64, String, Option<String>)>, _> = {
+        let conn = state.db.conn();
+        conn.prepare("SELECT id, path, name FROM projects ORDER BY name ASC")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+    };
+
+    match result {
+        Ok(projects) if !projects.is_empty() => {
+            let formatted: Vec<String> = projects
+                .iter()
+                .map(|(id, path, name)| {
+                    let display = name.clone().unwrap_or_else(|| path.clone());
+                    let marker = if Some(*id) == current_project_id { " (current)" } else { "" };
+                    format!("- {}{}", display, marker)
+                })
+                .collect();
+            format!("Projects:\n{}", formatted.join("\n"))
+        }
+        Ok(_) => "No projects found. Projects are created when you use session_start with a project path.".to_string(),
+        Err(e) => format!("Error listing projects: {}", e),
     }
 }

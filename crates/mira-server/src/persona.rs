@@ -42,6 +42,88 @@ Use tools when you need to search code, recall memories, or make changes. Be con
 
 Never output raw JSON. If you want to remember something about the user, that happens automatically."#;
 
+/// Get active goals for a project (limited to 5)
+fn get_project_goals(db: &Arc<Database>, project_id: i64) -> Vec<String> {
+    use rusqlite::params;
+
+    let conn = db.conn();
+    conn.prepare(
+        "SELECT title, progress_percent, status FROM goals
+         WHERE project_id = ? AND status NOT IN ('completed', 'abandoned')
+         ORDER BY priority DESC, created_at DESC
+         LIMIT 5",
+    )
+    .ok()
+    .and_then(|mut stmt| {
+        stmt.query_map(params![project_id], |row| {
+            let title: String = row.get(0)?;
+            let progress: i32 = row.get(1)?;
+            let status: String = row.get(2)?;
+            Ok(format!("- {} ({}%, {})", title, progress, status))
+        })
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
+}
+
+/// Get active tasks for a project (limited to 5)
+fn get_project_tasks(db: &Arc<Database>, project_id: i64) -> Vec<String> {
+    use rusqlite::params;
+
+    let conn = db.conn();
+    conn.prepare(
+        "SELECT title, status, priority FROM tasks
+         WHERE project_id = ? AND status IN ('pending', 'in_progress')
+         ORDER BY
+           CASE status WHEN 'in_progress' THEN 0 ELSE 1 END,
+           CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+           created_at DESC
+         LIMIT 5",
+    )
+    .ok()
+    .and_then(|mut stmt| {
+        stmt.query_map(params![project_id], |row| {
+            let title: String = row.get(0)?;
+            let status: String = row.get(1)?;
+            let priority: String = row.get(2)?;
+            Ok(format!("- [{}] {} ({})", status, title, priority))
+        })
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
+}
+
+/// Get recent project memories/notes (limited to 5)
+fn get_project_memories(db: &Arc<Database>, project_id: i64) -> Vec<String> {
+    use rusqlite::params;
+
+    let conn = db.conn();
+    conn.prepare(
+        "SELECT content FROM memory_facts
+         WHERE project_id = ? AND fact_type IN ('decision', 'context', 'general')
+         ORDER BY created_at DESC
+         LIMIT 5",
+    )
+    .ok()
+    .and_then(|mut stmt| {
+        stmt.query_map(params![project_id], |row| {
+            let content: String = row.get(0)?;
+            // Truncate long memories
+            let truncated = if content.len() > 100 {
+                format!("{}...", &content[..100])
+            } else {
+                content
+            };
+            Ok(format!("- {}", truncated))
+        })
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
+}
+
 /// Build the complete system prompt with persona overlays
 ///
 /// Layers (in order):
@@ -75,6 +157,24 @@ pub fn build_system_prompt_with_persona(
             // Add project persona overlay if set
             if let Ok(Some(overlay)) = db.get_project_persona(pid) {
                 project_section.push_str(&format!("\n\n{}", overlay));
+            }
+
+            // Add active goals
+            let goals = get_project_goals(db, pid);
+            if !goals.is_empty() {
+                project_section.push_str(&format!("\n\nActive goals:\n{}", goals.join("\n")));
+            }
+
+            // Add active tasks
+            let tasks = get_project_tasks(db, pid);
+            if !tasks.is_empty() {
+                project_section.push_str(&format!("\n\nActive tasks:\n{}", tasks.join("\n")));
+            }
+
+            // Add recent project memories
+            let memories = get_project_memories(db, pid);
+            if !memories.is_empty() {
+                project_section.push_str(&format!("\n\nRecent notes:\n{}", memories.join("\n")));
             }
 
             sections.push(format!("=== PROJECT CONTEXT ===\n{}", project_section));

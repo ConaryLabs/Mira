@@ -48,6 +48,7 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 ### Session
 - **session_start** - Initialize session with project context
 - **set_project** / **get_project** - Manage active project
+- **list_projects** - List all known projects
 - **session_history** - Query session and tool call history
 
 ### Web Search & Research
@@ -67,6 +68,7 @@ Full conversational memory system at `http://localhost:3000/chat`:
 - **Semantic Recall** - Context loaded based on message similarity
 - **KV Cache Optimization** - Context ordered static-to-volatile for cache efficiency
 - **Date/Time Context** - Current date/time always included in system prompt
+- **Project-Aware Context** - Active project's goals, tasks, and recent memories included in context
 
 #### Chat UI Features
 - **Project Sidebar** - Slide-out panel to switch between projects

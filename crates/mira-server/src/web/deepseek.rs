@@ -888,5 +888,27 @@ pub fn mira_tools() -> Vec<Tool> {
                 "required": ["command"]
             }),
         ),
+        Tool::function(
+            "set_project",
+            "Switch to a different project. Use when user wants to work on a specific project. The project context, tasks, goals, and memories will update accordingly.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name_or_path": {
+                        "type": "string",
+                        "description": "Project name (e.g., 'Mira', 'website') or full path (e.g., '/home/user/projects/myapp')"
+                    }
+                },
+                "required": ["name_or_path"]
+            }),
+        ),
+        Tool::function(
+            "list_projects",
+            "List all known projects. Use to see what projects are available to switch to.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        ),
     ]
 }
