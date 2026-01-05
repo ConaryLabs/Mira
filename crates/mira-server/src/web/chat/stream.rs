@@ -126,7 +126,7 @@ async fn process_chat_stream(
     let tools = mira_tools();
 
     // Tool call loop
-    const MAX_TOOL_ROUNDS: usize = 30; // High limit - trust the model to stop when done
+    const MAX_TOOL_ROUNDS: usize = 100; // Very high limit - prevents spirals but allows complex workflows
     let mut current_messages = messages;
     let mut final_content = String::new();
     let mut final_reasoning: Option<String> = None;

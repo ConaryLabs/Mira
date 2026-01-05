@@ -132,7 +132,7 @@ pub async fn chat(
     let tools = mira_tools();
 
     // Tool call loop - continue until we get a final response
-    const MAX_TOOL_ROUNDS: usize = 30; // High limit - trust the model to stop when done
+    const MAX_TOOL_ROUNDS: usize = 100; // Very high limit - prevents spirals but allows complex workflows
     let mut current_messages = messages;
     let mut final_result = None;
     let mut last_result = None; // Keep track of last result for fallback
