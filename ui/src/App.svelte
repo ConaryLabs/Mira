@@ -39,6 +39,12 @@
   let messageIdCounter = $state(0);
   let pendingToolCalls = $state<ToolCall[]>([]);
 
+  // Verbose streaming status
+  let planningTools = $state<string[]>([]);
+  let currentRound = $state(0);
+  let roundToolCount = $state(0);
+  let hasReasoning = $state(false);
+
   // Project state
   let projects = $state<Project[]>([]);
   let currentProject = $state<Project | null>(null);
@@ -260,6 +266,10 @@
     isThinking = false;
     currentTool = null;
     pendingToolCalls = [];
+    planningTools = [];
+    currentRound = 0;
+    roundToolCount = 0;
+    hasReasoning = false;
 
     // Add user message
     messageIdCounter++;
@@ -337,12 +347,33 @@
   function handleSSEEvent(event: any) {
     switch (event.type) {
       case 'start':
+        // Initial start - waiting for model
+        break;
+      case 'thinking':
+        // Model is now reasoning
         isThinking = true;
+        hasReasoning = true;
+        break;
+      case 'tool_planning':
+        // Model is planning tools (names detected during streaming)
+        isThinking = false;
+        planningTools = event.tools || [];
+        break;
+      case 'round_start':
+        // New round of tool execution
+        currentRound = event.round || 1;
+        roundToolCount = event.tool_count || 0;
+        planningTools = []; // Clear planning, now executing
         break;
       case 'delta':
         isThinking = false;
+        planningTools = [];
         appendToLastMessage(event.content);
         scrollToBottom();
+        break;
+      case 'reasoning':
+        // Reasoning content received (stored but not displayed inline)
+        hasReasoning = true;
         break;
       case 'tool_start':
         currentTool = event.name;
@@ -357,6 +388,8 @@
       case 'done':
         updateLastMessage(event.content, pendingToolCalls);
         pendingToolCalls = [];
+        planningTools = [];
+        currentRound = 0;
         break;
       case 'error':
         updateLastMessage(`Error: ${event.message}`);
@@ -585,24 +618,65 @@
                   {#if msg.content}
                     {@html renderMarkdown(msg.content)}
                   {:else if loading && msg.role === 'assistant'}
-                    <!-- Loading state -->
-                    {#if isThinking}
-                      <div class="flex items-center gap-2.5 text-xs" style="color: var(--muted);">
-                        <div class="w-4 h-4 rounded-full border-2 animate-spin" style="border-color: var(--surface1); border-top-color: var(--mauve);"></div>
-                        <span>Reasoning...</span>
-                      </div>
-                    {:else if currentTool}
-                      <div class="flex items-center gap-2.5 text-xs" style="color: var(--muted);">
-                        <div class="w-4 h-4 rounded-full border-2 animate-spin" style="border-color: var(--surface1); border-top-color: var(--mauve);"></div>
-                        <span>Using {currentTool}...</span>
-                      </div>
-                    {:else}
-                      <div class="flex gap-1 py-2">
-                        <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0s;"></div>
-                        <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0.2s;"></div>
-                        <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--overlay1); animation-delay: 0.4s;"></div>
-                      </div>
-                    {/if}
+                    <!-- Verbose streaming status -->
+                    <div class="streaming-status">
+                      {#if isThinking}
+                        <div class="status-line">
+                          <div class="status-spinner thinking"></div>
+                          <span class="status-text">Reasoning...</span>
+                        </div>
+                      {:else if planningTools.length > 0}
+                        <div class="status-line">
+                          <div class="status-spinner planning"></div>
+                          <div class="status-content">
+                            <span class="status-label">Planning</span>
+                            <div class="tool-chips">
+                              {#each planningTools as tool}
+                                <span class="tool-chip planning">{tool}</span>
+                              {/each}
+                            </div>
+                          </div>
+                        </div>
+                      {:else if currentTool}
+                        <div class="status-line">
+                          <div class="status-spinner executing"></div>
+                          <div class="status-content">
+                            {#if currentRound > 0}
+                              <span class="round-badge">Round {currentRound}</span>
+                            {/if}
+                            <span class="status-label">Executing</span>
+                            <span class="tool-chip active">{currentTool}</span>
+                          </div>
+                        </div>
+                        {#if pendingToolCalls.length > 0}
+                          <div class="tool-progress">
+                            {#each pendingToolCalls as tc, i}
+                              <div class="tool-progress-item" class:current={tc.name === currentTool}>
+                                <span class="tool-dot" class:done={i < pendingToolCalls.findIndex(t => t.name === currentTool)} class:active={tc.name === currentTool}></span>
+                                <span class="tool-name">{tc.name}</span>
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
+                      {:else if currentRound > 0}
+                        <div class="status-line">
+                          <div class="status-spinner"></div>
+                          <div class="status-content">
+                            <span class="round-badge">Round {currentRound}</span>
+                            <span class="status-text">Processing {roundToolCount} tools...</span>
+                          </div>
+                        </div>
+                      {:else}
+                        <div class="status-line">
+                          <div class="status-dots">
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                          </div>
+                          <span class="status-text subtle">Waiting for response...</span>
+                        </div>
+                      {/if}
+                    </div>
                   {/if}
                 </div>
 
@@ -858,5 +932,178 @@
   /* Rotation for expand chevrons */
   .rotate-90 {
     transform: rotate(90deg);
+  }
+
+  /* Streaming status styles */
+  .streaming-status {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .status-line {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .status-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .status-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--surface1);
+    border-top-color: var(--mauve);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .status-spinner.thinking {
+    border-top-color: var(--blue);
+  }
+
+  .status-spinner.planning {
+    border-top-color: var(--yellow);
+  }
+
+  .status-spinner.executing {
+    border-top-color: var(--green);
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .status-text {
+    font-size: 0.8125rem;
+    color: var(--subtext0);
+  }
+
+  .status-text.subtle {
+    color: var(--overlay0);
+  }
+
+  .status-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+
+  .round-badge {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    background: var(--surface0);
+    border: 1px solid var(--border-subtle);
+    border-radius: 9999px;
+    color: var(--subtext0);
+  }
+
+  .tool-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .tool-chip {
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    padding: 0.25rem 0.625rem;
+    border-radius: 6px;
+    background: var(--surface0);
+    color: var(--subtext1);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .tool-chip.planning {
+    background: rgba(249, 226, 175, 0.1);
+    border-color: rgba(249, 226, 175, 0.3);
+    color: var(--yellow);
+  }
+
+  .tool-chip.active {
+    background: rgba(166, 227, 161, 0.1);
+    border-color: rgba(166, 227, 161, 0.3);
+    color: var(--green);
+    animation: pulse-glow 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(166, 227, 161, 0.2); }
+    50% { box-shadow: 0 0 8px 2px rgba(166, 227, 161, 0.3); }
+  }
+
+  .tool-progress {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding-left: 1.75rem;
+  }
+
+  .tool-progress-item {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.6875rem;
+    color: var(--overlay0);
+  }
+
+  .tool-progress-item.current {
+    color: var(--subtext0);
+  }
+
+  .tool-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--surface2);
+  }
+
+  .tool-dot.done {
+    background: var(--green);
+  }
+
+  .tool-dot.active {
+    background: var(--green);
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.2); }
+  }
+
+  .tool-name {
+    font-family: var(--font-mono);
+  }
+
+  .status-dots {
+    display: flex;
+    gap: 4px;
+    padding: 4px 0;
+  }
+
+  .status-dots .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--overlay1);
+    animation: bounce 1.4s ease-in-out infinite;
+  }
+
+  .status-dots .dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .status-dots .dot:nth-child(3) {
+    animation-delay: 0.4s;
   }
 </style>
