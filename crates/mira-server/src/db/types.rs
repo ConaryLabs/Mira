@@ -47,3 +47,29 @@ pub struct ChatSummary {
     pub summary_level: i32,
     pub created_at: String,
 }
+
+/// Task record
+#[derive(Debug, Clone)]
+pub struct Task {
+    pub id: i64,
+    pub project_id: Option<i64>,
+    pub goal_id: Option<i64>,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: String,
+    pub created_at: String,
+}
+
+/// Goal record  
+#[derive(Debug, Clone)]
+pub struct Goal {
+    pub id: i64,
+    pub project_id: Option<i64>,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: String,
+    pub progress_percent: i32,
+    pub created_at: String,
+}

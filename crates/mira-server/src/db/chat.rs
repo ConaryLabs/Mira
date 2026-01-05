@@ -193,4 +193,14 @@ impl Database {
         let deleted = conn.execute(&sql, params.as_slice())?;
         Ok(deleted)
     }
+    /// Get timestamp of the most recent chat message
+    pub fn get_last_chat_time(&self) -> Result<Option<String>> {
+        let conn = self.conn();
+        let timestamp: Option<String> = conn.query_row(
+            "SELECT created_at FROM chat_messages ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).ok();
+        Ok(timestamp)
+    }
 }
