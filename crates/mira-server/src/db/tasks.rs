@@ -76,4 +76,175 @@ impl Database {
         let rows = stmt.query_map(params![project_id, limit as i64], parse_task_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+
+    /// Create a new task
+    pub fn create_task(
+        &self,
+        project_id: Option<i64>,
+        goal_id: Option<i64>,
+        title: &str,
+        description: Option<&str>,
+        status: Option<&str>,
+        priority: Option<&str>,
+    ) -> Result<i64> {
+        let conn = self.conn();
+        let status = status.unwrap_or("pending");
+        let priority = priority.unwrap_or("medium");
+        
+        conn.execute(
+            "INSERT INTO tasks (project_id, goal_id, title, description, status, priority) VALUES (?, ?, ?, ?, ?, ?)",
+            params![project_id, goal_id, title, description, status, priority],
+        )?;
+        
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get tasks with optional status filter
+    /// Get tasks with optional status filter
+    /// Get tasks with optional status filter
+    /// Get tasks with optional status filter
+    pub fn get_tasks(&self, project_id: Option<i64>, status_filter: Option<&str>) -> Result<Vec<Task>> {
+        let conn = self.conn();
+        let sql = match status_filter {
+            Some(_) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                       FROM tasks
+                       WHERE (project_id = ? OR project_id IS NULL) AND status = ?
+                       ORDER BY created_at DESC
+                       LIMIT 100",
+            None => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                    FROM tasks
+                    WHERE (project_id = ? OR project_id IS NULL)
+                    ORDER BY created_at DESC
+                    LIMIT 100",
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = match status_filter {
+            Some(status) => stmt.query_map(params![project_id, status], parse_task_row)?,
+            None => stmt.query_map(params![project_id], parse_task_row)?,
+        };
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+
+
+    /// Update a task
+    /// Update a task
+    pub fn update_task(
+        &self,
+        id: i64,
+        title: Option<&str>,
+        status: Option<&str>,
+        priority: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn();
+        
+        if let Some(title) = title {
+            conn.execute("UPDATE tasks SET title = ? WHERE id = ?", params![title, id])?;
+        }
+        if let Some(status) = status {
+            conn.execute("UPDATE tasks SET status = ? WHERE id = ?", params![status, id])?;
+        }
+        if let Some(priority) = priority {
+            conn.execute("UPDATE tasks SET priority = ? WHERE id = ?", params![priority, id])?;
+        }
+        
+        Ok(())
+    }
+
+
+
+    /// Delete a task
+    pub fn delete_task(&self, id: i64) -> Result<()> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM tasks WHERE id = ?", [id])?;
+        Ok(())
+    }
+
+    /// Create a new goal
+    pub fn create_goal(
+        &self,
+        project_id: Option<i64>,
+        title: &str,
+        description: Option<&str>,
+        status: Option<&str>,
+        priority: Option<&str>,
+        progress_percent: Option<i64>,
+    ) -> Result<i64> {
+        let conn = self.conn();
+        let status = status.unwrap_or("planning");
+        let priority = priority.unwrap_or("medium");
+        let progress_percent = progress_percent.unwrap_or(0);
+        
+        conn.execute(
+            "INSERT INTO goals (project_id, title, description, status, priority, progress_percent) VALUES (?, ?, ?, ?, ?, ?)",
+            params![project_id, title, description, status, priority, progress_percent],
+        )?;
+        
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get goals with optional status filter
+    /// Get goals with optional status filter
+    /// Get goals with optional status filter
+    /// Get goals with optional status filter
+    pub fn get_goals(&self, project_id: Option<i64>, status_filter: Option<&str>) -> Result<Vec<Goal>> {
+        let conn = self.conn();
+        let sql = match status_filter {
+            Some(_) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+                       FROM goals
+                       WHERE (project_id = ? OR project_id IS NULL) AND status = ?
+                       ORDER BY created_at DESC
+                       LIMIT 100",
+            None => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+                    FROM goals
+                    WHERE (project_id = ? OR project_id IS NULL)
+                    ORDER BY created_at DESC
+                    LIMIT 100",
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = match status_filter {
+            Some(status) => stmt.query_map(params![project_id, status], parse_goal_row)?,
+            None => stmt.query_map(params![project_id], parse_goal_row)?,
+        };
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+
+
+    /// Update a goal
+    /// Update a goal
+    pub fn update_goal(
+        &self,
+        id: i64,
+        title: Option<&str>,
+        status: Option<&str>,
+        priority: Option<&str>,
+        progress_percent: Option<i64>,
+    ) -> Result<()> {
+        let conn = self.conn();
+        
+        if let Some(title) = title {
+            conn.execute("UPDATE goals SET title = ? WHERE id = ?", params![title, id])?;
+        }
+        if let Some(status) = status {
+            conn.execute("UPDATE goals SET status = ? WHERE id = ?", params![status, id])?;
+        }
+        if let Some(priority) = priority {
+            conn.execute("UPDATE goals SET priority = ? WHERE id = ?", params![priority, id])?;
+        }
+        if let Some(progress_percent) = progress_percent {
+            conn.execute("UPDATE goals SET progress_percent = ? WHERE id = ?", params![progress_percent, id])?;
+        }
+        
+        Ok(())
+    }
+
+
+
+    /// Delete a goal
+    pub fn delete_goal(&self, id: i64) -> Result<()> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM goals WHERE id = ?", [id])?;
+        Ok(())
+    }
 }

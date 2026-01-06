@@ -132,4 +132,16 @@ impl Database {
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
     }
+
+    /// List all projects in the database
+    pub fn list_projects(&self) -> Result<Vec<(i64, String, Option<String>)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, path, name FROM projects ORDER BY id DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
 }

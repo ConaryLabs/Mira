@@ -7,6 +7,7 @@ use crate::hooks::session::read_claude_session_id;
 use crate::mcp::MiraServer;
 use mira_types::ProjectContext;
 use std::process::Command;
+use crate::tools::core::project;
 
 /// Initialize session with project
 pub async fn session_start(
@@ -275,39 +276,10 @@ pub async fn set_project(
     project_path: String,
     name: Option<String>,
 ) -> Result<String, String> {
-    let (project_id, project_name) = server
-        .db
-        .get_or_create_project(&project_path, name.as_deref())
-        .map_err(|e| e.to_string())?;
-
-    let ctx = ProjectContext {
-        id: project_id,
-        path: project_path.clone(),
-        name: project_name.clone(),
-    };
-
-    *server.project.write().await = Some(ctx);
-
-    // Register project with file watcher for automatic incremental indexing
-    if let Some(ref watcher) = server.watcher {
-        watcher.watch(project_id, std::path::PathBuf::from(&project_path)).await;
-    }
-
-    let display_name = project_name.as_deref().unwrap_or(&project_path);
-    Ok(format!("Project set: {} (id: {})", display_name, project_id))
+    project::set_project(server, project_path, name).await
 }
 
 /// Get current project
 pub async fn get_project(server: &MiraServer) -> Result<String, String> {
-    let project = server.project.read().await;
-
-    match project.as_ref() {
-        Some(ctx) => Ok(format!(
-            "Current project:\n  Path: {}\n  Name: {}\n  ID: {}",
-            ctx.path,
-            ctx.name.as_deref().unwrap_or("(unnamed)"),
-            ctx.id
-        )),
-        None => Ok("No active project. Call session_start or set_project first.".to_string()),
-    }
+    project::get_project(server).await
 }

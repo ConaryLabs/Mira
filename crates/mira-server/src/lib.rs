@@ -15,3 +15,4 @@ pub mod mcp;
 pub mod persona;
 pub mod search;
 pub mod web;
+pub mod tools;

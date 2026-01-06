@@ -436,6 +436,11 @@ impl MiraServer {
         tools::code::summarize_codebase(self).await
     }
 
+    #[tool(description = "Get session recap (what appears in system prompts when chatting via web UI).")]
+    async fn get_session_recap(&self) -> Result<String, String> {
+        tools::dev::get_session_recap(self).await
+    }
+
     #[tool(description = "Query session history. Actions: list_sessions, get_history, current")]
     async fn session_history(
         &self,

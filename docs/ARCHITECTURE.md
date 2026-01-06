@@ -1,75 +1,124 @@
 # Mira Architecture
 
-**Version**: 3.1.0
-**Last Updated**: 2026-01-01
+**Version**: 3.2.0
+**Last Updated**: 2026-01-05
 
 ## Overview
 
-Mira is an MCP (Model Context Protocol) server that provides persistent memory and code intelligence for Claude Code. It uses rusqlite with sqlite-vec for all storage, eliminating external dependencies.
+Mira is an MCP (Model Context Protocol) server that provides persistent memory and code intelligence for Claude Code. It also provides a web chat interface powered by DeepSeek Reasoner. Both interfaces share a unified tool core for consistent behavior.
 
 ## Source Structure
 
 ```
-src/
-├── main.rs           # CLI entry point (serve, index, hook)
+crates/mira-server/src/
+├── main.rs           # CLI entry point (serve, index, hook, web)
 ├── lib.rs            # Library exports
-├── db.rs             # Database (rusqlite + sqlite-vec)
+├── db/               # Database layer (rusqlite + sqlite-vec)
+│   ├── mod.rs        # Database struct and queries
+│   ├── project.rs    # Project CRUD operations
+│   └── tasks.rs      # Task/Goal CRUD operations
 ├── embeddings.rs     # OpenAI embeddings API client
 ├── background/       # Background worker for batch processing
 │   ├── mod.rs        # Worker loop, spawns on service start
-│   ├── scanner.rs    # Finds pending work items
-│   ├── embeddings.rs # OpenAI Batch API (50% cheaper)
-│   └── summaries.rs  # Rate-limited DeepSeek summaries
+│   ├── watcher.rs    # File system watcher
+│   └── ...
 ├── cartographer/     # Codebase structure mapping
 │   └── mod.rs        # Module detection, dependency graphs
+├── tools/            # UNIFIED TOOL CORE (new)
+│   ├── core/         # Shared tool implementations
+│   │   ├── mod.rs    # ToolContext trait
+│   │   ├── memory.rs # recall, remember, forget
+│   │   ├── code.rs   # search_code, find_callers/callees
+│   │   ├── project.rs# set_project, get_project, list_projects
+│   │   ├── tasks_goals.rs # task/goal CRUD
+│   │   ├── web.rs    # google_search, web_fetch, research
+│   │   ├── claude.rs # claude_task, claude_close, claude_status
+│   │   └── bash.rs   # bash command execution
+│   ├── web.rs        # ToolContext impl for AppState
+│   └── mcp.rs        # ToolContext impl for MiraServer
 ├── mcp/
 │   ├── mod.rs        # MCP server (rmcp)
-│   └── tools/        # Tool implementations
+│   └── tools/        # MCP tool handlers (delegate to core)
 │       ├── mod.rs
 │       ├── project.rs   # session_start, set_project, get_project
 │       ├── memory.rs    # remember, recall, forget
-│       ├── code.rs      # get_symbols, semantic_code_search, index, summarize_codebase
+│       ├── code.rs      # get_symbols, semantic_code_search, index
 │       └── tasks.rs     # task, goal
+├── web/              # Web server (axum)
+│   ├── mod.rs        # HTTP routes
+│   ├── state.rs      # AppState
+│   ├── deepseek.rs   # DeepSeek Reasoner client
+│   └── chat/
+│       ├── mod.rs    # Chat API endpoints
+│       └── tools.rs  # Web tool handlers (delegate to core)
+├── search/           # Unified search layer
+│   ├── mod.rs        # Exports
+│   ├── semantic.rs   # Vector search
+│   ├── keyword.rs    # Text search
+│   └── crossref.rs   # Call graph queries
 ├── indexer/
 │   ├── mod.rs        # Code indexing orchestration
 │   └── parsers/      # Tree-sitter parsers
-│       ├── mod.rs
-│       ├── rust.rs
-│       ├── python.rs
-│       ├── typescript.rs
-│       └── go.rs
 └── hooks/
-    ├── mod.rs
     └── permission.rs # Auto-approval hook
 ```
 
 ## Data Flow
 
 ```
-Claude Code
-    │
-    ▼ (stdio)
-┌─────────────────────────────────────┐
-│  MCP Server (rmcp)                  │
-│  - Parses JSON-RPC                  │
-│  - Routes to tool handlers          │
-└─────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────┐
-│  Tool Implementations               │
-│  - session_start, remember, recall  │
-│  - get_symbols, semantic_code_search│
-│  - task, goal                       │
-└─────────────────────────────────────┘
-    │
-    ├─────────────┬─────────────┐
-    ▼             ▼             ▼
-┌─────────┐ ┌──────────┐ ┌───────────┐
-│ SQLite  │ │sqlite-vec│ │  Gemini   │
-│ Tables  │ │ Vectors  │ │ Embeddings│
-└─────────┘ └──────────┘ └───────────┘
+Claude Code                    Web Browser
+    │                              │
+    ▼ (stdio)                      ▼ (HTTP/WS)
+┌──────────────────┐     ┌──────────────────────┐
+│  MCP Server      │     │  Web Server (axum)   │
+│  - JSON-RPC      │     │  - REST API          │
+│  - rmcp          │     │  - WebSocket events  │
+└────────┬─────────┘     └──────────┬───────────┘
+         │                          │
+         │   ┌──────────────────┐   │
+         └──►│ Unified Tool Core│◄──┘
+             │  ToolContext trait│
+             │  - memory.rs      │
+             │  - code.rs        │
+             │  - tasks_goals.rs │
+             │  - project.rs     │
+             └────────┬─────────┘
+                      │
+         ┌────────────┼────────────┐
+         ▼            ▼            ▼
+    ┌─────────┐ ┌──────────┐ ┌───────────┐
+    │ SQLite  │ │sqlite-vec│ │  OpenAI   │
+    │ Tables  │ │ Vectors  │ │ Embeddings│
+    └─────────┘ └──────────┘ └───────────┘
 ```
+
+## Unified Tool Core
+
+The `tools/core/` module provides a single implementation of all tools that works with both interfaces:
+
+```rust
+// ToolContext trait abstracts the differences between MCP and Web
+#[async_trait]
+pub trait ToolContext: Send + Sync {
+    fn db(&self) -> &Arc<Database>;
+    fn embeddings(&self) -> Option<&Arc<Embeddings>>;
+    async fn get_project(&self) -> Option<ProjectContext>;
+    async fn set_project(&self, project: ProjectContext);
+    // ... other shared resources
+}
+
+// Both AppState (web) and MiraServer (MCP) implement ToolContext
+impl ToolContext for AppState { ... }
+impl ToolContext for MiraServer { ... }
+
+// Tool functions are generic over ToolContext
+pub async fn recall<C: ToolContext>(ctx: &C, query: String, ...) -> Result<String, String>
+```
+
+This ensures:
+- **Consistent behavior** across MCP and web chat
+- **Single source of truth** for each tool
+- **Easy maintenance** - update once, works everywhere
 
 ## Database Schema
 
@@ -114,21 +163,47 @@ vec_memory (embedding, fact_id, content)
 vec_code (embedding, file_path, chunk_content, project_id)
 ```
 
-## MCP Tools
+## Tools
+
+### Shared Tools (MCP + Web Chat)
+
+| Tool | Description | Core Module |
+|------|-------------|-------------|
+| `recall` | Semantic search through memories | `memory.rs` |
+| `remember` | Store a memory fact | `memory.rs` |
+| `forget` | Delete a memory by ID | `memory.rs` |
+| `semantic_code_search` | Search code by meaning | `code.rs` |
+| `find_callers` | Find functions that call a function | `code.rs` |
+| `find_callees` | Find functions called by a function | `code.rs` |
+| `set_project` | Set active project | `project.rs` |
+| `get_project` | Get current project | `project.rs` |
+| `list_projects` | List all projects | `project.rs` |
+| `task` | Manage tasks (create/list/update/complete/delete) | `tasks_goals.rs` |
+| `goal` | Manage goals (create/list/update/progress/delete) | `tasks_goals.rs` |
+
+### MCP-Only Tools
 
 | Tool | Description |
 |------|-------------|
 | `session_start` | Initialize session with project context |
-| `set_project` | Set active project |
-| `get_project` | Get current project |
-| `remember` | Store a memory fact with optional embedding |
-| `recall` | Semantic search through memories |
-| `forget` | Delete a memory by ID |
-| `get_symbols` | Get symbols from a file (via tree-sitter) |
-| `semantic_code_search` | Search code by meaning |
+| `session_history` | Query session history |
+| `get_session_recap` | Get session recap for system prompts |
+| `get_symbols` | Get symbols from a file (tree-sitter) |
 | `index` | Index project code |
-| `task` | Manage tasks (CRUD) |
-| `goal` | Manage goals and milestones |
+| `summarize_codebase` | Generate LLM summaries for modules |
+
+### Web Chat-Only Tools
+
+| Tool | Description | Core Module |
+|------|-------------|-------------|
+| `claude_task` | Send task to Claude Code instance | `claude.rs` |
+| `claude_close` | Close Claude Code instance | `claude.rs` |
+| `claude_status` | Get Claude Code status | `claude.rs` |
+| `discuss` | Discuss with Claude (collaboration) | `claude.rs` |
+| `google_search` | Search the web | `web.rs` |
+| `web_fetch` | Fetch and parse a URL | `web.rs` |
+| `research` | Multi-step research pipeline | `web.rs` |
+| `bash` | Execute shell commands | `bash.rs` |
 
 ## Key Dependencies
 

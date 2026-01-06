@@ -6,8 +6,8 @@ use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::indexer;
 use crate::mcp::MiraServer;
-use crate::search::{crossref_search, expand_context_with_db, find_callers, find_callees, format_crossref_results, hybrid_search, CrossRefType};
 use crate::web::deepseek::{DeepSeekClient, Message};
+use crate::tools::core::code;
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
@@ -158,89 +158,10 @@ pub async fn get_symbols(
 pub async fn semantic_code_search(
     server: &MiraServer,
     query: String,
-    _language: Option<String>,
+    language: Option<String>,
     limit: Option<i64>,
 ) -> Result<String, String> {
-    let limit = limit.unwrap_or(10) as usize;
-
-    // Get project context
-    let (project_path, project_id) = {
-        let proj = server.project.read().await;
-        (
-            proj.as_ref().map(|p| p.path.clone()),
-            proj.as_ref().map(|p| p.id),
-        )
-    };
-
-    // Check for cross-reference query patterns first ("who calls X", "callers of X", etc.)
-    if let Some((target, ref_type, results)) = crossref_search(&server.db, &query, project_id, limit) {
-        return Ok(format_crossref_results(&target, ref_type, &results));
-    }
-
-    // Process any pending embeddings for the active project (real-time fallback)
-    if let Some(ref embeddings) = server.embeddings {
-        if let Some(ref project) = *server.project.read().await {
-            if let Err(e) = process_pending_embeddings_inline(&server.db, embeddings, project.id).await {
-                tracing::debug!("Failed to process pending embeddings: {}", e);
-            }
-        }
-    }
-
-    // Use shared hybrid search
-    let result = hybrid_search(
-        &server.db,
-        server.embeddings.as_ref(),
-        &query,
-        project_id,
-        project_path.as_deref(),
-        limit,
-    )
-    .await?;
-
-    // Format with context expansion (MCP style with box drawing)
-    if result.results.is_empty() {
-        return Ok("No code matches found. Have you run 'index' yet?".to_string());
-    }
-
-    let mut response = format!(
-        "{} results ({} search):\n\n",
-        result.results.len(),
-        result.search_type
-    );
-
-    for r in &result.results {
-        // Use shared context expansion with DB for full symbol bounds
-        let expanded = expand_context_with_db(
-            &r.file_path,
-            &r.content,
-            project_path.as_deref(),
-            Some(&server.db),
-            project_id,
-        );
-
-        response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", r.file_path, r.score));
-
-        if let Some((symbol_info, full_code)) = expanded {
-            if let Some(info) = symbol_info {
-                response.push_str(&format!("{}\n", info));
-            }
-            let code_display = if full_code.len() > 1500 {
-                format!("{}...\n[truncated]", &full_code[..1500])
-            } else {
-                full_code
-            };
-            response.push_str(&format!("```\n{}\n```\n\n", code_display));
-        } else {
-            let display = if r.content.len() > 500 {
-                format!("{}...", &r.content[..500])
-            } else {
-                r.content.clone()
-            };
-            response.push_str(&format!("```\n{}\n```\n\n", display));
-        }
-    }
-
-    Ok(response)
+    code::search_code(server, query, language, limit).await
 }
 
 /// Index project
@@ -435,15 +356,7 @@ pub async fn mcp_find_callers(
     function_name: String,
     limit: Option<i64>,
 ) -> Result<String, String> {
-    if function_name.is_empty() {
-        return Err("function_name is required".to_string());
-    }
-
-    let limit = limit.unwrap_or(20) as usize;
-    let project_id = server.project.read().await.as_ref().map(|p| p.id);
-
-    let results = find_callers(&server.db, project_id, &function_name, limit);
-    Ok(format_crossref_results(&function_name, CrossRefType::Caller, &results))
+    code::find_function_callers(server, function_name, limit).await
 }
 
 /// Find all functions called by a given function
@@ -452,13 +365,5 @@ pub async fn mcp_find_callees(
     function_name: String,
     limit: Option<i64>,
 ) -> Result<String, String> {
-    if function_name.is_empty() {
-        return Err("function_name is required".to_string());
-    }
-
-    let limit = limit.unwrap_or(20) as usize;
-    let project_id = server.project.read().await.as_ref().map(|p| p.id);
-
-    let results = find_callees(&server.db, project_id, &function_name, limit);
-    Ok(format_crossref_results(&function_name, CrossRefType::Callee, &results))
+    code::find_function_callees(server, function_name, limit).await
 }

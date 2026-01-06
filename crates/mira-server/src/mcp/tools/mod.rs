@@ -2,6 +2,7 @@
 // MCP tool implementations
 
 pub mod code;
+pub mod dev;
 pub mod memory;
 pub mod project;
 pub mod tasks;
