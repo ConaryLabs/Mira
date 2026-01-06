@@ -100,25 +100,36 @@ impl Database {
     }
 
     /// Get tasks with optional status filter
-    /// Get tasks with optional status filter
-    /// Get tasks with optional status filter
-    /// Get tasks with optional status filter
+    /// Prefix with '!' to negate (e.g., "!completed" = status != 'completed')
     pub fn get_tasks(&self, project_id: Option<i64>, status_filter: Option<&str>) -> Result<Vec<Task>> {
         let conn = self.conn();
-        let sql = match status_filter {
-            Some(_) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
-                       FROM tasks
-                       WHERE (project_id = ? OR project_id IS NULL) AND status = ?
-                       ORDER BY created_at DESC
-                       LIMIT 100",
-            None => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
-                    FROM tasks
-                    WHERE (project_id = ? OR project_id IS NULL)
-                    ORDER BY created_at DESC
-                    LIMIT 100",
+
+        // Parse negation prefix
+        let (negate, status_value) = match status_filter {
+            Some(s) if s.starts_with('!') => (true, Some(&s[1..])),
+            Some(s) => (false, Some(s)),
+            None => (false, None),
+        };
+
+        let sql = match (status_value, negate) {
+            (Some(_), true) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                               FROM tasks
+                               WHERE (project_id = ? OR project_id IS NULL) AND status != ?
+                               ORDER BY created_at DESC
+                               LIMIT 100",
+            (Some(_), false) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                                FROM tasks
+                                WHERE (project_id = ? OR project_id IS NULL) AND status = ?
+                                ORDER BY created_at DESC
+                                LIMIT 100",
+            (None, _) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                         FROM tasks
+                         WHERE (project_id = ? OR project_id IS NULL)
+                         ORDER BY created_at DESC
+                         LIMIT 100",
         };
         let mut stmt = conn.prepare(sql)?;
-        let rows = match status_filter {
+        let rows = match status_value {
             Some(status) => stmt.query_map(params![project_id, status], parse_task_row)?,
             None => stmt.query_map(params![project_id], parse_task_row)?,
         };
@@ -184,25 +195,36 @@ impl Database {
     }
 
     /// Get goals with optional status filter
-    /// Get goals with optional status filter
-    /// Get goals with optional status filter
-    /// Get goals with optional status filter
+    /// Prefix with '!' to negate (e.g., "!finished" = status != 'finished')
     pub fn get_goals(&self, project_id: Option<i64>, status_filter: Option<&str>) -> Result<Vec<Goal>> {
         let conn = self.conn();
-        let sql = match status_filter {
-            Some(_) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
-                       FROM goals
-                       WHERE (project_id = ? OR project_id IS NULL) AND status = ?
-                       ORDER BY created_at DESC
-                       LIMIT 100",
-            None => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
-                    FROM goals
-                    WHERE (project_id = ? OR project_id IS NULL)
-                    ORDER BY created_at DESC
-                    LIMIT 100",
+
+        // Parse negation prefix
+        let (negate, status_value) = match status_filter {
+            Some(s) if s.starts_with('!') => (true, Some(&s[1..])),
+            Some(s) => (false, Some(s)),
+            None => (false, None),
+        };
+
+        let sql = match (status_value, negate) {
+            (Some(_), true) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+                               FROM goals
+                               WHERE (project_id = ? OR project_id IS NULL) AND status != ?
+                               ORDER BY created_at DESC
+                               LIMIT 100",
+            (Some(_), false) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+                                FROM goals
+                                WHERE (project_id = ? OR project_id IS NULL) AND status = ?
+                                ORDER BY created_at DESC
+                                LIMIT 100",
+            (None, _) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+                         FROM goals
+                         WHERE (project_id = ? OR project_id IS NULL)
+                         ORDER BY created_at DESC
+                         LIMIT 100",
         };
         let mut stmt = conn.prepare(sql)?;
-        let rows = match status_filter {
+        let rows = match status_value {
             Some(status) => stmt.query_map(params![project_id, status], parse_goal_row)?,
             None => stmt.query_map(params![project_id], parse_goal_row)?,
         };

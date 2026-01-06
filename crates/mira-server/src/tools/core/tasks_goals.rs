@@ -123,8 +123,13 @@ pub async fn goal<C: ToolContext>(
         }
         "list" => {
             let include_finished = include_finished.unwrap_or(false);
-            let status_filter = if include_finished { None } else { Some("!finished") };
-            let goals = ctx.db().get_goals(project_id, status_filter).map_err(|e| e.to_string())?;
+            // Use get_active_goals for non-finished, get_goals(None) for all
+            let goals = if include_finished {
+                ctx.db().get_goals(project_id, None).map_err(|e| e.to_string())?
+            } else {
+                // get_active_goals excludes 'completed' and 'abandoned'
+                ctx.db().get_active_goals(project_id, 100).map_err(|e| e.to_string())?
+            };
 
             // Apply limit
             let limit = limit.unwrap_or(10) as usize;
