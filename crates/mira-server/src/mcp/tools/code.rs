@@ -367,3 +367,11 @@ pub async fn mcp_find_callees(
 ) -> Result<String, String> {
     code::find_function_callees(server, function_name, limit).await
 }
+
+/// Check if a capability/feature exists in the codebase
+pub async fn check_capability(
+    server: &MiraServer,
+    description: String,
+) -> Result<String, String> {
+    code::check_capability(server, description).await
+}

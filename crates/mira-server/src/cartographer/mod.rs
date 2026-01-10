@@ -727,3 +727,37 @@ pub fn update_module_purposes(
 
     Ok(updated)
 }
+
+/// Get all modules with their purposes for capabilities scanning
+pub fn get_modules_with_purposes(db: &Database, project_id: i64) -> Result<Vec<Module>> {
+    let conn = db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT module_id, name, path, purpose, exports, depends_on, symbol_count, line_count
+         FROM codebase_modules WHERE project_id = ? ORDER BY module_id"
+    )?;
+
+    let modules = stmt
+        .query_map(params![project_id], |row| {
+            let exports_json: Option<String> = row.get(4)?;
+            let depends_json: Option<String> = row.get(5)?;
+
+            Ok(Module {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                path: row.get(2)?,
+                purpose: row.get(3)?,
+                exports: exports_json
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+                depends_on: depends_json
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+                symbol_count: row.get(6)?,
+                line_count: row.get(7)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(modules)
+}

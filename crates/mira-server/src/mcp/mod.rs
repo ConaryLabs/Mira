@@ -210,6 +210,12 @@ pub struct FindCalleesRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CheckCapabilityRequest {
+    #[schemars(description = "Description of the capability/feature to check for (e.g., 'semantic search', 'git change tracking')")]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TaskRequest {
     #[schemars(description = "Action: create/list/get/update/complete/delete")]
     pub action: String,
@@ -382,6 +388,14 @@ impl MiraServer {
         Parameters(req): Parameters<FindCalleesRequest>,
     ) -> Result<String, String> {
         tools::code::mcp_find_callees(self, req.function_name, req.limit).await
+    }
+
+    #[tool(description = "Check if a capability/feature exists in the codebase. Searches cached capabilities first, then falls back to live code search.")]
+    async fn check_capability(
+        &self,
+        Parameters(req): Parameters<CheckCapabilityRequest>,
+    ) -> Result<String, String> {
+        tools::code::check_capability(self, req.description).await
     }
 
     #[tool(description = "Manage tasks. Actions: create/list/get/update/complete/delete")]

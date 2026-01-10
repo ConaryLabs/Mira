@@ -5,6 +5,7 @@ mod scanner;
 mod embeddings;
 mod summaries;
 mod briefings;
+mod capabilities;
 pub mod watcher;
 
 use crate::db::Database;
@@ -99,6 +100,11 @@ impl BackgroundWorker {
             processed += self.process_briefings().await?;
         }
 
+        // Process capabilities inventory (periodic codebase scan)
+        if self.deepseek.is_some() {
+            processed += self.process_capabilities().await?;
+        }
+
         Ok(processed)
     }
 
@@ -115,6 +121,15 @@ impl BackgroundWorker {
     /// Process project briefings (What's New since last session)
     async fn process_briefings(&self) -> Result<usize, String> {
         briefings::process_briefings(&self.db, self.deepseek.as_ref().unwrap()).await
+    }
+
+    /// Process capabilities inventory (periodic codebase scan)
+    async fn process_capabilities(&self) -> Result<usize, String> {
+        capabilities::process_capabilities(
+            &self.db,
+            self.deepseek.as_ref().unwrap(),
+            self.embeddings.as_ref(),
+        ).await
     }
 }
 
