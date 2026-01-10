@@ -7,6 +7,7 @@ use crate::embeddings::EmbeddingClient;
 use crate::web::deepseek::{DeepSeekClient, Message};
 use rusqlite::params;
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 
 /// Check if capabilities inventory needs regeneration and process if so
@@ -37,8 +38,8 @@ pub async fn process_capabilities(
                 );
                 processed += count;
 
-                // Update last scan timestamp
-                mark_capabilities_scanned(db, project_id)?;
+                // Update last scan timestamp with git commit
+                mark_capabilities_scanned(db, project_id, &project_path)?;
             }
             Err(e) => {
                 tracing::warn!("Failed to generate capabilities for {}: {}", project_path, e);
@@ -49,44 +50,137 @@ pub async fn process_capabilities(
     Ok(processed)
 }
 
-/// Get projects that haven't had a capabilities scan recently
+/// Get projects that need a capabilities scan
+/// Triggers on:
+/// 1. First scan (never scanned before)
+/// 2. Git HEAD changed AND last scan > 1 day ago (rate limited)
+/// 3. Last scan > 7 days ago (periodic refresh)
 fn get_projects_needing_scan(db: &Database) -> Result<Vec<(i64, String)>, String> {
     let conn = db.conn();
 
-    // Projects where:
-    // 1. No capabilities scan ever (no memory with key starting with 'capabilities:')
-    // 2. OR last scan was > 7 days ago
-    // 3. AND project has been indexed (has modules)
+    // Get all indexed projects
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT p.id, p.path
              FROM projects p
-             JOIN codebase_modules m ON m.project_id = p.id
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM memory_facts mf
-                 WHERE mf.project_id = p.id
-                 AND mf.key = 'capabilities_scan_time'
-                 AND mf.updated_at > datetime('now', '-7 days')
-             )
-             LIMIT 1",
+             JOIN codebase_modules m ON m.project_id = p.id",
         )
         .map_err(|e| e.to_string())?;
 
-    let projects: Vec<(i64, String)> = stmt
+    let all_projects: Vec<(i64, String)> = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
 
-    Ok(projects)
+    let mut needing_scan = Vec::new();
+
+    for (project_id, project_path) in all_projects {
+        if needs_capabilities_scan(db, project_id, &project_path)? {
+            needing_scan.push((project_id, project_path));
+            // Only process one project per cycle to avoid long delays
+            break;
+        }
+    }
+
+    Ok(needing_scan)
 }
 
-/// Mark that we've scanned a project's capabilities
-fn mark_capabilities_scanned(db: &Database, project_id: i64) -> Result<(), String> {
+/// Check if a specific project needs a capabilities scan
+fn needs_capabilities_scan(db: &Database, project_id: i64, project_path: &str) -> Result<bool, String> {
+    let conn = db.conn();
+
+    // Get last scan info
+    let scan_info: Option<(String, String)> = conn
+        .query_row(
+            "SELECT content, updated_at FROM memory_facts
+             WHERE project_id = ? AND key = 'capabilities_scan_time'",
+            [project_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
+
+    let (last_commit, last_scan_time) = match scan_info {
+        Some((commit, time)) => (Some(commit), Some(time)),
+        None => (None, None), // Never scanned
+    };
+
+    // Case 1: Never scanned
+    if last_commit.is_none() {
+        tracing::debug!("Project {} needs scan: never scanned", project_id);
+        return Ok(true);
+    }
+
+    // Get current git HEAD
+    let current_commit = get_git_head(project_path);
+
+    // Case 2: Git changed AND rate limit passed (> 1 day since last scan)
+    if let (Some(last), Some(current)) = (&last_commit, &current_commit) {
+        if last != current {
+            // Check rate limit - only rescan if last scan was > 1 day ago
+            if let Some(ref scan_time) = last_scan_time {
+                let older_than_1_day: bool = conn
+                    .query_row(
+                        "SELECT datetime(?) < datetime('now', '-1 day')",
+                        [scan_time],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+
+                if older_than_1_day {
+                    tracing::debug!(
+                        "Project {} needs scan: git changed ({} -> {}) and rate limit passed",
+                        project_id, &last[..8.min(last.len())], &current[..8.min(current.len())]
+                    );
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    // Case 3: Periodic refresh (> 7 days since last scan)
+    if let Some(ref scan_time) = last_scan_time {
+        let older_than_7_days: bool = conn
+            .query_row(
+                "SELECT datetime(?) < datetime('now', '-7 days')",
+                [scan_time],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if older_than_7_days {
+            tracing::debug!("Project {} needs scan: periodic refresh (> 7 days)", project_id);
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Get the current git HEAD commit hash
+fn get_git_head(project_path: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(project_path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Mark that we've scanned a project's capabilities (stores git commit)
+fn mark_capabilities_scanned(db: &Database, project_id: i64, project_path: &str) -> Result<(), String> {
+    // Store the current git commit as the scan marker
+    let commit = get_git_head(project_path).unwrap_or_else(|| "unknown".to_string());
+
     db.store_memory(
         Some(project_id),
         Some("capabilities_scan_time"),
-        &chrono::Utc::now().to_rfc3339(),
+        &commit,
         "system",
         Some("capabilities"),
         1.0,
