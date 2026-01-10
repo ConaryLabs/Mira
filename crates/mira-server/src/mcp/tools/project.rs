@@ -52,6 +52,16 @@ pub async fn session_start(
     let display_name = project_name.as_deref().unwrap_or("unnamed");
     let mut response = format!("Project: {} ({})\n", display_name, project_type);
 
+    // Check for "What's New" briefing (git changes since last session)
+    if let Ok(Some(briefing)) = server.db.get_project_briefing(project_id) {
+        if let Some(text) = &briefing.briefing_text {
+            response.push_str(&format!("\nWhat's new: {}\n", text));
+        }
+    }
+
+    // Mark that a session occurred (clears briefing for next time)
+    let _ = server.db.mark_session_for_briefing(project_id);
+
     // Show recent sessions (skip current, show last 3)
     let recent_sessions = server
         .db

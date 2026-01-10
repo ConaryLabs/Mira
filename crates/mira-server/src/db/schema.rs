@@ -214,6 +214,19 @@ CREATE TABLE IF NOT EXISTS pending_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_embeddings_status ON pending_embeddings(status);
 
+-- ═══════════════════════════════════════
+-- PROJECT BRIEFINGS (What's New)
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS project_briefings (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER UNIQUE REFERENCES projects(id),
+    last_known_commit TEXT,           -- git HEAD hash when briefing was generated
+    last_session_at TEXT,             -- timestamp of last session
+    briefing_text TEXT,               -- DeepSeek-generated summary of changes
+    generated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_briefings_project ON project_briefings(project_id);
+
 CREATE TABLE IF NOT EXISTS background_batches (
     id INTEGER PRIMARY KEY,
     batch_id TEXT NOT NULL,

@@ -221,6 +221,20 @@ Vector embeddings for semantic code search.
 
 ## Background Processing
 
+### project_briefings
+"What's New" briefings generated when git changes are detected.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK UNIQUE | Project reference |
+| last_known_commit | TEXT | Git HEAD when briefing was generated |
+| last_session_at | TEXT | When last session occurred |
+| briefing_text | TEXT | DeepSeek-generated summary of changes |
+| generated_at | TEXT | When briefing was created |
+
+The background worker monitors git HEAD for each project. When changes are detected, it summarizes the commits using DeepSeek Reasoner and stores the briefing. The briefing is shown once in `session_start` then cleared.
+
 ### pending_embeddings
 Queue for async embedding generation.
 

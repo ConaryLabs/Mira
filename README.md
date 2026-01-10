@@ -46,7 +46,7 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 - **goal** - Track goals with milestones
 
 ### Session
-- **session_start** - Initialize session with project context
+- **session_start** - Initialize session with project context, shows "What's New" briefing if git changes detected since last session
 - **set_project** / **get_project** - Manage active project
 - **list_projects** - List all known projects
 - **session_history** - Query session and tool call history
@@ -82,6 +82,7 @@ Full conversational memory system at `http://localhost:3000/chat`:
 Automatic idle-time processing for cost savings:
 - **Embeddings**: Queued for OpenAI Batch API (50% cheaper)
 - **Module Summaries**: Rate-limited DeepSeek calls
+- **What's New Briefings**: Monitors git for changes, summarizes commits with DeepSeek Reasoner
 - **Real-time Fallback**: Immediate embedding if needed before batch completes
 
 ## Architecture
@@ -176,7 +177,7 @@ Then use naturally:
 
 ## Database Schema
 
-Simplified schema with 17 tables + 2 vector tables:
+Simplified schema with 18 tables + 2 vector tables:
 
 ### Core Tables
 - `projects` - Project paths and names
@@ -194,6 +195,7 @@ Simplified schema with 17 tables + 2 vector tables:
 - `permission_rules` - Auto-approval rules
 - `pending_embeddings` - Queue for batch embedding
 - `background_batches` - Track active batch jobs
+- `project_briefings` - "What's New" git change summaries
 - `chat_messages` - Stored conversation history
 - `chat_summaries` - Multi-level conversation summaries
 

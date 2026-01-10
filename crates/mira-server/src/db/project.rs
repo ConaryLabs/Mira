@@ -144,4 +144,78 @@ impl Database {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
+
+    /// Get project briefing (What's New since last session)
+    pub fn get_project_briefing(&self, project_id: i64) -> Result<Option<super::types::ProjectBriefing>> {
+        let conn = self.conn();
+        let result = conn.query_row(
+            "SELECT project_id, last_known_commit, last_session_at, briefing_text, generated_at
+             FROM project_briefings WHERE project_id = ?",
+            [project_id],
+            |row| Ok(super::types::ProjectBriefing {
+                project_id: row.get(0)?,
+                last_known_commit: row.get(1)?,
+                last_session_at: row.get(2)?,
+                briefing_text: row.get(3)?,
+                generated_at: row.get(4)?,
+            }),
+        );
+
+        match result {
+            Ok(briefing) => Ok(Some(briefing)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Update project briefing with new git state and summary
+    pub fn update_project_briefing(
+        &self,
+        project_id: i64,
+        last_known_commit: &str,
+        briefing_text: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO project_briefings (project_id, last_known_commit, briefing_text, generated_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(project_id) DO UPDATE SET
+                last_known_commit = excluded.last_known_commit,
+                briefing_text = excluded.briefing_text,
+                generated_at = CURRENT_TIMESTAMP",
+            params![project_id, last_known_commit, briefing_text],
+        )?;
+        Ok(())
+    }
+
+    /// Mark that a session occurred for this project (clears the briefing)
+    pub fn mark_session_for_briefing(&self, project_id: i64) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO project_briefings (project_id, last_session_at)
+             VALUES (?, CURRENT_TIMESTAMP)
+             ON CONFLICT(project_id) DO UPDATE SET
+                last_session_at = CURRENT_TIMESTAMP,
+                briefing_text = NULL",
+            [project_id],
+        )?;
+        Ok(())
+    }
+
+    /// Get projects that need briefing checks (have had sessions)
+    pub fn get_projects_for_briefing_check(&self) -> Result<Vec<(i64, String, Option<String>)>> {
+        let conn = self.conn();
+        // Get projects that have had at least one session and have a path
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT p.id, p.path, pb.last_known_commit
+             FROM projects p
+             LEFT JOIN project_briefings pb ON p.id = pb.project_id
+             WHERE p.path IS NOT NULL
+             ORDER BY p.id"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
 }

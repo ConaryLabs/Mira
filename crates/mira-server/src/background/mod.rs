@@ -4,6 +4,7 @@
 mod scanner;
 mod embeddings;
 mod summaries;
+mod briefings;
 pub mod watcher;
 
 use crate::db::Database;
@@ -88,9 +89,14 @@ impl BackgroundWorker {
             processed += self.process_embedding_batch().await?;
         }
 
-        // Then, process summaries one at a time (rate limited)
+        // Process summaries one at a time (rate limited)
         if self.deepseek.is_some() {
             processed += self.process_summary_queue().await?;
+        }
+
+        // Process project briefings (What's New since last session)
+        if self.deepseek.is_some() {
+            processed += self.process_briefings().await?;
         }
 
         Ok(processed)
@@ -104,6 +110,11 @@ impl BackgroundWorker {
     /// Process summaries with rate limiting
     async fn process_summary_queue(&self) -> Result<usize, String> {
         summaries::process_queue(&self.db, self.deepseek.as_ref().unwrap()).await
+    }
+
+    /// Process project briefings (What's New since last session)
+    async fn process_briefings(&self) -> Result<usize, String> {
+        briefings::process_briefings(&self.db, self.deepseek.as_ref().unwrap()).await
     }
 }
 

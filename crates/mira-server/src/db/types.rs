@@ -61,7 +61,7 @@ pub struct Task {
     pub created_at: String,
 }
 
-/// Goal record  
+/// Goal record
 #[derive(Debug, Clone)]
 pub struct Goal {
     pub id: i64,
@@ -72,4 +72,14 @@ pub struct Goal {
     pub priority: String,
     pub progress_percent: i32,
     pub created_at: String,
+}
+
+/// Project briefing (What's New since last session)
+#[derive(Debug, Clone)]
+pub struct ProjectBriefing {
+    pub project_id: i64,
+    pub last_known_commit: Option<String>,
+    pub last_session_at: Option<String>,
+    pub briefing_text: Option<String>,
+    pub generated_at: Option<String>,
 }
