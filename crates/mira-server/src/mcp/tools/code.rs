@@ -2,108 +2,11 @@
 // Code intelligence tools
 
 use crate::cartographer;
-use crate::db::Database;
-use crate::embeddings::Embeddings;
 use crate::indexer;
 use crate::mcp::MiraServer;
 use crate::web::deepseek::{DeepSeekClient, Message};
 use crate::tools::core::code;
-use rusqlite::params;
 use std::path::Path;
-use std::sync::Arc;
-use zerocopy::AsBytes;
-
-/// Process pending embeddings for a project inline (real-time fallback)
-/// Only called if no embeddings exist yet - otherwise batch API handles it
-async fn process_pending_embeddings_inline(
-    db: &Arc<Database>,
-    embeddings: &Arc<Embeddings>,
-    project_id: i64,
-) -> Result<usize, String> {
-    // First check if we already have some embeddings - if so, skip inline processing
-    // and let the batch API handle the rest
-    {
-        let conn = db.conn();
-        let existing: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vec_code WHERE project_id = ?",
-                params![project_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        if existing > 0 {
-            // Already have embeddings, don't block on more
-            return Ok(0);
-        }
-    }
-
-    // No embeddings exist yet - process a small batch to bootstrap search
-    // Note: Must drop conn before await to satisfy Send requirement
-    let pending: Vec<(i64, String, String)> = {
-        let conn = db.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, file_path, chunk_content
-                 FROM pending_embeddings
-                 WHERE project_id = ? AND status = 'pending'
-                 ORDER BY id ASC
-                 LIMIT 10",
-            )
-            .map_err(|e| e.to_string())?;
-
-        stmt.query_map(params![project_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect()
-    }; // conn dropped here
-
-    if pending.is_empty() {
-        return Ok(0);
-    }
-
-    tracing::info!("Bootstrapping {} embeddings inline for project {}", pending.len(), project_id);
-
-    let mut processed = 0;
-    for (id, file_path, chunk_content) in pending {
-        // Embed the chunk
-        match embeddings.embed(&chunk_content).await {
-            Ok(embedding) => {
-                // Re-acquire connection for DB operations
-                let conn = db.conn();
-
-                // Insert into vec_code
-                if let Err(e) = conn.execute(
-                    "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id)
-                     VALUES (?, ?, ?, ?)",
-                    params![embedding.as_bytes(), file_path, chunk_content, project_id],
-                ) {
-                    tracing::debug!("Failed to insert embedding: {}", e);
-                    continue;
-                }
-
-                // Mark as completed
-                let _ = conn.execute(
-                    "DELETE FROM pending_embeddings WHERE id = ?",
-                    params![id],
-                );
-
-                processed += 1;
-            }
-            Err(e) => {
-                tracing::debug!("Failed to embed chunk: {}", e);
-            }
-        }
-    }
-
-    if processed > 0 {
-        tracing::info!("Bootstrapped {} embeddings inline", processed);
-    }
-
-    Ok(processed)
-}
 
 /// Get symbols from a file
 pub async fn get_symbols(

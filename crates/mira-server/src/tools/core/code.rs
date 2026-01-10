@@ -10,7 +10,7 @@ use crate::tools::core::ToolContext;
 pub async fn search_code<C: ToolContext>(
     ctx: &C,
     query: String,
-    language: Option<String>,
+    _language: Option<String>,
     limit: Option<i64>,
 ) -> Result<String, String> {
     let limit = limit.unwrap_or(10) as usize;

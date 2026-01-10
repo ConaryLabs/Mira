@@ -240,6 +240,7 @@ pub struct ChatResult {
 #[derive(Debug, Deserialize)]
 struct SimpleChatResponse {
     choices: Vec<SimpleChoice>,
+    #[allow(dead_code)]
     usage: Option<Usage>,
 }
 

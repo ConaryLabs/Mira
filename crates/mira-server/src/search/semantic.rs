@@ -130,12 +130,6 @@ fn detect_query_intent(query: &str) -> QueryIntent {
     QueryIntent::General
 }
 
-/// Rerank search results based on quality signals and query intent
-/// Boosts: complete symbols (+10%), documented code (+10%), recent files (up to +20%)
-fn rerank_results(results: &mut [SearchResult], project_path: Option<&str>) {
-    rerank_results_with_intent(results, project_path, QueryIntent::General);
-}
-
 /// Rerank with intent-specific boosts
 fn rerank_results_with_intent(
     results: &mut [SearchResult],

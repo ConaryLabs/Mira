@@ -71,19 +71,11 @@ pub async fn claude_status<C: ToolContext>(
 /// Discuss with Claude - requires claude_manager (web-only)
 pub async fn discuss<C: ToolContext>(
     ctx: &C,
-    message: String,
+    _message: String,
 ) -> Result<String, String> {
-    let manager = ctx.claude_manager()
+    let _manager = ctx.claude_manager()
         .ok_or("Discuss is only available in web chat interface".to_string())?;
-    
-    let project = ctx.get_project().await
-        .ok_or("No project selected. Use set_project first.".to_string())?;
-    
-    // Check if instance exists
-    if !manager.has_instance(&project.path).await {
-        return Err("No Claude Code instance running for this project. Use claude_task first.".to_string());
-    }
-    
+
     // In web chat, this spawns a collaborator
     // For now, return a message about using web interface
     Err("Discuss tool not yet implemented in unified core. Use web chat interface.".to_string())

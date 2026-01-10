@@ -52,17 +52,14 @@ pub async fn web_fetch<C: ToolContext>(
 /// Research with synthesis - requires both google_search and web_fetcher (web-only)
 pub async fn research<C: ToolContext>(
     ctx: &C,
-    question: String,
-    depth: Option<String>,
+    _question: String,
+    _depth: Option<String>,
 ) -> Result<String, String> {
-    let google = ctx.google_search()
+    let _google = ctx.google_search()
         .ok_or("Research is only available in web chat interface".to_string())?;
-    let fetcher = ctx.web_fetcher()
+    let _fetcher = ctx.web_fetcher()
         .ok_or("Research is only available in web chat interface".to_string())?;
-    
-    let depth = depth.unwrap_or_else(|| "quick".to_string());
-    let is_thorough = depth == "thorough";
-    
+
     // This is a simplified implementation
     // Full implementation would be in web/chat/tools.rs
     Err("Research tool not yet implemented in unified core. Use web chat interface.".to_string())
