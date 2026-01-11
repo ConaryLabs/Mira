@@ -94,6 +94,9 @@ impl Database {
         // Add start_line column to vec_code if missing (drops and recreates)
         schema::migrate_vec_code_line_numbers(&conn)?;
 
+        // Add full_result column to tool_history if missing
+        schema::migrate_tool_history_full_result(&conn)?;
+
         conn.execute_batch(schema::SCHEMA)?;
         Ok(())
     }

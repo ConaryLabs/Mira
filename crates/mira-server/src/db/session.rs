@@ -37,13 +37,14 @@ impl Database {
         tool_name: &str,
         arguments: &str,
         result_summary: &str,
+        full_result: Option<&str>,
         success: bool,
     ) -> Result<i64> {
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO tool_history (session_id, tool_name, arguments, result_summary, success, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
-            params![session_id, tool_name, arguments, result_summary, success as i32],
+            "INSERT INTO tool_history (session_id, tool_name, arguments, result_summary, full_result, success, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+            params![session_id, tool_name, arguments, result_summary, full_result, success as i32],
         )?;
         Ok(conn.last_insert_rowid())
     }

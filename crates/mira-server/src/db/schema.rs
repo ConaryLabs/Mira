@@ -107,6 +107,41 @@ pub fn migrate_pending_embeddings_line_numbers(conn: &Connection) -> Result<()> 
     Ok(())
 }
 
+/// Migrate tool_history to add full_result column for complete tool output storage
+pub fn migrate_tool_history_full_result(conn: &Connection) -> Result<()> {
+    // Check if tool_history exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_history'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if full_result column exists
+    let has_column: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('tool_history') WHERE name='full_result'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_column {
+        tracing::info!("Migrating tool_history to add full_result column");
+        let _ = conn.execute(
+            "ALTER TABLE tool_history ADD COLUMN full_result TEXT",
+            [],
+        );
+    }
+
+    Ok(())
+}
+
 /// Database schema SQL
 pub const SCHEMA: &str = r#"
 -- ═══════════════════════════════════════
@@ -218,6 +253,7 @@ CREATE TABLE IF NOT EXISTS tool_history (
     tool_name TEXT NOT NULL,
     arguments TEXT,
     result_summary TEXT,
+    full_result TEXT,
     success INTEGER DEFAULT 1,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );

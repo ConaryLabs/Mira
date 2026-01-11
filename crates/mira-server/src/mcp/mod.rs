@@ -644,13 +644,14 @@ impl ServerHandler for MiraServer {
                 duration_ms,
             });
 
-            // Persist to tool_history
-            let summary = if result_text.len() > 500 {
-                format!("{}...", &result_text[..500])
+            // Persist to tool_history (summary for quick display, full result for recall)
+            let summary = if result_text.len() > 2000 {
+                format!("{}...", &result_text[..2000])
             } else {
                 result_text.clone()
             };
-            if let Err(e) = self.db.log_tool_call(&session_id, &tool_name, &args_json, &summary, success) {
+            let full_result = if result_text.len() > 100 { Some(result_text.as_str()) } else { None };
+            if let Err(e) = self.db.log_tool_call(&session_id, &tool_name, &args_json, &summary, full_result, success) {
                 eprintln!("[HISTORY] Failed to log tool call: {}", e);
             }
 
