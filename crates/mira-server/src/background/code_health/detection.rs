@@ -512,12 +512,25 @@ fn check_error_pattern(line: &str) -> Option<(&'static str, &'static str, &'stat
 
     // Medium severity: .ok() on non-optional contexts
     if line.contains(".ok()") && !line.contains(".ok()?") {
-        // Skip env vars and file reads (often intentionally optional)
-        if !line.contains("env::var") && !line.contains("read_to_string") && !line.contains("from_str") {
-            // Check if it's being used to convert Result to Option for control flow
-            if !line.contains(".ok().") && !line.contains(".ok()?") {
-                return Some(("medium", "ok_swallow", ".ok() may be swallowing important errors"));
-            }
+        // Skip lines that are just method chain continuations (start with .)
+        let trimmed = line.trim();
+        if trimmed.starts_with('.') {
+            return None;
+        }
+
+        // Skip env vars (both std::env::var and env::var), file reads, and parsing
+        if line.contains("env::var")
+            || line.contains("read_to_string")
+            || line.contains("from_str")
+            || line.contains("parse::<")
+            || line.contains("parse()")
+        {
+            return None;
+        }
+
+        // Check if it's being used to convert Result to Option for control flow
+        if !line.contains(".ok().") && !line.contains(".ok()?") {
+            return Some(("medium", "ok_swallow", ".ok() may be swallowing important errors"));
         }
     }
 
@@ -544,6 +557,20 @@ fn is_acceptable_error_swallow(line: &str) -> bool {
 
     // Filter operations (expected to filter out errors)
     if line.contains("filter_map") || line.contains("filter(|") {
+        return true;
+    }
+
+    // .ok() with explicit fallback handling (intentional conversion to Option)
+    if line.contains(".ok().flatten()")
+        || line.contains(".ok().unwrap_or")
+        || line.contains(".ok().map(")
+        || line.contains(".ok().and_then(")
+    {
+        return true;
+    }
+
+    // Database "get" operations often return Option intentionally
+    if line.contains(".get_") && line.contains(".ok()") {
         return true;
     }
 
