@@ -152,19 +152,12 @@ async fn extract_and_store(
             0.85, // Slightly lower than manual, higher than chat extraction
         )?;
 
-        // Store embedding if available
+        // Store embedding if available (also marks fact as having embedding)
         if let Some(embeddings) = embeddings {
             if let Ok(embedding) = embeddings.embed(&outcome.content).await {
-                let conn = db.conn();
-                let embedding_bytes: Vec<u8> = embedding
-                    .iter()
-                    .flat_map(|f| f.to_le_bytes())
-                    .collect();
-
-                let _ = conn.execute(
-                    "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
-                    rusqlite::params![id, embedding_bytes, id, &outcome.content],
-                );
+                if let Err(e) = db.store_fact_embedding(id, &outcome.content, &embedding) {
+                    warn!("Failed to store embedding for outcome {}: {}", id, e);
+                }
             }
         }
 

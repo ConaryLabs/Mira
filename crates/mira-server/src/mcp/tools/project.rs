@@ -35,6 +35,11 @@ pub async fn session_start(
         watcher.watch(project_id, std::path::PathBuf::from(&project_path)).await;
     }
 
+    // Persist active project for restart recovery
+    if let Err(e) = server.db.save_active_project(&project_path) {
+        tracing::warn!("Failed to persist active project: {}", e);
+    }
+
     // Set session ID (use provided, or Claude's from hook, or generate new)
     let sid = session_id
         .or_else(read_claude_session_id)

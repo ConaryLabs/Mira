@@ -84,28 +84,33 @@ async fn extract_and_store_facts(
 
     info!("Extracted {} facts from conversation", facts.len());
 
-    // Store each fact as global memory
+    // Get project_id for project-scoped facts
+    let project_id = state.project_id().await;
+
+    // Store each fact
     for fact in facts {
-        let id = state.db.store_global_memory(
-            &fact.content,
-            &fact.category,
+        // Work-related facts are project-scoped, others are global
+        let fact_project_id = if fact.category == "work" {
+            project_id
+        } else {
+            None
+        };
+
+        let id = state.db.store_memory(
+            fact_project_id,
             fact.key.as_deref(),
-            Some(0.9), // Slightly lower confidence for auto-extracted facts
+            &fact.content,
+            "personal",
+            Some(&fact.category),
+            0.9, // Slightly lower confidence for auto-extracted facts
         )?;
 
-        // Also store embedding if available
+        // Store embedding if available (also marks fact as having embedding)
         if let Some(ref embeddings) = state.embeddings {
             if let Ok(embedding) = embeddings.embed(&fact.content).await {
-                let conn = state.db.conn();
-                let embedding_bytes: Vec<u8> = embedding
-                    .iter()
-                    .flat_map(|f| f.to_le_bytes())
-                    .collect();
-
-                let _ = conn.execute(
-                    "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
-                    rusqlite::params![id, embedding_bytes, id, &fact.content],
-                );
+                if let Err(e) = state.db.store_fact_embedding(id, &fact.content, &embedding) {
+                    warn!("Failed to store embedding for fact {}: {}", id, e);
+                }
             }
         }
 

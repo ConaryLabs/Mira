@@ -27,6 +27,11 @@ pub async fn set_project<C: ToolContext>(
         watcher.watch(project_id, std::path::PathBuf::from(&project_path)).await;
     }
 
+    // Persist active project for restart recovery
+    if let Err(e) = ctx.db().save_active_project(&project_path) {
+        tracing::warn!("Failed to persist active project: {}", e);
+    }
+
     let display_name = project_name.as_deref().unwrap_or(&project_path);
     Ok(format!("Project set: {} (id: {})", display_name, project_id))
 }

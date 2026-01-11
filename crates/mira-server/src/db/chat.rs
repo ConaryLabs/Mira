@@ -76,14 +76,54 @@ impl Database {
         Ok(messages)
     }
 
-    /// Mark messages as summarized
-    pub fn mark_messages_summarized(&self, start_id: i64, end_id: i64) -> Result<usize> {
+    /// Mark messages as summarized and link to the summary for reversibility
+    pub fn mark_messages_summarized(&self, start_id: i64, end_id: i64, summary_id: i64) -> Result<usize> {
         let conn = self.conn();
         let updated = conn.execute(
-            "UPDATE chat_messages SET summarized = 1 WHERE id >= ? AND id <= ?",
-            params![start_id, end_id],
+            "UPDATE chat_messages SET summarized = 1, summary_id = ? WHERE id >= ? AND id <= ?",
+            params![summary_id, start_id, end_id],
         )?;
         Ok(updated)
+    }
+
+    /// Unroll a summary: restore original messages and delete the summary
+    /// Returns the number of messages restored
+    pub fn unroll_summary(&self, summary_id: i64) -> Result<usize> {
+        let conn = self.conn();
+
+        // Restore messages linked to this summary
+        let restored = conn.execute(
+            "UPDATE chat_messages SET summarized = 0, summary_id = NULL WHERE summary_id = ?",
+            [summary_id],
+        )?;
+
+        // Delete the summary
+        conn.execute("DELETE FROM chat_summaries WHERE id = ?", [summary_id])?;
+
+        Ok(restored)
+    }
+
+    /// Get messages that belong to a specific summary (for preview before unrolling)
+    pub fn get_messages_for_summary(&self, summary_id: i64) -> Result<Vec<ChatMessage>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, role, content, reasoning_content, created_at
+             FROM chat_messages
+             WHERE summary_id = ?
+             ORDER BY id ASC"
+        )?;
+
+        let rows = stmt.query_map([summary_id], |row| {
+            Ok(ChatMessage {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                content: row.get(2)?,
+                reasoning_content: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     /// Store a chat summary

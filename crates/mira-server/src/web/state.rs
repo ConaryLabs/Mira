@@ -196,4 +196,31 @@ impl AppState {
         let mut guard = self.session_persona.write().await;
         *guard = persona;
     }
+
+    /// Restore state from database (call after creating AppState)
+    /// Returns the restored project path if any
+    pub async fn restore_from_state(&self) -> Option<String> {
+        // Try to restore last active project
+        if let Ok(Some(path)) = self.db.get_last_active_project() {
+            // Verify the path still exists
+            if std::path::Path::new(&path).exists() {
+                // Get or create the project
+                if let Ok((project_id, project_name)) = self.db.get_or_create_project(&path, None) {
+                    let ctx = ProjectContext {
+                        id: project_id,
+                        path: path.clone(),
+                        name: project_name,
+                    };
+                    self.set_project(ctx).await;
+                    tracing::info!("Restored active project: {}", path);
+                    return Some(path);
+                }
+            } else {
+                // Clear stale project path
+                let _ = self.db.clear_active_project();
+                tracing::info!("Cleared stale project path: {}", path);
+            }
+        }
+        None
+    }
 }

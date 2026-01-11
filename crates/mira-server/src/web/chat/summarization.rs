@@ -132,9 +132,9 @@ async fn perform_rolling_summarization(
     let summary_id = state.db.store_chat_summary(project_id, &summary, start_id, end_id, 1)?;
     info!("Stored summary {} covering messages {}-{}", summary_id, start_id, end_id);
 
-    // Mark messages as summarized
-    let marked = state.db.mark_messages_summarized(start_id, end_id)?;
-    info!("Marked {} messages as summarized", marked);
+    // Mark messages as summarized (linking to summary for reversibility)
+    let marked = state.db.mark_messages_summarized(start_id, end_id, summary_id)?;
+    info!("Marked {} messages as summarized (linked to summary {})", marked, summary_id);
 
     Ok(())
 }

@@ -142,6 +142,86 @@ pub fn migrate_tool_history_full_result(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate memory_facts to add has_embedding column for tracking embedding status
+pub fn migrate_memory_facts_has_embedding(conn: &Connection) -> Result<()> {
+    // Check if memory_facts exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_facts'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if has_embedding column exists
+    let has_column: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='has_embedding'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_column {
+        tracing::info!("Migrating memory_facts to add has_embedding column");
+        let _ = conn.execute(
+            "ALTER TABLE memory_facts ADD COLUMN has_embedding INTEGER DEFAULT 0",
+            [],
+        );
+        // Backfill: mark existing facts that have embeddings
+        let _ = conn.execute(
+            "UPDATE memory_facts SET has_embedding = 1 WHERE id IN (SELECT fact_id FROM vec_memory)",
+            [],
+        );
+    }
+
+    Ok(())
+}
+
+/// Migrate chat_messages to add summary_id for reversible summarization
+pub fn migrate_chat_messages_summary_id(conn: &Connection) -> Result<()> {
+    // Check if chat_messages exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_messages'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if summary_id column exists
+    let has_column: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('chat_messages') WHERE name='summary_id'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_column {
+        tracing::info!("Migrating chat_messages to add summary_id column for reversible summarization");
+        let _ = conn.execute(
+            "ALTER TABLE chat_messages ADD COLUMN summary_id INTEGER REFERENCES chat_summaries(id) ON DELETE SET NULL",
+            [],
+        );
+        // Add index for efficient lookup by summary
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_summary ON chat_messages(summary_id)",
+            [],
+        );
+    }
+
+    Ok(())
+}
+
 /// Migrate chat_summaries to add project_id column for multi-project separation
 pub fn migrate_chat_summaries_project_id(conn: &Connection) -> Result<()> {
     // Check if chat_summaries exists
@@ -205,11 +285,13 @@ CREATE TABLE IF NOT EXISTS memory_facts (
     fact_type TEXT DEFAULT 'general',
     category TEXT,
     confidence REAL DEFAULT 1.0,
+    has_embedding INTEGER DEFAULT 0,  -- 1 if fact has embedding in vec_memory
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
 CREATE INDEX IF NOT EXISTS idx_memory_key ON memory_facts(key);
+CREATE INDEX IF NOT EXISTS idx_memory_no_embedding ON memory_facts(has_embedding) WHERE has_embedding = 0;
 
 CREATE TABLE IF NOT EXISTS corrections (
     id INTEGER PRIMARY KEY,
@@ -382,6 +464,15 @@ CREATE TABLE IF NOT EXISTS background_batches (
 );
 
 -- ═══════════════════════════════════════
+-- SERVER STATE (for restart recovery)
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS server_state (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ═══════════════════════════════════════
 -- CHAT MESSAGES (conversation history)
 -- ═══════════════════════════════════════
 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -390,9 +481,11 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     content TEXT NOT NULL,
     reasoning_content TEXT,  -- for deepseek reasoner responses
     summarized INTEGER DEFAULT 0,  -- 1 if included in a summary
+    summary_id INTEGER REFERENCES chat_summaries(id) ON DELETE SET NULL,  -- links to the summary for reversibility
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_summary ON chat_messages(summary_id);
 
 CREATE TABLE IF NOT EXISTS chat_summaries (
     id INTEGER PRIMARY KEY,

@@ -100,6 +100,12 @@ impl Database {
         // Add project_id column to chat_summaries if missing
         schema::migrate_chat_summaries_project_id(&conn)?;
 
+        // Add summary_id column to chat_messages for reversible summarization
+        schema::migrate_chat_messages_summary_id(&conn)?;
+
+        // Add has_embedding column to memory_facts for tracking embedding status
+        schema::migrate_memory_facts_has_embedding(&conn)?;
+
         conn.execute_batch(schema::SCHEMA)?;
         Ok(())
     }

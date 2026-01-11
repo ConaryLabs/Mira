@@ -242,4 +242,68 @@ impl Database {
         )?;
         Ok(deleted > 0)
     }
+
+    // ═══════════════════════════════════════
+    // EMBEDDING STATUS TRACKING
+    // ═══════════════════════════════════════
+
+    /// Mark a fact as having an embedding
+    pub fn mark_fact_has_embedding(&self, fact_id: i64) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE memory_facts SET has_embedding = 1 WHERE id = ?",
+            [fact_id],
+        )?;
+        Ok(())
+    }
+
+    /// Find facts that lack embeddings (for background processing)
+    pub fn find_facts_without_embeddings(&self, limit: usize) -> Result<Vec<MemoryFact>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+             FROM memory_facts
+             WHERE has_embedding = 0
+             ORDER BY created_at ASC
+             LIMIT ?"
+        )?;
+
+        let rows = stmt.query_map([limit as i64], parse_memory_fact_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Get count of facts lacking embeddings
+    pub fn count_facts_without_embeddings(&self) -> Result<i64> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_facts WHERE has_embedding = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Store embedding for a fact and mark as embedded
+    pub fn store_fact_embedding(&self, fact_id: i64, content: &str, embedding: &[f32]) -> Result<()> {
+        let conn = self.conn();
+
+        let embedding_bytes: Vec<u8> = embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+
+        // Insert or update embedding
+        conn.execute(
+            "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
+            params![fact_id, embedding_bytes, fact_id, content],
+        )?;
+
+        // Mark fact as having embedding
+        conn.execute(
+            "UPDATE memory_facts SET has_embedding = 1 WHERE id = ?",
+            [fact_id],
+        )?;
+
+        Ok(())
+    }
 }

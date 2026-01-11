@@ -212,6 +212,11 @@ async fn run_web_server(port: u16) -> Result<()> {
     // Create app state with watcher handle
     let state = web::state::AppState::with_watcher(db, embeddings, watcher_handle);
 
+    // Restore last active project if any
+    if let Some(path) = state.restore_from_state().await {
+        info!("Restored project: {}", path);
+    }
+
     // Create router
     let app = web::create_router(state);
 

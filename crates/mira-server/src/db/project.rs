@@ -218,4 +218,61 @@ impl Database {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
+
+    // ═══════════════════════════════════════
+    // SERVER STATE (for restart recovery)
+    // ═══════════════════════════════════════
+
+    /// Get a server state value by key
+    pub fn get_server_state(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn();
+        let result: Result<String, _> = conn.query_row(
+            "SELECT value FROM server_state WHERE key = ?",
+            [key],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Set a server state value (upsert)
+    pub fn set_server_state(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO server_state (key, value, updated_at)
+             VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a server state value
+    pub fn delete_server_state(&self, key: &str) -> Result<bool> {
+        let conn = self.conn();
+        let deleted = conn.execute("DELETE FROM server_state WHERE key = ?", [key])?;
+        Ok(deleted > 0)
+    }
+
+    /// Get last active project path (for startup recovery)
+    pub fn get_last_active_project(&self) -> Result<Option<String>> {
+        self.get_server_state("active_project_path")
+    }
+
+    /// Save active project path (for restart recovery)
+    pub fn save_active_project(&self, path: &str) -> Result<()> {
+        self.set_server_state("active_project_path", path)
+    }
+
+    /// Clear active project (when switching or closing)
+    pub fn clear_active_project(&self) -> Result<()> {
+        self.delete_server_state("active_project_path")?;
+        Ok(())
+    }
 }
