@@ -1,6 +1,7 @@
 // crates/mira-server/src/mcp/mod.rs
 // MCP Server implementation
 
+mod extraction;
 pub mod tools;
 
 use std::collections::HashMap;
@@ -647,10 +648,24 @@ impl ServerHandler for MiraServer {
             let summary = if result_text.len() > 500 {
                 format!("{}...", &result_text[..500])
             } else {
-                result_text
+                result_text.clone()
             };
             if let Err(e) = self.db.log_tool_call(&session_id, &tool_name, &args_json, &summary, success) {
                 eprintln!("[HISTORY] Failed to log tool call: {}", e);
+            }
+
+            // Extract meaningful outcomes from tool results (async, non-blocking)
+            if success {
+                let project_id = self.project.read().await.as_ref().map(|p| p.id);
+                extraction::spawn_tool_extraction(
+                    self.db.clone(),
+                    self.embeddings.clone(),
+                    self.deepseek.clone(),
+                    project_id,
+                    tool_name,
+                    args_json,
+                    result_text,
+                );
             }
 
             result
