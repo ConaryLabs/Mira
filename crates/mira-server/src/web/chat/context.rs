@@ -2,7 +2,6 @@
 // System prompt and personal context building
 
 use chrono::Local;
-use chrono::{DateTime, Utc};
 
 use crate::persona;
 use crate::web::state::AppState;
@@ -26,7 +25,7 @@ pub async fn build_system_prompt(state: &AppState, user_message: &str) -> String
     );
 
     // Add conversation summaries (semi-dynamic, changes less frequently)
-    let summary_context = get_summary_context(&state.db, 5);
+    let summary_context = get_summary_context(&state.db, project_id, 5);
     if !summary_context.is_empty() {
         prompt.push_str(&format!("\n\n=== CONVERSATION HISTORY ===\n{}", summary_context));
     }
@@ -89,88 +88,7 @@ pub async fn build_personal_context(state: &AppState, user_message: &str) -> Str
 }
 
 /// Build session recap with recent activity, pending tasks, and active goals
+/// Uses the shared Database::build_session_recap for consistency with MCP interface
 pub async fn build_session_recap(state: &AppState, project_id: Option<i64>) -> String {
-    let mut recap_parts = Vec::new();
-
-    // Get project name if available
-    let project_name = if let Some(pid) = project_id {
-        if let Ok(Some((name, _path))) = state.db.get_project_info(pid) {
-            name
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // Welcome header
-    let welcome = if let Some(name) = project_name {
-        format!("Welcome back to {} project!", name)
-    } else {
-        "Welcome back!".to_string()
-    };
-    recap_parts.push(format!("╔══════════════════════════════════════╗\n║   {}      ║\n╚══════════════════════════════════════╝", welcome));
-
-    // Time since last chat
-    if let Ok(Some(last_chat_time)) = state.db.get_last_chat_time() {
-        if let Ok(parsed) = DateTime::parse_from_rfc3339(&last_chat_time) {
-            let now = Utc::now();
-            let duration = now.signed_duration_since(parsed);
-            let hours = duration.num_hours();
-            let minutes = duration.num_minutes() % 60;
-            let time_ago = if hours > 0 {
-                format!("{} hours, {} minutes ago", hours, minutes)
-            } else {
-                format!("{} minutes ago", minutes)
-            };
-            recap_parts.push(format!("Last chat: {}", time_ago));
-        }
-    }
-
-    // Recent sessions (excluding current)
-    if let Some(pid) = project_id {
-        if let Ok(sessions) = state.db.get_recent_sessions(pid, 2) {
-            let recent: Vec<_> = sessions.iter().filter(|s| s.status != "active").collect();
-            if !recent.is_empty() {
-                let mut session_lines = Vec::new();
-                for sess in recent {
-                    let short_id = &sess.id[..8];
-                    let timestamp = &sess.last_activity[..16]; // YYYY-MM-DD HH:MM
-                    if let Some(ref summary) = sess.summary {
-                        session_lines.push(format!("• [{}] {} - {}", short_id, timestamp, summary));
-                    } else {
-                        session_lines.push(format!("• [{}] {}", short_id, timestamp));
-                    }
-                }
-                recap_parts.push(format!("Recent sessions:\n{}", session_lines.join("\n")));
-            }
-        }
-    }
-
-    // Pending tasks
-    if let Ok(tasks) = state.db.get_pending_tasks(project_id, 3) {
-        if !tasks.is_empty() {
-            let task_lines: Vec<String> = tasks.iter()
-                .map(|t| format!("• [ ] {} ({})", t.title, t.priority))
-                .collect();
-            recap_parts.push(format!("Pending tasks:\n{}", task_lines.join("\n")));
-        }
-    }
-
-    // Active goals
-    if let Ok(goals) = state.db.get_active_goals(project_id, 3) {
-        if !goals.is_empty() {
-            let goal_lines: Vec<String> = goals.iter()
-                .map(|g| format!("• {} ({}%) - {}", g.title, g.progress_percent, g.status))
-                .collect();
-            recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
-        }
-    }
-
-    // If we have any recap content, format it nicely
-    if recap_parts.len() > 1 { // More than just welcome header
-        recap_parts.join("\n\n")
-    } else {
-        String::new()
-    }
+    state.db.build_session_recap(project_id)
 }

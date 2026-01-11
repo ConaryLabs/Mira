@@ -41,6 +41,7 @@ pub struct ChatMessage {
 #[derive(Debug, Clone)]
 pub struct ChatSummary {
     pub id: i64,
+    pub project_id: Option<i64>,
     pub summary: String,
     pub message_range_start: i64,
     pub message_range_end: i64,

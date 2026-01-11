@@ -89,6 +89,7 @@ impl Database {
     /// Store a chat summary
     pub fn store_chat_summary(
         &self,
+        project_id: Option<i64>,
         summary: &str,
         range_start: i64,
         range_end: i64,
@@ -96,34 +97,67 @@ impl Database {
     ) -> Result<i64> {
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO chat_summaries (summary, message_range_start, message_range_end, summary_level)
-             VALUES (?, ?, ?, ?)",
-            params![summary, range_start, range_end, level],
+            "INSERT INTO chat_summaries (project_id, summary, message_range_start, message_range_end, summary_level)
+             VALUES (?, ?, ?, ?, ?)",
+            params![project_id, summary, range_start, range_end, level],
         )?;
         Ok(conn.last_insert_rowid())
     }
 
-    /// Get recent summaries
-    pub fn get_recent_summaries(&self, level: i32, limit: usize) -> Result<Vec<ChatSummary>> {
+    /// Get recent summaries for a project (or global if project_id is None)
+    pub fn get_recent_summaries(
+        &self,
+        project_id: Option<i64>,
+        level: i32,
+        limit: usize,
+    ) -> Result<Vec<ChatSummary>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, summary, message_range_start, message_range_end, summary_level, created_at
-             FROM chat_summaries
-             WHERE summary_level = ?
-             ORDER BY id DESC
-             LIMIT ?"
-        )?;
 
-        let rows = stmt.query_map(params![level, limit as i64], |row| {
-            Ok(ChatSummary {
-                id: row.get(0)?,
-                summary: row.get(1)?,
-                message_range_start: row.get(2)?,
-                message_range_end: row.get(3)?,
-                summary_level: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?;
+        let (sql, has_project) = match project_id {
+            Some(_) => (
+                "SELECT id, project_id, summary, message_range_start, message_range_end, summary_level, created_at
+                 FROM chat_summaries
+                 WHERE project_id = ? AND summary_level = ?
+                 ORDER BY id DESC
+                 LIMIT ?",
+                true,
+            ),
+            None => (
+                "SELECT id, project_id, summary, message_range_start, message_range_end, summary_level, created_at
+                 FROM chat_summaries
+                 WHERE project_id IS NULL AND summary_level = ?
+                 ORDER BY id DESC
+                 LIMIT ?",
+                false,
+            ),
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows: Box<dyn Iterator<Item = Result<ChatSummary, _>>> = if has_project {
+            Box::new(stmt.query_map(params![project_id, level, limit as i64], |row| {
+                Ok(ChatSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    summary: row.get(2)?,
+                    message_range_start: row.get(3)?,
+                    message_range_end: row.get(4)?,
+                    summary_level: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?)
+        } else {
+            Box::new(stmt.query_map(params![level, limit as i64], |row| {
+                Ok(ChatSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    summary: row.get(2)?,
+                    message_range_start: row.get(3)?,
+                    message_range_end: row.get(4)?,
+                    summary_level: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?)
+        };
 
         let mut summaries: Vec<ChatSummary> = rows.filter_map(|r| r.ok()).collect();
         summaries.reverse();
@@ -141,38 +175,78 @@ impl Database {
         Ok(count)
     }
 
-    /// Count summaries at a given level
-    pub fn count_summaries_at_level(&self, level: i32) -> Result<i64> {
+    /// Count summaries at a given level for a project
+    pub fn count_summaries_at_level(&self, project_id: Option<i64>, level: i32) -> Result<i64> {
         let conn = self.conn();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM chat_summaries WHERE summary_level = ?",
-            [level],
-            |row| row.get(0),
-        )?;
+        let count: i64 = match project_id {
+            Some(pid) => conn.query_row(
+                "SELECT COUNT(*) FROM chat_summaries WHERE project_id = ? AND summary_level = ?",
+                params![pid, level],
+                |row| row.get(0),
+            )?,
+            None => conn.query_row(
+                "SELECT COUNT(*) FROM chat_summaries WHERE project_id IS NULL AND summary_level = ?",
+                [level],
+                |row| row.get(0),
+            )?,
+        };
         Ok(count)
     }
 
-    /// Get oldest summaries at a level (for promotion to next level)
-    pub fn get_oldest_summaries(&self, level: i32, limit: usize) -> Result<Vec<ChatSummary>> {
+    /// Get oldest summaries at a level for a project (for promotion to next level)
+    pub fn get_oldest_summaries(
+        &self,
+        project_id: Option<i64>,
+        level: i32,
+        limit: usize,
+    ) -> Result<Vec<ChatSummary>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, summary, message_range_start, message_range_end, summary_level, created_at
-             FROM chat_summaries
-             WHERE summary_level = ?
-             ORDER BY id ASC
-             LIMIT ?"
-        )?;
 
-        let rows = stmt.query_map(params![level, limit as i64], |row| {
-            Ok(ChatSummary {
-                id: row.get(0)?,
-                summary: row.get(1)?,
-                message_range_start: row.get(2)?,
-                message_range_end: row.get(3)?,
-                summary_level: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?;
+        let (sql, has_project) = match project_id {
+            Some(_) => (
+                "SELECT id, project_id, summary, message_range_start, message_range_end, summary_level, created_at
+                 FROM chat_summaries
+                 WHERE project_id = ? AND summary_level = ?
+                 ORDER BY id ASC
+                 LIMIT ?",
+                true,
+            ),
+            None => (
+                "SELECT id, project_id, summary, message_range_start, message_range_end, summary_level, created_at
+                 FROM chat_summaries
+                 WHERE project_id IS NULL AND summary_level = ?
+                 ORDER BY id ASC
+                 LIMIT ?",
+                false,
+            ),
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows: Box<dyn Iterator<Item = Result<ChatSummary, _>>> = if has_project {
+            Box::new(stmt.query_map(params![project_id, level, limit as i64], |row| {
+                Ok(ChatSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    summary: row.get(2)?,
+                    message_range_start: row.get(3)?,
+                    message_range_end: row.get(4)?,
+                    summary_level: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?)
+        } else {
+            Box::new(stmt.query_map(params![level, limit as i64], |row| {
+                Ok(ChatSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    summary: row.get(2)?,
+                    message_range_start: row.get(3)?,
+                    message_range_end: row.get(4)?,
+                    summary_level: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?)
+        };
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }

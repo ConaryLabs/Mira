@@ -142,6 +142,46 @@ pub fn migrate_tool_history_full_result(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate chat_summaries to add project_id column for multi-project separation
+pub fn migrate_chat_summaries_project_id(conn: &Connection) -> Result<()> {
+    // Check if chat_summaries exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_summaries'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if project_id column exists
+    let has_column: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('chat_summaries') WHERE name='project_id'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_column {
+        tracing::info!("Migrating chat_summaries to add project_id column");
+        let _ = conn.execute(
+            "ALTER TABLE chat_summaries ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE",
+            [],
+        );
+        // Add index for efficient project-scoped queries
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_summaries_project ON chat_summaries(project_id, summary_level, created_at DESC)",
+            [],
+        );
+    }
+
+    Ok(())
+}
+
 /// Database schema SQL
 pub const SCHEMA: &str = r#"
 -- ═══════════════════════════════════════
@@ -356,13 +396,16 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at
 
 CREATE TABLE IF NOT EXISTS chat_summaries (
     id INTEGER PRIMARY KEY,
+    project_id INTEGER,  -- NULL for global/legacy summaries
     summary TEXT NOT NULL,
     message_range_start INTEGER,  -- first message id covered
     message_range_end INTEGER,    -- last message id covered
     summary_level INTEGER DEFAULT 1,  -- 1=session, 2=daily, 3=weekly
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_chat_summaries_level ON chat_summaries(summary_level, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_summaries_project ON chat_summaries(project_id, summary_level, created_at DESC);
 
 -- ═══════════════════════════════════════
 -- VECTOR TABLES (sqlite-vec)

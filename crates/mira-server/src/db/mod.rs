@@ -97,6 +97,9 @@ impl Database {
         // Add full_result column to tool_history if missing
         schema::migrate_tool_history_full_result(&conn)?;
 
+        // Add project_id column to chat_summaries if missing
+        schema::migrate_chat_summaries_project_id(&conn)?;
+
         conn.execute_batch(schema::SCHEMA)?;
         Ok(())
     }

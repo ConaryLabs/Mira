@@ -39,6 +39,9 @@ Respond with ONLY the combined summary text, no preamble."#;
 /// Check if we need to summarize and spawn background task if so
 pub fn maybe_spawn_summarization(state: AppState) {
     tokio::spawn(async move {
+        // Get project_id for project-scoped summaries
+        let project_id = state.project_id().await;
+
         // Check message count for L1 summarization
         let count = match state.db.count_unsummarized_messages() {
             Ok(c) => c as usize,
@@ -47,25 +50,25 @@ pub fn maybe_spawn_summarization(state: AppState) {
 
         if count >= SUMMARY_THRESHOLD {
             info!("Triggering rolling summarization: {} unsummarized messages", count);
-            if let Err(e) = perform_rolling_summarization(&state).await {
+            if let Err(e) = perform_rolling_summarization(&state, project_id).await {
                 warn!("Rolling summarization failed: {}", e);
             }
         }
 
         // Check for L1→L2 promotion
-        let l1_count = state.db.count_summaries_at_level(1).unwrap_or(0) as usize;
+        let l1_count = state.db.count_summaries_at_level(project_id, 1).unwrap_or(0) as usize;
         if l1_count >= L1_PROMOTION_THRESHOLD {
             info!("Triggering L1→L2 promotion: {} session summaries", l1_count);
-            if let Err(e) = promote_summaries(&state, 1, 2, L1_PROMOTION_BATCH).await {
+            if let Err(e) = promote_summaries(&state, project_id, 1, 2, L1_PROMOTION_BATCH).await {
                 warn!("L1→L2 promotion failed: {}", e);
             }
         }
 
         // Check for L2→L3 promotion
-        let l2_count = state.db.count_summaries_at_level(2).unwrap_or(0) as usize;
+        let l2_count = state.db.count_summaries_at_level(project_id, 2).unwrap_or(0) as usize;
         if l2_count >= L2_PROMOTION_THRESHOLD {
             info!("Triggering L2→L3 promotion: {} daily summaries", l2_count);
-            if let Err(e) = promote_summaries(&state, 2, 3, L2_PROMOTION_BATCH).await {
+            if let Err(e) = promote_summaries(&state, project_id, 2, 3, L2_PROMOTION_BATCH).await {
                 warn!("L2→L3 promotion failed: {}", e);
             }
         }
@@ -73,7 +76,10 @@ pub fn maybe_spawn_summarization(state: AppState) {
 }
 
 /// Perform rolling summarization of older messages
-async fn perform_rolling_summarization(state: &AppState) -> anyhow::Result<()> {
+async fn perform_rolling_summarization(
+    state: &AppState,
+    project_id: Option<i64>,
+) -> anyhow::Result<()> {
     let deepseek = state.deepseek.as_ref()
         .ok_or_else(|| anyhow::anyhow!("DeepSeek not configured"))?;
 
@@ -99,8 +105,8 @@ async fn perform_rolling_summarization(state: &AppState) -> anyhow::Result<()> {
     let end_id = to_summarize.last().unwrap().id;
 
     info!(
-        "Summarizing messages {} to {} ({} messages)",
-        start_id, end_id, to_summarize.len()
+        "Summarizing messages {} to {} ({} messages) for project {:?}",
+        start_id, end_id, to_summarize.len(), project_id
     );
 
     // Format messages for summarization
@@ -122,8 +128,8 @@ async fn perform_rolling_summarization(state: &AppState) -> anyhow::Result<()> {
         .or(result.reasoning_content)
         .ok_or_else(|| anyhow::anyhow!("No summary generated"))?;
 
-    // Store summary
-    let summary_id = state.db.store_chat_summary(&summary, start_id, end_id, 1)?;
+    // Store summary with project scope
+    let summary_id = state.db.store_chat_summary(project_id, &summary, start_id, end_id, 1)?;
     info!("Stored summary {} covering messages {}-{}", summary_id, start_id, end_id);
 
     // Mark messages as summarized
@@ -136,6 +142,7 @@ async fn perform_rolling_summarization(state: &AppState) -> anyhow::Result<()> {
 /// Promote summaries from one level to the next
 async fn promote_summaries(
     state: &AppState,
+    project_id: Option<i64>,
     from_level: i32,
     to_level: i32,
     batch_size: usize,
@@ -143,8 +150,8 @@ async fn promote_summaries(
     let deepseek = state.deepseek.as_ref()
         .ok_or_else(|| anyhow::anyhow!("DeepSeek not configured"))?;
 
-    // Get oldest summaries at the source level
-    let summaries = state.db.get_oldest_summaries(from_level, batch_size)?;
+    // Get oldest summaries at the source level for this project
+    let summaries = state.db.get_oldest_summaries(project_id, from_level, batch_size)?;
 
     if summaries.is_empty() {
         return Ok(());
@@ -155,8 +162,8 @@ async fn promote_summaries(
     let range_end = summaries.last().unwrap().message_range_end;
 
     info!(
-        "Promoting {} L{} summaries to L{} (covering {}-{})",
-        summaries.len(), from_level, to_level, range_start, range_end
+        "Promoting {} L{} summaries to L{} (covering {}-{}) for project {:?}",
+        summaries.len(), from_level, to_level, range_start, range_end, project_id
     );
 
     // Combine summaries for the LLM
@@ -178,8 +185,8 @@ async fn promote_summaries(
         .or(result.reasoning_content)
         .ok_or_else(|| anyhow::anyhow!("No promoted summary generated"))?;
 
-    // Store the new higher-level summary
-    let new_id = state.db.store_chat_summary(&new_summary, range_start, range_end, to_level)?;
+    // Store the new higher-level summary with project scope
+    let new_id = state.db.store_chat_summary(project_id, &new_summary, range_start, range_end, to_level)?;
     info!("Created L{} summary {} from {} L{} summaries", to_level, new_id, ids.len(), from_level);
 
     // Delete the old summaries
@@ -190,11 +197,15 @@ async fn promote_summaries(
 }
 
 /// Get recent summaries for context injection (all levels)
-pub fn get_summary_context(db: &crate::db::Database, limit: usize) -> String {
+pub fn get_summary_context(
+    db: &crate::db::Database,
+    project_id: Option<i64>,
+    limit: usize,
+) -> String {
     let mut parts = Vec::new();
 
     // L3 - Weekly summaries (oldest context, most compressed)
-    if let Ok(summaries) = db.get_recent_summaries(3, 2) {
+    if let Ok(summaries) = db.get_recent_summaries(project_id, 3, 2) {
         if !summaries.is_empty() {
             parts.push("Long-term context:".to_string());
             for s in summaries {
@@ -204,7 +215,7 @@ pub fn get_summary_context(db: &crate::db::Database, limit: usize) -> String {
     }
 
     // L2 - Daily summaries
-    if let Ok(summaries) = db.get_recent_summaries(2, 3) {
+    if let Ok(summaries) = db.get_recent_summaries(project_id, 2, 3) {
         if !summaries.is_empty() {
             parts.push("Recent days:".to_string());
             for s in summaries {
@@ -214,7 +225,7 @@ pub fn get_summary_context(db: &crate::db::Database, limit: usize) -> String {
     }
 
     // L1 - Session summaries (most recent compressed context)
-    if let Ok(summaries) = db.get_recent_summaries(1, limit) {
+    if let Ok(summaries) = db.get_recent_summaries(project_id, 1, limit) {
         if !summaries.is_empty() {
             parts.push("Earlier today:".to_string());
             for s in summaries {

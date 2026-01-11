@@ -2,6 +2,7 @@
 // Session and tool history operations
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use rusqlite::params;
 
 use super::types::{SessionInfo, ToolHistoryEntry};
@@ -145,5 +146,98 @@ impl Database {
             .collect();
 
         Ok((count, tools))
+    }
+
+    /// Build session recap with recent activity, pending tasks, and active goals
+    /// This is the single source of truth used by both MCP and chat interfaces
+    pub fn build_session_recap(&self, project_id: Option<i64>) -> String {
+        let mut recap_parts = Vec::new();
+
+        // Get project name if available
+        let project_name = project_id.and_then(|pid| {
+            self.get_project_info(pid)
+                .ok()
+                .flatten()
+                .and_then(|(name, _path)| name)
+        });
+
+        // Welcome header
+        let welcome = if let Some(name) = project_name {
+            format!("Welcome back to {} project!", name)
+        } else {
+            "Welcome back!".to_string()
+        };
+        recap_parts.push(format!(
+            "╔══════════════════════════════════════╗\n\
+             ║   {}      ║\n\
+             ╚══════════════════════════════════════╝",
+            welcome
+        ));
+
+        // Time since last chat
+        if let Ok(Some(last_chat_time)) = self.get_last_chat_time() {
+            if let Ok(parsed) = DateTime::parse_from_rfc3339(&last_chat_time) {
+                let now = Utc::now();
+                let duration = now.signed_duration_since(parsed);
+                let hours = duration.num_hours();
+                let minutes = duration.num_minutes() % 60;
+                let time_ago = if hours > 0 {
+                    format!("{} hours, {} minutes ago", hours, minutes)
+                } else {
+                    format!("{} minutes ago", minutes)
+                };
+                recap_parts.push(format!("Last chat: {}", time_ago));
+            }
+        }
+
+        // Recent sessions (excluding current)
+        if let Some(pid) = project_id {
+            if let Ok(sessions) = self.get_recent_sessions(pid, 2) {
+                let recent: Vec<_> = sessions.iter().filter(|s| s.status != "active").collect();
+                if !recent.is_empty() {
+                    let mut session_lines = Vec::new();
+                    for sess in recent {
+                        let short_id = &sess.id[..8.min(sess.id.len())];
+                        let timestamp = &sess.last_activity[..16.min(sess.last_activity.len())];
+                        if let Some(ref summary) = sess.summary {
+                            session_lines
+                                .push(format!("• [{}] {} - {}", short_id, timestamp, summary));
+                        } else {
+                            session_lines.push(format!("• [{}] {}", short_id, timestamp));
+                        }
+                    }
+                    recap_parts.push(format!("Recent sessions:\n{}", session_lines.join("\n")));
+                }
+            }
+        }
+
+        // Pending tasks
+        if let Ok(tasks) = self.get_pending_tasks(project_id, 3) {
+            if !tasks.is_empty() {
+                let task_lines: Vec<String> = tasks
+                    .iter()
+                    .map(|t| format!("• [ ] {} ({})", t.title, t.priority))
+                    .collect();
+                recap_parts.push(format!("Pending tasks:\n{}", task_lines.join("\n")));
+            }
+        }
+
+        // Active goals
+        if let Ok(goals) = self.get_active_goals(project_id, 3) {
+            if !goals.is_empty() {
+                let goal_lines: Vec<String> = goals
+                    .iter()
+                    .map(|g| format!("• {} ({}%) - {}", g.title, g.progress_percent, g.status))
+                    .collect();
+                recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
+            }
+        }
+
+        // If we have any recap content, format it nicely
+        if recap_parts.len() > 1 {
+            recap_parts.join("\n\n")
+        } else {
+            String::new()
+        }
     }
 }
