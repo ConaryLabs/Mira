@@ -38,6 +38,7 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 - **semantic_code_search** - Find code by meaning (hybrid semantic + keyword search)
 - **find_callers** - Find all functions that call a given function (uses call graph)
 - **find_callees** - Find all functions called by a given function
+- **check_capability** - Check if a feature exists in codebase (searches cached capabilities, falls back to live code search)
 - **index** - Index project code for search
 - **summarize_codebase** - Generate LLM-powered module descriptions
 
@@ -48,7 +49,7 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 ### Session
 - **session_start** - Initialize session with project context, shows "What's New" briefing if git changes detected since last session
 - **set_project** / **get_project** - Manage active project
-- **list_projects** - List all known projects
+- **get_session_recap** - Get session recap (pending tasks, active goals, recent sessions)
 - **session_history** - Query session and tool call history
 
 ### Web Search & Research
@@ -83,6 +84,8 @@ Automatic idle-time processing for cost savings:
 - **Embeddings**: Queued for OpenAI Batch API (50% cheaper)
 - **Module Summaries**: Rate-limited DeepSeek calls
 - **What's New Briefings**: Monitors git for changes, summarizes commits with DeepSeek Reasoner
+- **Capabilities Inventory**: Scans codebase to identify features and flag incomplete implementations
+- **Tool Memory Bridge**: Extracts decisions/discoveries from MCP tool calls and stores as project-scoped memories
 - **Real-time Fallback**: Immediate embedding if needed before batch completes
 
 ## Architecture
@@ -177,7 +180,7 @@ Then use naturally:
 
 ## Database Schema
 
-Simplified schema with 18 tables + 2 vector tables:
+Simplified schema with 19 tables + 2 vector tables:
 
 ### Core Tables
 - `projects` - Project paths and names
@@ -196,6 +199,7 @@ Simplified schema with 18 tables + 2 vector tables:
 - `pending_embeddings` - Queue for batch embedding
 - `background_batches` - Track active batch jobs
 - `project_briefings` - "What's New" git change summaries
+- `server_state` - Key-value store for restart recovery (e.g., active project)
 - `chat_messages` - Stored conversation history
 - `chat_summaries` - Multi-level conversation summaries
 
