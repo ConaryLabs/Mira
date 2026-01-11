@@ -1,0 +1,194 @@
+// crates/mira-server/src/cartographer/detection.rs
+// Rust module detection from project structure
+
+use super::types::Module;
+use std::collections::HashSet;
+use std::path::Path;
+use walkdir::WalkDir;
+
+/// Detect Rust modules from project structure
+pub fn detect_rust_modules(project_path: &Path) -> Vec<Module> {
+    let mut modules = Vec::new();
+
+    tracing::info!("detect_rust_modules: scanning {:?}", project_path);
+
+    // Find all Cargo.toml files (workspace members)
+    let cargo_tomls: Vec<_> = WalkDir::new(project_path)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name() == "Cargo.toml")
+        .filter(|e| e.path() != project_path.join("Cargo.toml") || !is_workspace(e.path()))
+        .collect();
+
+    tracing::info!("Found {} Cargo.toml files", cargo_tomls.len());
+
+    for entry in cargo_tomls {
+        let crate_root = entry.path().parent().unwrap_or(project_path);
+        let crate_name = parse_crate_name(entry.path()).unwrap_or_else(|| {
+            crate_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        });
+
+        let src_dir = crate_root.join("src");
+        if !src_dir.exists() {
+            continue;
+        }
+
+        // Walk src directory looking for modules
+        detect_modules_in_src(&src_dir, &crate_name, project_path, &mut modules);
+    }
+
+    // If no crates found, try the project root directly
+    if modules.is_empty() {
+        let src_dir = project_path.join("src");
+        if src_dir.exists() {
+            let crate_name = project_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project")
+                .to_string();
+            detect_modules_in_src(&src_dir, &crate_name, project_path, &mut modules);
+        }
+    }
+
+    tracing::info!("detect_rust_modules: found {} modules", modules.len());
+    for m in &modules {
+        tracing::debug!("  module: {} at {}", m.id, m.path);
+    }
+
+    modules
+}
+
+pub(super) fn is_workspace(cargo_toml: &Path) -> bool {
+    std::fs::read_to_string(cargo_toml)
+        .map(|c| c.contains("[workspace]"))
+        .unwrap_or(false)
+}
+
+pub(super) fn parse_crate_name(cargo_toml: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(cargo_toml).ok()?;
+    let mut in_package = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+        } else if in_package && line.starts_with("name") {
+            if let Some(name) = line.split('=').nth(1) {
+                let name = name.trim().trim_matches('"').trim_matches('\'');
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn detect_modules_in_src(
+    src_dir: &Path,
+    crate_name: &str,
+    project_path: &Path,
+    modules: &mut Vec<Module>,
+) {
+    let mut seen_dirs: HashSet<String> = HashSet::new();
+
+    for entry in WalkDir::new(src_dir)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            !name.starts_with('.') && name != "target"
+        })
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let relative = path.strip_prefix(project_path).unwrap_or(path);
+
+        if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            // Entry points become top-level modules
+            if file_name == "lib.rs" || file_name == "main.rs" {
+                let module_path = relative
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                if !seen_dirs.contains(&module_path) {
+                    seen_dirs.insert(module_path.clone());
+                    modules.push(Module {
+                        id: crate_name.to_string(),
+                        name: crate_name.to_string(),
+                        path: module_path,
+                        purpose: None,
+                        exports: vec![],
+                        depends_on: vec![],
+                        symbol_count: 0,
+                        line_count: 0,
+                    });
+                }
+            }
+            // mod.rs indicates a module directory
+            else if file_name == "mod.rs" {
+                if let Some(parent) = path.parent() {
+                    let module_name = parent
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown");
+                    let module_path = parent
+                        .strip_prefix(project_path)
+                        .unwrap_or(parent)
+                        .to_string_lossy()
+                        .to_string();
+
+                    // Create module ID: crate_name/relative_module_path
+                    let src_relative = parent.strip_prefix(src_dir).unwrap_or(parent);
+                    let module_id = if src_relative.as_os_str().is_empty() {
+                        crate_name.to_string()
+                    } else {
+                        format!("{}/{}", crate_name, src_relative.to_string_lossy())
+                    };
+
+                    if !seen_dirs.contains(&module_path) {
+                        seen_dirs.insert(module_path.clone());
+                        modules.push(Module {
+                            id: module_id,
+                            name: module_name.to_string(),
+                            path: module_path,
+                            purpose: None,
+                            exports: vec![],
+                            depends_on: vec![],
+                            symbol_count: 0,
+                            line_count: 0,
+                        });
+                    }
+                }
+            }
+            // Regular .rs files in src/ are also modules
+            else if path.parent() == Some(src_dir) && file_name != "lib.rs" && file_name != "main.rs"
+            {
+                let module_name = file_name.trim_end_matches(".rs");
+                let module_id = format!("{}/{}", crate_name, module_name);
+                let module_path = relative.to_string_lossy().to_string();
+
+                if !seen_dirs.contains(&module_path) {
+                    seen_dirs.insert(module_path.clone());
+                    modules.push(Module {
+                        id: module_id,
+                        name: module_name.to_string(),
+                        path: module_path,
+                        purpose: None,
+                        exports: vec![],
+                        depends_on: vec![],
+                        symbol_count: 0,
+                        line_count: 0,
+                    });
+                }
+            }
+        }
+    }
+}

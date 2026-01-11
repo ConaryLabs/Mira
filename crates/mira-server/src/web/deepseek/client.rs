@@ -1,20 +1,20 @@
-// src/web/deepseek.rs
-// DeepSeek API client for Reasoner (V3.2) with tool calling support
+// crates/mira-server/src/web/deepseek/client.rs
+// DeepSeek API client with streaming support
 
+use super::types::{ChatResult, FunctionCall, Message, Tool, ToolCall, Usage};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use reqwest_eventsource::{Event, EventSource};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::time::Instant;
-use tracing::{debug, info, warn, error, instrument, Span};
+use tracing::{debug, error, info, instrument, warn, Span};
 use uuid::Uuid;
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
 
 /// Check if content looks like garbage (JSON fragments, brackets, etc.)
 /// Returns true if content should be streamed to UI, false if it should be suppressed
-fn is_streamable_content(content: &str) -> bool {
+pub(super) fn is_streamable_content(content: &str) -> bool {
     let trimmed = content.trim();
 
     // Empty or whitespace-only
@@ -28,7 +28,10 @@ fn is_streamable_content(content: &str) -> bool {
     }
 
     // Just JSON punctuation
-    if trimmed.chars().all(|c| matches!(c, '[' | ']' | '{' | '}' | ',' | ':' | '"' | ' ' | '\n' | '\t')) {
+    if trimmed
+        .chars()
+        .all(|c| matches!(c, '[' | ']' | '{' | '}' | ',' | ':' | '"' | ' ' | '\n' | '\t'))
+    {
         return false;
     }
 
@@ -41,111 +44,6 @@ fn is_streamable_content(content: &str) -> bool {
     }
 
     true
-}
-
-// ═══════════════════════════════════════
-// API TYPES
-// ═══════════════════════════════════════
-
-/// Message in a conversation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub role: String, // "system" | "user" | "assistant" | "tool"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>, // Must preserve for multi-turn!
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>, // For tool responses
-}
-
-impl Message {
-    pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: "system".into(),
-            content: Some(content.into()),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: "user".into(),
-            content: Some(content.into()),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    pub fn assistant(content: Option<String>, reasoning: Option<String>) -> Self {
-        Self {
-            role: "assistant".into(),
-            content,
-            reasoning_content: reasoning,
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            role: "tool".into(),
-            content: Some(content.into()),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: Some(tool_call_id.into()),
-        }
-    }
-}
-
-/// Tool call from the model
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub call_type: String, // "function"
-    pub function: FunctionCall,
-}
-
-/// Function call details
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionCall {
-    pub name: String,
-    pub arguments: String, // JSON string
-}
-
-/// Tool definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tool {
-    #[serde(rename = "type")]
-    pub tool_type: String, // "function"
-    pub function: FunctionDef,
-}
-
-impl Tool {
-    pub fn function(name: impl Into<String>, description: impl Into<String>, parameters: Value) -> Self {
-        Self {
-            tool_type: "function".into(),
-            function: FunctionDef {
-                name: name.into(),
-                description: description.into(),
-                parameters,
-            },
-        }
-    }
-}
-
-/// Function definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionDef {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value, // JSON Schema
 }
 
 /// Chat completion request
@@ -203,39 +101,6 @@ struct FunctionChunk {
     arguments: Option<String>,
 }
 
-/// Usage statistics
-#[derive(Debug, Clone, Deserialize)]
-pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-    #[serde(default)]
-    pub prompt_cache_hit_tokens: Option<u32>,
-    #[serde(default)]
-    pub prompt_cache_miss_tokens: Option<u32>,
-}
-
-// ═══════════════════════════════════════
-// CLIENT
-// ═══════════════════════════════════════
-
-/// DeepSeek API client
-pub struct DeepSeekClient {
-    api_key: String,
-    client: reqwest::Client,
-}
-
-/// Result of a chat completion
-#[derive(Clone)]
-pub struct ChatResult {
-    pub request_id: String,
-    pub content: Option<String>,
-    pub reasoning_content: Option<String>,
-    pub tool_calls: Option<Vec<ToolCall>>,
-    pub usage: Option<Usage>,
-    pub duration_ms: u64,
-}
-
 /// Non-streaming response for simple chat
 #[derive(Debug, Deserialize)]
 struct SimpleChatResponse {
@@ -252,6 +117,12 @@ struct SimpleChoice {
 #[derive(Debug, Deserialize)]
 struct SimpleMessage {
     content: Option<String>,
+}
+
+/// DeepSeek API client
+pub struct DeepSeekClient {
+    api_key: String,
+    client: reqwest::Client,
 }
 
 impl DeepSeekClient {
@@ -319,11 +190,7 @@ impl DeepSeekClient {
 
     /// Chat with streaming, returns the complete response
     #[instrument(skip(self, messages, tools), fields(request_id, model = "deepseek-reasoner", message_count = messages.len()))]
-    pub async fn chat(
-        &self,
-        messages: Vec<Message>,
-        tools: Option<Vec<Tool>>,
-    ) -> Result<ChatResult> {
+    pub async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
         let request_id = Uuid::new_v4().to_string();
         let start_time = Instant::now();
 
@@ -489,7 +356,8 @@ impl DeepSeekClient {
 
         // Log tool calls (don't broadcast - causes UI flooding)
         for tc in &tool_calls {
-            let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
+            let args: serde_json::Value =
+                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
             debug!(
                 request_id = %request_id,
                 tool = %tc.function.name,
@@ -604,9 +472,7 @@ impl DeepSeekClient {
                                 full_content.push_str(&content);
                                 // Filter garbage before sending
                                 if is_streamable_content(&content) {
-                                    let _ = tx.send(ChatEvent::Delta {
-                                        content,
-                                    }).await;
+                                    let _ = tx.send(ChatEvent::Delta { content }).await;
                                 }
                             }
                         }
@@ -648,9 +514,11 @@ impl DeepSeekClient {
 
                             if current_names != last_tool_names && !current_names.is_empty() {
                                 last_tool_names = current_names.clone();
-                                let _ = tx.send(ChatEvent::ToolPlanning {
-                                    tools: current_names,
-                                }).await;
+                                let _ = tx
+                                    .send(ChatEvent::ToolPlanning {
+                                        tools: current_names,
+                                    })
+                                    .await;
                             }
                         }
                     }
@@ -663,273 +531,23 @@ impl DeepSeekClient {
 
         Ok(ChatResult {
             request_id,
-            content: if full_content.is_empty() { None } else { Some(full_content) },
-            reasoning_content: if full_reasoning.is_empty() { None } else { Some(full_reasoning) },
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+            content: if full_content.is_empty() {
+                None
+            } else {
+                Some(full_content)
+            },
+            reasoning_content: if full_reasoning.is_empty() {
+                None
+            } else {
+                Some(full_reasoning)
+            },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
             usage,
             duration_ms,
         })
     }
-}
-
-// ═══════════════════════════════════════
-// TOOL DEFINITIONS
-// ═══════════════════════════════════════
-
-/// Get the Mira tools available to DeepSeek
-pub fn mira_tools() -> Vec<Tool> {
-    vec![
-        Tool::function(
-            "recall_memories",
-            "Search semantic memory for relevant context, past decisions, and project knowledge",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language query to search memories"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default 5)",
-                        "default": 5
-                    }
-                },
-                "required": ["query"]
-            }),
-        ),
-        Tool::function(
-            "search_code",
-            "Semantic code search over the project codebase",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language description of code to find"
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Filter by programming language (e.g., 'rust', 'python')"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default 10)",
-                        "default": 10
-                    }
-                },
-                "required": ["query"]
-            }),
-        ),
-        Tool::function(
-            "find_callers",
-            "Find all functions that call a specific function. Use this when user asks 'who calls X' or 'callers of X'.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "function_name": {
-                        "type": "string",
-                        "description": "Name of the function to find callers for"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default 20)",
-                        "default": 20
-                    }
-                },
-                "required": ["function_name"]
-            }),
-        ),
-        Tool::function(
-            "find_callees",
-            "Find all functions called by a specific function. Use this when user asks 'what does X call' or 'callees of X'.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "function_name": {
-                        "type": "string",
-                        "description": "Name of the function to find callees for"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default 20)",
-                        "default": 20
-                    }
-                },
-                "required": ["function_name"]
-            }),
-        ),
-        Tool::function(
-            "list_tasks",
-            "Get current tasks and their status for the project",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "in_progress", "completed", "blocked"],
-                        "description": "Filter by task status"
-                    }
-                },
-                "required": []
-            }),
-        ),
-        Tool::function(
-            "list_goals",
-            "Get project goals and their progress",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["planning", "in_progress", "blocked", "completed", "abandoned"],
-                        "description": "Filter by goal status"
-                    }
-                },
-                "required": []
-            }),
-        ),
-        Tool::function(
-            "claude_task",
-            "Send a coding task to Claude Code for the current project. Claude will edit files, run commands, and complete the task. Spawns a new instance if none exists.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "The coding task for Claude Code to complete"
-                    }
-                },
-                "required": ["task"]
-            }),
-        ),
-        Tool::function(
-            "claude_close",
-            "Close the current project's Claude Code instance when done with coding tasks.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-        ),
-        Tool::function(
-            "claude_status",
-            "Check if Claude Code is running for the current project.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-        ),
-        Tool::function(
-            "discuss",
-            "Have a real-time conversation with Claude. Send a message and wait for Claude's structured response. Use this for code review, debugging together, getting Claude's expert analysis, or collaborating on complex tasks.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "What to discuss with Claude"
-                    }
-                },
-                "required": ["message"]
-            }),
-        ),
-        Tool::function(
-            "google_search",
-            "Search the web using Google Custom Search. Returns titles, URLs, and snippets from search results.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    },
-                    "num_results": {
-                        "type": "integer",
-                        "description": "Number of results to return (1-10, default 5)",
-                        "default": 5
-                    }
-                },
-                "required": ["query"]
-            }),
-        ),
-        Tool::function(
-            "web_fetch",
-            "Fetch and extract content from a web page. Returns the page title and main text content.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL to fetch"
-                    }
-                },
-                "required": ["url"]
-            }),
-        ),
-        Tool::function(
-            "research",
-            "Research a topic by searching the web, reading top results, and synthesizing findings into a grounded answer with citations. Use this when you need current information, technical comparisons, or factual verification.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "The question or topic to research"
-                    },
-                    "depth": {
-                        "type": "string",
-                        "enum": ["quick", "thorough"],
-                        "description": "Research depth: 'quick' (1 query, 3 pages) or 'thorough' (3 queries, 5 pages)",
-                        "default": "quick"
-                    }
-                },
-                "required": ["question"]
-            }),
-        ),
-        Tool::function(
-            "bash",
-            "Execute shell commands on the system. Use for file operations, git, builds, system tasks, and anything outside of code editing.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The bash command to execute"
-                    },
-                    "working_directory": {
-                        "type": "string",
-                        "description": "Working directory for the command (defaults to project root)"
-                    },
-                    "timeout_seconds": {
-                        "type": "integer",
-                        "description": "Command timeout in seconds (default 60)",
-                        "default": 60
-                    }
-                },
-                "required": ["command"]
-            }),
-        ),
-        Tool::function(
-            "set_project",
-            "Switch to a different project. Use when user wants to work on a specific project. The project context, tasks, goals, and memories will update accordingly.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "name_or_path": {
-                        "type": "string",
-                        "description": "Project name (e.g., 'Mira', 'website') or full path (e.g., '/home/user/projects/myapp')"
-                    }
-                },
-                "required": ["name_or_path"]
-            }),
-        ),
-        Tool::function(
-            "list_projects",
-            "List all known projects. Use to see what projects are available to switch to.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-        ),
-    ]
 }
