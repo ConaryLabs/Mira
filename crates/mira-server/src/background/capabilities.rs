@@ -18,6 +18,9 @@ pub async fn process_capabilities(
 ) -> Result<usize, String> {
     // Get projects that need capability scanning
     let projects = get_projects_needing_scan(db)?;
+    if !projects.is_empty() {
+        tracing::info!("Capabilities: found {} projects needing scan", projects.len());
+    }
 
     let mut processed = 0;
 
@@ -56,27 +59,28 @@ pub async fn process_capabilities(
 /// 2. Git HEAD changed AND last scan > 1 day ago (rate limited)
 /// 3. Last scan > 7 days ago (periodic refresh)
 fn get_projects_needing_scan(db: &Database) -> Result<Vec<(i64, String)>, String> {
-    let conn = db.conn();
+    // Get all indexed projects (in separate scope to release conn)
+    let all_projects: Vec<(i64, String)> = {
+        let conn = db.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT p.id, p.path
+                 FROM projects p
+                 JOIN codebase_modules m ON m.project_id = p.id",
+            )
+            .map_err(|e| e.to_string())?;
 
-    // Get all indexed projects
-    let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT p.id, p.path
-             FROM projects p
-             JOIN codebase_modules m ON m.project_id = p.id",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let all_projects: Vec<(i64, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    }; // conn dropped here
 
     let mut needing_scan = Vec::new();
 
     for (project_id, project_path) in all_projects {
         if needs_capabilities_scan(db, project_id, &project_path)? {
+            tracing::debug!("Capabilities: project {} needs scan", project_id);
             needing_scan.push((project_id, project_path));
             // Only process one project per cycle to avoid long delays
             break;
@@ -189,6 +193,12 @@ fn mark_capabilities_scanned(db: &Database, project_id: i64, project_path: &str)
     Ok(())
 }
 
+/// Max bytes of code to send per module (30KB each)
+const MAX_MODULE_CODE_BYTES: usize = 30_000;
+
+/// Max total bytes for all module context (200KB ≈ 50K tokens, fits in DeepSeek's 64K limit)
+const MAX_TOTAL_CONTEXT_BYTES: usize = 200_000;
+
 /// Generate the full capabilities inventory for a project
 async fn generate_capabilities_inventory(
     db: &Arc<Database>,
@@ -205,58 +215,78 @@ async fn generate_capabilities_inventory(
         return Ok(0);
     }
 
-    // Build context about the codebase
+    // Build context about the codebase with FULL code
     let path = Path::new(project_path);
     let mut module_context = String::new();
 
     for module in &modules {
-        module_context.push_str(&format!("\n## {}\n", module.id));
-        if let Some(ref purpose) = module.purpose {
-            module_context.push_str(&format!("Purpose: {}\n", purpose));
-        }
-        if !module.exports.is_empty() {
-            module_context.push_str(&format!("Exports: {}\n", module.exports.join(", ")));
-        }
-        if !module.depends_on.is_empty() {
-            module_context.push_str(&format!("Dependencies: {}\n", module.depends_on.join(", ")));
+        // Check if we're approaching the limit
+        if module_context.len() >= MAX_TOTAL_CONTEXT_BYTES {
+            tracing::info!(
+                "Capabilities: stopping at {} bytes (limit: {}), included {} modules",
+                module_context.len(),
+                MAX_TOTAL_CONTEXT_BYTES,
+                modules.iter().take_while(|m| m.id != module.id).count()
+            );
+            break;
         }
 
-        // Get a code preview
-        let preview = cartographer::get_module_code_preview(path, &module.path);
-        if !preview.is_empty() {
-            let truncated = if preview.len() > 500 {
-                format!("{}...", &preview[..500])
-            } else {
-                preview
-            };
-            module_context.push_str(&format!("Code preview:\n```\n{}\n```\n", truncated));
+        let mut module_section = format!("\n## Module: {}\n", module.id);
+        if let Some(ref purpose) = module.purpose {
+            module_section.push_str(&format!("Purpose: {}\n", purpose));
+        }
+        if !module.exports.is_empty() {
+            let exports_preview: Vec<_> = module.exports.iter().take(30).cloned().collect();
+            module_section.push_str(&format!("Key exports: {}\n", exports_preview.join(", ")));
+        }
+
+        // Get FULL module code (not just preview)
+        let full_code = cartographer::get_module_full_code(path, &module.path, MAX_MODULE_CODE_BYTES);
+        if !full_code.is_empty() {
+            module_section.push_str(&format!("\n```rust\n{}\n```\n", full_code));
+        }
+
+        // Only add if it won't exceed the limit
+        if module_context.len() + module_section.len() <= MAX_TOTAL_CONTEXT_BYTES {
+            module_context.push_str(&module_section);
+        } else {
+            tracing::info!(
+                "Capabilities: skipping module {} (would exceed limit)",
+                module.id
+            );
         }
     }
 
-    // Ask Reasoner to extract capabilities
+    tracing::info!(
+        "Capabilities: sending {} bytes of context to DeepSeek (~{} tokens)",
+        module_context.len(),
+        module_context.len() / 4  // Rough estimate: 4 chars per token for code
+    );
+
+    // Ask Reasoner to extract capabilities (NO issues - that's handled by code_health scanner)
     let prompt = format!(
-        r#"Analyze this codebase and extract its CAPABILITIES - what can users/developers DO with it.
+        r#"Analyze this Rust codebase and list its CAPABILITIES - what can users and developers DO with it.
 
-For each capability found:
-1. Describe what the system CAN DO (action-oriented)
-2. Note which module provides it
-3. Flag any capabilities that appear INCOMPLETE or UNUSED (dead code, stub implementations, unfinished features)
+Focus on:
+- MCP tools (functions exposed to Claude Code via the MCP protocol)
+- API endpoints (HTTP routes in the web module)
+- CLI commands (if any)
+- Background automation features
+- Key public APIs and their purposes
 
-Format your response as a structured list:
+For each capability, describe:
+1. What action users/developers can perform
+2. Which module provides it
+3. The key function or endpoint name
+
+Format your response as:
 
 CAPABILITIES:
-- [module_name] Can do X via function/tool Y
-- [module_name] Can do Z via endpoint/command W
-...
+- [module_name] Description of what users can do (via function_name or /endpoint)
 
-ISSUES (incomplete/unused):
-- [module_name] Function X appears unused (never called)
-- [module_name] Feature Y is stubbed but not implemented
-...
+Only list working, implemented capabilities. Do NOT list problems, issues, or incomplete features.
 
-Be specific and action-oriented. Focus on what the system provides to its users.
-
-Codebase modules:
+=== CODEBASE ===
 {}"#,
         module_context
     );
@@ -272,13 +302,13 @@ Codebase modules:
         .content
         .ok_or("No content in DeepSeek response")?;
 
-    // Parse and store capabilities
+    // Parse and store capabilities only
     let stored = parse_and_store_capabilities(db, embeddings, project_id, &content).await?;
 
     Ok(stored)
 }
 
-/// Parse the Reasoner response and store as memories with embeddings
+/// Parse the Reasoner response and store capabilities as memories with embeddings
 async fn parse_and_store_capabilities(
     db: &Database,
     embeddings: Option<&Arc<EmbeddingClient>>,
@@ -290,78 +320,50 @@ async fn parse_and_store_capabilities(
     // Clear old capabilities for this project (refresh)
     clear_old_capabilities(db, project_id)?;
 
-    let lines: Vec<&str> = response.lines().collect();
     let mut in_capabilities = false;
-    let mut in_issues = false;
     let mut capability_index = 0;
-    let mut issue_index = 0;
 
-    for line in lines {
+    for line in response.lines() {
         let trimmed = line.trim();
 
         if trimmed.starts_with("CAPABILITIES:") || trimmed.starts_with("**CAPABILITIES") {
             in_capabilities = true;
-            in_issues = false;
             continue;
         }
 
-        if trimmed.starts_with("ISSUES") || trimmed.starts_with("**ISSUES") {
-            in_capabilities = false;
-            in_issues = true;
-            continue;
+        // Stop if we hit a different section
+        if in_capabilities && (trimmed.starts_with("ISSUES") || trimmed.starts_with("**ISSUES")
+            || trimmed.starts_with("NOTES") || trimmed.starts_with("**NOTES")) {
+            break;
         }
 
-        if trimmed.starts_with("- ") {
+        if in_capabilities && trimmed.starts_with("- ") {
             let content = trimmed.trim_start_matches("- ").trim();
             if content.is_empty() {
                 continue;
             }
 
-            if in_capabilities {
-                // Store as capability with embedding
-                let key = format!("capability:{}", capability_index);
-                let id = db.store_memory(
-                    Some(project_id),
-                    Some(&key),
-                    content,
-                    "capability",
-                    Some("codebase"),
-                    1.0,
-                )
-                .map_err(|e| e.to_string())?;
+            // Store as capability with embedding
+            let key = format!("capability:{}", capability_index);
+            let id = db.store_memory(
+                Some(project_id),
+                Some(&key),
+                content,
+                "capability",
+                Some("codebase"),
+                1.0,
+            )
+            .map_err(|e| e.to_string())?;
 
-                // Generate and store embedding
-                if let Some(emb_client) = embeddings {
-                    if let Ok(embedding) = emb_client.embed(content).await {
-                        store_embedding(db, id, content, &embedding)?;
-                    }
+            // Generate and store embedding
+            if let Some(emb_client) = embeddings {
+                if let Ok(embedding) = emb_client.embed(content).await {
+                    store_embedding(db, id, content, &embedding)?;
                 }
-
-                capability_index += 1;
-                stored += 1;
-            } else if in_issues {
-                // Store as issue with embedding
-                let key = format!("capability_issue:{}", issue_index);
-                let id = db.store_memory(
-                    Some(project_id),
-                    Some(&key),
-                    content,
-                    "issue",
-                    Some("codebase"),
-                    0.9, // Slightly lower confidence for issues
-                )
-                .map_err(|e| e.to_string())?;
-
-                // Generate and store embedding
-                if let Some(emb_client) = embeddings {
-                    if let Ok(embedding) = emb_client.embed(content).await {
-                        store_embedding(db, id, content, &embedding)?;
-                    }
-                }
-
-                issue_index += 1;
-                stored += 1;
             }
+
+            capability_index += 1;
+            stored += 1;
         }
     }
 
@@ -383,18 +385,18 @@ fn store_embedding(db: &Database, fact_id: i64, content: &str, embedding: &[f32]
     Ok(())
 }
 
-/// Clear old capabilities before refresh
+/// Clear old capabilities before refresh (issues are handled by code_health scanner)
 fn clear_old_capabilities(db: &Database, project_id: i64) -> Result<(), String> {
     let conn = db.conn();
 
-    // Delete old capabilities and issues
+    // Delete old capabilities only (issues managed by code_health scanner)
     conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND fact_type IN ('capability', 'issue') AND category = 'codebase'",
+        "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'capability' AND category = 'codebase'",
         [project_id],
     )
     .map_err(|e| e.to_string())?;
 
-    // Also clear from vec_memory
+    // Clean up orphaned embeddings
     conn.execute(
         "DELETE FROM vec_memory WHERE fact_id NOT IN (SELECT id FROM memory_facts)",
         [],

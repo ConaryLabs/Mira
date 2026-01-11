@@ -6,6 +6,7 @@ mod embeddings;
 mod summaries;
 mod briefings;
 mod capabilities;
+mod code_health;
 pub mod watcher;
 
 use crate::db::Database;
@@ -87,23 +88,46 @@ impl BackgroundWorker {
 
         // First, check for pending embeddings (use batch API)
         if self.embeddings.is_some() {
-            processed += self.process_embedding_batch().await?;
+            let count = self.process_embedding_batch().await?;
+            if count > 0 {
+                tracing::info!("Background: processed {} embeddings", count);
+            }
+            processed += count;
         }
 
         // Process summaries one at a time (rate limited)
         if self.deepseek.is_some() {
-            processed += self.process_summary_queue().await?;
+            let count = self.process_summary_queue().await?;
+            if count > 0 {
+                tracing::info!("Background: processed {} summaries", count);
+            }
+            processed += count;
         }
 
         // Process project briefings (What's New since last session)
         if self.deepseek.is_some() {
-            processed += self.process_briefings().await?;
+            let count = self.process_briefings().await?;
+            if count > 0 {
+                tracing::info!("Background: processed {} briefings", count);
+            }
+            processed += count;
         }
 
         // Process capabilities inventory (periodic codebase scan)
         if self.deepseek.is_some() {
-            processed += self.process_capabilities().await?;
+            let count = self.process_capabilities().await?;
+            if count > 0 {
+                tracing::info!("Background: processed {} capabilities", count);
+            }
+            processed += count;
         }
+
+        // Process code health (cargo warnings, TODOs, unused functions)
+        let count = self.process_code_health().await?;
+        if count > 0 {
+            tracing::info!("Background: processed {} health issues", count);
+        }
+        processed += count;
 
         Ok(processed)
     }
@@ -130,6 +154,11 @@ impl BackgroundWorker {
             self.deepseek.as_ref().unwrap(),
             self.embeddings.as_ref(),
         ).await
+    }
+
+    /// Process code health (compiler warnings, TODOs, unused code)
+    async fn process_code_health(&self) -> Result<usize, String> {
+        code_health::process_code_health(&self.db).await
     }
 }
 

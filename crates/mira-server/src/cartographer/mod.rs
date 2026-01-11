@@ -652,6 +652,73 @@ pub fn get_module_code_preview(project_path: &Path, module_path: &str) -> String
     preview
 }
 
+/// Read full code for a module (all .rs files in the directory)
+/// Returns concatenated code with file headers, up to max_bytes total
+pub fn get_module_full_code(project_path: &Path, module_path: &str, max_bytes: usize) -> String {
+    let full_path = project_path.join(module_path);
+    let mut code = String::new();
+    let mut total_bytes = 0;
+
+    // Collect all .rs files in the module
+    let mut rs_files: Vec<_> = if full_path.is_dir() {
+        WalkDir::new(&full_path)
+            .max_depth(2) // Include immediate subdirectories
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+            .map(|e| e.path().to_path_buf())
+            .collect()
+    } else if full_path.extension().map_or(false, |e| e == "rs") && full_path.exists() {
+        vec![full_path.clone()]
+    } else {
+        vec![]
+    };
+
+    // Sort for consistent ordering (mod.rs first, then alphabetically)
+    rs_files.sort_by(|a, b| {
+        let a_is_mod = a.file_name().map_or(false, |n| n == "mod.rs");
+        let b_is_mod = b.file_name().map_or(false, |n| n == "mod.rs");
+        match (a_is_mod, b_is_mod) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.cmp(b),
+        }
+    });
+
+    for file_path in rs_files {
+        if total_bytes >= max_bytes {
+            code.push_str("\n// ... truncated (max size reached) ...\n");
+            break;
+        }
+
+        if let Ok(content) = std::fs::read_to_string(&file_path) {
+            // Get relative path for header
+            let relative = file_path
+                .strip_prefix(project_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| file_path.to_string_lossy().to_string());
+
+            let header = format!("\n// ═══ {} ═══\n", relative);
+            let available = max_bytes.saturating_sub(total_bytes);
+
+            if header.len() + content.len() <= available {
+                code.push_str(&header);
+                code.push_str(&content);
+                total_bytes += header.len() + content.len();
+            } else if available > header.len() + 100 {
+                // Partial content
+                code.push_str(&header);
+                let take = available - header.len() - 30;
+                code.push_str(&content[..take.min(content.len())]);
+                code.push_str("\n// ... truncated ...\n");
+                total_bytes = max_bytes;
+            }
+        }
+    }
+
+    code
+}
+
 /// Build prompt for summarizing multiple modules
 pub fn build_summary_prompt(modules: &[ModuleSummaryContext]) -> String {
     let mut prompt = String::from(
