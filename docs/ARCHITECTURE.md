@@ -1,7 +1,7 @@
 # Mira Architecture
 
-**Version**: 3.2.0
-**Last Updated**: 2026-01-05
+**Version**: 3.3.0
+**Last Updated**: 2026-01-11
 
 ## Overview
 
@@ -122,14 +122,14 @@ This ensures:
 
 ## Database Schema
 
-### Regular Tables (15)
+### Regular Tables (17)
 
 ```sql
 -- Projects
 projects (id, path, name, created_at)
 
 -- Memory
-memory_facts (id, project_id, key, content, fact_type, category, confidence, created_at, updated_at)
+memory_facts (id, project_id, key, content, fact_type, category, confidence, has_embedding, created_at, updated_at)
 corrections (id, project_id, what_was_wrong, what_is_right, correction_type, scope, confidence, created_at)
 
 -- Code Intelligence
@@ -140,7 +140,11 @@ codebase_modules (id, project_id, module_id, name, path, purpose, exports, depen
 
 -- Sessions
 sessions (id, project_id, status, summary, started_at, last_activity)
-tool_history (id, session_id, tool_name, arguments, result_summary, success, created_at)
+tool_history (id, session_id, tool_name, arguments, result_summary, full_result, success, created_at)
+
+-- Chat
+chat_messages (id, role, content, reasoning_content, summarized, summary_id, created_at)
+chat_summaries (id, project_id, summary, message_range_start, message_range_end, summary_level, created_at)
 
 -- Tasks & Goals
 goals (id, project_id, title, description, status, priority, progress_percent, created_at)
@@ -153,6 +157,9 @@ permission_rules (id, tool_name, pattern, match_type, scope, created_at)
 -- Background Processing
 pending_embeddings (id, project_id, file_path, chunk_content, status, created_at)
 background_batches (id, batch_id, item_ids, status, created_at)
+
+-- Server State
+server_state (key, value, updated_at)
 ```
 
 ### Vector Tables (2)
