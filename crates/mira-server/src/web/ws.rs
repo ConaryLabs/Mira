@@ -50,13 +50,6 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         let _ = sender.send(Message::Text(msg.into())).await;
     }
 
-    // Skip tool history replay for now - causes UI flooding
-    // TODO: Batch these or send as single summary event
-    // if let Ok(mut history) = state.db.get_session_history(&session_id, 50) {
-    //     history.reverse();
-    //     replay_history(&mut sender, history).await;
-    // }
-
     // Clone what we need for the send task
     let send_session_id = session_id.clone();
     let send_db = state.db.clone();

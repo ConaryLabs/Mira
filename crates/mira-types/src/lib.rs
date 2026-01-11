@@ -415,6 +415,8 @@ pub struct IndexStats {
     pub files: usize,
     pub symbols: usize,
     pub chunks: usize,
+    #[serde(default)]
+    pub errors: usize,
 }
 
 /// Generic API response wrapper

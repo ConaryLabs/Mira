@@ -156,9 +156,9 @@ impl BackgroundWorker {
         ).await
     }
 
-    /// Process code health (compiler warnings, TODOs, unused code)
+    /// Process code health (compiler warnings, TODOs, unused code, complexity)
     async fn process_code_health(&self) -> Result<usize, String> {
-        code_health::process_code_health(&self.db).await
+        code_health::process_code_health(&self.db, self.deepseek.as_ref()).await
     }
 }
 

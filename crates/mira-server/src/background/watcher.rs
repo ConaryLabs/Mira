@@ -1,6 +1,7 @@
 // crates/mira-server/src/background/watcher.rs
 // File system watcher for automatic incremental indexing
 
+use super::code_health;
 use crate::db::Database;
 use crate::indexer;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -266,6 +267,9 @@ impl FileWatcher {
             }
         }
 
+        // Mark project for health rescan (will run on next background cycle)
+        let _ = code_health::mark_health_scan_needed(&self.db, project_id);
+
         Ok(())
     }
 
@@ -357,9 +361,9 @@ impl FileWatcher {
         // Queue chunks for embedding
         for chunk in &parse_result.chunks {
             conn.execute(
-                "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, status)
-                 VALUES (?, ?, ?, 'pending')",
-                rusqlite::params![project_id, relative_path, chunk],
+                "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line, status)
+                 VALUES (?, ?, ?, ?, 'pending')",
+                rusqlite::params![project_id, relative_path, &chunk.content, chunk.start_line],
             ).map_err(|e| e.to_string())?;
         }
 

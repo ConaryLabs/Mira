@@ -326,11 +326,11 @@ fn store_embedding(db: &Arc<Database>, pending_id: i64, embedding: &[f32]) -> Re
     let conn = db.conn();
 
     // Get the pending item details
-    let (project_id, file_path, chunk_content): (i64, String, String) = conn
+    let (project_id, file_path, chunk_content, start_line): (i64, String, String, i64) = conn
         .query_row(
-            "SELECT project_id, file_path, chunk_content FROM pending_embeddings WHERE id = ?",
+            "SELECT project_id, file_path, chunk_content, start_line FROM pending_embeddings WHERE id = ?",
             params![pending_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -342,9 +342,9 @@ fn store_embedding(db: &Arc<Database>, pending_id: i64, embedding: &[f32]) -> Re
 
     // Insert into vec_code
     conn.execute(
-        "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id)
-         VALUES (?, ?, ?, ?)",
-        params![embedding_bytes, file_path, chunk_content, project_id],
+        "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
+         VALUES (?, ?, ?, ?, ?)",
+        params![embedding_bytes, file_path, chunk_content, project_id, start_line],
     )
     .map_err(|e| e.to_string())?;
 

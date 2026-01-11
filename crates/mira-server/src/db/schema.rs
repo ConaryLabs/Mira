@@ -38,6 +38,75 @@ pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate vec_code to add start_line column (v2.1 schema)
+pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
+    // Check if vec_code exists
+    let vec_code_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_code'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !vec_code_exists {
+        return Ok(());
+    }
+
+    // Check if start_line column exists by checking vec_code_info
+    let has_start_line: bool = conn
+        .query_row(
+            "SELECT 1 FROM vec_code_info WHERE auxiliary_column_name = 'start_line'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_start_line {
+        tracing::info!("Migrating vec_code to add start_line column");
+        // Virtual tables can't be altered - must drop and recreate
+        // Embeddings will be regenerated on next indexing
+        let _ = conn.execute("DROP TABLE IF EXISTS vec_code", []);
+    }
+
+    Ok(())
+}
+
+/// Migrate pending_embeddings to add start_line column
+pub fn migrate_pending_embeddings_line_numbers(conn: &Connection) -> Result<()> {
+    // Check if pending_embeddings exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pending_embeddings'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if start_line column exists
+    let has_column: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('pending_embeddings') WHERE name = 'start_line'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_column {
+        tracing::info!("Migrating pending_embeddings to add start_line column");
+        let _ = conn.execute(
+            "ALTER TABLE pending_embeddings ADD COLUMN start_line INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
+    }
+
+    Ok(())
+}
+
 /// Database schema SQL
 pub const SCHEMA: &str = r#"
 -- ═══════════════════════════════════════
@@ -209,6 +278,7 @@ CREATE TABLE IF NOT EXISTS pending_embeddings (
     project_id INTEGER,
     file_path TEXT NOT NULL,
     chunk_content TEXT NOT NULL,
+    start_line INTEGER NOT NULL DEFAULT 1,
     status TEXT DEFAULT 'pending',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -271,6 +341,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
     embedding float[1536],
     +file_path TEXT,
     +chunk_content TEXT,
-    +project_id INTEGER
+    +project_id INTEGER,
+    +start_line INTEGER
 );
 "#;

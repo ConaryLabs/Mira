@@ -19,6 +19,7 @@ pub struct IndexStats {
     pub files: usize,
     pub symbols: usize,
     pub chunks: usize,
+    pub errors: usize,
 }
 
 /// Create a parser for a given file extension
@@ -61,11 +62,17 @@ pub fn extract_all(path: &Path) -> Result<(Vec<Symbol>, Vec<Import>, Vec<parsers
     Ok(result)
 }
 
+/// A code chunk with content and location info
+pub struct CodeChunk {
+    pub content: String,
+    pub start_line: u32,
+}
+
 /// Result of parsing file content for incremental updates
 pub struct FileParseResult {
     pub symbols: Vec<ParsedSymbol>,
     pub imports: Vec<ParsedImport>,
-    pub chunks: Vec<String>,
+    pub chunks: Vec<CodeChunk>,
 }
 
 /// Simplified symbol for incremental indexing
@@ -85,9 +92,9 @@ pub struct ParsedImport {
 
 /// Create semantic chunks based on symbol boundaries
 /// Each chunk is a complete function/struct/etc with context metadata
-fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<String> {
+fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeChunk> {
     let lines: Vec<&str> = content.lines().collect();
-    let mut chunks = Vec::new();
+    let mut chunks: Vec<CodeChunk> = Vec::new();
     let mut covered_lines: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
     // Sort symbols by start line
@@ -128,17 +135,17 @@ fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<String
             let mut current_chunk = String::new();
             for line in context.lines() {
                 if current_chunk.len() + line.len() > 1000 && !current_chunk.is_empty() {
-                    chunks.push(current_chunk);
+                    chunks.push(CodeChunk { content: current_chunk, start_line: sym.start_line });
                     current_chunk = format!("// {} {} (continued)\n", sym.kind, sym.name);
                 }
                 current_chunk.push_str(line);
                 current_chunk.push('\n');
             }
             if !current_chunk.trim().is_empty() {
-                chunks.push(current_chunk);
+                chunks.push(CodeChunk { content: current_chunk, start_line: sym.start_line });
             }
         } else {
-            chunks.push(context);
+            chunks.push(CodeChunk { content: context, start_line: sym.start_line });
         }
     }
 
@@ -155,7 +162,10 @@ fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<String
             // End of orphan region - create chunk if substantial
             let orphan_code: String = lines[(start - 1) as usize..(line_num - 1) as usize].join("\n");
             if orphan_code.trim().len() > 50 {
-                chunks.push(format!("// module-level code\n{}", orphan_code));
+                chunks.push(CodeChunk {
+                    content: format!("// module-level code\n{}", orphan_code),
+                    start_line: start,
+                });
             }
             orphan_start = None;
         }
@@ -165,7 +175,10 @@ fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<String
     if let Some(start) = orphan_start {
         let orphan_code: String = lines[(start - 1) as usize..].join("\n");
         if orphan_code.trim().len() > 50 {
-            chunks.push(format!("// module-level code\n{}", orphan_code));
+            chunks.push(CodeChunk {
+                content: format!("// module-level code\n{}", orphan_code),
+                start_line: start,
+            });
         }
     }
 
@@ -236,12 +249,14 @@ pub async fn index_project(
         files: 0,
         symbols: 0,
         chunks: 0,
+        errors: 0,
     };
 
     tracing::info!("Collecting files...");
 
-    // Collect files to index
-    let files: Vec<_> = WalkDir::new(path)
+    // Collect files to index, tracking any walk errors
+    let mut files = Vec::new();
+    for entry in WalkDir::new(path)
         .follow_links(true)
         .into_iter()
         .filter_entry(|e| {
@@ -257,15 +272,23 @@ pub async fn index_project(
                 && name != "vendor"   // vendored deps
                 && name != "__pycache__"
         })
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            matches!(
-                e.path().extension().and_then(|e| e.to_str()),
-                Some("rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "go")
-            )
-        })
-        .collect();
+    {
+        match entry {
+            Ok(e) if e.file_type().is_file() => {
+                if matches!(
+                    e.path().extension().and_then(|ext| ext.to_str()),
+                    Some("rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "go")
+                ) {
+                    files.push(e);
+                }
+            }
+            Ok(_) => {} // Directory, skip
+            Err(e) => {
+                tracing::warn!("Failed to access path during indexing: {}", e);
+                stats.errors += 1;
+            }
+        }
+    }
 
     tracing::info!("Found {} files to index", files.len());
 
@@ -391,47 +414,65 @@ pub async fn index_project(
                 // Queue AST-aware code chunks for batch embedding
                 // Chunks are based on symbol boundaries for better semantic search
                 if embeddings.is_some() {
-                    if let Ok(content) = std::fs::read_to_string(file_path) {
-                        // Convert symbols to ParsedSymbol format for chunking
-                        let parsed_symbols: Vec<ParsedSymbol> = symbols
-                            .iter()
-                            .map(|s| ParsedSymbol {
-                                name: s.name.clone(),
-                                kind: s.symbol_type.clone(),
-                                start_line: s.start_line,
-                                end_line: s.end_line,
-                                signature: s.signature.clone(),
-                            })
-                            .collect();
+                    match std::fs::read_to_string(file_path) {
+                        Ok(content) => {
+                            // Convert symbols to ParsedSymbol format for chunking
+                            let parsed_symbols: Vec<ParsedSymbol> = symbols
+                                .iter()
+                                .map(|s| ParsedSymbol {
+                                    name: s.name.clone(),
+                                    kind: s.symbol_type.clone(),
+                                    start_line: s.start_line,
+                                    end_line: s.end_line,
+                                    signature: s.signature.clone(),
+                                })
+                                .collect();
 
-                        // Create AST-aware chunks
-                        let chunks = create_semantic_chunks(&content, &parsed_symbols);
+                            // Create AST-aware chunks
+                            let chunks = create_semantic_chunks(&content, &parsed_symbols);
 
-                        for chunk in chunks {
-                            if chunk.trim().is_empty() {
-                                continue;
+                            for chunk in chunks {
+                                if chunk.content.trim().is_empty() {
+                                    continue;
+                                }
+
+                                // Queue for batch processing
+                                if let Err(e) = conn.execute(
+                                    "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line, status)
+                                     VALUES (?, ?, ?, ?, 'pending')",
+                                    params![project_id, relative_path, chunk.content, chunk.start_line],
+                                ) {
+                                    tracing::warn!("Failed to queue chunk for embedding ({}:{}): {}", relative_path, chunk.start_line, e);
+                                    stats.errors += 1;
+                                } else {
+                                    stats.chunks += 1;
+                                }
                             }
-
-                            // Queue for batch processing
-                            if let Err(e) = conn.execute(
-                                "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, status)
-                                 VALUES (?, ?, ?, 'pending')",
-                                params![project_id, relative_path, chunk],
-                            ) {
-                                tracing::debug!("Failed to queue chunk for embedding: {}", e);
-                            } else {
-                                stats.chunks += 1;
-                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to read {} for chunking: {}", relative_path, e);
+                            stats.errors += 1;
                         }
                     }
                 }
             }
             Err(e) => {
                 tracing::warn!("Failed to parse {}: {}", file_path.display(), e);
+                stats.errors += 1;
             }
         }
     }
 
-    tracing::info!("Indexing complete: {} files, {} symbols", stats.files, stats.symbols);
+    if stats.errors > 0 {
+        tracing::warn!(
+            "Indexing complete with errors: {} files, {} symbols, {} chunks, {} errors",
+            stats.files, stats.symbols, stats.chunks, stats.errors
+        );
+    } else {
+        tracing::info!(
+            "Indexing complete: {} files, {} symbols, {} chunks",
+            stats.files, stats.symbols, stats.chunks
+        );
+    }
     Ok(stats)
 }

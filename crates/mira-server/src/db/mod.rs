@@ -88,6 +88,12 @@ impl Database {
         // Check if vec tables need migration (dimension change)
         schema::migrate_vec_tables(&conn)?;
 
+        // Add start_line column to pending_embeddings if missing
+        schema::migrate_pending_embeddings_line_numbers(&conn)?;
+
+        // Add start_line column to vec_code if missing (drops and recreates)
+        schema::migrate_vec_code_line_numbers(&conn)?;
+
         conn.execute_batch(schema::SCHEMA)?;
         Ok(())
     }
