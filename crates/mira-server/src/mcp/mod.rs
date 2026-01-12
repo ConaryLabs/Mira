@@ -270,7 +270,7 @@ pub struct GoalRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
-    #[schemars(description = "Action: project/file/status/cleanup")]
+    #[schemars(description = "Action: project/file/status/check-batch/reset-stuck/embed-now/cancel-batch")]
     pub action: String,
     #[schemars(description = "Path")]
     pub path: Option<String>,
@@ -438,7 +438,7 @@ impl MiraServer {
         .await
     }
 
-    #[tool(description = "Index code and git history. Actions: project/file/status/cleanup")]
+    #[tool(description = "Index code and git history. Actions: project/file/status/check-batch/reset-stuck")]
     async fn index(
         &self,
         Parameters(req): Parameters<IndexRequest>,

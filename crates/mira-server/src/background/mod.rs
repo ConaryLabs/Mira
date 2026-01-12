@@ -178,3 +178,25 @@ pub fn spawn(
 
     shutdown_tx
 }
+
+/// Force check batch status now (called from MCP tool)
+pub async fn check_batch_now(
+    db: &Arc<Database>,
+    embeddings: &Arc<EmbeddingClient>,
+) -> Result<usize, String> {
+    embeddings::process_batch(db, embeddings).await
+}
+
+/// Process embeddings immediately using direct API (called from MCP tool)
+pub async fn embed_now(
+    db: &Arc<Database>,
+    embeddings: &Arc<EmbeddingClient>,
+    limit: usize,
+) -> Result<usize, String> {
+    embeddings::process_realtime(db, embeddings, limit).await
+}
+
+/// Cancel active batch and reset items to pending (called from MCP tool)
+pub fn cancel_batch(db: &Arc<Database>) -> Result<String, String> {
+    embeddings::cancel_batch(db)
+}

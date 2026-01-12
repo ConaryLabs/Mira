@@ -417,3 +417,97 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
         text.chars().take(max_chars).collect()
     }
 }
+
+// ═══════════════════════════════════════
+// REAL-TIME EMBEDDING (direct API)
+// ═══════════════════════════════════════
+
+/// Process pending embeddings immediately using direct API (not batch file API)
+/// This is faster but costs 2x more than the batch API
+pub async fn process_realtime(
+    db: &Arc<Database>,
+    embeddings: &Arc<EmbeddingClient>,
+    limit: usize,
+) -> Result<usize, String> {
+    // Find pending embeddings
+    let pending = scanner::find_pending_embeddings(db, limit)?;
+    if pending.is_empty() {
+        return Ok(0);
+    }
+
+    tracing::info!("Processing {} embeddings in real-time", pending.len());
+
+    let ids: Vec<i64> = pending.iter().map(|p| p.id).collect();
+    let texts: Vec<String> = pending.iter().map(|p| truncate_text(&p.chunk_content, 8000)).collect();
+
+    // Mark as processing
+    scanner::mark_embeddings_processing(db, &ids)?;
+
+    // Call the direct embedding API (batches internally in chunks of 100)
+    match embeddings.embed_batch(&texts).await {
+        Ok(vectors) => {
+            let mut completed_ids = Vec::new();
+
+            for (i, embedding) in vectors.iter().enumerate() {
+                if let Err(e) = store_embedding(db, ids[i], embedding) {
+                    tracing::warn!("Failed to store embedding {}: {}", ids[i], e);
+                } else {
+                    completed_ids.push(ids[i]);
+                }
+            }
+
+            // Mark completed
+            scanner::mark_embeddings_completed(db, &completed_ids)?;
+
+            tracing::info!("Real-time: embedded {} items", completed_ids.len());
+            Ok(completed_ids.len())
+        }
+        Err(e) => {
+            // Reset to pending on failure
+            let conn = db.conn();
+            let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+            let sql = format!(
+                "UPDATE pending_embeddings SET status = 'pending' WHERE id IN ({})",
+                placeholders.join(",")
+            );
+            let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let _ = conn.execute(&sql, params.as_slice());
+
+            Err(format!("Real-time embedding failed: {}", e))
+        }
+    }
+}
+
+/// Cancel active batch and reset items to pending
+pub fn cancel_batch(db: &Arc<Database>) -> Result<String, String> {
+    let conn = db.conn();
+
+    // Get active batch info
+    let batch_id: Option<String> = conn
+        .query_row(
+            "SELECT batch_id FROM background_batches WHERE status = 'active' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if batch_id.is_none() {
+        return Ok("No active batch to cancel".to_string());
+    }
+
+    let batch_id = batch_id.unwrap();
+
+    // Mark batch as cancelled
+    conn.execute(
+        "UPDATE background_batches SET status = 'cancelled' WHERE status = 'active'",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    // Reset processing items to pending
+    let reset_count = conn.execute(
+        "UPDATE pending_embeddings SET status = 'pending' WHERE status = 'processing'",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(format!("Cancelled batch {} and reset {} items to pending", batch_id, reset_count))
+}

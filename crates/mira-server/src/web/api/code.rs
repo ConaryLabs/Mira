@@ -121,3 +121,63 @@ pub async fn trigger_index(
         Err(e) => Json(ApiResponse::err(e.to_string())),
     }
 }
+
+/// Process pending embeddings immediately using direct API
+pub async fn embed_now(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let embeddings = match &state.embeddings {
+        Some(e) => e.clone(),
+        None => return Json(ApiResponse::<EmbedNowStats>::err("Embeddings not configured")),
+    };
+
+    // First, cancel any active batch and reset processing items
+    // This prevents the background worker from competing with us
+    let _ = crate::background::cancel_batch(&state.db);
+
+    // Also reset any stuck processing items
+    {
+        let conn = state.db.conn();
+        let _ = conn.execute(
+            "UPDATE pending_embeddings SET status = 'pending' WHERE status = 'processing'",
+            [],
+        );
+    }
+
+    let limit = 100;
+    let mut total = 0;
+
+    loop {
+        let result = crate::background::embed_now(&state.db, &embeddings, limit).await;
+
+        match result {
+            Ok(processed) if processed > 0 => {
+                total += processed;
+                if processed < limit {
+                    break;
+                }
+            }
+            Ok(_) => break,
+            Err(e) => {
+                if total > 0 {
+                    return Json(ApiResponse::ok(EmbedNowStats {
+                        embedded: total,
+                        error: Some(e),
+                    }));
+                }
+                return Json(ApiResponse::err(e));
+            }
+        }
+    }
+
+    Json(ApiResponse::ok(EmbedNowStats {
+        embedded: total,
+        error: None,
+    }))
+}
+
+#[derive(serde::Serialize)]
+pub struct EmbedNowStats {
+    pub embedded: usize,
+    pub error: Option<String>,
+}

@@ -36,6 +36,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/symbols", post(api::get_symbols))
         .route("/search/code", post(api::semantic_search))
         .route("/index", post(api::trigger_index))
+        .route("/embed-now", post(api::embed_now))
         .route("/tasks", get(api::list_tasks).post(api::create_task))
         .route("/goals", get(api::list_goals).post(api::create_goal))
         .route("/project", get(api::get_project))

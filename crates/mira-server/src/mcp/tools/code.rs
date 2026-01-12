@@ -116,17 +116,179 @@ pub async fn index(
             Ok(response)
         }
         "status" => {
-            let conn = server.db.conn();
-            let symbols: i64 = conn
-                .query_row("SELECT COUNT(*) FROM code_symbols", [], |r| r.get(0))
-                .unwrap_or(0);
-            let chunks: i64 = conn
-                .query_row("SELECT COUNT(*) FROM vec_code", [], |r| r.get(0))
-                .unwrap_or(0);
+            let project = server.project.read().await;
+            let project_id = project.as_ref().map(|p| p.id);
+            drop(project);
 
-            Ok(format!("Index status: {} symbols, {} code chunks", symbols, chunks))
+            let conn = server.db.conn();
+
+            // Count symbols for current project (or all if no project)
+            let symbols: i64 = if let Some(pid) = project_id {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM code_symbols WHERE project_id = ?",
+                    [pid],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0)
+            } else {
+                conn.query_row("SELECT COUNT(*) FROM code_symbols", [], |r| r.get(0))
+                    .unwrap_or(0)
+            };
+
+            // Count embedded chunks for current project
+            let embedded: i64 = if let Some(pid) = project_id {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM vec_code WHERE project_id = ?",
+                    [pid],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0)
+            } else {
+                conn.query_row("SELECT COUNT(*) FROM vec_code", [], |r| r.get(0))
+                    .unwrap_or(0)
+            };
+
+            // Count pending embeddings
+            let (pending, processing): (i64, i64) = if let Some(pid) = project_id {
+                let pending = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM pending_embeddings WHERE project_id = ? AND status = 'pending'",
+                        [pid],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                let processing = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM pending_embeddings WHERE project_id = ? AND status = 'processing'",
+                        [pid],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                (pending, processing)
+            } else {
+                let pending = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM pending_embeddings WHERE status = 'pending'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                let processing = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM pending_embeddings WHERE status = 'processing'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                (pending, processing)
+            };
+
+            // Check for active batch
+            let active_batch: Option<String> = conn
+                .query_row(
+                    "SELECT batch_id FROM background_batches WHERE status = 'active' LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .ok();
+
+            let mut status = format!("Index status: {} symbols, {} embedded chunks", symbols, embedded);
+
+            if pending > 0 || processing > 0 {
+                status.push_str(&format!("\nPending embeddings: {} pending, {} processing", pending, processing));
+            }
+
+            if let Some(batch_id) = active_batch {
+                status.push_str(&format!("\nActive batch: {}", batch_id));
+            }
+
+            Ok(status)
         }
-        _ => Err(format!("Unknown action: {}. Use: project, file, status", action)),
+        "check-batch" => {
+            // Force check batch status
+            if server.embeddings.is_none() {
+                return Err("Embeddings not configured".to_string());
+            }
+
+            let result = crate::background::check_batch_now(
+                &server.db,
+                server.embeddings.as_ref().unwrap(),
+            )
+            .await;
+
+            match result {
+                Ok(processed) if processed > 0 => {
+                    Ok(format!("Batch complete: {} embeddings processed", processed))
+                }
+                Ok(_) => Ok("Batch still processing or no active batch".to_string()),
+                Err(e) => Err(format!("Batch check failed: {}", e)),
+            }
+        }
+        "reset-stuck" => {
+            // Reset stuck processing items back to pending
+            let conn = server.db.conn();
+            let reset = conn
+                .execute(
+                    "UPDATE pending_embeddings SET status = 'pending' WHERE status = 'processing'",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+
+            // Also clear any stale active batches
+            let _ = conn.execute(
+                "UPDATE background_batches SET status = 'failed' WHERE status = 'active'",
+                [],
+            );
+
+            Ok(format!("Reset {} stuck items to pending", reset))
+        }
+        "embed-now" => {
+            // Process embeddings immediately using direct API (not batch file API)
+            if server.embeddings.is_none() {
+                return Err("Embeddings not configured".to_string());
+            }
+
+            // Process up to 100 at a time (direct API limit per request)
+            let limit = 100;
+            let mut total = 0;
+
+            loop {
+                let result = crate::background::embed_now(
+                    &server.db,
+                    server.embeddings.as_ref().unwrap(),
+                    limit,
+                )
+                .await;
+
+                match result {
+                    Ok(processed) if processed > 0 => {
+                        total += processed;
+                        // Continue processing if we hit the limit
+                        if processed < limit {
+                            break;
+                        }
+                    }
+                    Ok(_) => break, // No more pending
+                    Err(e) => {
+                        if total > 0 {
+                            return Ok(format!("Embedded {} items before error: {}", total, e));
+                        }
+                        return Err(format!("Embedding failed: {}", e));
+                    }
+                }
+            }
+
+            if total > 0 {
+                Ok(format!("Embedded {} items in real-time", total))
+            } else {
+                Ok("No pending embeddings to process".to_string())
+            }
+        }
+        "cancel-batch" => {
+            // Cancel active batch and reset items to pending
+            crate::background::cancel_batch(&server.db)
+        }
+        _ => Err(format!("Unknown action: {}. Use: project, file, status, check-batch, reset-stuck, embed-now, cancel-batch", action)),
     }
 }
 

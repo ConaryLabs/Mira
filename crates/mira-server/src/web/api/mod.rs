@@ -13,7 +13,7 @@ use mira_types::{ApiResponse, WsEvent};
 use crate::web::state::AppState;
 
 // Re-export all handlers for router compatibility
-pub use code::{get_symbols, semantic_search, trigger_index};
+pub use code::{embed_now, get_symbols, semantic_search, trigger_index};
 pub use memory::{create_memory, delete_memory, get_memory, list_memories, recall};
 pub use projects::{get_persona, get_project, list_projects, set_project, set_session_persona};
 pub use sessions::{export_session, get_session, get_session_history, list_sessions};
