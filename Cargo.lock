@@ -1503,6 +1503,7 @@ dependencies = [
  "dirs",
  "dotenv",
  "dotenvy",
+ "futures",
  "git2",
  "glob",
  "ignore",

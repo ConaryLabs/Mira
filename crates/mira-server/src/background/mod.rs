@@ -1,12 +1,10 @@
 // crates/mira-server/src/background/mod.rs
 // Background worker for idle-time processing
 
-mod scanner;
-mod embeddings;
 mod summaries;
 mod briefings;
 mod capabilities;
-mod code_health;
+pub mod code_health;
 pub mod watcher;
 
 use crate::db::Database;
@@ -22,15 +20,6 @@ pub struct BackgroundWorker {
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
     shutdown: watch::Receiver<bool>,
-}
-
-/// Work item types
-#[derive(Debug)]
-pub enum WorkItem {
-    /// File needs embedding (project_id, file_path, content)
-    Embedding { project_id: i64, file_path: String, content: String },
-    /// Module needs summary (project_id, module_id, module_path)
-    Summary { project_id: i64, module_id: i64, module_path: String },
 }
 
 impl BackgroundWorker {
@@ -86,15 +75,6 @@ impl BackgroundWorker {
     async fn process_batch(&self) -> Result<usize, String> {
         let mut processed = 0;
 
-        // First, check for pending embeddings (use batch API)
-        if self.embeddings.is_some() {
-            let count = self.process_embedding_batch().await?;
-            if count > 0 {
-                tracing::info!("Background: processed {} embeddings", count);
-            }
-            processed += count;
-        }
-
         // Process summaries one at a time (rate limited)
         if self.deepseek.is_some() {
             let count = self.process_summary_queue().await?;
@@ -130,11 +110,6 @@ impl BackgroundWorker {
         processed += count;
 
         Ok(processed)
-    }
-
-    /// Process embeddings using OpenAI Batch API
-    async fn process_embedding_batch(&self) -> Result<usize, String> {
-        embeddings::process_batch(&self.db, self.embeddings.as_ref().unwrap()).await
     }
 
     /// Process summaries with rate limiting
@@ -177,26 +152,4 @@ pub fn spawn(
     });
 
     shutdown_tx
-}
-
-/// Force check batch status now (called from MCP tool)
-pub async fn check_batch_now(
-    db: &Arc<Database>,
-    embeddings: &Arc<EmbeddingClient>,
-) -> Result<usize, String> {
-    embeddings::process_batch(db, embeddings).await
-}
-
-/// Process embeddings immediately using direct API (called from MCP tool)
-pub async fn embed_now(
-    db: &Arc<Database>,
-    embeddings: &Arc<EmbeddingClient>,
-    limit: usize,
-) -> Result<usize, String> {
-    embeddings::process_realtime(db, embeddings, limit).await
-}
-
-/// Cancel active batch and reset items to pending (called from MCP tool)
-pub fn cancel_batch(db: &Arc<Database>) -> Result<String, String> {
-    embeddings::cancel_batch(db)
 }

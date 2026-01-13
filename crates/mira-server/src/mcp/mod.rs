@@ -275,18 +275,18 @@ pub struct GoalRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
-    #[schemars(description = "Action: project/file/status/check-batch/reset-stuck/embed-now/cancel-batch")]
+    #[schemars(description = "Action: project/file/status")]
     pub action: String,
     #[schemars(description = "Path")]
     pub path: Option<String>,
-    #[schemars(description = "Include git")]
-    pub include_git: Option<bool>,
     #[schemars(description = "Commit limit")]
     pub commit_limit: Option<i64>,
     #[schemars(description = "Parallel")]
     pub parallel: Option<bool>,
     #[schemars(description = "Max workers")]
     pub max_workers: Option<i64>,
+    #[schemars(description = "Skip embedding generation (faster indexing)")]
+    pub skip_embed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -486,12 +486,12 @@ impl MiraServer {
         .await
     }
 
-    #[tool(description = "Index code and git history. Actions: project/file/status/check-batch/reset-stuck")]
+    #[tool(description = "Index code and git history. Actions: project/file/status")]
     async fn index(
         &self,
         Parameters(req): Parameters<IndexRequest>,
     ) -> Result<String, String> {
-        tools::code::index(self, req.action, req.path).await
+        tools::code::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
     }
 
     #[tool(description = "Generate LLM-powered summaries for codebase modules. Uses DeepSeek to analyze code and create descriptions.")]

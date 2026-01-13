@@ -22,6 +22,13 @@ pub struct IndexStats {
     pub errors: usize,
 }
 
+/// Pending chunk for batch embedding
+struct PendingChunk {
+    file_path: String,
+    start_line: usize,
+    content: String,
+}
+
 /// Create a parser for a given file extension
 fn create_parser(ext: &str) -> Option<Parser> {
     let mut parser = Parser::new();
@@ -317,15 +324,14 @@ pub async fn index_project(
             "DELETE FROM codebase_modules WHERE project_id = ?",
             params![project_id],
         )?;
-        conn.execute(
-            "DELETE FROM pending_embeddings WHERE project_id = ?",
-            params![project_id],
-        )?;
     }
 
     tracing::info!("Processing files...");
 
-    // Index each file
+    // Collect chunks for batch embedding
+    let mut pending_chunks: Vec<PendingChunk> = Vec::new();
+
+    // Index each file (parse and store symbols, collect chunks)
     for (i, entry) in files.iter().enumerate() {
         let file_path = entry.path();
         let relative_path = file_path
@@ -345,113 +351,95 @@ pub async fn index_project(
 
                 tracing::info!("  Parsed in {:?} ({} symbols, {} imports)", parse_time, symbols.len(), imports.len());
 
-                let db_start = std::time::Instant::now();
-                let conn = db.conn();
-
-                // Store symbols
-                for sym in &symbols {
-                    conn.execute(
-                        "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        params![
-                            project_id,
-                            relative_path,
-                            sym.name,
-                            sym.symbol_type,
-                            sym.start_line,
-                            sym.end_line,
-                            sym.signature
-                        ],
-                    )?;
-                }
-
-                // Store imports
-                for import in &imports {
-                    conn.execute(
-                        "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
-                         VALUES (?, ?, ?, ?)",
-                        params![
-                            project_id,
-                            relative_path,
-                            import.import_path,
-                            import.is_external as i32
-                        ],
-                    )?;
-                }
-
-                // Store function calls for call graph
-                // Build a map of symbol names to IDs for caller lookup
-                let mut symbol_ids: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+                // Store symbols, imports, and calls in database
                 {
-                    let mut stmt = conn.prepare(
-                        "SELECT id, name FROM code_symbols WHERE project_id = ? AND file_path = ?"
-                    )?;
-                    let rows = stmt.query_map(params![project_id, &relative_path], |row| {
-                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                    })?;
-                    for row in rows {
-                        if let Ok((id, name)) = row {
-                            symbol_ids.insert(name, id);
-                        }
-                    }
-                }
+                    let db_start = std::time::Instant::now();
+                    let conn = db.conn();
 
-                for call in &calls {
-                    if let Some(&caller_id) = symbol_ids.get(&call.caller_name) {
-                        // Try to resolve callee_id if it's in this file
-                        let callee_id = symbol_ids.get(&call.callee_name).copied();
-
+                    // Store symbols
+                    for sym in &symbols {
                         conn.execute(
-                            "INSERT INTO call_graph (caller_id, callee_name, callee_id)
-                             VALUES (?, ?, ?)",
-                            params![caller_id, call.callee_name, callee_id],
+                            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            params![
+                                project_id,
+                                relative_path,
+                                sym.name,
+                                sym.symbol_type,
+                                sym.start_line,
+                                sym.end_line,
+                                sym.signature
+                            ],
                         )?;
                     }
-                }
 
-                tracing::debug!("  DB inserts in {:?} ({} calls)", db_start.elapsed(), calls.len());
+                    // Store imports
+                    for import in &imports {
+                        conn.execute(
+                            "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
+                             VALUES (?, ?, ?, ?)",
+                            params![
+                                project_id,
+                                relative_path,
+                                import.import_path,
+                                import.is_external as i32
+                            ],
+                        )?;
+                    }
 
-                // Queue AST-aware code chunks for batch embedding
-                // Chunks are based on symbol boundaries for better semantic search
-                if embeddings.is_some() {
-                    match std::fs::read_to_string(file_path) {
-                        Ok(content) => {
-                            // Convert symbols to ParsedSymbol format for chunking
-                            let parsed_symbols: Vec<ParsedSymbol> = symbols
-                                .iter()
-                                .map(|s| ParsedSymbol {
-                                    name: s.name.clone(),
-                                    kind: s.symbol_type.clone(),
-                                    start_line: s.start_line,
-                                    end_line: s.end_line,
-                                    signature: s.signature.clone(),
-                                })
-                                .collect();
-
-                            // Create AST-aware chunks
-                            let chunks = create_semantic_chunks(&content, &parsed_symbols);
-
-                            for chunk in chunks {
-                                if chunk.content.trim().is_empty() {
-                                    continue;
-                                }
-
-                                // Queue for batch processing
-                                if let Err(e) = conn.execute(
-                                    "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line, status)
-                                     VALUES (?, ?, ?, ?, 'pending')",
-                                    params![project_id, relative_path, chunk.content, chunk.start_line],
-                                ) {
-                                    tracing::warn!("Failed to queue chunk for embedding ({}:{}): {}", relative_path, chunk.start_line, e);
-                                    stats.errors += 1;
-                                } else {
-                                    stats.chunks += 1;
-                                }
+                    // Store function calls for call graph
+                    let mut symbol_ids: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+                    {
+                        let mut stmt = conn.prepare(
+                            "SELECT id, name FROM code_symbols WHERE project_id = ? AND file_path = ?"
+                        )?;
+                        let rows = stmt.query_map(params![project_id, &relative_path], |row| {
+                            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                        })?;
+                        for row in rows {
+                            if let Ok((id, name)) = row {
+                                symbol_ids.insert(name, id);
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!("Failed to read {} for chunking: {}", relative_path, e);
-                            stats.errors += 1;
+                    }
+
+                    for call in &calls {
+                        if let Some(&caller_id) = symbol_ids.get(&call.caller_name) {
+                            let callee_id = symbol_ids.get(&call.callee_name).copied();
+                            conn.execute(
+                                "INSERT INTO call_graph (caller_id, callee_name, callee_id)
+                                 VALUES (?, ?, ?)",
+                                params![caller_id, call.callee_name, callee_id],
+                            )?;
+                        }
+                    }
+
+                    tracing::debug!("  DB inserts in {:?} ({} calls)", db_start.elapsed(), calls.len());
+                }
+
+                // Collect chunks for batch embedding (if embeddings enabled)
+                if embeddings.is_some() {
+                    if let Ok(content) = std::fs::read_to_string(file_path) {
+                        let parsed_symbols: Vec<ParsedSymbol> = symbols
+                            .iter()
+                            .map(|s| ParsedSymbol {
+                                name: s.name.clone(),
+                                kind: s.symbol_type.clone(),
+                                start_line: s.start_line,
+                                end_line: s.end_line,
+                                signature: s.signature.clone(),
+                            })
+                            .collect();
+
+                        let chunks = create_semantic_chunks(&content, &parsed_symbols);
+                        for chunk in chunks {
+                            if !chunk.content.trim().is_empty() {
+                                pending_chunks.push(PendingChunk {
+                                    file_path: relative_path.clone(),
+                                    start_line: chunk.start_line as usize,
+                                    content: chunk.content,
+                                });
+                            }
                         }
                     }
                 }
@@ -459,6 +447,48 @@ pub async fn index_project(
             Err(e) => {
                 tracing::warn!("Failed to parse {}: {}", file_path.display(), e);
                 stats.errors += 1;
+            }
+        }
+    }
+
+    // Batch embed all collected chunks
+    if let Some(ref emb) = embeddings {
+        if !pending_chunks.is_empty() {
+            tracing::info!("Embedding {} chunks in parallel batches...", pending_chunks.len());
+            let embed_start = std::time::Instant::now();
+
+            // Extract texts for embedding
+            let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
+
+            // Embed all at once (client handles batching internally)
+            match emb.embed_batch(&texts).await {
+                Ok(vectors) => {
+                    tracing::info!("Embedded {} chunks in {:?}", vectors.len(), embed_start.elapsed());
+
+                    // Store all embeddings
+                    let conn = db.conn();
+                    for (chunk, embedding) in pending_chunks.iter().zip(vectors.iter()) {
+                        let embedding_bytes: Vec<u8> = embedding
+                            .iter()
+                            .flat_map(|f| f.to_le_bytes())
+                            .collect();
+
+                        if let Err(e) = conn.execute(
+                            "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
+                             VALUES (?, ?, ?, ?, ?)",
+                            params![embedding_bytes, chunk.file_path, chunk.content, project_id, chunk.start_line],
+                        ) {
+                            tracing::warn!("Failed to store embedding ({}:{}): {}", chunk.file_path, chunk.start_line, e);
+                            stats.errors += 1;
+                        } else {
+                            stats.chunks += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Batch embedding failed: {}", e);
+                    stats.errors += pending_chunks.len();
+                }
             }
         }
     }

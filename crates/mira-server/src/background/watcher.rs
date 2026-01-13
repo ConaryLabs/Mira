@@ -289,12 +289,6 @@ impl FileWatcher {
             rusqlite::params![project_id, file_path],
         ).map_err(|e| e.to_string())?;
 
-        // Delete pending embeddings
-        conn.execute(
-            "DELETE FROM pending_embeddings WHERE project_id = ? AND file_path = ?",
-            rusqlite::params![project_id, file_path],
-        ).map_err(|e| e.to_string())?;
-
         // Delete imports
         conn.execute(
             "DELETE FROM imports WHERE project_id = ? AND file_path = ?",
@@ -358,18 +352,11 @@ impl FileWatcher {
             ).map_err(|e| e.to_string())?;
         }
 
-        // Queue chunks for embedding
-        for chunk in &parse_result.chunks {
-            conn.execute(
-                "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line, status)
-                 VALUES (?, ?, ?, ?, 'pending')",
-                rusqlite::params![project_id, relative_path, &chunk.content, chunk.start_line],
-            ).map_err(|e| e.to_string())?;
-        }
+        // Note: embeddings not created here - run 'index' to generate embeddings
 
         tracing::debug!(
-            "Updated file {} in project {}: {} symbols, {} chunks",
-            relative_path, project_id, parse_result.symbols.len(), parse_result.chunks.len()
+            "Updated file {} in project {}: {} symbols",
+            relative_path, project_id, parse_result.symbols.len()
         );
 
         Ok(())

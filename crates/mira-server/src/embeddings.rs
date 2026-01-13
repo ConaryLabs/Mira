@@ -116,7 +116,7 @@ impl Embeddings {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error")))
     }
 
-    /// Embed multiple texts in batch
+    /// Embed multiple texts in batch (parallel)
     pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
@@ -131,11 +131,30 @@ impl Embeddings {
             return Ok(results);
         }
 
-        // Large batches: chunk and use batch API
+        // Large batches: chunk into MAX_BATCH_SIZE and process in parallel
+        let chunks: Vec<Vec<String>> = texts.chunks(MAX_BATCH_SIZE)
+            .map(|c| c.to_vec())
+            .collect();
+        let num_batches = chunks.len();
+
+        if num_batches == 1 {
+            // Single batch, no need for parallelism
+            return self.embed_batch_inner(&chunks[0]).await;
+        }
+
+        debug!("Embedding {} texts in {} parallel batches", texts.len(), num_batches);
+
+        // Process batches in parallel using join_all
+        let futures: Vec<_> = chunks.iter()
+            .map(|chunk| self.embed_batch_inner(chunk))
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        // Collect results in order
         let mut all_results = Vec::with_capacity(texts.len());
-        for chunk in texts.chunks(MAX_BATCH_SIZE) {
-            let chunk_results = self.embed_batch_inner(chunk).await?;
-            all_results.extend(chunk_results);
+        for result in results {
+            all_results.extend(result?);
         }
 
         Ok(all_results)
