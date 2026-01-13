@@ -4,7 +4,7 @@
 use crate::cartographer;
 use crate::indexer;
 use crate::mcp::MiraServer;
-use crate::web::deepseek::{DeepSeekClient, Message};
+use crate::llm::{DeepSeekClient, Message};
 use crate::tools::core::code;
 use std::path::Path;
 

@@ -2,7 +2,7 @@
 // Background worker for generating "What's New" project briefings
 
 use crate::db::Database;
-use crate::web::deepseek::DeepSeekClient;
+use crate::llm::DeepSeekClient;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -158,7 +158,7 @@ async fn generate_briefing(
     _to_commit: &str,
     deepseek: &Arc<DeepSeekClient>,
 ) -> Option<String> {
-    use crate::web::deepseek::Message;
+    use crate::llm::Message;
 
     // Get git log
     let git_log = get_git_changes(project_path, from_commit)?;

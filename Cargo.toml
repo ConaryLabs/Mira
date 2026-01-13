@@ -2,7 +2,6 @@
 members = [
     "crates/mira-types",
     "crates/mira-server",
-    "src-tauri",
 ]
 resolver = "2"
 

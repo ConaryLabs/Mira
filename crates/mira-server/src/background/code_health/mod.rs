@@ -6,7 +6,7 @@ mod cargo;
 mod detection;
 
 use crate::db::Database;
-use crate::web::deepseek::DeepSeekClient;
+use crate::llm::DeepSeekClient;
 use std::path::Path;
 use std::sync::Arc;
 

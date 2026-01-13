@@ -11,7 +11,7 @@ pub mod watcher;
 
 use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
-use crate::web::deepseek::DeepSeekClient;
+use crate::llm::DeepSeekClient;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;

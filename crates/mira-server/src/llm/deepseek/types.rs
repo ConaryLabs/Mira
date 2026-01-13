@@ -1,4 +1,4 @@
-// crates/mira-server/src/web/deepseek/types.rs
+// crates/mira-server/src/llm/deepseek/types.rs
 // DeepSeek API types for messages, tools, and responses
 
 use serde::{Deserialize, Serialize};

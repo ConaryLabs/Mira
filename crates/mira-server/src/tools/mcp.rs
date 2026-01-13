@@ -5,7 +5,9 @@ use crate::mcp::MiraServer;
 use crate::tools::core::ToolContext;
 use async_trait::async_trait;
 use mira_types::WsEvent;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::{oneshot, RwLock};
 
 #[async_trait]
 impl ToolContext for MiraServer {
@@ -17,7 +19,7 @@ impl ToolContext for MiraServer {
         self.embeddings.as_ref()
     }
 
-    fn deepseek(&self) -> Option<&Arc<crate::web::deepseek::DeepSeekClient>> {
+    fn deepseek(&self) -> Option<&Arc<crate::llm::DeepSeekClient>> {
         self.deepseek.as_ref()
     }
 
@@ -48,10 +50,11 @@ impl ToolContext for MiraServer {
         }
     }
 
+    fn pending_responses(&self) -> Option<&Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>> {
+        Some(&self.pending_responses)
+    }
+
     fn watcher(&self) -> Option<&crate::background::watcher::WatcherHandle> {
         self.watcher.as_ref()
     }
 }
-
-// MCP-specific tool wrappers that call unified core
-// These will replace the current implementations in mcp/tools/

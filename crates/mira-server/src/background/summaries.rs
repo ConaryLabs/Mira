@@ -3,7 +3,7 @@
 
 use crate::cartographer;
 use crate::db::Database;
-use crate::web::deepseek::{DeepSeekClient, Message};
+use crate::llm::{DeepSeekClient, Message};
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;

@@ -6,7 +6,7 @@ use tracing::{debug, info, warn};
 
 use crate::db::Database;
 use crate::embeddings::Embeddings;
-use crate::web::deepseek::{DeepSeekClient, Message};
+use crate::llm::{DeepSeekClient, Message};
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[

@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 use crate::background::watcher::WatcherHandle;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
-use crate::web::deepseek::DeepSeekClient;
+use crate::llm::DeepSeekClient;
 use mira_types::{AgentRole, ProjectContext, WsEvent};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},

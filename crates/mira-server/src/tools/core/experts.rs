@@ -2,7 +2,7 @@
 // Expert sub-agents powered by DeepSeek Reasoner
 
 use super::ToolContext;
-use crate::web::deepseek::Message;
+use crate::llm::Message;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -155,7 +155,7 @@ fn build_user_prompt(context: &str, question: Option<&str>) -> String {
 }
 
 /// Format the expert response including reasoning if available
-fn format_expert_response(expert: ExpertRole, result: crate::web::deepseek::ChatResult) -> String {
+fn format_expert_response(expert: ExpertRole, result: crate::llm::ChatResult) -> String {
     let mut output = String::new();
 
     // Add expert header
