@@ -23,6 +23,37 @@ STOP before using Grep or Glob. Use Mira tools instead:
 **Only use Grep** for literal strings (error messages, UUIDs, specific constants).
 **Only use Glob** for exact filename patterns when you know the name.
 
+### Wrong vs Right
+
+| Task | ❌ Wrong | ✓ Right |
+|------|----------|---------|
+| Find authentication code | `grep -r "auth"` | `semantic_code_search("authentication")` |
+| What calls this function? | `grep -r "function_name"` | `find_callers("function_name")` |
+| List functions in file | `grep "fn " file.rs` | `get_symbols(file_path="file.rs")` |
+| Check if feature exists | `grep -r "feature"` | `check_capability("feature description")` |
+| Find config files | `find . -name "*.toml"` | `glob("**/*.toml")` - OK, exact pattern |
+
+## Task Management
+
+Use Mira's `task` and `goal` tools instead of TodoWrite for **cross-session persistence**:
+
+- `task(action="create", title="...")` - persists across sessions
+- `goal(action="create", title="...")` - for larger milestones
+- `task(action="list")` - see what's pending from previous sessions
+
+**TodoWrite** is fine for ephemeral, single-session checklists. Use Mira tasks when work spans multiple sessions.
+
+## Memory
+
+Use `remember` to store decisions and context for future sessions:
+
+```
+remember(content="Decided to use X approach because Y", category="decision")
+remember(content="User prefers Z style", category="preference")
+```
+
+Then `recall("relevant query")` retrieves it later.
+
 ## Expert Consultation
 
 Use experts for second opinions before major decisions:
