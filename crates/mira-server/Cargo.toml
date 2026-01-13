@@ -73,11 +73,6 @@ md5 = "0.8.0"
 dirs = "6.0.0"
 regex = "1.12.2"
 
-# Streaming
-futures = "0.3.31"
-async-stream = "0.3"
-tokio-stream = "0.1"
-
 # Document processing
 pdf-extract = "0.10"
 pulldown-cmark = "0.13"
@@ -95,7 +90,6 @@ thiserror = "2.0"
 sha2 = "0.10"
 tokio-util = "0.7.17"
 url = "2.5.7"
-reqwest-eventsource = "0.6.0"
 
 [dev-dependencies]
 tempfile = "3.8"

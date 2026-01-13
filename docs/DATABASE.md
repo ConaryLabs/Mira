@@ -292,4 +292,4 @@ Key-value storage for server state persistence across restarts.
 | updated_at | TEXT | Last update timestamp |
 
 Used to persist:
-- `active_project_path`: Last active project, restored on web server startup
+- `active_project_path`: Last active project, restored on MCP server startup

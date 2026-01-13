@@ -10,15 +10,12 @@ Mira provides persistent semantic memory and code intelligence for Claude Code v
 # Build
 cargo build --release
 
-# Run the server
-mira web
-
 # Add to your project's .mcp.json
 {
   "mcpServers": {
     "mira": {
-      "type": "http",
-      "url": "http://localhost:3000/mcp"
+      "command": "/path/to/mira",
+      "args": ["serve"]
     }
   }
 }
@@ -43,50 +40,21 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 - **summarize_codebase** - Generate LLM-powered module descriptions
 
 ### Project Management
-- **task** - Create/list/update/complete tasks
-- **goal** - Track goals with milestones
+- **task** - Create/list/update/complete tasks (supports bulk_create)
+- **goal** - Track goals with milestones (supports bulk_create)
 
 ### Session
-- **session_start** - Initialize session with project context, shows "What's New" briefing if git changes detected since last session
+- **session_start** - Initialize session with project context
 - **set_project** / **get_project** - Manage active project
 - **get_session_recap** - Get session recap (pending tasks, active goals, recent sessions)
 - **session_history** - Query session and tool call history
 
-### Web Search & Research
-Intelligent web research with grounded answers:
-- **google_search** - Raw Google Custom Search results
-- **web_fetch** - Fetch and parse web page content
-- **research** - Full research pipeline: generates queries, searches, reads pages, synthesizes answer with citations
-  - `quick` mode: 1 query, 3 pages
-  - `thorough` mode: 3 queries, 5 pages
-  - Project-context-aware query generation
-
-### Chat (DeepSeek Integration)
-Full conversational memory system at `http://localhost:3000/chat`:
-- **Message Storage** - All messages persisted to database
-- **Rolling Summaries** - Older messages automatically summarized (L1 session → L2 daily → L3 weekly)
-- **Fact Extraction** - Personal facts extracted via LLM and stored globally
-- **Semantic Recall** - Context loaded based on message similarity
-- **KV Cache Optimization** - Context ordered static-to-volatile for cache efficiency
-- **Date/Time Context** - Current date/time always included in system prompt
-- **Project-Aware Context** - Active project's goals, tasks, and recent memories included in context
-
-#### Chat UI Features
-- **Project Sidebar** - Slide-out panel to switch between projects
-- **Message Bubbles** - User messages right-aligned (orange accent), assistant left-aligned
-- **Collapsible Sections** - Thinking and tool calls collapsed by default, expand to view
-- **Markdown Rendering** - Full markdown support with code blocks, lists, links
-- **Code Blocks** - Syntax highlighting with copy button
-- **Streaming Indicators** - Typing dots and thinking spinner during responses
-
-### Background Processing
-Automatic idle-time processing for cost savings:
-- **Embeddings**: Queued for OpenAI Batch API (50% cheaper)
-- **Module Summaries**: Rate-limited DeepSeek calls
-- **What's New Briefings**: Monitors git for changes, summarizes commits with DeepSeek Reasoner
-- **Capabilities Inventory**: Scans codebase to identify features and flag incomplete implementations
-- **Tool Memory Bridge**: Extracts decisions/discoveries from MCP tool calls and stores as project-scoped memories
-- **Real-time Fallback**: Immediate embedding if needed before batch completes
+### Expert Consultation
+- **consult_architect** - System design, patterns, tradeoffs (uses DeepSeek Reasoner)
+- **consult_code_reviewer** - Find bugs, quality issues, improvements
+- **consult_security** - Identify vulnerabilities and attack vectors
+- **consult_scope_analyst** - Find missing requirements and edge cases
+- **consult_plan_reviewer** - Validate implementation plans
 
 ## Architecture
 
@@ -95,23 +63,23 @@ Automatic idle-time processing for cost savings:
 │              Claude Code                │
 │                   │                     │
 │                   ▼                     │
-│       MCP Protocol (HTTP transport)     │
+│       MCP Protocol (stdio transport)    │
 └─────────────────────────────────────────┘
-                    │
-                    ▼
+                   │
+                   ▼
 ┌─────────────────────────────────────────┐
-│              Mira (mira web)            │
+│           Mira (mira serve)             │
 │                                         │
 │   ┌─────────────────────────────────┐  │
-│   │  MCP over HTTP (/mcp endpoint)  │  │
+│   │  MCP Server (rmcp)              │  │
 │   │   session_start, remember,      │  │
 │   │   recall, get_symbols, etc.     │  │
 │   └──────────────┬──────────────────┘  │
-│                  │ broadcast            │
-│   ┌──────────────▼──────────────────┐  │
-│   │        Web UI & APIs            │  │
-│   │   Chat, WebSocket, REST API,    │  │
-│   │   session history               │  │
+│                  │                      │
+│   ┌──────────────┴──────────────────┐  │
+│   │        Background Worker        │  │
+│   │   embeddings, summaries,        │  │
+│   │   capabilities scan             │  │
 │   └─────────────────────────────────┘  │
 │                    │                    │
 │   ┌────────────────┴────────────────┐  │
@@ -127,9 +95,11 @@ Automatic idle-time processing for cost savings:
 
 | Command | Description |
 |---------|-------------|
-| `mira web` | Run server with MCP and Chat (port 3000) |
+| `mira serve` | Run as MCP server (default, for Claude Code) |
 | `mira index --path /project` | Index a project's code |
-| `mira test-chat "message"` | Test chat via HTTP (requires `mira web`) |
+| `mira hook permission` | Permission hook for Claude Code |
+| `mira debug-carto` | Debug cartographer module detection |
+| `mira debug-session` | Debug session_start output |
 
 ## Configuration
 
@@ -138,9 +108,7 @@ Automatic idle-time processing for cost savings:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | Yes | OpenAI API key for embeddings |
-| `DEEPSEEK_API_KEY` | For Chat | DeepSeek API key for Chat features |
-| `GOOGLE_API_KEY` | For Search | Google Custom Search API key |
-| `GOOGLE_SEARCH_CX` | For Search | Google Custom Search Engine ID |
+| `DEEPSEEK_API_KEY` | For experts | DeepSeek API key for expert consultation |
 
 ### Data Storage
 
@@ -149,7 +117,6 @@ All data stored in `~/.mira/mira.db`:
 - Code symbols (functions, structs, classes)
 - Tasks and goals
 - Session history
-- Permission rules
 
 ## Supported Languages
 
@@ -195,13 +162,8 @@ Simplified schema with 19 tables + 2 vector tables:
 - `goals` - High-level goals
 - `milestones` - Goal milestones
 - `tasks` - Task tracking
-- `permission_rules` - Auto-approval rules
 - `pending_embeddings` - Queue for batch embedding
 - `background_batches` - Track active batch jobs
-- `project_briefings` - "What's New" git change summaries
-- `server_state` - Key-value store for restart recovery (e.g., active project)
-- `chat_messages` - Stored conversation history
-- `chat_summaries` - Multi-level conversation summaries
 
 ### Vector Tables (sqlite-vec)
 - `vec_memory` - Memory embeddings (1536 dimensions)
@@ -211,7 +173,7 @@ Simplified schema with 19 tables + 2 vector tables:
 
 - Rust toolchain (for building)
 - OpenAI API key for embeddings (text-embedding-3-small)
-- DeepSeek API key for Chat features (optional)
+- DeepSeek API key for expert consultation (optional)
 
 ## License
 

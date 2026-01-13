@@ -542,12 +542,12 @@ impl MiraServer {
                 Ok(output)
             }
             "get_history" => {
-                let session_id = req.session_id
-                    .or_else(|| {
-                        // Use current session if not specified
-                        futures::executor::block_on(self.session_id.read()).clone()
-                    })
-                    .ok_or("No session_id provided and no active session")?;
+                // Use provided session_id or fall back to current session
+                let session_id = match req.session_id {
+                    Some(id) => id,
+                    None => self.session_id.read().await.clone()
+                        .ok_or("No session_id provided and no active session")?,
+                };
 
                 let history = self.db.get_session_history(&session_id, limit)
                     .map_err(|e| e.to_string())?;

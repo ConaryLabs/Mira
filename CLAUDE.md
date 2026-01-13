@@ -25,68 +25,26 @@ Then `recall("preferences")` before writing code.
 
 **When to use Glob:** Only for finding files by exact name pattern.
 
-## Build & Deploy
+## Build & Test
 
 ```bash
 cargo build --release
-systemctl --user restart mira
 ```
 
-## Service Management
+The binary is at `target/release/mira`. Claude Code spawns it via MCP (configured in `.mcp.json`).
 
-Mira runs as a systemd user service (auto-starts on boot):
+## Debugging
 
 ```bash
-systemctl --user status mira    # Check status
-systemctl --user restart mira   # Restart after rebuild
-systemctl --user stop mira      # Stop
-systemctl --user start mira     # Start
-journalctl --user -u mira -f    # View logs (follow)
-journalctl --user -u mira -n 50 # View last 50 lines
+# Debug session_start output
+mira debug-session
+
+# Debug cartographer module detection
+mira debug-carto
 ```
-
-**URLs:**
-- Studio: http://localhost:3000
-- Chat (DeepSeek): http://localhost:3000/chat
-
-## Testing & Debugging
-
-Test chat without UI (requires `mira web` running):
-
-```bash
-# Simple test
-mira test-chat "Hello, what tools do you have?"
-
-# Verbose (shows reasoning, tool args, results)
-mira test-chat -v "Search for authentication code"
-
-# With project context
-mira test-chat -p /home/peter/Mira "What are the recent goals?"
-```
-
-Note: `test-chat` uses HTTP to call the web server, ensuring messages are stored and background tasks (fact extraction, summarization) run properly.
-
-API endpoint for programmatic testing:
-
-```bash
-curl -X POST http://localhost:3000/api/chat/test \
-  -H "Content-Type: application/json" \
-  -d '{"message":"What is 2+2?","history":[]}'
-```
-
-Returns detailed JSON with request_id, duration, reasoning, tool calls, usage stats.
-
-## Tracing
-
-All chat requests include structured logging with:
-- `request_id` - UUID for tracking through system
-- `duration_ms` - Timing at each stage
-- Tool execution with timing and results
-
-View logs: `journalctl --user -u mira -f`
 
 ## Environment
 
 API keys are in `/home/peter/Mira/.env`:
-- `DEEPSEEK_API_KEY` - Chat/Reasoner
 - `OPENAI_API_KEY` - Embeddings (text-embedding-3-small)
+- `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)

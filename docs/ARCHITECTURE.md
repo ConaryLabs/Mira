@@ -1,56 +1,60 @@
 # Mira Architecture
 
-**Version**: 3.3.0
-**Last Updated**: 2026-01-11
+**Version**: 4.0.0
+**Last Updated**: 2026-01-12
 
 ## Overview
 
-Mira is an MCP (Model Context Protocol) server that provides persistent memory and code intelligence for Claude Code. It also provides a web chat interface powered by DeepSeek Reasoner. Both interfaces share a unified tool core for consistent behavior.
+Mira is an MCP (Model Context Protocol) server that provides persistent memory and code intelligence for Claude Code. It runs as a stdio-based MCP server spawned by Claude Code.
 
 ## Source Structure
 
 ```
 crates/mira-server/src/
-├── main.rs           # CLI entry point (serve, index, hook, web)
+├── main.rs           # CLI entry point (serve, index, hook)
 ├── lib.rs            # Library exports
 ├── db/               # Database layer (rusqlite + sqlite-vec)
 │   ├── mod.rs        # Database struct and queries
 │   ├── project.rs    # Project CRUD operations
-│   └── tasks.rs      # Task/Goal CRUD operations
+│   ├── tasks.rs      # Task/Goal CRUD operations
+│   ├── memory.rs     # Memory facts CRUD
+│   ├── session.rs    # Session tracking
+│   └── schema.rs     # Schema definitions
 ├── embeddings.rs     # OpenAI embeddings API client
 ├── background/       # Background worker for batch processing
-│   ├── mod.rs        # Worker loop, spawns on service start
+│   ├── mod.rs        # Worker loop, spawns on MCP start
 │   ├── watcher.rs    # File system watcher
-│   └── ...
+│   ├── embeddings.rs # Batch embedding processing
+│   ├── summaries.rs  # Module summary generation
+│   ├── briefings.rs  # Git change briefings
+│   ├── capabilities.rs # Capability scanning
+│   └── code_health/  # Code health analysis
 ├── cartographer/     # Codebase structure mapping
-│   └── mod.rs        # Module detection, dependency graphs
-├── tools/            # UNIFIED TOOL CORE (new)
-│   ├── core/         # Shared tool implementations
+│   ├── mod.rs        # Module detection, dependency graphs
+│   ├── detection.rs  # Language-specific detection
+│   ├── map.rs        # Module map generation
+│   └── summaries.rs  # LLM-powered summaries
+├── tools/            # Tool implementations
+│   ├── core/         # Shared tool logic
 │   │   ├── mod.rs    # ToolContext trait
 │   │   ├── memory.rs # recall, remember, forget
 │   │   ├── code.rs   # search_code, find_callers/callees
-│   │   ├── project.rs# set_project, get_project, list_projects
+│   │   ├── project.rs# set_project, get_project
 │   │   ├── tasks_goals.rs # task/goal CRUD
-│   │   ├── web.rs    # google_search, web_fetch, research
-│   │   ├── claude.rs # claude_task, claude_close, claude_status
-│   │   └── bash.rs   # bash command execution
-│   ├── web.rs        # ToolContext impl for AppState
-│   └── mcp.rs        # ToolContext impl for MiraServer
+│   │   └── experts.rs # Expert consultation
+│   └── mcp.rs        # MCP-specific adapters
 ├── mcp/
 │   ├── mod.rs        # MCP server (rmcp)
-│   └── tools/        # MCP tool handlers (delegate to core)
+│   ├── extraction.rs # Tool memory extraction
+│   └── tools/        # MCP tool handlers
 │       ├── mod.rs
 │       ├── project.rs   # session_start, set_project, get_project
 │       ├── memory.rs    # remember, recall, forget
 │       ├── code.rs      # get_symbols, semantic_code_search, index
-│       └── tasks.rs     # task, goal
-├── web/              # Web server (axum)
-│   ├── mod.rs        # HTTP routes
-│   ├── state.rs      # AppState
-│   ├── deepseek.rs   # DeepSeek Reasoner client
-│   └── chat/
-│       ├── mod.rs    # Chat API endpoints
-│       └── tools.rs  # Web tool handlers (delegate to core)
+│       ├── tasks.rs     # task, goal
+│       └── experts.rs   # consult_* tools
+├── llm/              # LLM clients
+│   └── deepseek/     # DeepSeek Reasoner for experts
 ├── search/           # Unified search layer
 │   ├── mod.rs        # Exports
 │   ├── semantic.rs   # Vector search
@@ -66,63 +70,33 @@ crates/mira-server/src/
 ## Data Flow
 
 ```
-Claude Code                    Web Browser
-    │                              │
-    ▼ (stdio)                      ▼ (HTTP/WS)
-┌──────────────────┐     ┌──────────────────────┐
-│  MCP Server      │     │  Web Server (axum)   │
-│  - JSON-RPC      │     │  - REST API          │
-│  - rmcp          │     │  - WebSocket events  │
-└────────┬─────────┘     └──────────┬───────────┘
-         │                          │
-         │   ┌──────────────────┐   │
-         └──►│ Unified Tool Core│◄──┘
-             │  ToolContext trait│
-             │  - memory.rs      │
-             │  - code.rs        │
-             │  - tasks_goals.rs │
-             │  - project.rs     │
-             └────────┬─────────┘
-                      │
-         ┌────────────┼────────────┐
-         ▼            ▼            ▼
-    ┌─────────┐ ┌──────────┐ ┌───────────┐
-    │ SQLite  │ │sqlite-vec│ │  OpenAI   │
-    │ Tables  │ │ Vectors  │ │ Embeddings│
-    └─────────┘ └──────────┘ └───────────┘
+Claude Code
+    │
+    ▼ (stdio JSON-RPC)
+┌──────────────────┐
+│  MCP Server      │
+│  - rmcp          │
+│  - Tool handlers │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Tool Core        │
+│  - memory.rs     │
+│  - code.rs       │
+│  - tasks_goals.rs│
+│  - experts.rs    │
+└────────┬─────────┘
+         │
+┌────────┼────────────┐
+▼        ▼            ▼
+SQLite   sqlite-vec   DeepSeek
+Tables   Vectors      (experts)
 ```
-
-## Unified Tool Core
-
-The `tools/core/` module provides a single implementation of all tools that works with both interfaces:
-
-```rust
-// ToolContext trait abstracts the differences between MCP and Web
-#[async_trait]
-pub trait ToolContext: Send + Sync {
-    fn db(&self) -> &Arc<Database>;
-    fn embeddings(&self) -> Option<&Arc<Embeddings>>;
-    async fn get_project(&self) -> Option<ProjectContext>;
-    async fn set_project(&self, project: ProjectContext);
-    // ... other shared resources
-}
-
-// Both AppState (web) and MiraServer (MCP) implement ToolContext
-impl ToolContext for AppState { ... }
-impl ToolContext for MiraServer { ... }
-
-// Tool functions are generic over ToolContext
-pub async fn recall<C: ToolContext>(ctx: &C, query: String, ...) -> Result<String, String>
-```
-
-This ensures:
-- **Consistent behavior** across MCP and web chat
-- **Single source of truth** for each tool
-- **Easy maintenance** - update once, works everywhere
 
 ## Database Schema
 
-### Regular Tables (17)
+### Regular Tables
 
 ```sql
 -- Projects
@@ -142,17 +116,10 @@ codebase_modules (id, project_id, module_id, name, path, purpose, exports, depen
 sessions (id, project_id, status, summary, started_at, last_activity)
 tool_history (id, session_id, tool_name, arguments, result_summary, full_result, success, created_at)
 
--- Chat
-chat_messages (id, role, content, reasoning_content, summarized, summary_id, created_at)
-chat_summaries (id, project_id, summary, message_range_start, message_range_end, summary_level, created_at)
-
 -- Tasks & Goals
 goals (id, project_id, title, description, status, priority, progress_percent, created_at)
 milestones (id, goal_id, title, weight, completed, completed_at)
 tasks (id, project_id, goal_id, title, description, status, priority, created_at)
-
--- Permissions
-permission_rules (id, tool_name, pattern, match_type, scope, created_at)
 
 -- Background Processing
 pending_embeddings (id, project_id, file_path, chunk_content, status, created_at)
@@ -162,55 +129,41 @@ background_batches (id, batch_id, item_ids, status, created_at)
 server_state (key, value, updated_at)
 ```
 
-### Vector Tables (2)
+### Vector Tables (sqlite-vec)
 
 ```sql
--- sqlite-vec virtual tables with 3072-dimension OpenAI embeddings
+-- 1536-dimension OpenAI embeddings
 vec_memory (embedding, fact_id, content)
 vec_code (embedding, file_path, chunk_content, project_id)
 ```
 
-## Tools
-
-### Shared Tools (MCP + Web Chat)
-
-| Tool | Description | Core Module |
-|------|-------------|-------------|
-| `recall` | Semantic search through memories | `memory.rs` |
-| `remember` | Store a memory fact | `memory.rs` |
-| `forget` | Delete a memory by ID | `memory.rs` |
-| `semantic_code_search` | Search code by meaning | `code.rs` |
-| `find_callers` | Find functions that call a function | `code.rs` |
-| `find_callees` | Find functions called by a function | `code.rs` |
-| `set_project` | Set active project | `project.rs` |
-| `get_project` | Get current project | `project.rs` |
-| `list_projects` | List all projects | `project.rs` |
-| `task` | Manage tasks (create/list/update/complete/delete) | `tasks_goals.rs` |
-| `goal` | Manage goals (create/list/update/progress/delete) | `tasks_goals.rs` |
-
-### MCP-Only Tools
+## MCP Tools
 
 | Tool | Description |
 |------|-------------|
 | `session_start` | Initialize session with project context |
 | `session_history` | Query session history |
 | `get_session_recap` | Get session recap for system prompts |
+| `remember` | Store a memory fact |
+| `recall` | Semantic search through memories |
+| `forget` | Delete a memory by ID |
 | `get_symbols` | Get symbols from a file (tree-sitter) |
+| `semantic_code_search` | Search code by meaning |
+| `find_callers` | Find functions that call a function |
+| `find_callees` | Find functions called by a function |
+| `check_capability` | Check if a feature exists in codebase |
 | `index` | Index project code |
 | `summarize_codebase` | Generate LLM summaries for modules |
-
-### Web Chat-Only Tools
-
-| Tool | Description | Core Module |
-|------|-------------|-------------|
-| `claude_task` | Send task to Claude Code instance | `claude.rs` |
-| `claude_close` | Close Claude Code instance | `claude.rs` |
-| `claude_status` | Get Claude Code status | `claude.rs` |
-| `discuss` | Discuss with Claude (collaboration) | `claude.rs` |
-| `google_search` | Search the web | `web.rs` |
-| `web_fetch` | Fetch and parse a URL | `web.rs` |
-| `research` | Multi-step research pipeline | `web.rs` |
-| `bash` | Execute shell commands | `bash.rs` |
+| `set_project` | Set active project |
+| `get_project` | Get current project |
+| `task` | Manage tasks (create/bulk_create/list/update/complete/delete) |
+| `goal` | Manage goals (create/bulk_create/list/update/progress/delete) |
+| `consult_architect` | System design consultation (DeepSeek Reasoner) |
+| `consult_code_reviewer` | Code review consultation |
+| `consult_security` | Security analysis consultation |
+| `consult_scope_analyst` | Requirements gap analysis |
+| `consult_plan_reviewer` | Plan validation |
+| `reply_to_mira` | Reply during collaboration |
 
 ## Key Dependencies
 
@@ -220,16 +173,15 @@ vec_code (embedding, file_path, chunk_content, project_id)
 | `rusqlite` | 0.32 | SQLite database |
 | `sqlite-vec` | 0.1.6 | Vector embeddings extension |
 | `tree-sitter` | 0.24 | Code parsing |
-| `reqwest` | 0.12 | HTTP client (Gemini API) |
+| `reqwest` | 0.12 | HTTP client (OpenAI, DeepSeek) |
 | `tokio` | 1.x | Async runtime |
 | `serde` | 1.x | Serialization |
 
 ## Embeddings
 
-Uses Gemini `text-embedding-004` model:
+Uses OpenAI `text-embedding-3-small` model:
 - 1536 dimensions
-- Free tier available
-- Batching support (up to 100 texts)
+- Batching support
 
 ```rust
 // src/embeddings.rs
@@ -278,7 +230,7 @@ Reads from stdin, checks `permission_rules` table, outputs allow/deny.
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API key for embeddings |
-| `GOOGLE_API_KEY` | Alternative to OPENAI_API_KEY |
+| `DEEPSEEK_API_KEY` | DeepSeek API key for expert consultation |
 
 ### File Paths
 
@@ -288,6 +240,19 @@ Reads from stdin, checks `permission_rules` table, outputs allow/deny.
 | `.mcp.json` | MCP server configuration |
 
 ## Design Decisions
+
+### Why MCP-only (stdio)?
+
+Previous architecture had HTTP-based MCP:
+- Required running a separate web server
+- Complex deployment with systemd service
+- Additional attack surface
+
+New architecture:
+- Claude Code spawns Mira directly via stdio
+- No separate service to manage
+- Simpler deployment (just the binary)
+- Background worker spawns within MCP server
 
 ### Why rusqlite + sqlite-vec?
 
@@ -299,7 +264,7 @@ Previous architecture used sqlx + Qdrant:
 New architecture:
 - Single SQLite file
 - sqlite-vec for embeddings (no external service)
-- 14 tables total
+- Simplified schema
 - Simpler deployment
 
 ### Why rmcp?
@@ -318,36 +283,21 @@ New architecture:
 
 ## Background Worker
 
-The background worker runs when the service starts and processes work during idle time:
+The background worker spawns when the MCP server starts:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Background Worker (spawns on service start)                   │
+│  Background Worker (spawns on MCP start)                        │
 │                                                                 │
-│  Every 60s (idle) / 5s (active):                               │
-│    1. Check for pending embeddings                             │
-│       - Create OpenAI Batch API job (50% cheaper)              │
-│       - Poll for completion, store results                     │
-│    2. Check for modules without summaries                      │
-│       - Rate-limited DeepSeek calls                            │
-│       - Update codebase_modules.purpose                        │
+│  Periodic tasks:                                                │
+│    1. Check for pending embeddings                              │
+│       - Batch embed with OpenAI                                 │
+│       - Store results in vec_code                               │
+│    2. Check for modules without summaries                       │
+│       - Generate with DeepSeek                                  │
+│       - Update codebase_modules.purpose                         │
+│    3. Scan for capabilities                                     │
+│       - Identify features in codebase                           │
+│       - Flag incomplete implementations                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
-
-### Real-time Fallback
-
-When `semantic_code_search` is called before batch completes:
-1. Check `pending_embeddings` for active project
-2. Embed up to 50 chunks inline (immediate)
-3. Delete from pending queue
-4. Search runs with fresh embeddings
-
-This ensures search always works, even if user starts before batch completes.
-
-### Cost Savings
-
-| Operation | Normal API | Batch API | Savings |
-|-----------|-----------|-----------|---------|
-| Embeddings | $0.02/1M tokens | $0.01/1M tokens | 50% |
-
-Batch API has 24h turnaround but is processed faster in practice.

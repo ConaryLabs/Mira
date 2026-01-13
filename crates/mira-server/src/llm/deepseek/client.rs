@@ -1,16 +1,18 @@
 // crates/mira-server/src/llm/deepseek/client.rs
-// DeepSeek API client with streaming support
+// DeepSeek API client (non-streaming, uses deepseek-reasoner)
 
 use super::types::{ChatResult, FunctionCall, Message, Tool, ToolCall, Usage};
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
-use reqwest_eventsource::{Event, EventSource};
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
-use tracing::{debug, error, info, instrument, warn, Span};
+use std::time::{Duration, Instant};
+use tracing::{debug, info, instrument, Span};
 use uuid::Uuid;
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
+
+/// Request timeout - reasoner can take a while for complex queries
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Chat completion request
 #[derive(Debug, Serialize)]
@@ -21,68 +23,44 @@ struct ChatRequest {
     tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>, // "auto" | "required" | "none"
-    stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
 }
 
-/// Streaming chunk
+/// Non-streaming chat response
 #[derive(Debug, Deserialize)]
-struct ChatChunk {
-    choices: Vec<ChunkChoice>,
-    #[serde(default)]
+struct ChatResponse {
+    choices: Vec<ResponseChoice>,
     usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChunkChoice {
-    delta: ChunkDelta,
+struct ResponseChoice {
+    message: ResponseMessage,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ChunkDelta {
+#[derive(Debug, Deserialize)]
+struct ResponseMessage {
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
     reasoning_content: Option<String>,
     #[serde(default)]
-    tool_calls: Option<Vec<ToolCallChunk>>,
-}
-
-/// Partial tool call in streaming
-#[derive(Debug, Deserialize)]
-struct ToolCallChunk {
-    index: usize,
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    function: Option<FunctionChunk>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct FunctionChunk {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    arguments: Option<String>,
-}
-
-/// Non-streaming response for simple chat
-#[derive(Debug, Deserialize)]
-struct SimpleChatResponse {
-    choices: Vec<SimpleChoice>,
-    #[allow(dead_code)]
-    usage: Option<Usage>,
+    tool_calls: Option<Vec<ResponseToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct SimpleChoice {
-    message: SimpleMessage,
+struct ResponseToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String,
+    function: ResponseFunction,
 }
 
 #[derive(Debug, Deserialize)]
-struct SimpleMessage {
-    content: Option<String>,
+struct ResponseFunction {
+    name: String,
+    arguments: String,
 }
 
 /// DeepSeek API client
@@ -92,75 +70,23 @@ pub struct DeepSeekClient {
 }
 
 impl DeepSeekClient {
-    /// Create a new DeepSeek client
+    /// Create a new DeepSeek client with appropriate timeouts
     pub fn new(api_key: String) -> Self {
-        Self {
-            api_key,
-            client: reqwest::Client::new(),
-        }
+        let client = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        Self { api_key, client }
     }
 
-    /// Simple non-streaming chat using deepseek-chat model (fast, cheap)
-    /// Used for summarization, query generation, etc.
-    pub async fn chat_simple(&self, system: &str, user: &str) -> Result<String> {
-        let start_time = Instant::now();
-
-        let request = serde_json::json!({
-            "model": "deepseek-chat",
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user}
-            ],
-            "stream": false,
-            "max_tokens": 2048
-        });
-
-        debug!("DeepSeek chat_simple request");
-
-        let response = self
-            .client
-            .post(DEEPSEEK_API_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| anyhow!("Request failed: {}", e))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("DeepSeek API error {}: {}", status, body));
-        }
-
-        let data: SimpleChatResponse = response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse response: {}", e))?;
-
-        let content = data
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
-            .unwrap_or_default();
-
-        let duration_ms = start_time.elapsed().as_millis();
-        info!(
-            duration_ms = duration_ms,
-            content_len = content.len(),
-            "DeepSeek chat_simple complete"
-        );
-
-        Ok(content)
-    }
-
-    /// Chat with streaming, returns the complete response
+    /// Chat using deepseek-reasoner model (non-streaming)
     #[instrument(skip(self, messages, tools), fields(request_id, model = "deepseek-reasoner", message_count = messages.len()))]
     pub async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
         let request_id = Uuid::new_v4().to_string();
         let start_time = Instant::now();
 
-        // Record request ID in span
         Span::current().record("request_id", &request_id);
 
         info!(
@@ -175,191 +101,105 @@ impl DeepSeekClient {
             messages,
             tools,
             tool_choice: Some("auto".into()),
-            stream: true,
             max_tokens: Some(8192),
         };
 
         debug!(request_id = %request_id, "DeepSeek request: {:?}", serde_json::to_string(&request)?);
 
-        let request_builder = self
+        let response = self
             .client
             .post(DEEPSEEK_API_URL)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&request);
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| anyhow!("DeepSeek request failed: {}", e))?;
 
-        // Stream the response using EventSource
-        let mut es = match EventSource::new(request_builder) {
-            Ok(es) => es,
-            Err(e) => {
-                error!(request_id = %request_id, error = %e, "Failed to create EventSource");
-                return Err(anyhow!("Failed to create EventSource: {}", e));
-            }
-        };
-
-        debug!(request_id = %request_id, "DeepSeek stream opened");
-
-        let mut full_content = String::new();
-        let mut full_reasoning = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut usage: Option<Usage> = None;
-        let mut chunk_count = 0u32;
-
-        while let Some(event) = es.next().await {
-            match event {
-                Ok(Event::Open) => {
-                    debug!(request_id = %request_id, "DeepSeek SSE connection opened");
-                }
-                Ok(Event::Message(msg)) => {
-                    if msg.data == "[DONE]" {
-                        debug!(
-                            request_id = %request_id,
-                            chunks = chunk_count,
-                            duration_ms = start_time.elapsed().as_millis(),
-                            "DeepSeek stream complete"
-                        );
-                        break;
-                    }
-
-                    chunk_count += 1;
-                    let chunk: ChatChunk = match serde_json::from_str(&msg.data) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            warn!(
-                                request_id = %request_id,
-                                error = %e,
-                                chunk = chunk_count,
-                                "Failed to parse chunk"
-                            );
-                            debug!(request_id = %request_id, raw_data = %msg.data, "Raw chunk data");
-                            continue;
-                        }
-                    };
-
-                    // Capture usage from final chunk
-                    if let Some(u) = chunk.usage {
-                        info!(
-                            request_id = %request_id,
-                            prompt_tokens = u.prompt_tokens,
-                            completion_tokens = u.completion_tokens,
-                            cache_hit = ?u.prompt_cache_hit_tokens,
-                            cache_miss = ?u.prompt_cache_miss_tokens,
-                            "DeepSeek usage stats"
-                        );
-                        usage = Some(u);
-                    }
-
-                    for choice in chunk.choices {
-                        // Accumulate reasoning content (don't stream - too many events)
-                        if let Some(reasoning) = choice.delta.reasoning_content {
-                            if !reasoning.is_empty() {
-                                full_reasoning.push_str(&reasoning);
-                            }
-                        }
-
-                        // Accumulate content
-                        if let Some(content) = choice.delta.content {
-                            if !content.is_empty() {
-                                full_content.push_str(&content);
-                            }
-                        }
-
-                        // Accumulate tool calls
-                        if let Some(tc_chunks) = choice.delta.tool_calls {
-                            for tc_chunk in tc_chunks {
-                                // Ensure we have space for this tool call
-                                while tool_calls.len() <= tc_chunk.index {
-                                    tool_calls.push(ToolCall {
-                                        id: String::new(),
-                                        call_type: "function".into(),
-                                        function: FunctionCall {
-                                            name: String::new(),
-                                            arguments: String::new(),
-                                        },
-                                    });
-                                }
-
-                                let tc = &mut tool_calls[tc_chunk.index];
-
-                                if let Some(id) = tc_chunk.id {
-                                    tc.id = id;
-                                }
-                                if let Some(func) = tc_chunk.function {
-                                    if let Some(name) = func.name {
-                                        tc.function.name = name;
-                                    }
-                                    if let Some(args) = func.arguments {
-                                        tc.function.arguments.push_str(&args);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        request_id = %request_id,
-                        error = ?e,
-                        chunks_received = chunk_count,
-                        "DeepSeek stream error"
-                    );
-                    break;
-                }
-            }
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!("DeepSeek API error {}: {}", status, body));
         }
+
+        let data: ChatResponse = response
+            .json()
+            .await
+            .map_err(|e| anyhow!("Failed to parse DeepSeek response: {}", e))?;
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
-        // Log tool calls if any
-        if !tool_calls.is_empty() {
+        // Extract response from first choice
+        let choice = data.choices.into_iter().next();
+        let (content, reasoning_content, tool_calls) = match choice {
+            Some(c) => {
+                let msg = c.message;
+                let tc: Option<Vec<ToolCall>> = msg.tool_calls.map(|calls| {
+                    calls
+                        .into_iter()
+                        .map(|tc| ToolCall {
+                            id: tc.id,
+                            call_type: tc.call_type,
+                            function: FunctionCall {
+                                name: tc.function.name,
+                                arguments: tc.function.arguments,
+                            },
+                        })
+                        .collect()
+                });
+                (msg.content, msg.reasoning_content, tc)
+            }
+            None => (None, None, None),
+        };
+
+        // Log usage stats
+        if let Some(ref u) = data.usage {
             info!(
                 request_id = %request_id,
-                tool_count = tool_calls.len(),
-                tools = ?tool_calls.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
-                "DeepSeek requested tool calls"
+                prompt_tokens = u.prompt_tokens,
+                completion_tokens = u.completion_tokens,
+                cache_hit = ?u.prompt_cache_hit_tokens,
+                cache_miss = ?u.prompt_cache_miss_tokens,
+                "DeepSeek usage stats"
             );
         }
 
-        // Log tool calls (don't broadcast - causes UI flooding)
-        for tc in &tool_calls {
-            let args: serde_json::Value =
-                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
-            debug!(
+        // Log tool calls if any
+        if let Some(ref tcs) = tool_calls {
+            info!(
                 request_id = %request_id,
-                tool = %tc.function.name,
-                call_id = %tc.id,
-                args = %args,
-                "Tool call"
+                tool_count = tcs.len(),
+                tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
+                "DeepSeek requested tool calls"
             );
+            for tc in tcs {
+                let args: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
+                debug!(
+                    request_id = %request_id,
+                    tool = %tc.function.name,
+                    call_id = %tc.id,
+                    args = %args,
+                    "Tool call"
+                );
+            }
         }
 
         info!(
             request_id = %request_id,
             duration_ms = duration_ms,
-            content_len = full_content.len(),
-            reasoning_len = full_reasoning.len(),
-            tool_calls = tool_calls.len(),
+            content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
+            reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+            tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
             "DeepSeek chat complete"
         );
 
         Ok(ChatResult {
             request_id,
-            content: if full_content.is_empty() {
-                None
-            } else {
-                Some(full_content)
-            },
-            reasoning_content: if full_reasoning.is_empty() {
-                None
-            } else {
-                Some(full_reasoning)
-            },
-            tool_calls: if tool_calls.is_empty() {
-                None
-            } else {
-                Some(tool_calls)
-            },
-            usage,
+            content,
+            reasoning_content,
+            tool_calls,
+            usage: data.usage,
             duration_ms,
         })
     }
