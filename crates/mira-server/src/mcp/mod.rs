@@ -308,6 +308,47 @@ pub struct ReplyToMiraRequest {
     pub complete: Option<bool>,
 }
 
+// Expert consultation request types
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConsultArchitectRequest {
+    #[schemars(description = "Code, design, or situation to analyze")]
+    pub context: String,
+    #[schemars(description = "Specific question to answer (optional)")]
+    pub question: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConsultPlanReviewerRequest {
+    #[schemars(description = "Implementation plan to review")]
+    pub context: String,
+    #[schemars(description = "Specific concern to address (optional)")]
+    pub question: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConsultScopeAnalystRequest {
+    #[schemars(description = "Requirements or plan to analyze for gaps")]
+    pub context: String,
+    #[schemars(description = "Specific area to focus on (optional)")]
+    pub question: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConsultCodeReviewerRequest {
+    #[schemars(description = "Code to review")]
+    pub context: String,
+    #[schemars(description = "Specific aspect to focus on (optional)")]
+    pub question: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConsultSecurityRequest {
+    #[schemars(description = "Code or design to analyze for security")]
+    pub context: String,
+    #[schemars(description = "Specific security concern (optional)")]
+    pub question: Option<String>,
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(description = "Initialize session: sets project, loads persona, context, corrections, goals. Call once at session start.")]
@@ -568,6 +609,48 @@ impl MiraServer {
                 Err(format!("No pending request found for message_id: {}. It may have timed out or been answered already.", req.in_reply_to))
             }
         }
+    }
+
+    // Expert consultation tools - delegate to DeepSeek Reasoner
+
+    #[tool(description = "Consult the Architect expert for system design, patterns, tradeoffs, and architectural decisions. Provides deep analysis using extended reasoning.")]
+    async fn consult_architect(
+        &self,
+        Parameters(req): Parameters<ConsultArchitectRequest>,
+    ) -> Result<String, String> {
+        tools::experts::consult_architect(self, req.context, req.question).await
+    }
+
+    #[tool(description = "Consult the Plan Reviewer expert to validate implementation plans before coding. Identifies risks, gaps, and blockers.")]
+    async fn consult_plan_reviewer(
+        &self,
+        Parameters(req): Parameters<ConsultPlanReviewerRequest>,
+    ) -> Result<String, String> {
+        tools::experts::consult_plan_reviewer(self, req.context, req.question).await
+    }
+
+    #[tool(description = "Consult the Scope Analyst expert to find missing requirements, unstated assumptions, and edge cases. Surfaces unknowns early.")]
+    async fn consult_scope_analyst(
+        &self,
+        Parameters(req): Parameters<ConsultScopeAnalystRequest>,
+    ) -> Result<String, String> {
+        tools::experts::consult_scope_analyst(self, req.context, req.question).await
+    }
+
+    #[tool(description = "Consult the Code Reviewer expert to find bugs, quality issues, and improvements. Reviews code for correctness and maintainability.")]
+    async fn consult_code_reviewer(
+        &self,
+        Parameters(req): Parameters<ConsultCodeReviewerRequest>,
+    ) -> Result<String, String> {
+        tools::experts::consult_code_reviewer(self, req.context, req.question).await
+    }
+
+    #[tool(description = "Consult the Security Analyst expert to identify vulnerabilities, attack vectors, and hardening opportunities. Reviews for security best practices.")]
+    async fn consult_security(
+        &self,
+        Parameters(req): Parameters<ConsultSecurityRequest>,
+    ) -> Result<String, String> {
+        tools::experts::consult_security(self, req.context, req.question).await
     }
 }
 

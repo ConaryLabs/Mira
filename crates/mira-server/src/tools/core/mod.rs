@@ -87,19 +87,21 @@ pub trait ToolContext: Send + Sync {
 }
 
 // Sub-modules with tool implementations
-pub mod memory;
+pub mod bash;
+pub mod claude;
 pub mod code;
+pub mod experts;
+pub mod memory;
 pub mod project;
 pub mod tasks_goals;
 pub mod web;
-pub mod claude;
-pub mod bash;
 
 // Re-export commonly used functions
-pub use memory::*;
+pub use bash::*;
+pub use claude::*;
 pub use code::*;
+pub use experts::*;
+pub use memory::*;
 pub use project::*;
 pub use tasks_goals::*;
 pub use web::*;
-pub use claude::*;
-pub use bash::*;
