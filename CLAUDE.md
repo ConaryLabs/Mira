@@ -10,20 +10,40 @@ session_start(project_path="/home/peter/Mira")
 
 Then `recall("preferences")` before writing code.
 
-## Code Navigation (Use These First)
+## CRITICAL: Tool Selection
 
-**Always prefer Mira tools over Grep/Glob for code exploration:**
+STOP before using Grep or Glob. Use Mira tools instead:
 
-| Need | Tool | Why |
-|------|------|-----|
-| Search by meaning | `semantic_code_search` | Understands intent, not just keywords |
-| File structure | `get_symbols` | Functions, structs, classes in a file |
-| Check past decisions | `recall` | What we decided and why |
-| Codebase overview | `session_start` output | Module map with summaries |
+- `semantic_code_search` - for ANY code search (not Grep)
+- `get_symbols` - for file structure (not Grep)
+- `find_callers` / `find_callees` - for call graph (not Grep)
+- `recall` - for past decisions and preferences
+- `check_capability` - to find if something exists in the codebase
 
-**When to use Grep:** Only for literal string searches (error messages, specific constants, config values).
+**Only use Grep** for literal strings (error messages, UUIDs, specific constants).
+**Only use Glob** for exact filename patterns when you know the name.
 
-**When to use Glob:** Only for finding files by exact name pattern.
+## Expert Consultation
+
+Use experts for second opinions before major decisions:
+
+- `consult_architect` - system design, patterns, tradeoffs
+- `consult_plan_reviewer` - validate plans before coding
+- `consult_code_reviewer` - find bugs, quality issues
+- `consult_security` - vulnerabilities, hardening
+- `consult_scope_analyst` - missing requirements, edge cases
+
+## Code Navigation Reference
+
+| Need | Tool |
+|------|------|
+| Search by meaning | `semantic_code_search` |
+| File structure | `get_symbols` |
+| What calls X? | `find_callers` |
+| What does X call? | `find_callees` |
+| Past decisions | `recall` |
+| Feature exists? | `check_capability` |
+| Codebase overview | `session_start` output |
 
 ## Build & Test
 
