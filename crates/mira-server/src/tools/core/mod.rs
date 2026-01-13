@@ -45,6 +45,9 @@ pub trait ToolContext: Send + Sync {
     /// Get current session ID (if any)
     async fn get_session_id(&self) -> Option<String>;
 
+    /// Set the session ID
+    async fn set_session_id(&self, session_id: String);
+
     /// Get or create a session ID for the current project
     async fn get_or_create_session(&self) -> String;
 
@@ -67,16 +70,16 @@ pub trait ToolContext: Send + Sync {
 }
 
 // Sub-modules with tool implementations
-pub mod bash;
 pub mod code;
+pub mod dev;
 pub mod experts;
 pub mod memory;
 pub mod project;
 pub mod tasks_goals;
 
 // Re-export commonly used functions
-pub use bash::*;
 pub use code::*;
+pub use dev::*;
 pub use experts::*;
 pub use memory::*;
 pub use project::*;

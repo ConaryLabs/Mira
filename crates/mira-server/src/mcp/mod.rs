@@ -2,7 +2,8 @@
 // MCP Server implementation
 
 mod extraction;
-pub mod tools;
+
+use crate::tools::core as tools;
 
 use std::collections::HashMap;
 use tokio::sync::oneshot;
@@ -357,7 +358,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<SessionStartRequest>,
     ) -> Result<String, String> {
-        tools::project::session_start(self, req.project_path, req.name, req.session_id).await
+        tools::session_start(self, req.project_path, req.name, req.session_id).await
     }
 
     #[tool(description = "Set active project.")]
@@ -365,12 +366,12 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<SetProjectRequest>,
     ) -> Result<String, String> {
-        tools::project::set_project(self, req.project_path, req.name).await
+        tools::set_project(self, req.project_path, req.name).await
     }
 
     #[tool(description = "Get currently active project.")]
     async fn get_project(&self) -> Result<String, String> {
-        tools::project::get_project(self).await
+        tools::get_project(self).await
     }
 
     #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]
@@ -378,7 +379,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<RememberRequest>,
     ) -> Result<String, String> {
-        tools::memory::remember(
+        tools::remember(
             self,
             req.content,
             req.key,
@@ -394,7 +395,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<RecallRequest>,
     ) -> Result<String, String> {
-        tools::memory::recall(self, req.query, req.limit, req.category, req.fact_type).await
+        tools::recall(self, req.query, req.limit, req.category, req.fact_type).await
     }
 
     #[tool(description = "Delete a memory by ID.")]
@@ -402,7 +403,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ForgetRequest>,
     ) -> Result<String, String> {
-        tools::memory::forget(self, req.id).await
+        tools::forget(self, req.id).await
     }
 
     #[tool(description = "Get symbols from a file.")]
@@ -410,15 +411,15 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<GetSymbolsRequest>,
     ) -> Result<String, String> {
-        tools::code::get_symbols(self, req.file_path, req.symbol_type).await
+        tools::get_symbols(req.file_path, req.symbol_type)
     }
 
     #[tool(description = "Search code by meaning.")]
-    async fn semantic_code_search(
+    async fn search_code(
         &self,
         Parameters(req): Parameters<SemanticCodeSearchRequest>,
     ) -> Result<String, String> {
-        tools::code::semantic_code_search(self, req.query, req.language, req.limit).await
+        tools::search_code(self, req.query, req.language, req.limit).await
     }
 
     #[tool(description = "Find all functions that call a given function.")]
@@ -426,7 +427,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<FindCallersRequest>,
     ) -> Result<String, String> {
-        tools::code::mcp_find_callers(self, req.function_name, req.limit).await
+        tools::find_function_callers(self, req.function_name, req.limit).await
     }
 
     #[tool(description = "Find all functions called by a given function.")]
@@ -434,7 +435,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<FindCalleesRequest>,
     ) -> Result<String, String> {
-        tools::code::mcp_find_callees(self, req.function_name, req.limit).await
+        tools::find_function_callees(self, req.function_name, req.limit).await
     }
 
     #[tool(description = "Check if a capability/feature exists in the codebase. Searches cached capabilities first, then falls back to live code search.")]
@@ -442,7 +443,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<CheckCapabilityRequest>,
     ) -> Result<String, String> {
-        tools::code::check_capability(self, req.description).await
+        tools::check_capability(self, req.description).await
     }
 
     #[tool(description = "Manage tasks. Actions: create/bulk_create/list/get/update/complete/delete. Use bulk_create with tasks param for multiple tasks in one call.")]
@@ -450,7 +451,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<TaskRequest>,
     ) -> Result<String, String> {
-        tools::tasks::task(
+        tools::task(
             self,
             req.action,
             req.task_id,
@@ -470,7 +471,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<GoalRequest>,
     ) -> Result<String, String> {
-        tools::tasks::goal(
+        tools::goal(
             self,
             req.action,
             req.goal_id,
@@ -491,17 +492,17 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<IndexRequest>,
     ) -> Result<String, String> {
-        tools::code::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
+        tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
     }
 
     #[tool(description = "Generate LLM-powered summaries for codebase modules. Uses DeepSeek to analyze code and create descriptions.")]
     async fn summarize_codebase(&self) -> Result<String, String> {
-        tools::code::summarize_codebase(self).await
+        tools::summarize_codebase(self).await
     }
 
     #[tool(description = "Get session recap (preferences, recent context, goals).")]
     async fn get_session_recap(&self) -> Result<String, String> {
-        tools::dev::get_session_recap(self).await
+        tools::get_session_recap(self).await
     }
 
     #[tool(description = "Query session history. Actions: list_sessions, get_history, current")]
@@ -619,7 +620,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ConsultArchitectRequest>,
     ) -> Result<String, String> {
-        tools::experts::consult_architect(self, req.context, req.question).await
+        tools::consult_architect(self, req.context, req.question).await
     }
 
     #[tool(description = "Consult the Plan Reviewer expert to validate implementation plans before coding. Identifies risks, gaps, and blockers.")]
@@ -627,7 +628,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ConsultPlanReviewerRequest>,
     ) -> Result<String, String> {
-        tools::experts::consult_plan_reviewer(self, req.context, req.question).await
+        tools::consult_plan_reviewer(self, req.context, req.question).await
     }
 
     #[tool(description = "Consult the Scope Analyst expert to find missing requirements, unstated assumptions, and edge cases. Surfaces unknowns early.")]
@@ -635,7 +636,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ConsultScopeAnalystRequest>,
     ) -> Result<String, String> {
-        tools::experts::consult_scope_analyst(self, req.context, req.question).await
+        tools::consult_scope_analyst(self, req.context, req.question).await
     }
 
     #[tool(description = "Consult the Code Reviewer expert to find bugs, quality issues, and improvements. Reviews code for correctness and maintainability.")]
@@ -643,7 +644,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ConsultCodeReviewerRequest>,
     ) -> Result<String, String> {
-        tools::experts::consult_code_reviewer(self, req.context, req.question).await
+        tools::consult_code_reviewer(self, req.context, req.question).await
     }
 
     #[tool(description = "Consult the Security Analyst expert to identify vulnerabilities, attack vectors, and hardening opportunities. Reviews for security best practices.")]
@@ -651,7 +652,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ConsultSecurityRequest>,
     ) -> Result<String, String> {
-        tools::experts::consult_security(self, req.context, req.question).await
+        tools::consult_security(self, req.context, req.question).await
     }
 }
 
@@ -685,6 +686,7 @@ impl ServerHandler for MiraServer {
         }))
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn call_tool(
         &self,
         request: CallToolRequestParam,

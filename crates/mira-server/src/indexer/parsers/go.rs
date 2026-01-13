@@ -406,7 +406,7 @@ import "fmt"
 "#;
         let (_, imports, _) = parse_go(code);
 
-        assert!(imports.len() >= 1);
+        assert!(!imports.is_empty());
         assert!(imports.iter().any(|i| i.import_path == "fmt"));
     }
 }

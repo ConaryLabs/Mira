@@ -5,6 +5,7 @@ use crate::cartographer;
 use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, Message};
+use crate::search::embedding_to_bytes;
 use rusqlite::params;
 use std::path::Path;
 use std::process::Command;
@@ -374,7 +375,7 @@ async fn parse_and_store_capabilities(
 fn store_embedding(db: &Database, fact_id: i64, content: &str, embedding: &[f32]) -> Result<(), String> {
     let conn = db.conn();
 
-    let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+    let embedding_bytes = embedding_to_bytes(embedding);
 
     conn.execute(
         "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",

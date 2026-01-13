@@ -27,6 +27,7 @@ pub struct Database {
 
 impl Database {
     /// Open database at path, creating if needed
+    #[allow(clippy::missing_transmute_annotations)]
     pub fn open(path: &Path) -> Result<Self> {
         // Register sqlite-vec extension before opening
         unsafe {
@@ -58,6 +59,7 @@ impl Database {
     }
 
     /// Open in-memory database (for testing)
+    #[allow(clippy::missing_transmute_annotations)]
     pub fn open_in_memory() -> Result<Self> {
         unsafe {
             rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(

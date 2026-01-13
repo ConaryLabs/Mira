@@ -223,7 +223,7 @@ async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
     let server = mira::mcp::MiraServer::new(db.clone(), None);
 
     // Call session_start
-    let result = mira::mcp::tools::project::session_start(
+    let result = mira::tools::session_start(
         &server,
         project_path.to_string_lossy().to_string(),
         None,

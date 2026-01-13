@@ -1,10 +1,11 @@
-// src/indexer/mod.rs
+// crates/mira-server/src/indexer/mod.rs
 // Code indexing for symbol extraction and semantic search
 
 pub mod parsers;
 
 use crate::db::Database;
 use crate::embeddings::Embeddings;
+use crate::search::embedding_to_bytes;
 use anyhow::{Context, Result};
 use rusqlite::params;
 use std::path::Path;
@@ -396,10 +397,8 @@ pub async fn index_project(
                         let rows = stmt.query_map(params![project_id, &relative_path], |row| {
                             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
                         })?;
-                        for row in rows {
-                            if let Ok((id, name)) = row {
-                                symbol_ids.insert(name, id);
-                            }
+                        for (id, name) in rows.flatten() {
+                            symbol_ids.insert(name, id);
                         }
                     }
 
@@ -468,10 +467,7 @@ pub async fn index_project(
                     // Store all embeddings
                     let conn = db.conn();
                     for (chunk, embedding) in pending_chunks.iter().zip(vectors.iter()) {
-                        let embedding_bytes: Vec<u8> = embedding
-                            .iter()
-                            .flat_map(|f| f.to_le_bytes())
-                            .collect();
+                        let embedding_bytes = embedding_to_bytes(embedding);
 
                         if let Err(e) = conn.execute(
                             "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)

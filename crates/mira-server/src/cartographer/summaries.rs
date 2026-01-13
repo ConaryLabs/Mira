@@ -54,7 +54,7 @@ pub fn get_module_code_preview(project_path: &Path, module_path: &str) -> String
     for candidate in candidates {
         let file_path = if full_path.is_dir() {
             full_path.join(candidate)
-        } else if full_path.extension().map_or(false, |e| e == "rs") {
+        } else if full_path.extension().is_some_and(|e| e == "rs") {
             full_path.clone()
         } else {
             continue;
@@ -76,7 +76,7 @@ pub fn get_module_code_preview(project_path: &Path, module_path: &str) -> String
             .max_depth(1)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
         {
             if let Ok(content) = std::fs::read_to_string(entry.path()) {
                 let lines: Vec<&str> = content.lines().take(50).collect();
@@ -102,10 +102,10 @@ pub fn get_module_full_code(project_path: &Path, module_path: &str, max_bytes: u
             .max_depth(2) // Include immediate subdirectories
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
             .map(|e| e.path().to_path_buf())
             .collect()
-    } else if full_path.extension().map_or(false, |e| e == "rs") && full_path.exists() {
+    } else if full_path.extension().is_some_and(|e| e == "rs") && full_path.exists() {
         vec![full_path.clone()]
     } else {
         vec![]
@@ -113,8 +113,8 @@ pub fn get_module_full_code(project_path: &Path, module_path: &str, max_bytes: u
 
     // Sort for consistent ordering (mod.rs first, then alphabetically)
     rs_files.sort_by(|a, b| {
-        let a_is_mod = a.file_name().map_or(false, |n| n == "mod.rs");
-        let b_is_mod = b.file_name().map_or(false, |n| n == "mod.rs");
+        let a_is_mod = a.file_name().is_some_and(|n| n == "mod.rs");
+        let b_is_mod = b.file_name().is_some_and(|n| n == "mod.rs");
         match (a_is_mod, b_is_mod) {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,

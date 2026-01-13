@@ -108,7 +108,7 @@ fn detect_modules_in_src(
         let path = entry.path();
         let relative = path.strip_prefix(project_path).unwrap_or(path);
 
-        if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
+        if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
             // Entry points become top-level modules

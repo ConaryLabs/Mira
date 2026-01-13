@@ -230,7 +230,7 @@ fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
     for entry in WalkDir::new(&full_path)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
         if let Ok(content) = std::fs::read_to_string(entry.path()) {
             count += content.lines().count() as u32;

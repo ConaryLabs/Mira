@@ -1,4 +1,4 @@
-// db/memory.rs
+// crates/mira-server/src/db/memory.rs
 // Memory storage and retrieval operations
 
 use anyhow::Result;
@@ -6,6 +6,7 @@ use mira_types::MemoryFact;
 use rusqlite::params;
 
 use super::Database;
+use crate::search::embedding_to_bytes;
 
 /// Parse MemoryFact from a rusqlite Row with standard column order:
 /// (id, project_id, key, content, fact_type, category, confidence, created_at)
@@ -169,10 +170,7 @@ impl Database {
     ) -> Result<Vec<(i64, String, f32)>> {
         let conn = self.conn();
 
-        let embedding_bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes = embedding_to_bytes(embedding);
 
         let mut stmt = conn.prepare(
             "SELECT f.id, f.content, vec_distance_cosine(v.embedding, ?1) as distance
@@ -287,10 +285,7 @@ impl Database {
     pub fn store_fact_embedding(&self, fact_id: i64, content: &str, embedding: &[f32]) -> Result<()> {
         let conn = self.conn();
 
-        let embedding_bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes = embedding_to_bytes(embedding);
 
         // Insert or update embedding
         conn.execute(

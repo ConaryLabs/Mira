@@ -35,6 +35,10 @@ impl ToolContext for MiraServer {
         self.session_id.read().await.clone()
     }
 
+    async fn set_session_id(&self, session_id: String) {
+        *self.session_id.write().await = Some(session_id);
+    }
+
     async fn get_or_create_session(&self) -> String {
         // For MCP, generate or return existing session ID
         let mut session_id = self.session_id.write().await;

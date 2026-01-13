@@ -61,8 +61,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if pattern.ends_with('*') {
-        let prefix = &pattern[..pattern.len() - 1];
+    if let Some(prefix) = pattern.strip_suffix('*') {
         return text.starts_with(prefix);
     }
     pattern == text

@@ -66,10 +66,10 @@ impl FileWatcher {
     /// Start watching a project directory
     pub async fn watch_project(&self, project_id: i64, project_path: PathBuf) {
         let mut projects = self.watched_projects.write().await;
-        if !projects.contains_key(&project_id) {
+        projects.entry(project_id).or_insert_with(|| {
             tracing::info!("Starting file watch for project {} at {:?}", project_id, project_path);
-            projects.insert(project_id, project_path);
-        }
+            project_path
+        });
     }
 
     /// Stop watching a project
@@ -373,10 +373,10 @@ impl WatcherHandle {
     /// Register a project for watching
     pub async fn watch(&self, project_id: i64, project_path: PathBuf) {
         let mut projects = self.watched_projects.write().await;
-        if !projects.contains_key(&project_id) {
+        projects.entry(project_id).or_insert_with(|| {
             tracing::info!("Registering project {} for file watching at {:?}", project_id, project_path);
-            projects.insert(project_id, project_path);
-        }
+            project_path
+        });
     }
 
     /// Unregister a project from watching

@@ -44,7 +44,7 @@ pub fn format_compact(map: &CodebaseMap) -> String {
                 let dep_names: Vec<_> = module
                     .depends_on
                     .iter()
-                    .map(|d| d.split('/').last().unwrap_or(d))
+                    .map(|d| d.split('/').next_back().unwrap_or(d))
                     .take(3)
                     .collect();
                 format!(" -> {}", dep_names.join(", "))
