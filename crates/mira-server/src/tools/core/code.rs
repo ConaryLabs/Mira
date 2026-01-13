@@ -158,53 +158,65 @@ pub async fn check_capability<C: ToolContext>(
     // Step 1: Search capability memories
     if let Some(embeddings) = ctx.embeddings() {
         if let Ok(query_embedding) = embeddings.embed(&description).await {
-            let conn = ctx.db().conn();
+            let embedding_bytes = embedding_to_bytes(&query_embedding);
 
-            // Search for capability and issue memories
-            let mut stmt = conn
-                .prepare(
-                    "SELECT f.id, f.content, f.fact_type, vec_distance_cosine(v.embedding, ?1) as distance
-                     FROM vec_memory v
-                     JOIN memory_facts f ON v.fact_id = f.id
-                     WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-                       AND f.fact_type IN ('capability', 'issue')
-                     ORDER BY distance
-                     LIMIT 5",
-                )
-                .map_err(|e| e.to_string())?;
+            // Run vector search on blocking thread pool
+            let db_clone = ctx.db().clone();
+            let capability_results: Result<Vec<(i64, String, String, f32)>, String> =
+                crate::db::Database::run_blocking(db_clone, move |conn| {
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT f.id, f.content, f.fact_type, vec_distance_cosine(v.embedding, ?1) as distance
+                             FROM vec_memory v
+                             JOIN memory_facts f ON v.fact_id = f.id
+                             WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+                               AND f.fact_type IN ('capability', 'issue')
+                             ORDER BY distance
+                             LIMIT 5",
+                        )
+                        .map_err(|e| e.to_string())?;
 
-            let capability_results: Vec<(i64, String, String, f32)> = stmt
-                .query_map(
-                    params![embedding_to_bytes(&query_embedding), project_id, 5i64],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
+                    let results: Vec<(i64, String, String, f32)> = stmt
+                        .query_map(params![embedding_bytes, project_id, 5i64], |row| {
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                        })
+                        .map_err(|e| e.to_string())?
+                        .filter_map(|r| r.ok())
+                        .collect();
 
-            // Check if we have good matches (similarity > 0.6)
-            let good_matches: Vec<_> = capability_results
-                .iter()
-                .filter(|(_, _, _, dist)| (1.0 - dist) > 0.6)
-                .collect();
+                    Ok(results)
+                })
+                .await;
 
-            if !good_matches.is_empty() {
-                let mut response = format!(
-                    "{}Found {} matching capabilities:\n\n",
-                    context_header,
-                    good_matches.len()
-                );
+            if let Ok(capability_results) = capability_results {
+                // Check if we have good matches (similarity > 0.6)
+                let good_matches: Vec<_> = capability_results
+                    .iter()
+                    .filter(|(_, _, _, dist)| (1.0 - dist) > 0.6)
+                    .collect();
 
-                for (id, content, fact_type, distance) in &good_matches {
-                    let score = 1.0 - distance;
-                    let type_label = if *fact_type == "issue" { "[ISSUE]" } else { "[CAPABILITY]" };
-                    response.push_str(&format!(
-                        "  {} (score: {:.2}, id: {}) {}\n",
-                        type_label, score, id, content
-                    ));
+                if !good_matches.is_empty() {
+                    let mut response = format!(
+                        "{}Found {} matching capabilities:\n\n",
+                        context_header,
+                        good_matches.len()
+                    );
+
+                    for (id, content, fact_type, distance) in &good_matches {
+                        let score = 1.0 - distance;
+                        let type_label = if *fact_type == "issue" {
+                            "[ISSUE]"
+                        } else {
+                            "[CAPABILITY]"
+                        };
+                        response.push_str(&format!(
+                            "  {} (score: {:.2}, id: {}) {}\n",
+                            type_label, score, id, content
+                        ));
+                    }
+
+                    return Ok(response);
                 }
-
-                return Ok(response);
             }
         }
     }

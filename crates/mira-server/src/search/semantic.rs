@@ -55,33 +55,37 @@ pub async fn semantic_search(
         .map_err(|e| format!("Embedding failed: {}", e))?;
 
     let embedding_bytes = embedding_to_bytes(&query_embedding);
-    let conn = db.conn();
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT file_path, chunk_content, vec_distance_cosine(embedding, ?2) as distance, start_line
-             FROM vec_code
-             WHERE project_id = ?1 OR ?1 IS NULL
-             ORDER BY distance
-             LIMIT ?3",
-        )
-        .map_err(|e| e.to_string())?;
+    // Run vector search on blocking thread pool to avoid blocking tokio
+    let db_clone = db.clone();
+    Database::run_blocking(db_clone, move |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT file_path, chunk_content, vec_distance_cosine(embedding, ?2) as distance, start_line
+                 FROM vec_code
+                 WHERE project_id = ?1 OR ?1 IS NULL
+                 ORDER BY distance
+                 LIMIT ?3",
+            )
+            .map_err(|e| e.to_string())?;
 
-    let results: Vec<SearchResult> = stmt
-        .query_map(params![project_id, embedding_bytes, limit as i64], |row| {
-            let start_line: i64 = row.get::<_, Option<i64>>(3)?.unwrap_or(0);
-            Ok(SearchResult {
-                file_path: row.get(0)?,
-                content: row.get(1)?,
-                score: distance_to_score(row.get(2)?),
-                start_line: start_line as u32,
+        let results: Vec<SearchResult> = stmt
+            .query_map(params![project_id, embedding_bytes, limit as i64], |row| {
+                let start_line: i64 = row.get::<_, Option<i64>>(3)?.unwrap_or(0);
+                Ok(SearchResult {
+                    file_path: row.get(0)?,
+                    content: row.get(1)?,
+                    score: distance_to_score(row.get(2)?),
+                    start_line: start_line as u32,
+                })
             })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
 
-    Ok(results)
+        Ok(results)
+    })
+    .await
 }
 
 // ============================================================================
@@ -261,8 +265,14 @@ pub async fn hybrid_search(
 
     // Decide if we need keyword fallback
     if semantic_results.is_empty() || best_score < FALLBACK_THRESHOLD {
-        let conn = db.conn();
-        let keyword_results = keyword_search(&conn, query, project_id, project_path, limit);
+        // Run keyword search on blocking thread pool
+        let db_clone = db.clone();
+        let query_owned = query.to_string();
+        let project_path_owned = project_path.map(|s| s.to_string());
+        let keyword_results = Database::run_blocking(db_clone, move |conn| {
+            keyword_search(conn, &query_owned, project_id, project_path_owned.as_deref(), limit)
+        })
+        .await;
 
         if !keyword_results.is_empty() {
             tracing::debug!(

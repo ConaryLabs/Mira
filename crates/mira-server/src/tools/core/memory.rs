@@ -34,18 +34,18 @@ pub async fn remember<C: ToolContext>(
     if let Some(embeddings) = ctx.embeddings() {
         match embeddings.embed(&content).await {
             Ok(embedding) => {
-                let conn = ctx.db().conn();
-                // Insert into vec_memory
-                use rusqlite::params;
-                let result = conn.execute(
-                    "INSERT INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
-                    params![
-                        id,
-                        embedding_to_bytes(&embedding),
-                        id,
-                        &content
-                    ],
-                );
+                // Insert into vec_memory on blocking thread pool
+                let db_clone = ctx.db().clone();
+                let embedding_bytes = embedding_to_bytes(&embedding);
+                let content_clone = content.clone();
+                let result = crate::db::Database::run_blocking(db_clone, move |conn| {
+                    use rusqlite::params;
+                    conn.execute(
+                        "INSERT INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
+                        params![id, embedding_bytes, id, &content_clone],
+                    )
+                })
+                .await;
                 if let Err(e) = result {
                     tracing::warn!("Failed to store embedding: {}", e);
                 }
@@ -80,43 +80,52 @@ pub async fn recall<C: ToolContext>(
     // Try semantic search first if embeddings available
     if let Some(embeddings) = ctx.embeddings() {
         if let Ok(query_embedding) = embeddings.embed(&query).await {
-            let conn = ctx.db().conn();
+            let embedding_bytes = embedding_to_bytes(&query_embedding);
 
-            // Search vec_memory with project scoping
-            // Join with memory_facts to filter by project_id
-            let mut stmt = conn
-                .prepare(
-                    "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
-                     FROM vec_memory v
-                     JOIN memory_facts f ON v.fact_id = f.id
-                     WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-                     ORDER BY distance
-                     LIMIT ?3",
-                )
-                .map_err(|e| e.to_string())?;
+            // Run vector search on blocking thread pool
+            let db_clone = ctx.db().clone();
+            let results: Result<Vec<(i64, String, f32)>, String> =
+                crate::db::Database::run_blocking(db_clone, move |conn| {
+                    use rusqlite::params;
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
+                             FROM vec_memory v
+                             JOIN memory_facts f ON v.fact_id = f.id
+                             WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+                             ORDER BY distance
+                             LIMIT ?3",
+                        )
+                        .map_err(|e| e.to_string())?;
 
-            use rusqlite::params;
-            let results: Vec<(i64, String, f32)> = stmt
-                .query_map(
-                    params![embedding_to_bytes(&query_embedding), project_id, limit as i64],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
+                    let results: Vec<(i64, String, f32)> = stmt
+                        .query_map(params![embedding_bytes, project_id, limit as i64], |row| {
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                        })
+                        .map_err(|e| e.to_string())?
+                        .filter_map(|r| r.ok())
+                        .collect();
 
-            if !results.is_empty() {
-                let mut response = format!("{}Found {} memories:\n", context_header, results.len());
-                for (id, content, distance) in results {
-                    let score = 1.0 - distance; // Convert distance to similarity
-                    let preview = if content.len() > 100 {
-                        format!("{}...", &content[..100])
-                    } else {
-                        content
-                    };
-                    response.push_str(&format!("  [{}] (score: {:.2}) {}\n", id, score, preview));
+                    Ok(results)
+                })
+                .await;
+
+            if let Ok(results) = results {
+                if !results.is_empty() {
+                    let mut response =
+                        format!("{}Found {} memories:\n", context_header, results.len());
+                    for (id, content, distance) in results {
+                        let score = 1.0 - distance; // Convert distance to similarity
+                        let preview = if content.len() > 100 {
+                            format!("{}...", &content[..100])
+                        } else {
+                            content
+                        };
+                        response
+                            .push_str(&format!("  [{}] (score: {:.2}) {}\n", id, score, preview));
+                    }
+                    return Ok(response);
                 }
-                return Ok(response);
             }
         }
     }
@@ -153,13 +162,18 @@ pub async fn recall<C: ToolContext>(
 pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, String> {
     let id: i64 = id.parse().map_err(|_| "Invalid ID".to_string())?;
 
-    // Delete from SQL
-    let deleted = ctx.db().delete_memory(id).map_err(|e| e.to_string())?;
-
-    // Delete from vector table
-    let conn = ctx.db().conn();
-    use rusqlite::params;
-    let _ = conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", params![id]);
+    // Delete from both SQL and vector table on blocking thread pool
+    let db_clone = ctx.db().clone();
+    let deleted = crate::db::Database::run_blocking(db_clone, move |conn| {
+        use rusqlite::params;
+        // Delete from vector table first
+        let _ = conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", params![id]);
+        // Delete from facts table
+        conn.execute("DELETE FROM memory_facts WHERE id = ?", params![id])
+            .map(|n| n > 0)
+            .unwrap_or(false)
+    })
+    .await;
 
     if deleted {
         Ok(format!("Memory {} deleted.", id))
