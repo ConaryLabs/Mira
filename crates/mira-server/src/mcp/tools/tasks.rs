@@ -15,6 +15,7 @@ pub async fn task(
     priority: Option<String>,
     include_completed: Option<bool>,
     limit: Option<i64>,
+    tasks: Option<String>,
 ) -> Result<String, String> {
     tasks_goals::task(
         server,
@@ -26,6 +27,7 @@ pub async fn task(
         priority,
         include_completed,
         limit,
+        tasks,
     ).await
 }
 
@@ -41,6 +43,7 @@ pub async fn goal(
     progress_percent: Option<i32>,
     include_finished: Option<bool>,
     limit: Option<i64>,
+    goals: Option<String>,
 ) -> Result<String, String> {
     tasks_goals::goal(
         server,
@@ -53,5 +56,6 @@ pub async fn goal(
         progress_percent,
         include_finished,
         limit,
+        goals,
     ).await
 }

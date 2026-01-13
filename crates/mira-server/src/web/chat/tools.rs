@@ -62,13 +62,13 @@ pub async fn execute_tools(
                     }
                 }
                 "list_tasks" => {
-                    match tasks_goals::task(state, "list".to_string(), None, None, None, None, None, None, None).await {
+                    match tasks_goals::task(state, "list".to_string(), None, None, None, None, None, None, None, None).await {
                         Ok(r) => r,
                         Err(e) => format!("Error: {}", e),
                     }
                 }
                 "list_goals" => {
-                    match tasks_goals::goal(state, "list".to_string(), None, None, None, None, None, None, None, None).await {
+                    match tasks_goals::goal(state, "list".to_string(), None, None, None, None, None, None, None, None, None).await {
                         Ok(r) => r,
                         Err(e) => format!("Error: {}", e),
                     }

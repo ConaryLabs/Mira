@@ -2,8 +2,27 @@
 //! Unified task and goal tools
 
 use crate::tools::core::ToolContext;
+use serde::Deserialize;
 
-/// Unified task tool with actions: create, list, update, complete, delete
+/// Task definition for bulk creation
+#[derive(Debug, Deserialize)]
+struct BulkTask {
+    title: String,
+    description: Option<String>,
+    priority: Option<String>,
+    status: Option<String>,
+}
+
+/// Goal definition for bulk creation
+#[derive(Debug, Deserialize)]
+struct BulkGoal {
+    title: String,
+    description: Option<String>,
+    priority: Option<String>,
+    status: Option<String>,
+}
+
+/// Unified task tool with actions: create, bulk_create, list, update, complete, delete
 pub async fn task<C: ToolContext>(
     ctx: &C,
     action: String,
@@ -14,6 +33,7 @@ pub async fn task<C: ToolContext>(
     priority: Option<String>,
     include_completed: Option<bool>,
     limit: Option<i64>,
+    tasks: Option<String>,
 ) -> Result<String, String> {
     let project_id = ctx.project_id().await;
 
@@ -29,6 +49,30 @@ pub async fn task<C: ToolContext>(
                 priority.as_deref(),
             ).map_err(|e| e.to_string())?;
             Ok(format!("Created task '{}' (id: {})", title, id))
+        }
+        "bulk_create" => {
+            let tasks_json = tasks.ok_or("tasks parameter is required for bulk_create action")?;
+            let bulk_tasks: Vec<BulkTask> = serde_json::from_str(&tasks_json)
+                .map_err(|e| format!("Invalid tasks JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]", e))?;
+
+            if bulk_tasks.is_empty() {
+                return Err("tasks array cannot be empty".to_string());
+            }
+
+            let mut created = Vec::new();
+            for t in bulk_tasks {
+                let id = ctx.db().create_task(
+                    project_id,
+                    None, // goal_id
+                    &t.title,
+                    t.description.as_deref(),
+                    t.status.as_deref(),
+                    t.priority.as_deref(),
+                ).map_err(|e| e.to_string())?;
+                created.push(format!("[{}] {}", id, t.title));
+            }
+
+            Ok(format!("Created {} tasks:\n  {}", created.len(), created.join("\n  ")))
         }
         "list" => {
             let include_completed = include_completed.unwrap_or(false);
@@ -89,11 +133,11 @@ pub async fn task<C: ToolContext>(
 
             Ok(format!("Deleted task {}", id))
         }
-        _ => Err(format!("Unknown action: {}. Valid actions: create, list, update, complete, delete", action))
+        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, update, complete, delete", action))
     }
 }
 
-/// Unified goal tool with actions: create, list, update, progress, delete
+/// Unified goal tool with actions: create, bulk_create, list, update, progress, delete
 pub async fn goal<C: ToolContext>(
     ctx: &C,
     action: String,
@@ -105,6 +149,7 @@ pub async fn goal<C: ToolContext>(
     progress_percent: Option<i32>,
     include_finished: Option<bool>,
     limit: Option<i64>,
+    goals: Option<String>,
 ) -> Result<String, String> {
     let project_id = ctx.project_id().await;
 
@@ -120,6 +165,30 @@ pub async fn goal<C: ToolContext>(
                 progress_percent.map(|p| p as i64),
             ).map_err(|e| e.to_string())?;
             Ok(format!("Created goal '{}' (id: {})", title, id))
+        }
+        "bulk_create" => {
+            let goals_json = goals.ok_or("goals parameter is required for bulk_create action")?;
+            let bulk_goals: Vec<BulkGoal> = serde_json::from_str(&goals_json)
+                .map_err(|e| format!("Invalid goals JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]", e))?;
+
+            if bulk_goals.is_empty() {
+                return Err("goals array cannot be empty".to_string());
+            }
+
+            let mut created = Vec::new();
+            for g in bulk_goals {
+                let id = ctx.db().create_goal(
+                    project_id,
+                    &g.title,
+                    g.description.as_deref(),
+                    g.status.as_deref(),
+                    g.priority.as_deref(),
+                    None, // progress_percent
+                ).map_err(|e| e.to_string())?;
+                created.push(format!("[{}] {}", id, g.title));
+            }
+
+            Ok(format!("Created {} goals:\n  {}", created.len(), created.join("\n  ")))
         }
         "list" => {
             let include_finished = include_finished.unwrap_or(false);
@@ -180,6 +249,6 @@ pub async fn goal<C: ToolContext>(
 
             Ok(format!("Deleted goal {}", id))
         }
-        _ => Err(format!("Unknown action: {}. Valid actions: create, list, update, progress, delete", action))
+        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, update, progress, delete", action))
     }
 }

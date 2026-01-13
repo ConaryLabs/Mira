@@ -218,7 +218,7 @@ pub struct CheckCapabilityRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TaskRequest {
-    #[schemars(description = "Action: create/list/get/update/complete/delete")]
+    #[schemars(description = "Action: create/bulk_create/list/get/update/complete/delete")]
     pub action: String,
     #[schemars(description = "Task ID")]
     pub task_id: Option<String>,
@@ -238,11 +238,13 @@ pub struct TaskRequest {
     pub include_completed: Option<bool>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+    #[schemars(description = "For bulk_create: JSON array of tasks [{title, description?, priority?}, ...]")]
+    pub tasks: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoalRequest {
-    #[schemars(description = "Action: create/list/get/update/delete/add_milestone/complete_milestone/progress")]
+    #[schemars(description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/progress")]
     pub action: String,
     #[schemars(description = "Goal ID")]
     pub goal_id: Option<String>,
@@ -266,6 +268,8 @@ pub struct GoalRequest {
     pub weight: Option<i32>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+    #[schemars(description = "For bulk_create: JSON array of goals [{title, description?, priority?}, ...]")]
+    pub goals: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -399,7 +403,7 @@ impl MiraServer {
         tools::code::check_capability(self, req.description).await
     }
 
-    #[tool(description = "Manage tasks. Actions: create/list/get/update/complete/delete")]
+    #[tool(description = "Manage tasks. Actions: create/bulk_create/list/get/update/complete/delete. Use bulk_create with tasks param for multiple tasks in one call.")]
     async fn task(
         &self,
         Parameters(req): Parameters<TaskRequest>,
@@ -414,11 +418,12 @@ impl MiraServer {
             req.priority,
             req.include_completed,
             req.limit,
+            req.tasks,
         )
         .await
     }
 
-    #[tool(description = "Manage goals/milestones. Actions: create/list/get/update/delete/add_milestone/complete_milestone/progress")]
+    #[tool(description = "Manage goals/milestones. Actions: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/progress. Use bulk_create with goals param for multiple goals in one call.")]
     async fn goal(
         &self,
         Parameters(req): Parameters<GoalRequest>,
@@ -434,6 +439,7 @@ impl MiraServer {
             req.progress_percent,
             req.include_finished,
             req.limit,
+            req.goals,
         )
         .await
     }
