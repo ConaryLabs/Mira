@@ -81,9 +81,13 @@ pub fn keyword_search(
                             let full_path = Path::new(proj_path).join(&file_path);
                             if let Ok(file_content) = std::fs::read_to_string(&full_path) {
                                 let lines: Vec<&str> = file_content.lines().collect();
-                                let start_idx = (start as usize).saturating_sub(1);
+                                let start_idx = (start as usize).saturating_sub(1).min(lines.len());
                                 let end_idx = (end as usize).min(lines.len());
-                                lines[start_idx..end_idx].join("\n")
+                                if start_idx < end_idx {
+                                    lines[start_idx..end_idx].join("\n")
+                                } else {
+                                    signature.clone().unwrap_or_else(|| name.clone())
+                                }
                             } else {
                                 signature.unwrap_or_else(|| name.clone())
                             }

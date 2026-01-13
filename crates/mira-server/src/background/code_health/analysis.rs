@@ -39,8 +39,11 @@ pub async fn scan_complexity(
 
         // Extract the function (with some context)
         let lines: Vec<&str> = source.lines().collect();
-        let start = (start_line as usize).saturating_sub(1);
+        let start = (start_line as usize).saturating_sub(1).min(lines.len());
         let end = (end_line as usize).min(lines.len());
+        if start >= end {
+            continue; // Stale line numbers
+        }
         let function_code: String = lines[start..end].join("\n");
 
         // Skip if too short after extraction (might be wrong line numbers)
@@ -186,8 +189,11 @@ pub async fn scan_error_quality(
         };
 
         let lines: Vec<&str> = source.lines().collect();
-        let start = (start_line as usize).saturating_sub(1);
+        let start = (start_line as usize).saturating_sub(1).min(lines.len());
         let end = (end_line as usize).min(lines.len());
+        if start >= end {
+            continue; // Stale line numbers
+        }
         let function_code: String = lines[start..end].join("\n");
 
         let prompt = format!(
