@@ -35,7 +35,7 @@ pub struct MiraServer {
     pub project: Arc<RwLock<Option<ProjectContext>>>,
     /// Current session ID (generated on first tool call or session_start)
     pub session_id: Arc<RwLock<Option<String>>>,
-    /// WebSocket broadcaster (shared with web server)
+    /// WebSocket broadcaster (unused in MCP-only mode)
     pub ws_tx: Option<tokio::sync::broadcast::Sender<mira_types::WsEvent>>,
     /// File watcher handle for registering projects
     pub watcher: Option<WatcherHandle>,
@@ -64,7 +64,8 @@ impl MiraServer {
         }
     }
 
-    /// Create with a broadcast channel and watcher (for embedded web server mode)
+    /// Create with a broadcast channel and watcher (for future embedding scenarios)
+    #[allow(dead_code)]
     pub fn with_broadcaster(
         db: Arc<Database>,
         embeddings: Option<Arc<Embeddings>>,
@@ -110,7 +111,7 @@ impl MiraServer {
         new_id
     }
 
-    /// Broadcast an event to connected WebSocket clients
+    /// Broadcast an event (no-op in MCP-only mode)
     pub fn broadcast(&self, event: mira_types::WsEvent) {
         if let Some(tx) = &self.ws_tx {
             let receiver_count = tx.receiver_count();
@@ -498,7 +499,7 @@ impl MiraServer {
         tools::code::summarize_codebase(self).await
     }
 
-    #[tool(description = "Get session recap (what appears in system prompts when chatting via web UI).")]
+    #[tool(description = "Get session recap (preferences, recent context, goals).")]
     async fn get_session_recap(&self) -> Result<String, String> {
         tools::dev::get_session_recap(self).await
     }

@@ -6,8 +6,7 @@ use tracing::{info, warn, error};
 
 use crate::tools::core::ToolContext;
 
-/// Execute bash command
-/// Works in web chat; in MCP returns web-only error
+/// Execute bash command with timeout
 pub async fn bash<C: ToolContext>(
     _ctx: &C,
     command: String,

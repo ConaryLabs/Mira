@@ -3,8 +3,8 @@
 
 use crate::mcp::MiraServer;
 
-/// Get session recap formatted exactly as it appears in system prompts
-/// Uses the shared Database::build_session_recap for consistency with chat UI
+/// Get session recap for MCP clients
+/// Returns recent context, preferences, and project state
 pub async fn get_session_recap(server: &MiraServer) -> Result<String, String> {
     let project_id = server.project.read().await.as_ref().map(|p| p.id);
     let recap = server.db.build_session_recap(project_id);

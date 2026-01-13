@@ -13,6 +13,5 @@ pub mod hooks;
 pub mod indexer;
 pub mod llm;
 pub mod mcp;
-pub mod persona;
 pub mod search;
 pub mod tools;
