@@ -273,33 +273,34 @@ impl FileWatcher {
         Ok(())
     }
 
-    /// Delete all data associated with a file
+    /// Delete all data associated with a file (runs on blocking thread pool)
     async fn delete_file_data(&self, project_id: i64, file_path: &str) -> Result<(), String> {
-        let conn = self.db.conn();
+        let file_path = file_path.to_string();
+        Database::run_blocking(self.db.clone(), move |conn| {
+            // Delete symbols
+            conn.execute(
+                "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
+                rusqlite::params![project_id, &file_path],
+            )?;
 
-        // Delete symbols
-        conn.execute(
-            "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
-            rusqlite::params![project_id, file_path],
-        ).map_err(|e| e.to_string())?;
+            // Delete embeddings
+            conn.execute(
+                "DELETE FROM vec_code WHERE project_id = ? AND file_path = ?",
+                rusqlite::params![project_id, &file_path],
+            )?;
 
-        // Delete embeddings
-        conn.execute(
-            "DELETE FROM vec_code WHERE project_id = ? AND file_path = ?",
-            rusqlite::params![project_id, file_path],
-        ).map_err(|e| e.to_string())?;
+            // Delete imports
+            conn.execute(
+                "DELETE FROM imports WHERE project_id = ? AND file_path = ?",
+                rusqlite::params![project_id, &file_path],
+            )?;
 
-        // Delete imports
-        conn.execute(
-            "DELETE FROM imports WHERE project_id = ? AND file_path = ?",
-            rusqlite::params![project_id, file_path],
-        ).map_err(|e| e.to_string())?;
-
-        tracing::debug!("Deleted data for file {} in project {}", file_path, project_id);
-        Ok(())
+            tracing::debug!("Deleted data for file {} in project {}", file_path, project_id);
+            Ok::<_, rusqlite::Error>(())
+        }).await.map_err(|e| e.to_string())
     }
 
-    /// Update a file (re-parse and queue embeddings)
+    /// Update a file (re-parse and queue embeddings) - runs DB ops on blocking thread pool
     async fn update_file(&self, project_id: i64, full_path: &Path, relative_path: &str) -> Result<(), String> {
         // First delete existing data for this file
         self.delete_file_data(project_id, relative_path).await?;
@@ -320,43 +321,54 @@ impl FileWatcher {
             _ => return Err(format!("Unsupported extension: {}", ext)),
         };
 
-        // Parse the file
+        // Parse the file (CPU-bound, runs on current thread - that's fine)
         let parse_result = indexer::parse_file(&content, language)
             .map_err(|e| format!("Parse error: {}", e))?;
 
-        let conn = self.db.conn();
+        // Run DB inserts on blocking thread pool with a transaction for speed
+        let relative_path = relative_path.to_string();
+        let relative_path_for_db = relative_path.clone();
+        let symbol_count = parse_result.symbols.len();
+        Database::run_blocking(self.db.clone(), move |conn| {
+            let relative_path = relative_path_for_db;
+            // Use a transaction for batch inserts (much faster)
+            let tx = conn.unchecked_transaction()?;
 
-        // Insert symbols
-        for symbol in &parse_result.symbols {
-            conn.execute(
-                "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    project_id,
-                    relative_path,
-                    symbol.name,
-                    symbol.kind,
-                    symbol.start_line,
-                    symbol.end_line,
-                    symbol.signature
-                ],
-            ).map_err(|e| e.to_string())?;
-        }
+            // Insert symbols
+            for symbol in &parse_result.symbols {
+                tx.execute(
+                    "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        project_id,
+                        &relative_path,
+                        symbol.name,
+                        symbol.kind,
+                        symbol.start_line,
+                        symbol.end_line,
+                        symbol.signature
+                    ],
+                )?;
+            }
 
-        // Insert imports
-        for import in &parse_result.imports {
-            conn.execute(
-                "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
-                 VALUES (?, ?, ?, ?)",
-                rusqlite::params![project_id, relative_path, import.path, import.is_external],
-            ).map_err(|e| e.to_string())?;
-        }
+            // Insert imports
+            for import in &parse_result.imports {
+                tx.execute(
+                    "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
+                     VALUES (?, ?, ?, ?)",
+                    rusqlite::params![project_id, &relative_path, import.path, import.is_external],
+                )?;
+            }
+
+            tx.commit()?;
+            Ok::<_, rusqlite::Error>(())
+        }).await.map_err(|e| e.to_string())?;
 
         // Note: embeddings not created here - run 'index' to generate embeddings
 
         tracing::debug!(
             "Updated file {} in project {}: {} symbols",
-            relative_path, project_id, parse_result.symbols.len()
+            relative_path, project_id, symbol_count
         );
 
         Ok(())

@@ -300,10 +300,9 @@ pub async fn index_project(
 
     tracing::info!("Found {} files to index", files.len());
 
-    // Clear existing data for this project
+    // Clear existing data for this project (runs on blocking thread pool)
     tracing::info!("Clearing existing data...");
-    {
-        let conn = db.conn();
+    Database::run_blocking(db.clone(), move |conn| {
         // Delete call_graph first (references code_symbols)
         conn.execute(
             "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
@@ -325,7 +324,8 @@ pub async fn index_project(
             "DELETE FROM codebase_modules WHERE project_id = ?",
             params![project_id],
         )?;
-    }
+        Ok::<_, rusqlite::Error>(())
+    }).await?;
 
     tracing::info!("Processing files...");
 
@@ -352,19 +352,34 @@ pub async fn index_project(
 
                 tracing::info!("  Parsed in {:?} ({} symbols, {} imports)", parse_time, symbols.len(), imports.len());
 
-                // Store symbols, imports, and calls in database
-                {
-                    let db_start = std::time::Instant::now();
-                    let conn = db.conn();
+                // Convert symbols to ParsedSymbol before moving into closure
+                // (needed for semantic chunking later)
+                let parsed_symbols: Vec<ParsedSymbol> = symbols
+                    .iter()
+                    .map(|s| ParsedSymbol {
+                        name: s.name.clone(),
+                        kind: s.symbol_type.clone(),
+                        start_line: s.start_line,
+                        end_line: s.end_line,
+                        signature: s.signature.clone(),
+                    })
+                    .collect();
+
+                // Store symbols, imports, and calls in database (runs on blocking thread pool)
+                let db_start = std::time::Instant::now();
+                let rel_path = relative_path.clone();
+                let call_count = calls.len();
+                Database::run_blocking(db.clone(), move |conn| {
+                    let tx = conn.unchecked_transaction()?;
 
                     // Store symbols
                     for sym in &symbols {
-                        conn.execute(
+                        tx.execute(
                             "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
                              VALUES (?, ?, ?, ?, ?, ?, ?)",
                             params![
                                 project_id,
-                                relative_path,
+                                &rel_path,
                                 sym.name,
                                 sym.symbol_type,
                                 sym.start_line,
@@ -376,12 +391,12 @@ pub async fn index_project(
 
                     // Store imports
                     for import in &imports {
-                        conn.execute(
+                        tx.execute(
                             "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
                              VALUES (?, ?, ?, ?)",
                             params![
                                 project_id,
-                                relative_path,
+                                &rel_path,
                                 import.import_path,
                                 import.is_external as i32
                             ],
@@ -391,10 +406,10 @@ pub async fn index_project(
                     // Store function calls for call graph
                     let mut symbol_ids: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
                     {
-                        let mut stmt = conn.prepare(
+                        let mut stmt = tx.prepare(
                             "SELECT id, name FROM code_symbols WHERE project_id = ? AND file_path = ?"
                         )?;
-                        let rows = stmt.query_map(params![project_id, &relative_path], |row| {
+                        let rows = stmt.query_map(params![project_id, &rel_path], |row| {
                             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
                         })?;
                         for (id, name) in rows.flatten() {
@@ -405,7 +420,7 @@ pub async fn index_project(
                     for call in &calls {
                         if let Some(&caller_id) = symbol_ids.get(&call.caller_name) {
                             let callee_id = symbol_ids.get(&call.callee_name).copied();
-                            conn.execute(
+                            tx.execute(
                                 "INSERT INTO call_graph (caller_id, callee_name, callee_id)
                                  VALUES (?, ?, ?)",
                                 params![caller_id, call.callee_name, callee_id],
@@ -413,23 +428,14 @@ pub async fn index_project(
                         }
                     }
 
-                    tracing::debug!("  DB inserts in {:?} ({} calls)", db_start.elapsed(), calls.len());
-                }
+                    tx.commit()?;
+                    Ok::<_, rusqlite::Error>(())
+                }).await?;
+                tracing::debug!("  DB inserts in {:?} ({} calls)", db_start.elapsed(), call_count);
 
                 // Collect chunks for batch embedding (if embeddings enabled)
                 if embeddings.is_some() {
                     if let Ok(content) = std::fs::read_to_string(file_path) {
-                        let parsed_symbols: Vec<ParsedSymbol> = symbols
-                            .iter()
-                            .map(|s| ParsedSymbol {
-                                name: s.name.clone(),
-                                kind: s.symbol_type.clone(),
-                                start_line: s.start_line,
-                                end_line: s.end_line,
-                                signature: s.signature.clone(),
-                            })
-                            .collect();
-
                         let chunks = create_semantic_chunks(&content, &parsed_symbols);
                         for chunk in chunks {
                             if !chunk.content.trim().is_empty() {
@@ -464,22 +470,42 @@ pub async fn index_project(
                 Ok(vectors) => {
                     tracing::info!("Embedded {} chunks in {:?}", vectors.len(), embed_start.elapsed());
 
-                    // Store all embeddings
-                    let conn = db.conn();
-                    for (chunk, embedding) in pending_chunks.iter().zip(vectors.iter()) {
-                        let embedding_bytes = embedding_to_bytes(embedding);
+                    // Store all embeddings (runs on blocking thread pool with transaction)
+                    let chunk_data: Vec<_> = pending_chunks
+                        .iter()
+                        .zip(vectors.iter())
+                        .map(|(chunk, embedding)| {
+                            (
+                                chunk.file_path.clone(),
+                                chunk.content.clone(),
+                                chunk.start_line,
+                                embedding_to_bytes(embedding),
+                            )
+                        })
+                        .collect();
 
-                        if let Err(e) = conn.execute(
-                            "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
-                             VALUES (?, ?, ?, ?, ?)",
-                            params![embedding_bytes, chunk.file_path, chunk.content, project_id, chunk.start_line],
-                        ) {
-                            tracing::warn!("Failed to store embedding ({}:{}): {}", chunk.file_path, chunk.start_line, e);
-                            stats.errors += 1;
-                        } else {
-                            stats.chunks += 1;
+                    let chunk_count = chunk_data.len();
+                    let error_count = Database::run_blocking(db.clone(), move |conn| {
+                        let tx = conn.unchecked_transaction()?;
+                        let mut errors = 0usize;
+
+                        for (file_path, content, start_line, embedding_bytes) in &chunk_data {
+                            if let Err(e) = tx.execute(
+                                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
+                                 VALUES (?, ?, ?, ?, ?)",
+                                params![embedding_bytes, file_path, content, project_id, start_line],
+                            ) {
+                                tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
+                                errors += 1;
+                            }
                         }
-                    }
+
+                        tx.commit()?;
+                        Ok::<_, rusqlite::Error>(errors)
+                    }).await.unwrap_or(chunk_count);
+
+                    stats.chunks += chunk_count - error_count;
+                    stats.errors += error_count;
                 }
                 Err(e) => {
                     tracing::error!("Batch embedding failed: {}", e);

@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Database wrapper with sqlite-vec support
 pub struct Database {
@@ -81,6 +81,29 @@ impl Database {
     /// Get a lock on the connection
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().expect("Database mutex poisoned")
+    }
+
+    /// Run a blocking database operation on tokio's blocking thread pool.
+    /// Use this for heavy DB operations in async code to avoid blocking tokio worker threads.
+    ///
+    /// Example:
+    /// ```ignore
+    /// let result = Database::run_blocking(db.clone(), |conn| {
+    ///     conn.execute("INSERT INTO ...", params![...])?;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    pub async fn run_blocking<F, R>(db: Arc<Database>, f: F) -> R
+    where
+        F: FnOnce(&Connection) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            f(&conn)
+        })
+        .await
+        .expect("Database spawn_blocking task panicked")
     }
 
     /// Initialize schema (idempotent)
