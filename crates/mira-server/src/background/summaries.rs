@@ -17,8 +17,11 @@ const RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
 
 /// Process pending summaries with rate limiting
 pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -> Result<usize, String> {
-    // Get all projects with pending summaries
-    let projects = get_projects_with_pending_summaries(db)?;
+    // Get all projects with pending summaries (run on blocking thread)
+    let db_clone = db.clone();
+    let projects = Database::run_blocking(db_clone, |conn| {
+        get_projects_with_pending_summaries(conn)
+    }).await?;
     if projects.is_empty() {
         return Ok(0);
     }
@@ -80,9 +83,7 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
 }
 
 /// Get projects that have modules needing summaries
-fn get_projects_with_pending_summaries(db: &Arc<Database>) -> Result<Vec<(i64, String)>, String> {
-    let conn = db.conn();
-
+fn get_projects_with_pending_summaries(conn: &rusqlite::Connection) -> Result<Vec<(i64, String)>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT m.project_id, p.path

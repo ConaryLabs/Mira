@@ -17,8 +17,11 @@ pub async fn process_capabilities(
     deepseek: &Arc<DeepSeekClient>,
     embeddings: Option<&Arc<EmbeddingClient>>,
 ) -> Result<usize, String> {
-    // Get projects that need capability scanning
-    let projects = get_projects_needing_scan(db)?;
+    // Get projects that need capability scanning (run on blocking thread)
+    let db_clone = db.clone();
+    let projects = Database::run_blocking(db_clone, |conn| {
+        get_projects_needing_scan(conn)
+    }).await?;
     if !projects.is_empty() {
         tracing::info!("Capabilities: found {} projects needing scan", projects.len());
     }
@@ -59,28 +62,26 @@ pub async fn process_capabilities(
 /// 1. First scan (never scanned before)
 /// 2. Git HEAD changed AND last scan > 1 day ago (rate limited)
 /// 3. Last scan > 7 days ago (periodic refresh)
-fn get_projects_needing_scan(db: &Database) -> Result<Vec<(i64, String)>, String> {
-    // Get all indexed projects (in separate scope to release conn)
-    let all_projects: Vec<(i64, String)> = {
-        let conn = db.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT DISTINCT p.id, p.path
-                 FROM projects p
-                 JOIN codebase_modules m ON m.project_id = p.id",
-            )
-            .map_err(|e| e.to_string())?;
+fn get_projects_needing_scan(conn: &rusqlite::Connection) -> Result<Vec<(i64, String)>, String> {
+    // Get all indexed projects
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT p.id, p.path
+             FROM projects p
+             JOIN codebase_modules m ON m.project_id = p.id",
+        )
+        .map_err(|e| e.to_string())?;
 
-        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect()
-    }; // conn dropped here
+    let all_projects: Vec<(i64, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     let mut needing_scan = Vec::new();
 
     for (project_id, project_path) in all_projects {
-        if needs_capabilities_scan(db, project_id, &project_path)? {
+        if needs_capabilities_scan(conn, project_id, &project_path)? {
             tracing::debug!("Capabilities: project {} needs scan", project_id);
             needing_scan.push((project_id, project_path));
             // Only process one project per cycle to avoid long delays
@@ -92,9 +93,7 @@ fn get_projects_needing_scan(db: &Database) -> Result<Vec<(i64, String)>, String
 }
 
 /// Check if a specific project needs a capabilities scan
-fn needs_capabilities_scan(db: &Database, project_id: i64, project_path: &str) -> Result<bool, String> {
-    let conn = db.conn();
-
+fn needs_capabilities_scan(conn: &rusqlite::Connection, project_id: i64, project_path: &str) -> Result<bool, String> {
     // Get last scan info
     let scan_info: Option<(String, String)> = conn
         .query_row(
@@ -311,15 +310,18 @@ Only list working, implemented capabilities. Do NOT list problems, issues, or in
 
 /// Parse the Reasoner response and store capabilities as memories with embeddings
 async fn parse_and_store_capabilities(
-    db: &Database,
+    db: &Arc<Database>,
     embeddings: Option<&Arc<EmbeddingClient>>,
     project_id: i64,
     response: &str,
 ) -> Result<usize, String> {
     let mut stored = 0;
 
-    // Clear old capabilities for this project (refresh)
-    clear_old_capabilities(db, project_id)?;
+    // Clear old capabilities for this project (run on blocking thread)
+    let db_clone = db.clone();
+    Database::run_blocking(db_clone, move |conn| {
+        clear_old_capabilities(conn, project_id)
+    }).await?;
 
     let mut in_capabilities = false;
     let mut capability_index = 0;
@@ -356,10 +358,14 @@ async fn parse_and_store_capabilities(
             )
             .map_err(|e| e.to_string())?;
 
-            // Generate and store embedding
+            // Generate and store embedding (run on blocking thread)
             if let Some(emb_client) = embeddings {
                 if let Ok(embedding) = emb_client.embed(content).await {
-                    store_embedding(db, id, content, &embedding)?;
+                    let db_clone = db.clone();
+                    let content_owned = content.to_string();
+                    Database::run_blocking(db_clone, move |conn| {
+                        store_embedding(conn, id, &content_owned, &embedding)
+                    }).await?;
                 }
             }
 
@@ -372,9 +378,7 @@ async fn parse_and_store_capabilities(
 }
 
 /// Store embedding for a memory fact
-fn store_embedding(db: &Database, fact_id: i64, content: &str, embedding: &[f32]) -> Result<(), String> {
-    let conn = db.conn();
-
+fn store_embedding(conn: &rusqlite::Connection, fact_id: i64, content: &str, embedding: &[f32]) -> Result<(), String> {
     let embedding_bytes = embedding_to_bytes(embedding);
 
     conn.execute(
@@ -387,9 +391,7 @@ fn store_embedding(db: &Database, fact_id: i64, content: &str, embedding: &[f32]
 }
 
 /// Clear old capabilities before refresh (issues are handled by code_health scanner)
-fn clear_old_capabilities(db: &Database, project_id: i64) -> Result<(), String> {
-    let conn = db.conn();
-
+fn clear_old_capabilities(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
     // Delete old capabilities only (issues managed by code_health scanner)
     conn.execute(
         "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'capability' AND category = 'codebase'",

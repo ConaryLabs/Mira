@@ -9,13 +9,16 @@ use std::sync::Arc;
 
 /// Use DeepSeek Reasoner to analyze large/complex functions
 pub async fn scan_complexity(
-    db: &Database,
+    db: &Arc<Database>,
     deepseek: &Arc<DeepSeekClient>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    // Find large functions (over 50 lines) that haven't been analyzed recently
-    let large_functions = get_large_functions(db, project_id, 50)?;
+    // Find large functions (over 50 lines) - run on blocking thread
+    let db_clone = db.clone();
+    let large_functions = Database::run_blocking(db_clone, move |conn| {
+        get_large_functions(conn, project_id, 50)
+    }).await?;
 
     if large_functions.is_empty() {
         return Ok(0);
@@ -91,21 +94,24 @@ SUGGESTION: <what to do>"#,
                         continue;
                     }
 
-                    // Store the issue
+                    // Store the issue (run on blocking thread)
                     let issue_content = format!(
                         "[complexity] {}:{} `{}`\n{}",
                         file_path, start_line, name, content
                     );
                     let key = format!("health:complexity:{}:{}", file_path, name);
 
-                    db.store_memory(
-                        Some(project_id),
-                        Some(&key),
-                        &issue_content,
-                        "health",
-                        Some("complexity"),
-                        0.75,
-                    )
+                    let db_clone = db.clone();
+                    tokio::task::spawn_blocking(move || {
+                        db_clone.store_memory(
+                            Some(project_id),
+                            Some(&key),
+                            &issue_content,
+                            "health",
+                            Some("complexity"),
+                            0.75,
+                        )
+                    }).await.expect("spawn_blocking panicked")
                     .map_err(|e| e.to_string())?;
 
                     tracing::info!("Code health: complexity issue found in {}", name);
@@ -126,12 +132,10 @@ SUGGESTION: <what to do>"#,
 
 /// Get large functions from the code symbols table
 fn get_large_functions(
-    db: &Database,
+    conn: &rusqlite::Connection,
     project_id: i64,
     min_lines: i64,
 ) -> Result<Vec<(String, String, i64, i64)>, String> {
-    let conn = db.conn();
-
     let mut stmt = conn
         .prepare(
             "SELECT name, file_path, start_line, end_line
@@ -161,13 +165,17 @@ fn get_large_functions(
 
 /// LLM-powered analysis of error handling quality in complex functions
 pub async fn scan_error_quality(
-    db: &Database,
+    db: &Arc<Database>,
     deepseek: &Arc<DeepSeekClient>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    // Find functions with many ? operators (error propagation heavy)
-    let error_heavy_functions = get_error_heavy_functions(db, project_id, project_path)?;
+    // Find functions with many ? operators - run on blocking thread
+    let db_clone = db.clone();
+    let project_path_owned = project_path.to_string();
+    let error_heavy_functions = Database::run_blocking(db_clone, move |conn| {
+        get_error_heavy_functions(conn, project_id, &project_path_owned)
+    }).await?;
 
     if error_heavy_functions.is_empty() {
         return Ok(0);
@@ -233,20 +241,24 @@ SUGGESTION: <what to do>"#,
                         continue;
                     }
 
+                    // Store the issue (run on blocking thread)
                     let issue_content = format!(
                         "[error_quality] {}:{} `{}`\n{}",
                         file_path, start_line, name, content
                     );
                     let key = format!("health:error_quality:{}:{}", file_path, name);
 
-                    db.store_memory(
-                        Some(project_id),
-                        Some(&key),
-                        &issue_content,
-                        "health",
-                        Some("error_quality"),
-                        0.75,
-                    )
+                    let db_clone = db.clone();
+                    tokio::task::spawn_blocking(move || {
+                        db_clone.store_memory(
+                            Some(project_id),
+                            Some(&key),
+                            &issue_content,
+                            "health",
+                            Some("error_quality"),
+                            0.75,
+                        )
+                    }).await.expect("spawn_blocking panicked")
                     .map_err(|e| e.to_string())?;
 
                     tracing::info!("Code health: error quality issue found in {}", name);
@@ -266,37 +278,35 @@ SUGGESTION: <what to do>"#,
 
 /// Find functions with many ? operators (error-propagation heavy)
 fn get_error_heavy_functions(
-    db: &Database,
+    conn: &rusqlite::Connection,
     project_id: i64,
     project_path: &str,
 ) -> Result<Vec<(String, String, i64, i64, usize)>, String> {
     use std::fs;
 
     // Get functions from symbols
-    let functions: Vec<(String, String, i64, i64)> = {
-        let conn = db.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT name, file_path, start_line, end_line
-                 FROM code_symbols
-                 WHERE project_id = ?
-                   AND symbol_type = 'function'
-                   AND end_line IS NOT NULL
-                   AND (end_line - start_line) >= 20
-                   AND file_path NOT LIKE '%/tests/%'
-                   AND name NOT LIKE 'test_%'
-                 ORDER BY (end_line - start_line) DESC
-                 LIMIT 50",
-            )
-            .map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT name, file_path, start_line, end_line
+             FROM code_symbols
+             WHERE project_id = ?
+               AND symbol_type = 'function'
+               AND end_line IS NOT NULL
+               AND (end_line - start_line) >= 20
+               AND file_path NOT LIKE '%/tests/%'
+               AND name NOT LIKE 'test_%'
+             ORDER BY (end_line - start_line) DESC
+             LIMIT 50",
+        )
+        .map_err(|e| e.to_string())?;
 
-        stmt.query_map(params![project_id], |row| {
+    let functions: Vec<(String, String, i64, i64)> = stmt
+        .query_map(params![project_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
-        .collect()
-    };
+        .collect();
 
     // Count ? operators in each function
     let mut results = Vec::new();
