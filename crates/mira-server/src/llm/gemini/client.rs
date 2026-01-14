@@ -1,6 +1,7 @@
 // crates/mira-server/src/llm/gemini/client.rs
-// Google Gemini API client (non-streaming, supports tool calling)
+// Google Gemini 3 Pro API client (non-streaming, supports tool calling)
 // Handles internal translation between Mira's format and Google's format
+// Note: Built-in tools (Google Search) cannot combine with custom function tools
 
 use crate::llm::deepseek::{ChatResult, FunctionCall, Message, Tool, ToolCall, Usage};
 use crate::llm::provider::{LlmClient, Provider};
@@ -18,8 +19,8 @@ const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Default model
-const DEFAULT_MODEL: &str = "gemini-3-pro";
+/// Default model - use preview for Gemini 3
+const DEFAULT_MODEL: &str = "gemini-3-pro-preview";
 
 // ============================================================================
 // Gemini API Types (Google's format)
@@ -35,6 +36,16 @@ struct GeminiRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GeminiTool>>,
     generation_config: GenerationConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_config: Option<ThinkingConfig>,
+}
+
+/// Thinking configuration for Gemini 3
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThinkingConfig {
+    /// Include thought summaries in response
+    include_thoughts: bool,
 }
 
 /// Gemini content (message)
@@ -50,6 +61,9 @@ struct GeminiContent {
 enum GeminiPart {
     Text {
         text: String,
+        /// If true, this is a thought summary (reasoning)
+        #[serde(default)]
+        thought: bool,
     },
     FunctionCall {
         #[serde(rename = "functionCall")]
@@ -114,6 +128,13 @@ struct GeminiFunctionDeclaration {
 #[serde(rename_all = "camelCase")]
 struct GenerationConfig {
     max_output_tokens: u32,
+    /// Thinking level for Gemini 3
+    /// Pro: "low", "high" (default) | Flash also: "minimal", "medium"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_level: Option<String>,
+    /// Temperature - keep at 1.0 for reasoning tasks per Google docs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
 }
 
 /// Gemini response
@@ -148,8 +169,11 @@ pub struct GeminiClient {
     api_key: String,
     model: String,
     client: reqwest::Client,
-    /// Enable Google Search tool
+    /// Enable Google Search tool (only when no custom tools provided)
     enable_search: bool,
+    /// Thinking level - Pro supports: "low", "high" (default)
+    /// Flash also supports: "minimal", "medium"
+    thinking_level: String,
 }
 
 impl GeminiClient {
@@ -171,6 +195,7 @@ impl GeminiClient {
             model,
             client,
             enable_search: true, // Enable Google Search by default for experts
+            thinking_level: "high".to_string(), // Good default for expert tasks
         }
     }
 
@@ -182,6 +207,7 @@ impl GeminiClient {
                 // System messages go to system_instruction
                 let parts = vec![GeminiPart::Text {
                     text: msg.content.clone().unwrap_or_default(),
+                    thought: false,
                 }];
                 Some((
                     GeminiContent {
@@ -194,6 +220,7 @@ impl GeminiClient {
             "user" => {
                 let parts = vec![GeminiPart::Text {
                     text: msg.content.clone().unwrap_or_default(),
+                    thought: false,
                 }];
                 Some((GeminiContent { role: "user".into(), parts }, false))
             }
@@ -203,7 +230,10 @@ impl GeminiClient {
                 // Add text content if present
                 if let Some(ref content) = msg.content {
                     if !content.is_empty() {
-                        parts.push(GeminiPart::Text { text: content.clone() });
+                        parts.push(GeminiPart::Text {
+                            text: content.clone(),
+                            thought: false,
+                        });
                     }
                 }
 
@@ -222,7 +252,10 @@ impl GeminiClient {
                 }
 
                 if parts.is_empty() {
-                    parts.push(GeminiPart::Text { text: String::new() });
+                    parts.push(GeminiPart::Text {
+                        text: String::new(),
+                        thought: false,
+                    });
                 }
 
                 Some((GeminiContent { role: "model".into(), parts }, false))
@@ -294,14 +327,19 @@ impl GeminiClient {
         }
     }
 
-    /// Extract text content from Gemini response
+    /// Extract text content from Gemini response (non-thought parts only)
     fn extract_content(content: &GeminiContent) -> Option<String> {
         let text_parts: Vec<&str> = content
             .parts
             .iter()
             .filter_map(|part| {
-                if let GeminiPart::Text { text } = part {
-                    Some(text.as_str())
+                if let GeminiPart::Text { text, thought } = part {
+                    // Only include non-thought text
+                    if !thought {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -312,6 +350,32 @@ impl GeminiClient {
             None
         } else {
             Some(text_parts.join(""))
+        }
+    }
+
+    /// Extract thought summaries (reasoning) from Gemini response
+    fn extract_thoughts(content: &GeminiContent) -> Option<String> {
+        let thought_parts: Vec<&str> = content
+            .parts
+            .iter()
+            .filter_map(|part| {
+                if let GeminiPart::Text { text, thought } = part {
+                    // Only include thought parts
+                    if *thought {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if thought_parts.is_empty() {
+            None
+        } else {
+            Some(thought_parts.join("\n"))
         }
     }
 }
@@ -334,7 +398,8 @@ impl LlmClient for GeminiClient {
             message_count = messages.len(),
             tool_count = tools.as_ref().map(|t| t.len()).unwrap_or(0),
             model = %self.model,
-            "Starting Gemini chat request"
+            thinking_level = %self.thinking_level,
+            "Starting Gemini 3 chat request"
         );
 
         // Convert messages, separating system instruction
@@ -351,20 +416,18 @@ impl LlmClient for GeminiClient {
             }
         }
 
-        // Build tools list - include Google Search if enabled
-        let mut gemini_tools: Vec<GeminiTool> = Vec::new();
-
-        // Add Google Search as a built-in tool
-        if self.enable_search {
-            gemini_tools.push(Self::google_search_tool());
-        }
-
-        // Add custom function tools
-        if let Some(ref custom_tools) = tools {
-            gemini_tools.push(Self::convert_tools(custom_tools));
-        }
-
-        let gemini_tools = if gemini_tools.is_empty() { None } else { Some(gemini_tools) };
+        // Build tools list
+        // NOTE: Gemini 3 cannot combine built-in tools with custom function tools
+        // Use Google Search only when no custom tools are provided
+        let gemini_tools: Option<Vec<GeminiTool>> = if let Some(ref custom_tools) = tools {
+            // Custom tools provided - use those (no Google Search)
+            Some(vec![Self::convert_tools(custom_tools)])
+        } else if self.enable_search {
+            // No custom tools - can use Google Search
+            Some(vec![Self::google_search_tool()])
+        } else {
+            None
+        };
 
         let request = GeminiRequest {
             contents,
@@ -372,7 +435,12 @@ impl LlmClient for GeminiClient {
             tools: gemini_tools,
             generation_config: GenerationConfig {
                 max_output_tokens: 8192,
+                thinking_level: Some(self.thinking_level.clone()),
+                temperature: Some(1.0), // Keep at 1.0 for reasoning per Google docs
             },
+            thinking_config: Some(ThinkingConfig {
+                include_thoughts: true, // Get thought summaries for reasoning_content
+            }),
         };
 
         let url = format!(
@@ -405,16 +473,17 @@ impl LlmClient for GeminiClient {
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
         // Extract response from first candidate
-        let (content, tool_calls) = data
+        let (content, reasoning_content, tool_calls) = data
             .candidates
             .as_ref()
             .and_then(|c| c.first())
             .map(|candidate| {
                 let content = Self::extract_content(&candidate.content);
+                let reasoning = Self::extract_thoughts(&candidate.content);
                 let tool_calls = Self::extract_tool_calls(&candidate.content);
-                (content, tool_calls)
+                (content, reasoning, tool_calls)
             })
-            .unwrap_or((None, None));
+            .unwrap_or((None, None, None));
 
         // Convert usage (Gemini uses different field names)
         let usage = data.usage_metadata.map(|u| Usage {
@@ -461,14 +530,15 @@ impl LlmClient for GeminiClient {
             request_id = %request_id,
             duration_ms = duration_ms,
             content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
+            reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
             tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-            "Gemini chat complete"
+            "Gemini 3 chat complete"
         );
 
         Ok(ChatResult {
             request_id,
             content,
-            reasoning_content: None, // Gemini doesn't expose reasoning
+            reasoning_content, // Gemini 3 thought summaries
             tool_calls,
             usage,
             duration_ms,

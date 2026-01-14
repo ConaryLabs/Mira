@@ -45,7 +45,7 @@ impl Provider {
         match self {
             Self::DeepSeek => "deepseek-reasoner",
             Self::OpenAi => "gpt-5.2",
-            Self::Gemini => "gemini-3-pro",
+            Self::Gemini => "gemini-3-pro-preview",
             Self::Ollama => "llama3.3",
         }
     }
