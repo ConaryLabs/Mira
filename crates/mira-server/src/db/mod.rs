@@ -2,6 +2,7 @@
 // Unified database layer with rusqlite + sqlite-vec
 
 mod chat;
+mod config;
 mod embeddings;
 mod memory;
 mod project;

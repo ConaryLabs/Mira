@@ -108,6 +108,26 @@ impl Database {
         Ok(deleted > 0)
     }
 
+    /// Get health alerts (high-confidence issues found by background scanner)
+    /// Returns issues with fact_type='health' sorted by confidence and recency
+    pub fn get_health_alerts(&self, project_id: Option<i64>, limit: usize) -> Result<Vec<MemoryFact>> {
+        let conn = self.conn();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+             FROM memory_facts
+             WHERE (project_id = ? OR project_id IS NULL)
+               AND fact_type = 'health'
+               AND confidence >= 0.7
+             ORDER BY confidence DESC, updated_at DESC
+             LIMIT ?"
+        )?;
+
+        let rows = stmt.query_map(params![project_id, limit as i64], parse_memory_fact_row)?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     // ═══════════════════════════════════════
     // GLOBAL MEMORY (for chat personal context)
     // ═══════════════════════════════════════

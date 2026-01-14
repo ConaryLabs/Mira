@@ -32,7 +32,16 @@ pub enum ExpertRole {
 
 impl ExpertRole {
     /// Get the system prompt for this expert role
-    pub fn system_prompt(&self) -> String {
+    /// Checks database for custom prompt first, falls back to default
+    pub fn system_prompt(&self, db: &Database) -> String {
+        let role_key = self.db_key();
+
+        // Check for custom prompt in database
+        if let Ok(Some(custom_prompt)) = db.get_custom_prompt(role_key) {
+            return format!("{}\n\n{}", custom_prompt, TOOL_USAGE_PROMPT);
+        }
+
+        // Fall back to default prompt
         let base = match self {
             ExpertRole::Architect => ARCHITECT_PROMPT,
             ExpertRole::PlanReviewer => PLAN_REVIEWER_PROMPT,
@@ -41,6 +50,17 @@ impl ExpertRole {
             ExpertRole::Security => SECURITY_PROMPT,
         };
         format!("{}\n\n{}", base, TOOL_USAGE_PROMPT)
+    }
+
+    /// Database key for this expert role
+    pub fn db_key(&self) -> &'static str {
+        match self {
+            ExpertRole::Architect => "architect",
+            ExpertRole::PlanReviewer => "plan_reviewer",
+            ExpertRole::ScopeAnalyst => "scope_analyst",
+            ExpertRole::CodeReviewer => "code_reviewer",
+            ExpertRole::Security => "security",
+        }
     }
 
     /// Display name for this expert
@@ -52,6 +72,29 @@ impl ExpertRole {
             ExpertRole::CodeReviewer => "Code Reviewer",
             ExpertRole::Security => "Security Analyst",
         }
+    }
+
+    /// Get role from database key
+    pub fn from_db_key(key: &str) -> Option<Self> {
+        match key {
+            "architect" => Some(ExpertRole::Architect),
+            "plan_reviewer" => Some(ExpertRole::PlanReviewer),
+            "scope_analyst" => Some(ExpertRole::ScopeAnalyst),
+            "code_reviewer" => Some(ExpertRole::CodeReviewer),
+            "security" => Some(ExpertRole::Security),
+            _ => None,
+        }
+    }
+
+    /// List all available roles
+    pub fn all() -> &'static [ExpertRole] {
+        &[
+            ExpertRole::Architect,
+            ExpertRole::PlanReviewer,
+            ExpertRole::ScopeAnalyst,
+            ExpertRole::CodeReviewer,
+            ExpertRole::Security,
+        ]
     }
 }
 
@@ -626,7 +669,7 @@ pub async fn consult_expert<C: ToolContext>(
     let deepseek = ctx.deepseek()
         .ok_or("DeepSeek not configured")?;
 
-    let system_prompt = expert.system_prompt();
+    let system_prompt = expert.system_prompt(ctx.db());
     let user_prompt = build_user_prompt(&context, question.as_deref());
     let tools = get_expert_tools();
 
@@ -736,4 +779,104 @@ pub async fn consult_security<C: ToolContext>(
     question: Option<String>,
 ) -> Result<String, String> {
     consult_expert(ctx, ExpertRole::Security, context, question).await
+}
+
+/// Configure expert system prompts (set, get, delete, list)
+pub async fn configure_expert<C: ToolContext>(
+    ctx: &C,
+    action: String,
+    role: Option<String>,
+    prompt: Option<String>,
+) -> Result<String, String> {
+    match action.as_str() {
+        "set" => {
+            let role_key = role.as_deref()
+                .ok_or("Role is required for 'set' action")?;
+            let prompt_text = prompt.as_deref()
+                .ok_or("Prompt is required for 'set' action")?;
+
+            // Validate role
+            if ExpertRole::from_db_key(role_key).is_none() {
+                return Err(format!(
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    role_key
+                ));
+            }
+
+            ctx.db().set_custom_prompt(role_key, prompt_text)
+                .map_err(|e| e.to_string())?;
+
+            Ok(format!("Custom prompt set for '{}' expert.", role_key))
+        }
+
+        "get" => {
+            let role_key = role.as_deref()
+                .ok_or("Role is required for 'get' action")?;
+
+            // Validate role
+            let expert = ExpertRole::from_db_key(role_key)
+                .ok_or_else(|| format!(
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    role_key
+                ))?;
+
+            match ctx.db().get_custom_prompt(role_key) {
+                Ok(Some(custom)) => Ok(format!(
+                    "Custom prompt for '{}' ({}):\n\n{}",
+                    role_key, expert.name(), custom
+                )),
+                Ok(None) => Ok(format!(
+                    "No custom prompt set for '{}'. Using default.",
+                    role_key
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+
+        "delete" => {
+            let role_key = role.as_deref()
+                .ok_or("Role is required for 'delete' action")?;
+
+            // Validate role
+            if ExpertRole::from_db_key(role_key).is_none() {
+                return Err(format!(
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    role_key
+                ));
+            }
+
+            match ctx.db().delete_custom_prompt(role_key) {
+                Ok(true) => Ok(format!("Custom prompt deleted for '{}'. Reverted to default.", role_key)),
+                Ok(false) => Ok(format!("No custom prompt was set for '{}'.", role_key)),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+
+        "list" => {
+            match ctx.db().list_custom_prompts() {
+                Ok(prompts) => {
+                    if prompts.is_empty() {
+                        Ok("No custom prompts configured. All experts use default prompts.".to_string())
+                    } else {
+                        let mut output = format!("{} custom prompts configured:\n\n", prompts.len());
+                        for (role_key, prompt_text) in prompts {
+                            let preview = if prompt_text.len() > 100 {
+                                format!("{}...", &prompt_text[..100])
+                            } else {
+                                prompt_text
+                            };
+                            output.push_str(&format!("  {}: {}\n", role_key, preview));
+                        }
+                        Ok(output)
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        }
+
+        _ => Err(format!(
+            "Invalid action '{}'. Valid actions: set, get, delete, list",
+            action
+        )),
+    }
 }

@@ -586,6 +586,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
 );
 
 -- ═══════════════════════════════════════
+-- CONFIGURATION
+-- ═══════════════════════════════════════
+CREATE TABLE IF NOT EXISTS system_prompts (
+    role TEXT PRIMARY KEY,             -- 'architect', 'plan_reviewer', etc.
+    prompt TEXT NOT NULL,              -- custom system prompt
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ═══════════════════════════════════════
 -- FULL-TEXT SEARCH (FTS5)
 -- ═══════════════════════════════════════
 -- High-performance keyword search for code

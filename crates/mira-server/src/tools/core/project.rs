@@ -192,6 +192,24 @@ pub async fn session_start<C: ToolContext>(
         }
     }
 
+    // Load health alerts (high-confidence issues found by background scanner)
+    let health_alerts = db
+        .get_health_alerts(Some(project_id), 5)
+        .unwrap_or_default();
+
+    if !health_alerts.is_empty() {
+        response.push_str("\nHealth alerts:\n");
+        for alert in health_alerts {
+            let category = alert.category.as_deref().unwrap_or("issue");
+            let preview = if alert.content.len() > 100 {
+                format!("{}...", &alert.content[..100])
+            } else {
+                alert.content.clone()
+            };
+            response.push_str(&format!("  [{}] {}\n", category, preview));
+        }
+    }
+
     // Load codebase map (only for Rust projects for now)
     if project_type == "rust" {
         if let Ok(map) = cartographer::get_or_generate_map(

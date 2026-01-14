@@ -374,6 +374,16 @@ pub struct ConsultSecurityRequest {
     pub question: Option<String>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConfigureExpertRequest {
+    #[schemars(description = "Action: set/get/delete/list")]
+    pub action: String,
+    #[schemars(description = "Expert role: architect/plan_reviewer/scope_analyst/code_reviewer/security")]
+    pub role: Option<String>,
+    #[schemars(description = "Custom system prompt (for 'set' action)")]
+    pub prompt: Option<String>,
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(description = "Initialize session: sets project, loads persona, context, corrections, goals. Call once at session start.")]
@@ -676,6 +686,14 @@ impl MiraServer {
         Parameters(req): Parameters<ConsultSecurityRequest>,
     ) -> Result<String, String> {
         tools::consult_security(self, req.context, req.question).await
+    }
+
+    #[tool(description = "Configure expert system prompts. Actions: set (customize prompt), get (view current), delete (revert to default), list (show all custom prompts).")]
+    async fn configure_expert(
+        &self,
+        Parameters(req): Parameters<ConfigureExpertRequest>,
+    ) -> Result<String, String> {
+        tools::configure_expert(self, req.action, req.role, req.prompt).await
     }
 }
 
