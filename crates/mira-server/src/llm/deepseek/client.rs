@@ -141,6 +141,7 @@ impl DeepSeekClient {
                         .into_iter()
                         .map(|tc| ToolCall {
                             id: tc.id,
+                            item_id: None,
                             call_type: tc.call_type,
                             function: FunctionCall {
                                 name: tc.function.name,

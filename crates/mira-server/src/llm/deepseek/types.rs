@@ -64,6 +64,9 @@ impl Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
+    /// Optional item ID (used by OpenAI Responses API which has separate id and call_id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
     #[serde(rename = "type")]
     pub call_type: String, // "function"
     pub function: FunctionCall,

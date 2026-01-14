@@ -90,6 +90,21 @@ pub trait LlmClient: Send + Sync {
         tools: Option<Vec<Tool>>,
     ) -> Result<ChatResult>;
 
+    /// Send a stateful chat request with optional previous response ID for continuation.
+    /// This is used by providers like OpenAI that support stateful conversations via
+    /// the Responses API. The previous_response_id allows the provider to maintain
+    /// context including reasoning items across turns.
+    ///
+    /// Default implementation ignores previous_response_id and calls chat().
+    async fn chat_stateful(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<Tool>>,
+        _previous_response_id: Option<&str>,
+    ) -> Result<ChatResult> {
+        self.chat(messages, tools).await
+    }
+
     /// Get the provider type
     fn provider_type(&self) -> Provider;
 

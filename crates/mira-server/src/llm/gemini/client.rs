@@ -311,6 +311,7 @@ impl GeminiClient {
             if let GeminiPart::FunctionCall { function_call } = part {
                 tool_calls.push(ToolCall {
                     id: format!("call_{}", idx),
+                    item_id: None,
                     call_type: "function".into(),
                     function: FunctionCall {
                         name: function_call.name.clone(),

@@ -686,6 +686,9 @@ pub async fn consult_expert<C: ToolContext>(
 
     let mut total_tool_calls = 0;
     let mut iterations = 0;
+    // Track previous response ID for stateful providers (like OpenAI)
+    // This preserves reasoning context across tool-calling turns
+    let mut previous_response_id: Option<String> = None;
 
     // Agentic loop with overall timeout
     let result = timeout(EXPERT_TIMEOUT, async {
@@ -698,14 +701,21 @@ pub async fn consult_expert<C: ToolContext>(
                 ));
             }
 
-            // Call LLM with tools
+            // Call LLM with tools using stateful API to preserve reasoning context
             let result = timeout(
                 LLM_CALL_TIMEOUT,
-                client.chat(messages.clone(), Some(tools.clone()))
+                client.chat_stateful(
+                    messages.clone(),
+                    Some(tools.clone()),
+                    previous_response_id.as_deref(),
+                )
             )
             .await
             .map_err(|_| format!("LLM call timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
             .map_err(|e| format!("Expert consultation failed: {}", e))?;
+
+            // Store response ID for next iteration (enables reasoning context preservation)
+            previous_response_id = Some(result.request_id.clone());
 
             // Check if the model wants to call tools
             if let Some(ref tool_calls) = result.tool_calls {
