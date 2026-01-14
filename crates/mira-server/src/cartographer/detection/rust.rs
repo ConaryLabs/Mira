@@ -1,13 +1,13 @@
-// crates/mira-server/src/cartographer/detection.rs
+// crates/mira-server/src/cartographer/detection/rust.rs
 // Rust module detection from project structure
 
-use super::types::Module;
+use super::super::types::Module;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
 
 /// Detect Rust modules from project structure
-pub fn detect_rust_modules(project_path: &Path) -> Vec<Module> {
+pub fn detect(project_path: &Path) -> Vec<Module> {
     let mut modules = Vec::new();
 
     tracing::info!("detect_rust_modules: scanning {:?}", project_path);
@@ -63,13 +63,13 @@ pub fn detect_rust_modules(project_path: &Path) -> Vec<Module> {
     modules
 }
 
-pub(super) fn is_workspace(cargo_toml: &Path) -> bool {
+pub fn is_workspace(cargo_toml: &Path) -> bool {
     std::fs::read_to_string(cargo_toml)
         .map(|c| c.contains("[workspace]"))
         .unwrap_or(false)
 }
 
-pub(super) fn parse_crate_name(cargo_toml: &Path) -> Option<String> {
+pub fn parse_crate_name(cargo_toml: &Path) -> Option<String> {
     let content = std::fs::read_to_string(cargo_toml).ok()?;
     let mut in_package = false;
 
@@ -191,4 +191,63 @@ fn detect_modules_in_src(
             }
         }
     }
+}
+
+/// Find Rust entry points
+pub fn find_entry_points(project_path: &Path) -> Vec<String> {
+    let mut entries = Vec::new();
+
+    for entry in WalkDir::new(project_path)
+        .max_depth(5)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            !name.starts_with('.') && name != "target" && name != "node_modules"
+        })
+        .filter_map(|e| e.ok())
+    {
+        let name = entry.file_name().to_string_lossy();
+        if name == "main.rs" || name == "lib.rs" {
+            if let Ok(rel) = entry.path().strip_prefix(project_path) {
+                entries.push(rel.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    entries.sort();
+    entries
+}
+
+/// Resolve Rust import to module ID
+pub fn resolve_import_to_module(import: &str, module_ids: &[(String, String)]) -> Option<String> {
+    // Convert "crate::foo::bar" to check against module IDs
+    let import = import
+        .replace("crate::", "")
+        .replace("super::", "")
+        .replace("::", "/");
+
+    // Find matching module
+    for (id, name) in module_ids {
+        if id.ends_with(&import) || import.starts_with(name) {
+            return Some(id.clone());
+        }
+    }
+    None
+}
+
+/// Count lines in Rust module
+pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
+    let full_path = project_path.join(module_path);
+
+    let mut count = 0u32;
+    for entry in WalkDir::new(&full_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            count += content.lines().count() as u32;
+        }
+    }
+    count
 }

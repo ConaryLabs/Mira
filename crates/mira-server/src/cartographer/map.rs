@@ -1,14 +1,13 @@
 // crates/mira-server/src/cartographer/map.rs
 // Codebase map generation, enrichment, and caching
 
-use super::detection::detect_rust_modules;
+use super::detection::{count_lines_in_module, detect_modules, find_entry_points, resolve_import_to_module};
 use super::types::{CodebaseMap, Module};
 use crate::db::Database;
 use anyhow::Result;
 use rusqlite::params;
 use std::collections::HashSet;
 use std::path::Path;
-use walkdir::WalkDir;
 
 /// Get or generate codebase map
 pub fn get_or_generate_map(
@@ -37,18 +36,18 @@ pub fn get_or_generate_map(
     tracing::info!("Cached modules: {}", cached_count);
 
     if cached_count == 0 {
-        // Generate fresh
+        // Generate fresh using polyglot detection
         let path = Path::new(project_path);
-        let modules = detect_rust_modules(path);
+        let modules = detect_modules(path, project_type);
 
         // Enrich with database data and store
-        let enriched = enrich_and_store_modules(db, project_id, modules, path)?;
+        let enriched = enrich_and_store_modules(db, project_id, modules, path, project_type)?;
 
         return Ok(CodebaseMap {
             name: project_name.to_string(),
             project_type: project_type.to_string(),
             modules: enriched,
-            entry_points: find_entry_points(path),
+            entry_points: find_entry_points(path, project_type),
             external_deps: get_external_deps(db, project_id)?,
             updated_at: chrono::Utc::now().to_rfc3339(),
         });
@@ -89,7 +88,7 @@ pub fn get_or_generate_map(
         name: project_name.to_string(),
         project_type: project_type.to_string(),
         modules,
-        entry_points: find_entry_points(Path::new(project_path)),
+        entry_points: find_entry_points(Path::new(project_path), project_type),
         external_deps: get_external_deps(db, project_id)?,
         updated_at: chrono::Utc::now().to_rfc3339(),
     })
@@ -100,6 +99,7 @@ fn enrich_and_store_modules(
     project_id: i64,
     mut modules: Vec<Module>,
     project_path: &Path,
+    project_type: &str,
 ) -> Result<Vec<Module>> {
     tracing::info!(
         "enrich_and_store_modules: starting with {} modules",
@@ -155,9 +155,9 @@ fn enrich_and_store_modules(
         tracing::debug!("  found {} deps", raw_deps.len());
         raw_deps_per_module.push(raw_deps);
 
-        // Get line count from files
+        // Get line count from files (polyglot)
         tracing::debug!("  counting lines...");
-        module.line_count = count_lines_in_module(project_path, &module.path);
+        module.line_count = count_lines_in_module(project_path, &module.path, project_type);
         tracing::debug!("  line_count: {}", module.line_count);
 
         // Generate purpose heuristic
@@ -177,7 +177,7 @@ fn enrich_and_store_modules(
     for (i, module) in modules.iter_mut().enumerate() {
         module.depends_on = raw_deps_per_module[i]
             .iter()
-            .filter_map(|import| resolve_import_to_module(import, &module_ids))
+            .filter_map(|import| resolve_import_to_module(import, &module_ids, project_type))
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
@@ -205,38 +205,6 @@ fn enrich_and_store_modules(
     }
 
     Ok(modules)
-}
-
-fn resolve_import_to_module(import: &str, module_ids: &[(String, String)]) -> Option<String> {
-    // Convert "crate::foo::bar" to check against module IDs
-    let import = import
-        .replace("crate::", "")
-        .replace("super::", "")
-        .replace("::", "/");
-
-    // Find matching module
-    for (id, name) in module_ids {
-        if id.ends_with(&import) || import.starts_with(name) {
-            return Some(id.clone());
-        }
-    }
-    None
-}
-
-fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
-    let full_path = project_path.join(module_path);
-
-    let mut count = 0u32;
-    for entry in WalkDir::new(&full_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
-    {
-        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-            count += content.lines().count() as u32;
-        }
-    }
-    count
 }
 
 fn generate_purpose_heuristic(name: &str, exports: &[String]) -> Option<String> {
@@ -280,31 +248,7 @@ fn generate_purpose_heuristic(name: &str, exports: &[String]) -> Option<String> 
     Some(purpose.to_string())
 }
 
-pub(super) fn find_entry_points(project_path: &Path) -> Vec<String> {
-    let mut entries = Vec::new();
-
-    for entry in WalkDir::new(project_path)
-        .max_depth(5)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && name != "target" && name != "node_modules"
-        })
-        .filter_map(|e| e.ok())
-    {
-        let name = entry.file_name().to_string_lossy();
-        if name == "main.rs" || name == "lib.rs" {
-            if let Ok(rel) = entry.path().strip_prefix(project_path) {
-                entries.push(rel.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    entries.sort();
-    entries
-}
-
-pub(super) fn get_external_deps(db: &Database, project_id: i64) -> Result<Vec<String>> {
+fn get_external_deps(db: &Database, project_id: i64) -> Result<Vec<String>> {
     let conn = db.conn();
     let mut stmt = conn.prepare(
         "SELECT DISTINCT import_path FROM imports

@@ -9,7 +9,10 @@ mod types;
 use std::collections::HashMap;
 
 // Re-export public API
-pub use detection::detect_rust_modules;
+pub use detection::{
+    detect_modules, detect_rust_modules, find_entry_points as detect_entry_points,
+    is_workspace, parse_crate_name,
+};
 pub use map::{get_modules_with_purposes, get_or_generate_map};
 pub use summaries::{
     build_summary_prompt, get_module_code_preview, get_module_full_code,
