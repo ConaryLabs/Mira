@@ -515,6 +515,14 @@ pub async fn index_project(
         }
     }
 
+    // Rebuild FTS5 full-text search index for this project
+    if let Some(pid) = project_id {
+        tracing::info!("Rebuilding FTS5 search index for project {}", pid);
+        if let Err(e) = db.rebuild_fts_for_project(pid) {
+            tracing::warn!("Failed to rebuild FTS5 index: {}", e);
+        }
+    }
+
     if stats.errors > 0 {
         tracing::warn!(
             "Indexing complete with errors: {} files, {} symbols, {} chunks, {} errors",

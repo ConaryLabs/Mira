@@ -282,11 +282,11 @@ pub async fn hybrid_search(
             );
             let mut results: Vec<SearchResult> = keyword_results
                 .into_iter()
-                .map(|(file_path, content, score)| SearchResult {
+                .map(|(file_path, content, score, start_line)| SearchResult {
                     file_path,
                     content,
                     score,
-                    start_line: 0, // Keyword search doesn't have line numbers
+                    start_line: start_line as u32,
                 })
                 .collect();
 

@@ -137,7 +137,7 @@ impl FileWatcher {
                         if let Err(e) = watcher.watch(project_path, RecursiveMode::Recursive) {
                             tracing::warn!("Failed to watch {:?}: {}", project_path, e);
                         } else {
-                            tracing::debug!("Now watching {:?}", project_path);
+                            tracing::info!("Watcher: now watching {:?}", project_path);
                             watched_paths.insert(project_path.clone());
                         }
                     }
@@ -195,6 +195,7 @@ impl FileWatcher {
 
     /// Queue a file change for processing (with debounce)
     async fn queue_change(&self, path: PathBuf, change_type: ChangeType) {
+        tracing::info!("Watcher: queuing {:?} for {:?}", change_type, path);
         let mut pending = self.pending_changes.write().await;
         pending.insert(path, (change_type, Instant::now()));
     }

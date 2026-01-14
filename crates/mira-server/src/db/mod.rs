@@ -134,7 +134,24 @@ impl Database {
         schema::migrate_memory_facts_has_embedding(&conn)?;
 
         conn.execute_batch(schema::SCHEMA)?;
+
+        // Add FTS5 full-text search table if missing
+        schema::migrate_code_fts(&conn)?;
+
         Ok(())
+    }
+
+    /// Rebuild FTS5 search index from vec_code
+    /// Call after indexing completes
+    pub fn rebuild_fts(&self) -> Result<()> {
+        let conn = self.conn();
+        schema::rebuild_code_fts(&conn)
+    }
+
+    /// Rebuild FTS5 search index for a specific project
+    pub fn rebuild_fts_for_project(&self, project_id: i64) -> Result<()> {
+        let conn = self.conn();
+        schema::rebuild_code_fts_for_project(&conn, project_id)
     }
 }
 
