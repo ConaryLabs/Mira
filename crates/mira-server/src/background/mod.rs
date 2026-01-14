@@ -1,9 +1,10 @@
 // crates/mira-server/src/background/mod.rs
 // Background worker for idle-time processing
 
-mod summaries;
 mod briefings;
 mod capabilities;
+mod embeddings;
+mod summaries;
 pub mod code_health;
 pub mod watcher;
 
@@ -75,6 +76,15 @@ impl BackgroundWorker {
     async fn process_batch(&self) -> Result<usize, String> {
         let mut processed = 0;
 
+        // Process pending embeddings first (highest priority - enables search for new files)
+        if self.embeddings.is_some() {
+            let count = self.process_pending_embeddings().await?;
+            if count > 0 {
+                tracing::info!("Background: processed {} pending embeddings", count);
+            }
+            processed += count;
+        }
+
         // Process summaries one at a time (rate limited)
         if self.deepseek.is_some() {
             let count = self.process_summary_queue().await?;
@@ -134,6 +144,11 @@ impl BackgroundWorker {
     /// Process code health (compiler warnings, TODOs, unused code, complexity)
     async fn process_code_health(&self) -> Result<usize, String> {
         code_health::process_code_health(&self.db, self.deepseek.as_ref()).await
+    }
+
+    /// Process pending embeddings from file watcher queue
+    async fn process_pending_embeddings(&self) -> Result<usize, String> {
+        embeddings::process_pending_embeddings(&self.db, self.embeddings.as_ref()).await
     }
 }
 

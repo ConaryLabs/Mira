@@ -2,6 +2,7 @@
 // Unified database layer with rusqlite + sqlite-vec
 
 mod chat;
+mod embeddings;
 mod memory;
 mod project;
 mod schema;
@@ -9,6 +10,7 @@ mod session;
 mod tasks;
 mod types;
 
+pub use embeddings::PendingEmbedding;
 pub use memory::parse_memory_fact_row;
 pub use types::*;
 pub use tasks::{parse_task_row, parse_goal_row};

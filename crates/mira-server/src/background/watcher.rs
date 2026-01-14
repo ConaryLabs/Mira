@@ -329,6 +329,7 @@ impl FileWatcher {
         let relative_path = relative_path.to_string();
         let relative_path_for_db = relative_path.clone();
         let symbol_count = parse_result.symbols.len();
+        let chunk_count = parse_result.chunks.len();
         Database::run_blocking(self.db.clone(), move |conn| {
             let relative_path = relative_path_for_db;
             // Use a transaction for batch inserts (much faster)
@@ -360,15 +361,24 @@ impl FileWatcher {
                 )?;
             }
 
+            // Queue chunks for background embedding
+            for chunk in &parse_result.chunks {
+                tx.execute(
+                    "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line, status)
+                     VALUES (?, ?, ?, ?, 'pending')",
+                    rusqlite::params![project_id, &relative_path, chunk.content, chunk.start_line],
+                )?;
+            }
+
             tx.commit()?;
             Ok::<_, rusqlite::Error>(())
         }).await.map_err(|e| e.to_string())?;
 
-        // Note: embeddings not created here - run 'index' to generate embeddings
+        // Embeddings queued in pending_embeddings - background worker will process
 
         tracing::debug!(
-            "Updated file {} in project {}: {} symbols",
-            relative_path, project_id, symbol_count
+            "Updated file {} in project {}: {} symbols, {} chunks queued",
+            relative_path, project_id, symbol_count, chunk_count
         );
 
         Ok(())
