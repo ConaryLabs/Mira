@@ -388,6 +388,16 @@ pub struct ConsultSecurityRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConsultExpertsRequest {
+    #[schemars(description = "List of expert roles to consult in parallel: architect, plan_reviewer, scope_analyst, code_reviewer, security")]
+    pub roles: Vec<String>,
+    #[schemars(description = "Code, design, or situation to analyze")]
+    pub context: String,
+    #[schemars(description = "Specific question for all experts (optional)")]
+    pub question: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConfigureExpertRequest {
     #[schemars(description = "Action: set/get/delete/list/providers")]
     pub action: String,
@@ -703,6 +713,14 @@ impl MiraServer {
         Parameters(req): Parameters<ConsultSecurityRequest>,
     ) -> Result<String, String> {
         tools::consult_security(self, req.context, req.question).await
+    }
+
+    #[tool(description = "Consult multiple experts in parallel. Runs all specified expert consultations concurrently and returns combined results. More efficient than calling individual experts sequentially.")]
+    async fn consult_experts(
+        &self,
+        Parameters(req): Parameters<ConsultExpertsRequest>,
+    ) -> Result<String, String> {
+        tools::consult_experts(self, req.roles, req.context, req.question).await
     }
 
     #[tool(description = "Configure expert system prompts. Actions: set (customize prompt), get (view current), delete (revert to default), list (show all custom prompts), providers (list available LLM providers).")]

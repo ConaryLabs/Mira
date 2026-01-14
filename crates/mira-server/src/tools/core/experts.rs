@@ -797,6 +797,82 @@ pub async fn consult_security<C: ToolContext>(
     consult_expert(ctx, ExpertRole::Security, context, question).await
 }
 
+/// Consult multiple experts in parallel
+/// Takes a list of role names and runs all consultations concurrently
+pub async fn consult_experts<C: ToolContext + Clone + 'static>(
+    ctx: &C,
+    roles: Vec<String>,
+    context: String,
+    question: Option<String>,
+) -> Result<String, String> {
+    use futures::future::join_all;
+
+    if roles.is_empty() {
+        return Err("No expert roles specified".to_string());
+    }
+
+    // Parse and validate all roles first
+    let parsed_roles: Result<Vec<ExpertRole>, String> = roles
+        .iter()
+        .map(|r| {
+            ExpertRole::from_db_key(r)
+                .ok_or_else(|| format!("Unknown expert role: '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security", r))
+        })
+        .collect();
+
+    let expert_roles = parsed_roles?;
+
+    // Create futures for all expert consultations
+    let futures: Vec<_> = expert_roles
+        .into_iter()
+        .map(|role| {
+            let ctx = ctx.clone();
+            let context = context.clone();
+            let question = question.clone();
+            async move {
+                let result = consult_expert(&ctx, role, context, question).await;
+                (role, result)
+            }
+        })
+        .collect();
+
+    // Run all consultations in parallel
+    let results = join_all(futures).await;
+
+    // Format combined results
+    let mut output = String::new();
+    let mut successes = 0;
+    let mut failures = 0;
+
+    for (role, result) in results {
+        match result {
+            Ok(response) => {
+                output.push_str(&response);
+                output.push_str("\n\n---\n\n");
+                successes += 1;
+            }
+            Err(e) => {
+                output.push_str(&format!("## {} (Failed)\n\nError: {}\n\n---\n\n", role.name(), e));
+                failures += 1;
+            }
+        }
+    }
+
+    // Add summary
+    if failures > 0 {
+        output.push_str(&format!(
+            "*Consulted {} experts: {} succeeded, {} failed*",
+            successes + failures,
+            successes,
+            failures
+        ));
+    } else {
+        output.push_str(&format!("*Consulted {} experts in parallel*", successes));
+    }
+
+    Ok(output)
+}
+
 /// Configure expert system prompts and LLM providers (set, get, delete, list, providers)
 pub async fn configure_expert<C: ToolContext>(
     ctx: &C,
