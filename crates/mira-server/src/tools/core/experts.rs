@@ -21,6 +21,12 @@ const EXPERT_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes for mult
 /// Timeout for individual LLM calls
 const LLM_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Maximum concurrent expert consultations (prevents rate limit exhaustion)
+const MAX_CONCURRENT_EXPERTS: usize = 3;
+
+/// Timeout for parallel expert consultation (longer than single expert to allow queuing)
+const PARALLEL_EXPERT_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
+
 /// Expert roles available for consultation
 #[derive(Debug, Clone, Copy)]
 pub enum ExpertRole {
@@ -805,7 +811,7 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
     context: String,
     question: Option<String>,
 ) -> Result<String, String> {
-    use futures::future::join_all;
+    use futures::stream::{self, StreamExt};
 
     if roles.is_empty() {
         return Err("No expert roles specified".to_string());
@@ -822,22 +828,35 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
 
     let expert_roles = parsed_roles?;
 
-    // Create futures for all expert consultations
-    let futures: Vec<_> = expert_roles
-        .into_iter()
+    // Use Arc for efficient sharing across concurrent tasks (avoids cloning large context)
+    let context: Arc<str> = Arc::from(context);
+    let question: Option<Arc<str>> = question.map(|q| Arc::from(q));
+
+    // Run consultations with bounded concurrency and overall timeout
+    let consultation_future = stream::iter(expert_roles)
         .map(|role| {
             let ctx = ctx.clone();
-            let context = context.clone();
+            let context = Arc::clone(&context);
             let question = question.clone();
             async move {
-                let result = consult_expert(&ctx, role, context, question).await;
+                let result =
+                    consult_expert(&ctx, role, context.to_string(), question.map(|q| q.to_string()))
+                        .await;
                 (role, result)
             }
         })
-        .collect();
+        .buffer_unordered(MAX_CONCURRENT_EXPERTS)
+        .collect::<Vec<_>>();
 
-    // Run all consultations in parallel
-    let results = join_all(futures).await;
+    let results = match timeout(PARALLEL_EXPERT_TIMEOUT, consultation_future).await {
+        Ok(results) => results,
+        Err(_) => {
+            return Err(format!(
+                "Parallel expert consultation timed out after {} seconds",
+                PARALLEL_EXPERT_TIMEOUT.as_secs()
+            ));
+        }
+    };
 
     // Format combined results
     let mut output = String::new();
