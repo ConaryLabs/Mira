@@ -44,8 +44,8 @@ impl Provider {
     pub fn default_model(&self) -> &'static str {
         match self {
             Self::DeepSeek => "deepseek-reasoner",
-            Self::OpenAi => "gpt-4.5-preview",
-            Self::Gemini => "gemini-2.0-flash",
+            Self::OpenAi => "gpt-5.2",
+            Self::Gemini => "gemini-3-pro",
             Self::Ollama => "llama3.3",
         }
     }

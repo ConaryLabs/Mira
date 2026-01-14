@@ -397,7 +397,7 @@ pub struct ConfigureExpertRequest {
     pub prompt: Option<String>,
     #[schemars(description = "LLM provider: deepseek/openai/gemini (for 'set' action)")]
     pub provider: Option<String>,
-    #[schemars(description = "Custom model name, e.g. gpt-4.5-preview, gemini-2.0-flash (for 'set' action)")]
+    #[schemars(description = "Custom model name, e.g. gpt-5.2, gemini-3-pro (for 'set' action)")]
     pub model: Option<String>,
 }
 

@@ -19,7 +19,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default model
-const DEFAULT_MODEL: &str = "gemini-2.0-flash";
+const DEFAULT_MODEL: &str = "gemini-3-pro";
 
 // ============================================================================
 // Gemini API Types (Google's format)

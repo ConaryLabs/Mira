@@ -17,7 +17,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default model
-const DEFAULT_MODEL: &str = "gpt-4.5-preview";
+const DEFAULT_MODEL: &str = "gpt-5.2";
 
 /// Chat completion request (OpenAI format)
 #[derive(Debug, Serialize)]
