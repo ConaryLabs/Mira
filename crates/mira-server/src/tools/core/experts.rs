@@ -707,11 +707,30 @@ pub async fn consult_expert<C: ToolContext>(
                 ));
             }
 
+            // For stateful providers (OpenAI), only send new messages after the first call.
+            // The previous_response_id preserves context, so we only need new tool results.
+            let messages_to_send = if previous_response_id.is_some() {
+                // Only send tool messages (results from current iteration)
+                // These are at the end of the messages vec after the last assistant message
+                messages
+                    .iter()
+                    .rev()
+                    .take_while(|m| m.role == "tool")
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect()
+            } else {
+                // First call - send all messages
+                messages.clone()
+            };
+
             // Call LLM with tools using stateful API to preserve reasoning context
             let result = timeout(
                 LLM_CALL_TIMEOUT,
                 client.chat_stateful(
-                    messages.clone(),
+                    messages_to_send,
                     Some(tools.clone()),
                     previous_response_id.as_deref(),
                 )

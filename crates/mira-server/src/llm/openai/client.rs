@@ -515,6 +515,11 @@ impl LlmClient for OpenAiClient {
     /// When previous_response_id is provided, we only send NEW messages (typically
     /// just tool results), as OpenAI's stored response contains the full context
     /// including reasoning items.
+    ///
+    /// IMPORTANT: When previous_response_id is set, this method expects `messages`
+    /// to contain ONLY the new tool results for the current turn, not the full
+    /// conversation history. The caller (e.g., consult_expert) should track and
+    /// pass only new messages.
     #[instrument(skip(self, messages, tools), fields(request_id, model = %self.model))]
     async fn chat_stateful(
         &self,
@@ -527,10 +532,12 @@ impl LlmClient for OpenAiClient {
 
         Span::current().record("request_id", &request_id);
 
-        // When we have a previous_response_id, only send new messages
-        // (typically just tool results from the current turn)
+        // When we have a previous_response_id, we expect the caller to pass only
+        // new messages (tool results from the current turn). We still filter to
+        // ensure only tool messages are sent.
         let input: Vec<InputItem> = if previous_response_id.is_some() {
-            // Filter to only tool messages (function_call_output)
+            // With previous_response_id, only send tool messages (function_call_output)
+            // Caller should have already filtered to new messages only
             messages
                 .iter()
                 .filter(|m| m.role == "tool")
