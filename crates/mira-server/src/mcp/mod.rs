@@ -65,6 +65,29 @@ impl MiraServer {
         }
     }
 
+    /// Create with a file watcher for incremental indexing
+    pub fn with_watcher(
+        db: Arc<Database>,
+        embeddings: Option<Arc<Embeddings>>,
+        watcher: WatcherHandle,
+    ) -> Self {
+        let deepseek = std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .map(|key| Arc::new(DeepSeekClient::new(key)));
+
+        Self {
+            db,
+            embeddings,
+            deepseek,
+            project: Arc::new(RwLock::new(None)),
+            session_id: Arc::new(RwLock::new(None)),
+            ws_tx: None,
+            watcher: Some(watcher),
+            pending_responses: Arc::new(RwLock::new(HashMap::new())),
+            tool_router: Self::tool_router(),
+        }
+    }
+
     /// Create with a broadcast channel and watcher (for future embedding scenarios)
     #[allow(dead_code)]
     pub fn with_broadcaster(

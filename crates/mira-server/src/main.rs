@@ -4,6 +4,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mira::{background, db::Database, embeddings::Embeddings, llm::DeepSeekClient, mcp::MiraServer};
+use tokio::sync::watch;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, Level};
@@ -118,8 +119,13 @@ async fn run_mcp_server() -> Result<()> {
     let _shutdown_tx = background::spawn(bg_db, bg_embeddings, bg_deepseek);
     info!("Background worker started");
 
-    // Create MCP server
-    let server = MiraServer::new(db, embeddings);
+    // Spawn file watcher for incremental indexing
+    let (_watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
+    let watcher_handle = background::watcher::spawn(db.clone(), watcher_shutdown_rx);
+    info!("File watcher started");
+
+    // Create MCP server with watcher
+    let server = MiraServer::with_watcher(db, embeddings, watcher_handle);
 
     // Run with stdio transport
     let transport = rmcp::transport::io::stdio();
