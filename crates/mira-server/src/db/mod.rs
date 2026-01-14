@@ -21,6 +21,9 @@ use sqlite_vec::sqlite3_vec_init;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// Database wrapper with sqlite-vec support
 pub struct Database {
     conn: Mutex<Connection>,
@@ -38,13 +41,27 @@ impl Database {
             )));
         }
 
-        // Ensure parent directory exists
+        // Ensure parent directory exists with secure permissions
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                let mut perms = std::fs::metadata(parent)?.permissions();
+                perms.set_mode(0o700); // rwx------
+                std::fs::set_permissions(parent, perms)?;
+            }
         }
 
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open database at {:?}", path))?;
+
+        // Set database file permissions to prevent other users from reading
+        #[cfg(unix)]
+        {
+            let mut perms = std::fs::metadata(path)?.permissions();
+            perms.set_mode(0o600); // rw-------
+            std::fs::set_permissions(path, perms)?;
+        }
 
         // Enable WAL mode for better concurrency
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;

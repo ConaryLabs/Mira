@@ -7,6 +7,7 @@ use super::utils::{distance_to_score, embedding_to_bytes};
 use crate::db::Database;
 use crate::embeddings::Embeddings;
 use rusqlite::params;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -238,8 +239,54 @@ fn rerank_results_with_intent(
 // Hybrid Search
 // ============================================================================
 
-/// Hybrid search: semantic first, keyword fallback if poor results
-/// Threshold: fall back if best semantic score < 0.25
+/// Merge search results from multiple sources with deduplication
+/// Deduplicates by (file_path, start_line) and keeps the higher-scoring result
+fn merge_results(
+    semantic_results: Vec<SearchResult>,
+    keyword_results: Vec<SearchResult>,
+) -> (Vec<SearchResult>, SearchType) {
+    // Use HashMap for deduplication by (file_path, start_line)
+    let mut merged: HashMap<(String, u32), SearchResult> = HashMap::new();
+
+    // Track which search type contributed more
+    let semantic_count = semantic_results.len();
+    let keyword_count = keyword_results.len();
+
+    // Add semantic results first
+    for result in semantic_results {
+        let key = (result.file_path.clone(), result.start_line);
+        merged.insert(key, result);
+    }
+
+    // Add keyword results, keeping higher score on collision
+    for result in keyword_results {
+        let key = (result.file_path.clone(), result.start_line);
+        merged
+            .entry(key)
+            .and_modify(|existing| {
+                if result.score > existing.score {
+                    *existing = result.clone();
+                }
+            })
+            .or_insert(result);
+    }
+
+    // Convert to vec and sort by score descending
+    let mut results: Vec<SearchResult> = merged.into_values().collect();
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Determine primary search type based on contribution
+    let search_type = if semantic_count >= keyword_count && semantic_count > 0 {
+        SearchType::Semantic
+    } else {
+        SearchType::Keyword
+    };
+
+    (results, search_type)
+}
+
+/// Hybrid search: runs semantic and keyword searches in parallel, merges results
+/// Falls back to keyword-only if embeddings unavailable
 pub async fn hybrid_search(
     db: &Arc<Database>,
     embeddings: Option<&Arc<Embeddings>>,
@@ -248,67 +295,87 @@ pub async fn hybrid_search(
     project_path: Option<&str>,
     limit: usize,
 ) -> Result<HybridSearchResult, String> {
-    const FALLBACK_THRESHOLD: f32 = 0.25;
+    // Fetch more results from each backend to account for deduplication
+    let fetch_limit = limit * 2;
 
-    // Try semantic search first if embeddings available
-    let semantic_results = if let Some(emb) = embeddings {
-        semantic_search(db, emb, query, project_id, limit).await?
-    } else {
-        Vec::new()
+    // Prepare keyword search future (always runs)
+    let db_for_keyword = db.clone();
+    let query_for_keyword = query.to_string();
+    let project_path_for_keyword = project_path.map(|s| s.to_string());
+    let keyword_future = async move {
+        Database::run_blocking(db_for_keyword, move |conn| {
+            keyword_search(
+                conn,
+                &query_for_keyword,
+                project_id,
+                project_path_for_keyword.as_deref(),
+                fetch_limit,
+            )
+        })
+        .await
     };
 
-    // Check quality
-    let best_score = semantic_results
-        .iter()
-        .map(|r| r.score)
-        .fold(0.0f32, |a, b| a.max(b));
+    // Run searches in parallel
+    let (semantic_results, keyword_results) = if let Some(emb) = embeddings {
+        let emb = emb.clone();
+        let db_for_semantic = db.clone();
+        let query_for_semantic = query.to_string();
 
-    // Decide if we need keyword fallback
-    if semantic_results.is_empty() || best_score < FALLBACK_THRESHOLD {
-        // Run keyword search on blocking thread pool
-        let db_clone = db.clone();
-        let query_owned = query.to_string();
-        let project_path_owned = project_path.map(|s| s.to_string());
-        let keyword_results = Database::run_blocking(db_clone, move |conn| {
-            keyword_search(conn, &query_owned, project_id, project_path_owned.as_deref(), limit)
+        let semantic_future = async move {
+            semantic_search(&db_for_semantic, &emb, &query_for_semantic, project_id, fetch_limit).await
+        };
+
+        let (semantic_res, keyword_res) = tokio::join!(semantic_future, keyword_future);
+
+        // Handle semantic search failure gracefully - continue with keyword results
+        let semantic = semantic_res.unwrap_or_else(|e| {
+            tracing::warn!("Semantic search failed, using keyword only: {}", e);
+            Vec::new()
+        });
+
+        (semantic, keyword_res)
+    } else {
+        // No embeddings available, keyword only
+        let keyword_res = keyword_future.await;
+        (Vec::new(), keyword_res)
+    };
+
+    // Convert keyword results to SearchResult
+    let keyword_results: Vec<SearchResult> = keyword_results
+        .into_iter()
+        .map(|(file_path, content, score, start_line)| SearchResult {
+            file_path,
+            content,
+            score,
+            start_line: start_line as u32,
         })
-        .await;
+        .collect();
 
-        if !keyword_results.is_empty() {
-            tracing::debug!(
-                "Semantic search poor (best_score={:.2}), using {} keyword results",
-                best_score,
-                keyword_results.len()
-            );
-            let mut results: Vec<SearchResult> = keyword_results
-                .into_iter()
-                .map(|(file_path, content, score, start_line)| SearchResult {
-                    file_path,
-                    content,
-                    score,
-                    start_line: start_line as u32,
-                })
-                .collect();
+    tracing::debug!(
+        "Hybrid search: {} semantic, {} keyword results before merge",
+        semantic_results.len(),
+        keyword_results.len()
+    );
 
-            // Apply reranking boosts with intent
-            let intent = detect_query_intent(query);
-            rerank_results_with_intent(&mut results, project_path, intent);
+    // Merge and deduplicate results
+    let (mut results, search_type) = merge_results(semantic_results, keyword_results);
 
-            return Ok(HybridSearchResult {
-                results,
-                search_type: SearchType::Keyword,
-            });
-        }
-    }
-
-    // Apply reranking boosts with intent to semantic results
-    let mut results = semantic_results;
+    // Apply intent-based reranking
     let intent = detect_query_intent(query);
     rerank_results_with_intent(&mut results, project_path, intent);
 
+    // Truncate to requested limit
+    results.truncate(limit);
+
+    tracing::debug!(
+        "Hybrid search: {} results after merge (type: {})",
+        results.len(),
+        search_type
+    );
+
     Ok(HybridSearchResult {
         results,
-        search_type: SearchType::Semantic,
+        search_type,
     })
 }
 

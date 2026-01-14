@@ -49,17 +49,22 @@ pub async fn process_briefings(
         )
         .await;
 
-        // Store the briefing (even if None, we update the commit)
-        db.update_project_briefing(project_id, &current_commit, briefing.as_deref())
-            .map_err(|e| e.to_string())?;
-
-        if briefing.is_some() {
+        // Only update commit marker if briefing was successfully generated
+        // This ensures failed briefings will be retried on next run
+        if let Some(ref text) = briefing {
+            db.update_project_briefing(project_id, &current_commit, Some(text))
+                .map_err(|e| e.to_string())?;
             tracing::info!(
                 "Generated briefing for project {} ({})",
                 project_id,
                 project_path
             );
             processed += 1;
+        } else {
+            tracing::debug!(
+                "Briefing generation failed for project {}, will retry next run",
+                project_id
+            );
         }
     }
 
