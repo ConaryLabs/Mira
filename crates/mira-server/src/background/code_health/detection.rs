@@ -1,36 +1,68 @@
 // crates/mira-server/src/background/code_health/detection.rs
 // Pattern-based detection for code health issues
+// Uses pure Rust implementation (no shell commands) for cross-platform support
 
 use crate::db::Database;
+use ignore::WalkBuilder;
+use regex::Regex;
 use rusqlite::params;
+use std::fs;
 use std::path::Path;
-use std::process::Command;
+
+/// Walk Rust files in a project, respecting .gitignore
+fn walk_rust_files(project_path: &str) -> Vec<String> {
+    let prefix = project_path.to_string();
+    WalkBuilder::new(project_path)
+        .hidden(true) // Skip hidden files
+        .git_ignore(true) // Respect .gitignore
+        .git_exclude(true)
+        .build()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "rs")
+        })
+        .filter(|entry| {
+            let path = entry.path();
+            // Skip target directory explicitly (in case .gitignore is missing)
+            !path.components().any(|c| c.as_os_str() == "target")
+        })
+        .filter_map(|entry| {
+            entry
+                .path()
+                .strip_prefix(&prefix)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        })
+        .collect()
+}
 
 /// Scan for TODO/FIXME/HACK comments
-pub fn scan_todo_comments(db: &Database, project_id: i64, project_path: &str) -> Result<usize, String> {
-    let output = Command::new("grep")
-        .args([
-            "-rn",
-            "--include=*.rs",
-            "-E",
-            r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:",
-            ".",
-        ])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to run grep: {}", e))?;
+pub fn scan_todo_comments(
+    db: &Database,
+    project_id: i64,
+    project_path: &str,
+) -> Result<usize, String> {
+    let pattern =
+        Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").map_err(|e| e.to_string())?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut stored = 0;
 
-    for line in stdout.lines() {
-        // Grep output format: ./path/file.rs:123:    // <marker>: description
-        if let Some((location, rest)) = line.split_once(':') {
-            if let Some((line_num, comment)) = rest.split_once(':') {
-                let file = location.trim_start_matches("./");
-                let comment = comment.trim();
+    for file in walk_rust_files(project_path) {
+        let full_path = Path::new(project_path).join(&file);
+        let content = match fs::read_to_string(&full_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
 
-                // Extract the TODO type and message
+        for (line_num, line) in content.lines().enumerate() {
+            let line_num = line_num + 1; // 1-indexed
+
+            if pattern.is_match(line) {
+                let comment = line.trim();
                 let content = format!("[todo] {}:{} - {}", file, line_num, comment);
                 let key = format!("health:todo:{}:{}", file, line_num);
 
@@ -48,7 +80,7 @@ pub fn scan_todo_comments(db: &Database, project_id: i64, project_path: &str) ->
 
                 // Limit to prevent flooding
                 if stored >= 50 {
-                    break;
+                    return Ok(stored);
                 }
             }
         }
@@ -58,33 +90,33 @@ pub fn scan_todo_comments(db: &Database, project_id: i64, project_path: &str) ->
 }
 
 /// Scan for unimplemented!() and todo!() macros
-pub fn scan_unimplemented(db: &Database, project_id: i64, project_path: &str) -> Result<usize, String> {
-    let output = Command::new("grep")
-        .args([
-            "-rn",
-            "--include=*.rs",
-            "-E",
-            r"(unimplemented!|todo!)\s*\(",
-            ".",
-        ])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to run grep: {}", e))?;
+pub fn scan_unimplemented(
+    db: &Database,
+    project_id: i64,
+    project_path: &str,
+) -> Result<usize, String> {
+    let pattern =
+        Regex::new(r"(unimplemented!|todo!)\s*\(").map_err(|e| e.to_string())?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut stored = 0;
 
-    for line in stdout.lines() {
-        if let Some((location, rest)) = line.split_once(':') {
-            if let Some((line_num, code)) = rest.split_once(':') {
-                let file = location.trim_start_matches("./");
-                let code = code.trim();
+    for file in walk_rust_files(project_path) {
+        let full_path = Path::new(project_path).join(&file);
+        let content = match fs::read_to_string(&full_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
 
-                // Skip comments (doc comments and regular comments)
-                if code.starts_with("//") || code.starts_with("/*") || code.starts_with('*') {
-                    continue;
-                }
+        for (line_num, line) in content.lines().enumerate() {
+            let line_num = line_num + 1;
+            let code = line.trim();
 
+            // Skip comments (doc comments and regular comments)
+            if code.starts_with("//") || code.starts_with("/*") || code.starts_with('*') {
+                continue;
+            }
+
+            if pattern.is_match(line) {
                 let content = format!("[unimplemented] {}:{} - {}", file, line_num, code);
                 let key = format!("health:unimplemented:{}:{}", file, line_num);
 
@@ -101,7 +133,7 @@ pub fn scan_unimplemented(db: &Database, project_id: i64, project_path: &str) ->
                 stored += 1;
 
                 if stored >= 20 {
-                    break;
+                    return Ok(stored);
                 }
             }
         }
@@ -207,17 +239,20 @@ pub fn scan_unused_functions(db: &Database, project_id: i64) -> Result<usize, St
             .map_err(|e| e.to_string())?;
 
         stmt.query_map(params![project_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect()
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect()
     }; // conn dropped here
 
     let mut stored = 0;
 
     for (name, file_path, line) in unused {
-        let content = format!("[unused] Function `{}` at {}:{} appears to have no callers", name, file_path, line);
+        let content = format!(
+            "[unused] Function `{}` at {}:{} appears to have no callers",
+            name, file_path, line
+        );
         let key = format!("health:unused:{}:{}", file_path, name);
 
         db.store_memory(
@@ -238,31 +273,14 @@ pub fn scan_unused_functions(db: &Database, project_id: i64) -> Result<usize, St
 
 /// Scan for .unwrap() and .expect() calls in non-test code
 /// These are potential panic points that should use proper error handling
-pub fn scan_unwrap_usage(db: &Database, project_id: i64, project_path: &str) -> Result<usize, String> {
-    use std::fs;
-
+pub fn scan_unwrap_usage(
+    db: &Database,
+    project_id: i64,
+    project_path: &str,
+) -> Result<usize, String> {
     let mut stored = 0;
 
-    // Walk through Rust files
-    let output = Command::new("find")
-        .args([
-            ".",
-            "-name", "*.rs",
-            "-type", "f",
-            "-not", "-path", "*/target/*",
-            "-not", "-path", "*/.git/*",
-        ])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to find Rust files: {}", e))?;
-
-    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|s| s.trim_start_matches("./").to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    for file in files {
+    for file in walk_rust_files(project_path) {
         // Skip test files entirely
         if file.contains("/tests/") || file.ends_with("_test.rs") {
             continue;
@@ -299,7 +317,10 @@ pub fn scan_unwrap_usage(db: &Database, project_id: i64, project_path: &str) -> 
             }
 
             // Skip if in test module or test function
-            if in_test_module || trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test]") {
+            if in_test_module
+                || trimmed.starts_with("#[test]")
+                || trimmed.starts_with("#[tokio::test]")
+            {
                 continue;
             }
 
@@ -390,7 +411,8 @@ fn is_safe_unwrap(line: &str) -> bool {
     }
 
     // Channel operations in controlled contexts
-    if trimmed.contains(".send(") && (trimmed.contains(".unwrap()") || trimmed.contains(".expect(")) {
+    if trimmed.contains(".send(") && (trimmed.contains(".unwrap()") || trimmed.contains(".expect("))
+    {
         return true;
     }
 
@@ -403,31 +425,14 @@ fn is_safe_unwrap(line: &str) -> bool {
 }
 
 /// Pattern-based scan for error handling issues
-pub fn scan_error_handling(db: &Database, project_id: i64, project_path: &str) -> Result<usize, String> {
-    use std::fs;
-
+pub fn scan_error_handling(
+    db: &Database,
+    project_id: i64,
+    project_path: &str,
+) -> Result<usize, String> {
     let mut stored = 0;
 
-    // Walk through Rust files
-    let output = Command::new("find")
-        .args([
-            ".",
-            "-name", "*.rs",
-            "-type", "f",
-            "-not", "-path", "*/target/*",
-            "-not", "-path", "*/.git/*",
-        ])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to find Rust files: {}", e))?;
-
-    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|s| s.trim_start_matches("./").to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    for file in files {
+    for file in walk_rust_files(project_path) {
         // Skip test files
         if file.contains("/tests/") || file.ends_with("_test.rs") {
             continue;
@@ -477,7 +482,11 @@ pub fn scan_error_handling(db: &Database, project_id: i64, project_path: &str) -
 
                 let content_str = format!(
                     "[{}] {} at {}:{} - {}",
-                    severity, description, file, line_num, trimmed.chars().take(80).collect::<String>()
+                    severity,
+                    description,
+                    file,
+                    line_num,
+                    trimmed.chars().take(80).collect::<String>()
                 );
                 let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
 
@@ -506,8 +515,17 @@ pub fn scan_error_handling(db: &Database, project_id: i64, project_path: &str) -
 /// Check for problematic error handling patterns
 fn check_error_pattern(line: &str) -> Option<(&'static str, &'static str, &'static str)> {
     // High severity: silently discarding Results
-    if line.contains("let _ =") && (line.contains("execute(") || line.contains("insert(") || line.contains("update(") || line.contains("delete(")) {
-        return Some(("high", "silent_db", "DB operation result silently discarded"));
+    if line.contains("let _ =")
+        && (line.contains("execute(")
+            || line.contains("insert(")
+            || line.contains("update(")
+            || line.contains("delete("))
+    {
+        return Some((
+            "high",
+            "silent_db",
+            "DB operation result silently discarded",
+        ));
     }
 
     // Medium severity: .ok() on non-optional contexts
@@ -530,14 +548,22 @@ fn check_error_pattern(line: &str) -> Option<(&'static str, &'static str, &'stat
 
         // Check if it's being used to convert Result to Option for control flow
         if !line.contains(".ok().") && !line.contains(".ok()?") {
-            return Some(("medium", "ok_swallow", ".ok() may be swallowing important errors"));
+            return Some((
+                "medium",
+                "ok_swallow",
+                ".ok() may be swallowing important errors",
+            ));
         }
     }
 
     // Medium severity: ignoring send errors on channels (may indicate receiver dropped)
     if line.contains("let _ =") && line.contains(".send(") && !line.contains("// ") {
         // This is often intentional but worth flagging
-        return Some(("low", "send_ignore", "Channel send error ignored (receiver may have dropped)"));
+        return Some((
+            "low",
+            "send_ignore",
+            "Channel send error ignored (receiver may have dropped)",
+        ));
     }
 
     None
@@ -551,7 +577,10 @@ fn is_acceptable_error_swallow(line: &str) -> bool {
     }
 
     // Explicit comment explaining why
-    if line.contains("// intentional") || line.contains("// ignore") || line.contains("// ok to fail") {
+    if line.contains("// intentional")
+        || line.contains("// ignore")
+        || line.contains("// ok to fail")
+    {
         return true;
     }
 
