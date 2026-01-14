@@ -86,15 +86,42 @@ fn get_git_head(project_path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Check if a commit is an ancestor of HEAD (handles rebases, force pushes)
+fn is_ancestor(project_path: &str, commit: &str) -> bool {
+    Command::new("git")
+        .args(["merge-base", "--is-ancestor", commit, "HEAD"])
+        .current_dir(project_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Max commits to include in briefing to prevent context overflow
+const MAX_COMMITS: usize = 50;
+
 /// Get git log between two commits (or recent commits if no base)
 fn get_git_changes(project_path: &str, from_commit: Option<&str>) -> Option<String> {
     let args = match from_commit {
-        Some(from) => vec![
-            "log".to_string(),
-            "--oneline".to_string(),
-            "--no-decorate".to_string(),
-            format!("{}..HEAD", from),
-        ],
+        Some(from) if is_ancestor(project_path, from) => {
+            // Verified ancestor - safe to use range, but limit to MAX_COMMITS
+            vec![
+                "log".to_string(),
+                "--oneline".to_string(),
+                "--no-decorate".to_string(),
+                format!("-{}", MAX_COMMITS),
+                format!("{}..HEAD", from),
+            ]
+        }
+        Some(_) => {
+            // Not an ancestor (rebase/force push) - fall back to recent commits
+            tracing::debug!("from_commit not an ancestor of HEAD, using recent commits");
+            vec![
+                "log".to_string(),
+                "--oneline".to_string(),
+                "--no-decorate".to_string(),
+                format!("-{}", MAX_COMMITS),
+            ]
+        }
         None => vec![
             "log".to_string(),
             "--oneline".to_string(),
@@ -124,13 +151,13 @@ fn get_git_changes(project_path: &str, from_commit: Option<&str>) -> Option<Stri
 /// Get a summary of files changed
 fn get_files_changed(project_path: &str, from_commit: Option<&str>) -> Option<String> {
     let args = match from_commit {
-        Some(from) => vec![
+        Some(from) if is_ancestor(project_path, from) => vec![
             "diff".to_string(),
             "--stat".to_string(),
             "--stat-width=80".to_string(),
             format!("{}..HEAD", from),
         ],
-        None => return None, // No diff for first briefing
+        _ => return None, // No diff for first briefing or invalid ancestor
     };
 
     let output = Command::new("git")

@@ -160,7 +160,10 @@ pub async fn recall<C: ToolContext>(
 
 /// Delete a memory
 pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, String> {
-    let id: i64 = id.parse().map_err(|_| "Invalid ID".to_string())?;
+    let id: i64 = id.parse().map_err(|_| "Invalid ID format".to_string())?;
+    if id <= 0 {
+        return Err("Invalid memory ID: must be positive".to_string());
+    }
 
     // Delete from both SQL and vector table on blocking thread pool
     let db_clone = ctx.db().clone();

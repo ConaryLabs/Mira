@@ -65,12 +65,17 @@ impl Database {
     /// Search memories by text (basic SQL LIKE)
     pub fn search_memories(&self, project_id: Option<i64>, query: &str, limit: usize) -> Result<Vec<MemoryFact>> {
         let conn = self.conn();
-        let pattern = format!("%{}%", query);
+        // Escape SQL LIKE wildcards to prevent injection
+        let escaped = query
+            .replace('\\', "\\\\") // Escape backslash first
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{}%", escaped);
 
         let mut stmt = conn.prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
              FROM memory_facts
-             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ?
+             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
              ORDER BY updated_at DESC
              LIMIT ?"
         )?;
