@@ -75,12 +75,31 @@ struct GeminiFunctionResponse {
     response: Value,
 }
 
-/// Gemini tool definition
+/// Gemini tool definition - can be functions or built-in tools
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum GeminiTool {
+    Functions(GeminiFunctionsTool),
+    GoogleSearch(GoogleSearchTool),
+}
+
+/// Functions tool wrapper
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GeminiTool {
+struct GeminiFunctionsTool {
     function_declarations: Vec<GeminiFunctionDeclaration>,
 }
+
+/// Google Search built-in tool
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleSearchTool {
+    google_search: GoogleSearchConfig,
+}
+
+/// Google Search configuration (empty for default)
+#[derive(Debug, Serialize)]
+struct GoogleSearchConfig {}
 
 /// Gemini function declaration
 #[derive(Debug, Serialize)]
@@ -129,6 +148,8 @@ pub struct GeminiClient {
     api_key: String,
     model: String,
     client: reqwest::Client,
+    /// Enable Google Search tool
+    enable_search: bool,
 }
 
 impl GeminiClient {
@@ -149,6 +170,7 @@ impl GeminiClient {
             api_key,
             model,
             client,
+            enable_search: true, // Enable Google Search by default for experts
         }
     }
 
@@ -225,6 +247,7 @@ impl GeminiClient {
     }
 
     /// Convert Mira Tool to Gemini FunctionDeclaration
+    /// Convert Mira Tools to Gemini function declarations tool
     fn convert_tools(tools: &[Tool]) -> GeminiTool {
         let declarations: Vec<GeminiFunctionDeclaration> = tools
             .iter()
@@ -235,9 +258,16 @@ impl GeminiClient {
             })
             .collect();
 
-        GeminiTool {
+        GeminiTool::Functions(GeminiFunctionsTool {
             function_declarations: declarations,
-        }
+        })
+    }
+
+    /// Create Google Search tool
+    fn google_search_tool() -> GeminiTool {
+        GeminiTool::GoogleSearch(GoogleSearchTool {
+            google_search: GoogleSearchConfig {},
+        })
     }
 
     /// Extract tool calls from Gemini response
@@ -321,8 +351,20 @@ impl LlmClient for GeminiClient {
             }
         }
 
-        // Convert tools
-        let gemini_tools = tools.as_ref().map(|t| vec![Self::convert_tools(t)]);
+        // Build tools list - include Google Search if enabled
+        let mut gemini_tools: Vec<GeminiTool> = Vec::new();
+
+        // Add Google Search as a built-in tool
+        if self.enable_search {
+            gemini_tools.push(Self::google_search_tool());
+        }
+
+        // Add custom function tools
+        if let Some(ref custom_tools) = tools {
+            gemini_tools.push(Self::convert_tools(custom_tools));
+        }
+
+        let gemini_tools = if gemini_tools.is_empty() { None } else { Some(gemini_tools) };
 
         let request = GeminiRequest {
             contents,
