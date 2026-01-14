@@ -2,7 +2,9 @@
 // DeepSeek API client (non-streaming, uses deepseek-reasoner)
 
 use super::types::{ChatResult, FunctionCall, Message, Tool, ToolCall, Usage};
+use crate::llm::provider::{LlmClient, Provider};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, Span};
@@ -202,5 +204,17 @@ impl DeepSeekClient {
             usage: data.usage,
             duration_ms,
         })
+    }
+}
+
+#[async_trait]
+impl LlmClient for DeepSeekClient {
+    fn provider_type(&self) -> Provider {
+        Provider::DeepSeek
+    }
+
+    async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
+        // Delegate to the existing implementation
+        self.chat(messages, tools).await
     }
 }

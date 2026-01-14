@@ -330,6 +330,28 @@ pub fn rebuild_code_fts_for_project(conn: &Connection, project_id: i64) -> Resul
     Ok(())
 }
 
+/// Migrate system_prompts to add provider and model columns
+pub fn migrate_system_prompts_provider(conn: &Connection) -> Result<()> {
+    // Check if provider column exists
+    let has_provider: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('system_prompts') WHERE name='provider'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_provider {
+        tracing::info!("Adding provider and model columns to system_prompts");
+        conn.execute_batch(
+            "ALTER TABLE system_prompts ADD COLUMN provider TEXT DEFAULT 'deepseek';
+             ALTER TABLE system_prompts ADD COLUMN model TEXT;",
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Database schema SQL
 pub const SCHEMA: &str = r#"
 -- ═══════════════════════════════════════
@@ -591,6 +613,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
 CREATE TABLE IF NOT EXISTS system_prompts (
     role TEXT PRIMARY KEY,             -- 'architect', 'plan_reviewer', etc.
     prompt TEXT NOT NULL,              -- custom system prompt
+    provider TEXT DEFAULT 'deepseek',  -- LLM provider: 'deepseek', 'openai', 'gemini'
+    model TEXT,                        -- custom model name (optional)
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 

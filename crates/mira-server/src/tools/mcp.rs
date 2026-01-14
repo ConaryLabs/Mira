@@ -23,6 +23,10 @@ impl ToolContext for MiraServer {
         self.deepseek.as_ref()
     }
 
+    fn llm_factory(&self) -> &crate::llm::ProviderFactory {
+        &self.llm_factory
+    }
+
     async fn get_project(&self) -> Option<mira_types::ProjectContext> {
         self.project.read().await.clone()
     }

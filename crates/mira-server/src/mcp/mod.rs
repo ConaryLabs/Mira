@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use crate::background::watcher::WatcherHandle;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
-use crate::llm::DeepSeekClient;
+use crate::llm::{DeepSeekClient, ProviderFactory};
 use mira_types::{AgentRole, ProjectContext, WsEvent};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -33,6 +33,7 @@ pub struct MiraServer {
     pub db: Arc<Database>,
     pub embeddings: Option<Arc<Embeddings>>,
     pub deepseek: Option<Arc<DeepSeekClient>>,
+    pub llm_factory: Arc<ProviderFactory>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
     /// Current session ID (generated on first tool call or session_start)
     pub session_id: Arc<RwLock<Option<String>>>,
@@ -47,15 +48,20 @@ pub struct MiraServer {
 
 impl MiraServer {
     pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
-        // Try to create DeepSeek client from env
+        // Try to create DeepSeek client from env (kept for backward compatibility)
         let deepseek = std::env::var("DEEPSEEK_API_KEY")
             .ok()
+            .filter(|k| !k.trim().is_empty())
             .map(|key| Arc::new(DeepSeekClient::new(key)));
+
+        // Create provider factory with all available LLM clients
+        let llm_factory = Arc::new(ProviderFactory::new());
 
         Self {
             db,
             embeddings,
             deepseek,
+            llm_factory,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
             ws_tx: None,
@@ -73,12 +79,16 @@ impl MiraServer {
     ) -> Self {
         let deepseek = std::env::var("DEEPSEEK_API_KEY")
             .ok()
+            .filter(|k| !k.trim().is_empty())
             .map(|key| Arc::new(DeepSeekClient::new(key)));
+
+        let llm_factory = Arc::new(ProviderFactory::new());
 
         Self {
             db,
             embeddings,
             deepseek,
+            llm_factory,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
             ws_tx: None,
@@ -100,10 +110,13 @@ impl MiraServer {
         pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>,
         watcher: Option<WatcherHandle>,
     ) -> Self {
+        let llm_factory = Arc::new(ProviderFactory::new());
+
         Self {
             db,
             embeddings,
             deepseek,
+            llm_factory,
             project,
             session_id,
             ws_tx: Some(ws_tx),
@@ -376,12 +389,16 @@ pub struct ConsultSecurityRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConfigureExpertRequest {
-    #[schemars(description = "Action: set/get/delete/list")]
+    #[schemars(description = "Action: set/get/delete/list/providers")]
     pub action: String,
     #[schemars(description = "Expert role: architect/plan_reviewer/scope_analyst/code_reviewer/security")]
     pub role: Option<String>,
     #[schemars(description = "Custom system prompt (for 'set' action)")]
     pub prompt: Option<String>,
+    #[schemars(description = "LLM provider: deepseek/openai/gemini (for 'set' action)")]
+    pub provider: Option<String>,
+    #[schemars(description = "Custom model name, e.g. gpt-4.5-preview, gemini-2.0-flash (for 'set' action)")]
+    pub model: Option<String>,
 }
 
 #[tool_router]
@@ -688,12 +705,12 @@ impl MiraServer {
         tools::consult_security(self, req.context, req.question).await
     }
 
-    #[tool(description = "Configure expert system prompts. Actions: set (customize prompt), get (view current), delete (revert to default), list (show all custom prompts).")]
+    #[tool(description = "Configure expert system prompts. Actions: set (customize prompt), get (view current), delete (revert to default), list (show all custom prompts), providers (list available LLM providers).")]
     async fn configure_expert(
         &self,
         Parameters(req): Parameters<ConfigureExpertRequest>,
     ) -> Result<String, String> {
-        tools::configure_expert(self, req.action, req.role, req.prompt).await
+        tools::configure_expert(self, req.action, req.role, req.prompt, req.provider, req.model).await
     }
 }
 

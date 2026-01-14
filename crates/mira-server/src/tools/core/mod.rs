@@ -11,7 +11,7 @@ use tokio::sync::{oneshot, RwLock};
 
 use crate::db::Database;
 use crate::embeddings::Embeddings;
-use crate::llm::DeepSeekClient;
+use crate::llm::{DeepSeekClient, ProviderFactory};
 use crate::background::watcher::WatcherHandle;
 
 /// Common context required by all tools.
@@ -26,8 +26,11 @@ pub trait ToolContext: Send + Sync {
     /// Embeddings client for semantic search (optional)
     fn embeddings(&self) -> Option<&Arc<Embeddings>>;
 
-    /// DeepSeek client for chat/completion (optional)
+    /// DeepSeek client for chat/completion (optional, deprecated - use llm_factory)
     fn deepseek(&self) -> Option<&Arc<DeepSeekClient>>;
+
+    /// LLM provider factory for multi-provider support
+    fn llm_factory(&self) -> &ProviderFactory;
 
     // === Project/Session State ===
 

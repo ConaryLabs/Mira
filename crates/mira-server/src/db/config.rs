@@ -1,12 +1,63 @@
 // crates/mira-server/src/db/config.rs
-// Configuration storage (custom system prompts, etc.)
+// Configuration storage (custom system prompts, LLM provider config, etc.)
 
+use crate::llm::Provider;
 use anyhow::Result;
 use rusqlite::params;
 
 use super::Database;
 
+/// Expert configuration including prompt, provider, and model
+#[derive(Debug, Clone)]
+pub struct ExpertConfig {
+    pub prompt: Option<String>,
+    pub provider: Provider,
+    pub model: Option<String>,
+}
+
+impl Default for ExpertConfig {
+    fn default() -> Self {
+        Self {
+            prompt: None,
+            provider: Provider::DeepSeek,
+            model: None,
+        }
+    }
+}
+
 impl Database {
+    /// Get full expert configuration for a role
+    /// Returns default config if no custom config is set
+    pub fn get_expert_config(&self, role: &str) -> Result<ExpertConfig> {
+        let conn = self.conn();
+        let result = conn.query_row(
+            "SELECT prompt, provider, model FROM system_prompts WHERE role = ?",
+            params![role],
+            |row| {
+                let prompt: Option<String> = row.get(0)?;
+                let provider_str: Option<String> = row.get(1)?;
+                let model: Option<String> = row.get(2)?;
+                Ok((prompt, provider_str, model))
+            },
+        );
+
+        match result {
+            Ok((prompt, provider_str, model)) => {
+                let provider = provider_str
+                    .as_deref()
+                    .and_then(Provider::from_str)
+                    .unwrap_or(Provider::DeepSeek);
+                Ok(ExpertConfig {
+                    prompt,
+                    provider,
+                    model,
+                })
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(ExpertConfig::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Get custom system prompt for an expert role
     /// Returns None if no custom prompt is set (use default)
     pub fn get_custom_prompt(&self, role: &str) -> Result<Option<String>> {
@@ -36,6 +87,75 @@ impl Database {
         Ok(())
     }
 
+    /// Set LLM provider for an expert role
+    pub fn set_expert_provider(&self, role: &str, provider: Provider, model: Option<&str>) -> Result<()> {
+        let conn = self.conn();
+        // Use a dummy prompt if none exists, we're primarily setting provider/model
+        conn.execute(
+            "INSERT INTO system_prompts (role, prompt, provider, model, updated_at)
+             VALUES (?1, '', ?2, ?3, CURRENT_TIMESTAMP)
+             ON CONFLICT(role) DO UPDATE SET
+                provider = excluded.provider,
+                model = excluded.model,
+                updated_at = CURRENT_TIMESTAMP",
+            params![role, provider.to_string(), model],
+        )?;
+        Ok(())
+    }
+
+    /// Set full expert configuration (prompt, provider, model)
+    pub fn set_expert_config(
+        &self,
+        role: &str,
+        prompt: Option<&str>,
+        provider: Option<Provider>,
+        model: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn();
+
+        // Check if row exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM system_prompts WHERE role = ?",
+                params![role],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if exists {
+            // Update only provided fields
+            if let Some(p) = prompt {
+                conn.execute(
+                    "UPDATE system_prompts SET prompt = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?",
+                    params![p, role],
+                )?;
+            }
+            if let Some(prov) = provider {
+                conn.execute(
+                    "UPDATE system_prompts SET provider = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?",
+                    params![prov.to_string(), role],
+                )?;
+            }
+            if model.is_some() {
+                conn.execute(
+                    "UPDATE system_prompts SET model = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?",
+                    params![model, role],
+                )?;
+            }
+        } else {
+            // Insert new row
+            let prompt_val = prompt.unwrap_or("");
+            let provider_val = provider.unwrap_or(Provider::DeepSeek).to_string();
+            conn.execute(
+                "INSERT INTO system_prompts (role, prompt, provider, model, updated_at)
+                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                params![role, prompt_val, provider_val, model],
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Delete custom system prompt (revert to default)
     pub fn delete_custom_prompt(&self, role: &str) -> Result<bool> {
         let conn = self.conn();
@@ -46,15 +166,15 @@ impl Database {
         Ok(deleted > 0)
     }
 
-    /// List all custom prompts
-    pub fn list_custom_prompts(&self) -> Result<Vec<(String, String)>> {
+    /// List all custom prompts with provider info
+    pub fn list_custom_prompts(&self) -> Result<Vec<(String, String, String, Option<String>)>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT role, prompt FROM system_prompts ORDER BY role",
+            "SELECT role, prompt, COALESCE(provider, 'deepseek'), model FROM system_prompts ORDER BY role",
         )?;
 
         let results = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
             .filter_map(|r| r.ok())
             .collect();
 

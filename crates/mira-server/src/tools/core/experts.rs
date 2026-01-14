@@ -1,13 +1,14 @@
 // crates/mira-server/src/tools/core/experts.rs
-// Agentic expert sub-agents powered by DeepSeek Reasoner with tool access
+// Agentic expert sub-agents powered by LLM providers with tool access
 
 use super::ToolContext;
 use crate::db::Database;
 use crate::indexer;
-use crate::llm::{Message, Tool, ToolCall};
+use crate::llm::{LlmClient, Message, Tool, ToolCall};
 use crate::search::{embedding_to_bytes, find_callers, find_callees, hybrid_search};
 use serde_json::{json, Value};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -666,8 +667,13 @@ pub async fn consult_expert<C: ToolContext>(
     context: String,
     question: Option<String>,
 ) -> Result<String, String> {
-    let deepseek = ctx.deepseek()
-        .ok_or("DeepSeek not configured")?;
+    // Get the appropriate LLM client for this expert role
+    let client: Arc<dyn LlmClient> = ctx.llm_factory()
+        .client_for_role(expert.db_key(), ctx.db())
+        .map_err(|e| e.to_string())?;
+
+    let provider = client.provider_type();
+    tracing::info!(expert = expert.db_key(), provider = %provider, "Expert consultation starting");
 
     let system_prompt = expert.system_prompt(ctx.db());
     let user_prompt = build_user_prompt(&context, question.as_deref());
@@ -692,10 +698,10 @@ pub async fn consult_expert<C: ToolContext>(
                 ));
             }
 
-            // Call DeepSeek with tools
+            // Call LLM with tools
             let result = timeout(
                 LLM_CALL_TIMEOUT,
-                deepseek.chat(messages.clone(), Some(tools.clone()))
+                client.chat(messages.clone(), Some(tools.clone()))
             )
             .await
             .map_err(|_| format!("LLM call timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
@@ -781,19 +787,21 @@ pub async fn consult_security<C: ToolContext>(
     consult_expert(ctx, ExpertRole::Security, context, question).await
 }
 
-/// Configure expert system prompts (set, get, delete, list)
+/// Configure expert system prompts and LLM providers (set, get, delete, list, providers)
 pub async fn configure_expert<C: ToolContext>(
     ctx: &C,
     action: String,
     role: Option<String>,
     prompt: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
 ) -> Result<String, String> {
+    use crate::llm::Provider;
+
     match action.as_str() {
         "set" => {
             let role_key = role.as_deref()
                 .ok_or("Role is required for 'set' action")?;
-            let prompt_text = prompt.as_deref()
-                .ok_or("Prompt is required for 'set' action")?;
 
             // Validate role
             if ExpertRole::from_db_key(role_key).is_none() {
@@ -803,10 +811,38 @@ pub async fn configure_expert<C: ToolContext>(
                 ));
             }
 
-            ctx.db().set_custom_prompt(role_key, prompt_text)
-                .map_err(|e| e.to_string())?;
+            // Parse provider if provided
+            let parsed_provider = if let Some(ref p) = provider {
+                Some(Provider::from_str(p).ok_or_else(|| {
+                    format!("Invalid provider '{}'. Valid providers: deepseek, openai, gemini", p)
+                })?)
+            } else {
+                None
+            };
 
-            Ok(format!("Custom prompt set for '{}' expert.", role_key))
+            // At least one of prompt, provider, or model should be set
+            if prompt.is_none() && parsed_provider.is_none() && model.is_none() {
+                return Err("At least one of prompt, provider, or model is required for 'set' action".to_string());
+            }
+
+            ctx.db().set_expert_config(
+                role_key,
+                prompt.as_deref(),
+                parsed_provider,
+                model.as_deref(),
+            ).map_err(|e| e.to_string())?;
+
+            let mut msg = format!("Configuration updated for '{}' expert:", role_key);
+            if prompt.is_some() {
+                msg.push_str(" prompt set");
+            }
+            if let Some(ref p) = parsed_provider {
+                msg.push_str(&format!(" provider={}", p));
+            }
+            if let Some(ref m) = model {
+                msg.push_str(&format!(" model={}", m));
+            }
+            Ok(msg)
         }
 
         "get" => {
@@ -820,15 +856,27 @@ pub async fn configure_expert<C: ToolContext>(
                     role_key
                 ))?;
 
-            match ctx.db().get_custom_prompt(role_key) {
-                Ok(Some(custom)) => Ok(format!(
-                    "Custom prompt for '{}' ({}):\n\n{}",
-                    role_key, expert.name(), custom
-                )),
-                Ok(None) => Ok(format!(
-                    "No custom prompt set for '{}'. Using default.",
-                    role_key
-                )),
+            match ctx.db().get_expert_config(role_key) {
+                Ok(config) => {
+                    let mut output = format!("Configuration for '{}' ({}):\n", role_key, expert.name());
+                    output.push_str(&format!("  Provider: {}\n", config.provider));
+                    if let Some(ref m) = config.model {
+                        output.push_str(&format!("  Model: {}\n", m));
+                    } else {
+                        output.push_str(&format!("  Model: {} (default)\n", config.provider.default_model()));
+                    }
+                    if let Some(ref p) = config.prompt {
+                        let preview = if p.len() > 200 {
+                            format!("{}...", &p[..200])
+                        } else {
+                            p.clone()
+                        };
+                        output.push_str(&format!("  Custom prompt: {}\n", preview));
+                    } else {
+                        output.push_str("  Prompt: (default)\n");
+                    }
+                    Ok(output)
+                }
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -846,26 +894,32 @@ pub async fn configure_expert<C: ToolContext>(
             }
 
             match ctx.db().delete_custom_prompt(role_key) {
-                Ok(true) => Ok(format!("Custom prompt deleted for '{}'. Reverted to default.", role_key)),
-                Ok(false) => Ok(format!("No custom prompt was set for '{}'.", role_key)),
+                Ok(true) => Ok(format!("Configuration deleted for '{}'. Reverted to defaults.", role_key)),
+                Ok(false) => Ok(format!("No custom configuration was set for '{}'.", role_key)),
                 Err(e) => Err(e.to_string()),
             }
         }
 
         "list" => {
             match ctx.db().list_custom_prompts() {
-                Ok(prompts) => {
-                    if prompts.is_empty() {
-                        Ok("No custom prompts configured. All experts use default prompts.".to_string())
+                Ok(configs) => {
+                    if configs.is_empty() {
+                        Ok("No custom configurations. All experts use default settings.".to_string())
                     } else {
-                        let mut output = format!("{} custom prompts configured:\n\n", prompts.len());
-                        for (role_key, prompt_text) in prompts {
-                            let preview = if prompt_text.len() > 100 {
-                                format!("{}...", &prompt_text[..100])
+                        let mut output = format!("{} expert configurations:\n\n", configs.len());
+                        for (role_key, prompt_text, provider_str, model_opt) in configs {
+                            let prompt_preview = if prompt_text.len() > 50 {
+                                format!("{}...", &prompt_text[..50])
+                            } else if prompt_text.is_empty() {
+                                "(default)".to_string()
                             } else {
                                 prompt_text
                             };
-                            output.push_str(&format!("  {}: {}\n", role_key, preview));
+                            let model_str = model_opt.as_deref().unwrap_or("default");
+                            output.push_str(&format!(
+                                "  {}: provider={}, model={}, prompt={}\n",
+                                role_key, provider_str, model_str, prompt_preview
+                            ));
                         }
                         Ok(output)
                     }
@@ -874,8 +928,30 @@ pub async fn configure_expert<C: ToolContext>(
             }
         }
 
+        "providers" => {
+            // List available LLM providers
+            let factory = ctx.llm_factory();
+            let available = factory.available_providers();
+
+            if available.is_empty() {
+                Ok("No LLM providers available. Set DEEPSEEK_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.".to_string())
+            } else {
+                let mut output = format!("{} LLM providers available:\n\n", available.len());
+                for p in &available {
+                    let is_default = factory.default_provider() == Some(*p);
+                    let default_marker = if is_default { " (default)" } else { "" };
+                    output.push_str(&format!(
+                        "  {}: model={}{}\n",
+                        p, p.default_model(), default_marker
+                    ));
+                }
+                output.push_str("\nSet DEFAULT_LLM_PROVIDER env var to change the global default.");
+                Ok(output)
+            }
+        }
+
         _ => Err(format!(
-            "Invalid action '{}'. Valid actions: set, get, delete, list",
+            "Invalid action '{}'. Valid actions: set, get, delete, list, providers",
             action
         )),
     }

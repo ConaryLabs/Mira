@@ -11,6 +11,7 @@ mod session;
 mod tasks;
 mod types;
 
+pub use config::ExpertConfig;
 pub use embeddings::PendingEmbedding;
 pub use memory::parse_memory_fact_row;
 pub use types::*;
@@ -150,6 +151,9 @@ impl Database {
 
         // Add has_embedding column to memory_facts for tracking embedding status
         schema::migrate_memory_facts_has_embedding(&conn)?;
+
+        // Add provider and model columns to system_prompts for multi-LLM support
+        schema::migrate_system_prompts_provider(&conn)?;
 
         conn.execute_batch(schema::SCHEMA)?;
 
