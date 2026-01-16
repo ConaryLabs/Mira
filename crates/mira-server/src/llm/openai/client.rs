@@ -360,6 +360,10 @@ impl LlmClient for OpenAiClient {
         Provider::OpenAi
     }
 
+    fn supports_stateful(&self) -> bool {
+        true
+    }
+
     #[instrument(skip(self, messages, tools), fields(request_id, model = %self.model, message_count = messages.len()))]
     async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
         let request_id = Uuid::new_v4().to_string();

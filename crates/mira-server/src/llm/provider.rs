@@ -105,6 +105,14 @@ pub trait LlmClient: Send + Sync {
         self.chat(messages, tools).await
     }
 
+    /// Whether this provider supports stateful conversations via previous_response_id.
+    /// When true, the caller can send only new messages (tool results) on subsequent
+    /// turns because the provider stores the full conversation context.
+    /// When false, the caller must send the full message history every time.
+    fn supports_stateful(&self) -> bool {
+        false
+    }
+
     /// Get the provider type
     fn provider_type(&self) -> Provider;
 

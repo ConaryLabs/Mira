@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 use crate::background::watcher::WatcherHandle;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
+use crate::hooks::session::read_claude_session_id;
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use mira_types::{AgentRole, ProjectContext, WsEvent};
 use rmcp::{
@@ -418,7 +419,9 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<SessionStartRequest>,
     ) -> Result<String, String> {
-        tools::session_start(self, req.project_path, req.name, req.session_id).await
+        // Use provided session ID, or fall back to Claude's hook-generated ID
+        let session_id = req.session_id.or_else(read_claude_session_id);
+        tools::session_start(self, req.project_path, req.name, session_id).await
     }
 
     #[tool(description = "Set active project.")]

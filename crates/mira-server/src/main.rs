@@ -1,9 +1,22 @@
-// crates/mira-server/src/main.rs
-// Mira - Memory and Intelligence Layer for Claude Code
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mira::{background, db::Database, embeddings::Embeddings, llm::DeepSeekClient, mcp::MiraServer};
+use mira::background;
+use mira::db::Database;
+use mira::embeddings::Embeddings;
+use mira::llm::DeepSeekClient;
+use mira::mcp::{
+    self, MiraServer,
+    SessionStartRequest, SetProjectRequest, RememberRequest, RecallRequest,
+    ForgetRequest, GetSymbolsRequest, SemanticCodeSearchRequest,
+    FindCallersRequest, FindCalleesRequest, CheckCapabilityRequest,
+    TaskRequest, GoalRequest, IndexRequest, SessionHistoryRequest,
+    ConsultArchitectRequest, ConsultCodeReviewerRequest,
+    ConsultPlanReviewerRequest, ConsultScopeAnalystRequest,
+    ConsultSecurityRequest, ConsultExpertsRequest, ConfigureExpertRequest,
+    ReplyToMiraRequest
+};
+use mira::tools::core::ToolContext;
+use mira_types::ProjectContext;
 use tokio::sync::watch;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,7 +41,7 @@ fn get_deepseek() -> Option<Arc<DeepSeekClient>> {
 
 #[derive(Parser)]
 #[command(name = "mira")]
-#[command(about = "Memory and Intelligence Layer for Claude Code")]
+#[command(about = "Memory and Intelligence Layer for AI Agents")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -37,8 +50,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run as MCP server (default, for Claude Code)
+    /// Run as MCP server (default)
     Serve,
+
+    /// Execute a tool directly
+    Tool {
+        /// Tool name (e.g. search_code, remember)
+        #[arg(index = 1)]
+        name: String,
+
+        /// JSON arguments (e.g. '{"query": "foo"}')
+        #[arg(index = 2)]
+        args: String,
+    },
 
     /// Index a project
     Index {
@@ -51,7 +75,7 @@ enum Commands {
         no_embed: bool,
     },
 
-    /// Claude Code hook handlers
+    /// Client hook handlers
     Hook {
         #[command(subcommand)]
         action: HookAction,
@@ -87,6 +111,187 @@ enum HookAction {
 fn get_db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".mira/mira.db")
+}
+
+async fn run_tool(name: String, args: String) -> Result<()> {
+    // Open database
+    let db_path = get_db_path();
+    let db = Arc::new(Database::open(&db_path)?);
+    let embeddings = get_embeddings();
+
+    // Create server context
+    let server = MiraServer::new(db.clone(), embeddings);
+
+    // Restore context (Project & Session)
+    if let Ok(Some(path)) = db.get_last_active_project() {
+        if let Ok((id, name)) = db.get_or_create_project(&path, None) {
+            let project = ProjectContext {
+                id,
+                path: path.clone(),
+                name,
+            };
+            server.set_project(project).await;
+        }
+    } else {
+        // Fallback: Check if CWD is a project
+        if let Ok(cwd) = std::env::current_dir() {
+            let path_str = cwd.to_string_lossy().to_string();
+            // Simple heuristic: if we can get a name, it's likely a project
+            if let Ok((id, name)) = db.get_or_create_project(&path_str, None) {
+                 let project = ProjectContext {
+                    id,
+                    path: path_str,
+                    name,
+                };
+                server.set_project(project).await;
+            }
+        }
+    }
+
+    if let Ok(Some(sid)) = db.get_server_state("active_session_id") {
+        server.set_session_id(sid).await;
+    }
+
+    // Execute tool
+    let res = match name.as_str() {
+        "session_start" => {
+            let req: SessionStartRequest = serde_json::from_str(&args)?;
+            mira::tools::session_start(&server, req.project_path, req.name, req.session_id).await
+        }
+        "set_project" => {
+            let req: SetProjectRequest = serde_json::from_str(&args)?;
+            mira::tools::set_project(&server, req.project_path, req.name).await
+        }
+        "get_project" => {
+             mira::tools::get_project(&server).await
+        }
+        "remember" => {
+             let req: RememberRequest = serde_json::from_str(&args)?;
+             mira::tools::remember(&server, req.content, req.key, req.fact_type, req.category, req.confidence).await
+        }
+        "recall" => {
+            let req: RecallRequest = serde_json::from_str(&args)?;
+            mira::tools::recall(&server, req.query, req.limit, req.category, req.fact_type).await
+        }
+        "forget" => {
+            let req: ForgetRequest = serde_json::from_str(&args)?;
+            mira::tools::forget(&server, req.id).await
+        }
+        "get_symbols" => {
+            let req: GetSymbolsRequest = serde_json::from_str(&args)?;
+            mira::tools::get_symbols(req.file_path, req.symbol_type)
+        }
+        "search_code" => {
+            let req: SemanticCodeSearchRequest = serde_json::from_str(&args)?;
+            mira::tools::search_code(&server, req.query, req.language, req.limit).await
+        }
+        "find_callers" => {
+            let req: FindCallersRequest = serde_json::from_str(&args)?;
+            mira::tools::find_function_callers(&server, req.function_name, req.limit).await
+        }
+        "find_callees" => {
+            let req: FindCalleesRequest = serde_json::from_str(&args)?;
+            mira::tools::find_function_callees(&server, req.function_name, req.limit).await
+        }
+        "check_capability" => {
+            let req: CheckCapabilityRequest = serde_json::from_str(&args)?;
+            mira::tools::check_capability(&server, req.description).await
+        }
+        "task" => {
+             let req: TaskRequest = serde_json::from_str(&args)?;
+             mira::tools::task(&server, req.action, req.task_id, req.title, req.description, req.status, req.priority, req.include_completed, req.limit, req.tasks).await
+        }
+        "goal" => {
+             let req: GoalRequest = serde_json::from_str(&args)?;
+             mira::tools::goal(&server, req.action, req.goal_id, req.title, req.description, req.status, req.priority, req.progress_percent, req.include_finished, req.limit, req.goals).await
+        }
+        "index" => {
+             let req: IndexRequest = serde_json::from_str(&args)?;
+             mira::tools::index(&server, req.action, req.path, req.skip_embed.unwrap_or(false)).await
+        }
+        "summarize_codebase" => {
+            mira::tools::summarize_codebase(&server).await
+        }
+        "get_session_recap" => {
+            mira::tools::get_session_recap(&server).await
+        }
+        "session_history" => {
+             let req: SessionHistoryRequest = serde_json::from_str(&args)?;
+             // Need to duplicate logic from MCP handler or expose it in tools/core?
+             // mcp/mod.rs implements logic inline for session_history.
+             // I'll leave it for now or implement a basic version.
+             // Actually, the logic is in MiraServer::session_history impl, which calls db methods directly.
+             let limit = req.limit.unwrap_or(20) as usize;
+             match req.action.as_str() {
+                "current" => {
+                    match server.session_id.read().await.as_ref() {
+                        Some(id) => Ok(format!("Current session: {}", id)),
+                        None => Ok("No active session".to_string()),
+                    }
+                }
+                "list_sessions" => {
+                    let project = server.project.read().await;
+                    let project_id = project.as_ref().map(|p| p.id).ok_or_else(|| anyhow::anyhow!("No active project"))?;
+                    let sessions = db.get_recent_sessions(project_id, limit)?;
+                    let mut output = format!("{} sessions:\n", sessions.len());
+                    for s in sessions {
+                         output.push_str(&format!("  [{}] {} - {}\n", &s.id[..8], s.started_at, s.status));
+                    }
+                    Ok(output)
+                }
+                "get_history" => {
+                     let session_id = req.session_id.or_else(|| futures::executor::block_on(server.session_id.read()).clone()).ok_or_else(|| anyhow::anyhow!("No session ID"))?;
+                     let history = db.get_session_history(&session_id, limit)?;
+                     let mut output = format!("History for {}:\n", &session_id[..8]);
+                     for h in history {
+                         output.push_str(&format!("  {} {}\n", h.tool_name, h.result_summary.unwrap_or_default()));
+                     }
+                     Ok(output)
+                }
+                _ => Err("Invalid action".to_string())
+             }
+        }
+        "consult_architect" => {
+            let req: ConsultArchitectRequest = serde_json::from_str(&args)?;
+            mira::tools::consult_architect(&server, req.context, req.question).await
+        }
+        "consult_code_reviewer" => {
+             let req: ConsultCodeReviewerRequest = serde_json::from_str(&args)?;
+             mira::tools::consult_code_reviewer(&server, req.context, req.question).await
+        }
+        "consult_plan_reviewer" => {
+             let req: ConsultPlanReviewerRequest = serde_json::from_str(&args)?;
+             mira::tools::consult_plan_reviewer(&server, req.context, req.question).await
+        }
+        "consult_scope_analyst" => {
+             let req: ConsultScopeAnalystRequest = serde_json::from_str(&args)?;
+             mira::tools::consult_scope_analyst(&server, req.context, req.question).await
+        }
+        "consult_security" => {
+             let req: ConsultSecurityRequest = serde_json::from_str(&args)?;
+             mira::tools::consult_security(&server, req.context, req.question).await
+        }
+        "consult_experts" => {
+             let req: ConsultExpertsRequest = serde_json::from_str(&args)?;
+             mira::tools::consult_experts(&server, req.roles, req.context, req.question).await
+        }
+        "configure_expert" => {
+             let req: ConfigureExpertRequest = serde_json::from_str(&args)?;
+             mira::tools::configure_expert(&server, req.action, req.role, req.prompt, req.provider, req.model).await
+        }
+        "reply_to_mira" => {
+             let req: ReplyToMiraRequest = serde_json::from_str(&args)?;
+             // Just print locally since we don't have a collaborative frontend connected
+             Ok(format!("(Reply not sent - no frontend connected) Content: {}", req.content))
+        }
+        _ => Err(format!("Unknown tool: {}", name).into()),
+    };
+
+    match res {
+        Ok(output) => println!("{}", output),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+    Ok(())
 }
 
 async fn run_mcp_server() -> Result<()> {
@@ -174,6 +379,7 @@ async fn main() -> Result<()> {
     // Set up logging based on command
     let log_level = match &cli.command {
         Some(Commands::Serve) | None => Level::WARN, // Quiet for MCP stdio
+        Some(Commands::Tool { .. }) => Level::WARN,
         Some(Commands::Hook { .. }) => Level::WARN,
         Some(Commands::Index { .. }) => Level::INFO,
         Some(Commands::DebugCarto { .. }) => Level::DEBUG,
@@ -190,6 +396,9 @@ async fn main() -> Result<()> {
     match cli.command {
         None | Some(Commands::Serve) => {
             run_mcp_server().await?;
+        }
+        Some(Commands::Tool { name, args }) => {
+            run_tool(name, args).await?;
         }
         Some(Commands::Index { path, no_embed }) => {
             run_index(path, no_embed).await?;

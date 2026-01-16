@@ -16,16 +16,16 @@ use tokio::time::timeout;
 const MAX_ITERATIONS: usize = 100;
 
 /// Timeout for the entire expert consultation (including all tool calls)
-const EXPERT_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes for multi-turn
+const EXPERT_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes for multi-turn with reasoning models
 
-/// Timeout for individual LLM calls
-const LLM_CALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// Timeout for individual LLM calls (6 minutes for reasoning models like DeepSeek)
+const LLM_CALL_TIMEOUT: Duration = Duration::from_secs(360);
 
 /// Maximum concurrent expert consultations (prevents rate limit exhaustion)
 const MAX_CONCURRENT_EXPERTS: usize = 3;
 
 /// Timeout for parallel expert consultation (longer than single expert to allow queuing)
-const PARALLEL_EXPERT_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
+const PARALLEL_EXPERT_TIMEOUT: Duration = Duration::from_secs(900); // 15 minutes for reasoning models
 
 /// Expert roles available for consultation
 #[derive(Debug, Clone, Copy)]
@@ -707,9 +707,10 @@ pub async fn consult_expert<C: ToolContext>(
                 ));
             }
 
-            // For stateful providers (OpenAI), only send new messages after the first call.
-            // The previous_response_id preserves context, so we only need new tool results.
-            let messages_to_send = if previous_response_id.is_some() {
+            // For stateful providers (OpenAI Responses API), only send new messages after
+            // the first call. The previous_response_id preserves context server-side.
+            // For non-stateful providers (DeepSeek, Gemini), always send full history.
+            let messages_to_send = if previous_response_id.is_some() && client.supports_stateful() {
                 // Only send tool messages (results from current iteration)
                 // These are at the end of the messages vec after the last assistant message
                 messages
@@ -722,7 +723,7 @@ pub async fn consult_expert<C: ToolContext>(
                     .rev()
                     .collect()
             } else {
-                // First call - send all messages
+                // First call OR non-stateful provider - send all messages
                 messages.clone()
             };
 
