@@ -76,6 +76,26 @@ Use experts for second opinions before major decisions:
 | Feature exists? | `check_capability` |
 | Codebase overview | `session_start` output |
 
+## rust-analyzer LSP Plugin
+
+The `rust-analyzer@claude-code-lsps` plugin is enabled in `~/.claude/settings.json`. It provides **passive background intelligence** - not directly callable tools.
+
+**What it does:**
+- Automatic diagnostics after file edits (type errors, unused variables, etc.)
+- Fix suggestions inline with errors
+- Surfaced via `<new-diagnostics>` in system reminders
+
+**Mira vs LSP:**
+
+| Capability | Mira | LSP |
+|------------|------|-----|
+| Invocation | Explicit tool calls | Automatic after edits |
+| Diagnostics | No | Yes, with fix suggestions |
+| Semantic search | Yes | No |
+| Memory/context | Yes | No |
+
+**Usage:** Just edit `.rs` files normally. Diagnostics appear automatically if there are errors. No explicit invocation needed.
+
 ## Build & Test
 
 ```bash
@@ -99,3 +119,19 @@ mira debug-carto
 API keys are in `/home/peter/Mira/.env`:
 - `OPENAI_API_KEY` - Embeddings (text-embedding-3-small)
 - `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)
+
+## Claude Code Config Locations
+
+| File | Purpose | Scope |
+|------|---------|-------|
+| `~/.claude.json` | Claude Code state (per-project settings, disabled servers, stats) | Global |
+| `~/.claude/settings.json` | User settings (hooks, plugins, thinking mode) | Global |
+| `~/.claude/settings.local.json` | Local overrides (not synced) | Global |
+| `~/.claude/mcp.json` | Global MCP servers (use sparingly) | Global |
+| `<project>/.mcp.json` | Project MCP servers (preferred) | Project |
+| `<project>/CLAUDE.md` | Project instructions for Claude | Project |
+
+**Best practices:**
+- Define MCP servers in project `.mcp.json`, not global `~/.claude/mcp.json`
+- Use `~/.claude/settings.json` for hooks and plugins
+- Project-specific overrides go in project's `.mcp.json` or `CLAUDE.md`
