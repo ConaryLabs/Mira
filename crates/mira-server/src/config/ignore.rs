@@ -15,16 +15,14 @@ pub const COMMON_SKIP: &[&str] = &[
     "out",
     ".venv",
     "venv",
-    "env",
-    "assets",
     "coverage",
 ];
 
 /// Python-specific skip directories
-pub const PYTHON_SKIP: &[&str] = &[".egg-info", ".tox", ".pytest_cache"];
+pub const PYTHON_SKIP: &[&str] = &[".egg-info", ".tox", ".pytest_cache", "env"];
 
 /// Node-specific skip directories
-pub const NODE_SKIP: &[&str] = &["__tests__", "__mocks__", ".turbo"];
+pub const NODE_SKIP: &[&str] = &["__tests__", "__mocks__", ".turbo", "assets"];
 
 /// Go-specific skip directories
 pub const GO_SKIP: &[&str] = &["testdata"];

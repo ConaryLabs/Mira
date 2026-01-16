@@ -4,8 +4,9 @@ use mira::background;
 use mira::db::Database;
 use mira::embeddings::Embeddings;
 use mira::llm::DeepSeekClient;
+use mira::hooks::session::read_claude_session_id;
 use mira::mcp::{
-    self, MiraServer,
+    MiraServer,
     SessionStartRequest, SetProjectRequest, RememberRequest, RecallRequest,
     ForgetRequest, GetSymbolsRequest, SemanticCodeSearchRequest,
     FindCallersRequest, FindCalleesRequest, CheckCapabilityRequest,
@@ -156,7 +157,9 @@ async fn run_tool(name: String, args: String) -> Result<()> {
     let res = match name.as_str() {
         "session_start" => {
             let req: SessionStartRequest = serde_json::from_str(&args)?;
-            mira::tools::session_start(&server, req.project_path, req.name, req.session_id).await
+            // Use provided session ID, or fall back to Claude's hook-generated ID
+            let session_id = req.session_id.or_else(read_claude_session_id);
+            mira::tools::session_start(&server, req.project_path, req.name, session_id).await
         }
         "set_project" => {
             let req: SetProjectRequest = serde_json::from_str(&args)?;
