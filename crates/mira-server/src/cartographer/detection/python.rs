@@ -2,6 +2,7 @@
 // Python package/module detection from project structure
 
 use super::super::types::Module;
+use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -23,15 +24,7 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.')
-                && name != "__pycache__"
-                && name != "venv"
-                && name != ".venv"
-                && name != "env"
-                && name != "node_modules"
-                && name != "build"
-                && name != "dist"
-                && name != ".egg-info"
+            !ignore::should_skip_for_lang(&name, "python")
         })
         .filter_map(|e| e.ok())
     {
@@ -137,7 +130,7 @@ fn detect_in_src(
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && name != "__pycache__"
+            !ignore::should_skip_for_lang(&name, "python")
         })
         .filter_map(|e| e.ok())
     {
@@ -258,7 +251,7 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && name != "__pycache__" && name != "venv"
+            !ignore::should_skip_for_lang(&name, "python")
         })
         .filter_map(|e| e.ok())
     {

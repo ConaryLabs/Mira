@@ -1,5 +1,5 @@
 // crates/mira-server/src/lib.rs
-// Mira - Memory and Intelligence Layer for Claude Code
+// Mira - Memory and Intelligence Layer for AI Agents
 // Test edit for file watcher verification
 
 #![allow(clippy::collapsible_if)]
@@ -8,6 +8,7 @@
 
 pub mod background;
 pub mod cartographer;
+pub mod config;
 pub mod db;
 pub mod embeddings;
 pub mod hooks;

@@ -2,6 +2,7 @@
 // Node.js/TypeScript module detection from project structure
 
 use super::super::types::Module;
+use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -57,13 +58,7 @@ fn detect_in_package(
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.')
-                && name != "node_modules"
-                && name != "dist"
-                && name != "build"
-                && name != "coverage"
-                && name != "__tests__"
-                && name != "__mocks__"
+            !ignore::should_skip_for_lang(&name, "node")
         })
         .filter_map(|e| e.ok())
     {

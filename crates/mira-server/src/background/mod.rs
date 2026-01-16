@@ -77,35 +77,32 @@ impl BackgroundWorker {
         let mut processed = 0;
 
         // Process pending embeddings first (highest priority - enables search for new files)
-        if self.embeddings.is_some() {
-            let count = self.process_pending_embeddings().await?;
+        if let Some(ref emb) = self.embeddings {
+            let count = self.process_pending_embeddings(emb).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} pending embeddings", count);
             }
             processed += count;
         }
 
-        // Process summaries one at a time (rate limited)
-        if self.deepseek.is_some() {
-            let count = self.process_summary_queue().await?;
+        // Process DeepSeek-dependent tasks (summaries, briefings, capabilities)
+        if let Some(ref ds) = self.deepseek {
+            // Process summaries one at a time (rate limited)
+            let count = self.process_summary_queue(ds).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} summaries", count);
             }
             processed += count;
-        }
 
-        // Process project briefings (What's New since last session)
-        if self.deepseek.is_some() {
-            let count = self.process_briefings().await?;
+            // Process project briefings (What's New since last session)
+            let count = self.process_briefings(ds).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} briefings", count);
             }
             processed += count;
-        }
 
-        // Process capabilities inventory (periodic codebase scan)
-        if self.deepseek.is_some() {
-            let count = self.process_capabilities().await?;
+            // Process capabilities inventory (periodic codebase scan)
+            let count = self.process_capabilities(ds).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} capabilities", count);
             }
@@ -123,20 +120,20 @@ impl BackgroundWorker {
     }
 
     /// Process summaries with rate limiting
-    async fn process_summary_queue(&self) -> Result<usize, String> {
-        summaries::process_queue(&self.db, self.deepseek.as_ref().unwrap()).await
+    async fn process_summary_queue(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
+        summaries::process_queue(&self.db, client).await
     }
 
     /// Process project briefings (What's New since last session)
-    async fn process_briefings(&self) -> Result<usize, String> {
-        briefings::process_briefings(&self.db, self.deepseek.as_ref().unwrap()).await
+    async fn process_briefings(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
+        briefings::process_briefings(&self.db, client).await
     }
 
     /// Process capabilities inventory (periodic codebase scan)
-    async fn process_capabilities(&self) -> Result<usize, String> {
+    async fn process_capabilities(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
         capabilities::process_capabilities(
             &self.db,
-            self.deepseek.as_ref().unwrap(),
+            client,
             self.embeddings.as_ref(),
         ).await
     }
@@ -147,8 +144,8 @@ impl BackgroundWorker {
     }
 
     /// Process pending embeddings from file watcher queue
-    async fn process_pending_embeddings(&self) -> Result<usize, String> {
-        embeddings::process_pending_embeddings(&self.db, self.embeddings.as_ref()).await
+    async fn process_pending_embeddings(&self, client: &Arc<EmbeddingClient>) -> Result<usize, String> {
+        embeddings::process_pending_embeddings(&self.db, Some(client)).await
     }
 }
 

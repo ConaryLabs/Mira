@@ -2,6 +2,7 @@
 // Go package detection from project structure
 
 use super::super::types::Module;
+use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -22,10 +23,7 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.')
-                && name != "vendor"
-                && name != "node_modules"
-                && name != "testdata"
+            !ignore::should_skip_for_lang(&name, "go")
         })
         .filter_map(|e| e.ok())
     {
@@ -137,7 +135,7 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && name != "vendor"
+            !ignore::should_skip_for_lang(&name, "go")
         })
         .filter_map(|e| e.ok())
     {

@@ -2,6 +2,7 @@
 // Rust module detection from project structure
 
 use super::super::types::Module;
+use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -101,7 +102,7 @@ fn detect_modules_in_src(
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && name != "target"
+            !ignore::should_skip(&name)
         })
         .filter_map(|e| e.ok())
     {
@@ -202,7 +203,7 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && name != "target" && name != "node_modules"
+            !ignore::should_skip(&name)
         })
         .filter_map(|e| e.ok())
     {

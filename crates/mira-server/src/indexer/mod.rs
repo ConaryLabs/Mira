@@ -3,6 +3,7 @@
 
 pub mod parsers;
 
+use crate::config::ignore;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::search::embedding_to_bytes;
@@ -46,12 +47,12 @@ fn create_parser(ext: &str) -> Option<Parser> {
 
 /// Extract symbols from a single file
 pub fn extract_symbols(path: &Path) -> Result<Vec<Symbol>> {
-    let (symbols, _, _) = extract_all(path)?;
+    let (symbols, _, _, _) = extract_all(path)?;
     Ok(symbols)
 }
 
-/// Extract symbols, imports, and calls from a single file
-pub fn extract_all(path: &Path) -> Result<(Vec<Symbol>, Vec<Import>, Vec<parsers::FunctionCall>)> {
+/// Extract symbols, imports, calls, and file content from a single file
+pub fn extract_all(path: &Path) -> Result<(Vec<Symbol>, Vec<Import>, Vec<parsers::FunctionCall>, String)> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
 
@@ -59,15 +60,15 @@ pub fn extract_all(path: &Path) -> Result<(Vec<Symbol>, Vec<Import>, Vec<parsers
 
     let mut parser = create_parser(ext).ok_or_else(|| anyhow::anyhow!("Unsupported file type"))?;
 
-    let result = match ext {
+    let (symbols, imports, calls) = match ext {
         "rs" => parsers::rust::parse(&mut parser, &content)?,
         "py" => parsers::python::parse(&mut parser, &content)?,
         "ts" | "tsx" | "js" | "jsx" => parsers::typescript::parse(&mut parser, &content)?,
         "go" => parsers::go::parse(&mut parser, &content)?,
-        _ => return Ok((vec![], vec![], vec![])),
+        _ => return Ok((vec![], vec![], vec![], content)),
     };
 
-    Ok(result)
+    Ok((symbols, imports, calls, content))
 }
 
 /// A code chunk with content and location info
@@ -270,15 +271,7 @@ pub async fn index_project(
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
             // Skip hidden, build outputs, dependencies, assets
-            !name.starts_with('.')
-                && name != "node_modules"
-                && name != "target"
-                && name != "assets"
-                && name != "pkg"      // wasm-pack output
-                && name != "dist"     // common build output
-                && name != "build"    // common build output
-                && name != "vendor"   // vendored deps
-                && name != "__pycache__"
+            !ignore::should_skip(&name)
         })
     {
         match entry {
@@ -345,7 +338,7 @@ pub async fn index_project(
         tracing::info!("[{}/{}] Parsing {}", i+1, files.len(), relative_path);
 
         match extract_all(file_path) {
-            Ok((symbols, imports, calls)) => {
+            Ok((symbols, imports, calls, content)) => {
                 let parse_time = start.elapsed();
                 stats.files += 1;
                 stats.symbols += symbols.len();
@@ -372,7 +365,10 @@ pub async fn index_project(
                 Database::run_blocking(db.clone(), move |conn| {
                     let tx = conn.unchecked_transaction()?;
 
-                    // Store symbols
+                    // Store symbols and capture IDs immediately (keyed by name+start_line for uniqueness)
+                    // This avoids the issue where duplicate names (nested functions, impl methods) overwrite each other
+                    let mut symbol_ranges: Vec<(String, u32, u32, i64)> = Vec::new(); // (name, start, end, id)
+
                     for sym in &symbols {
                         tx.execute(
                             "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
@@ -387,6 +383,8 @@ pub async fn index_project(
                                 sym.signature
                             ],
                         )?;
+                        let id = tx.last_insert_rowid();
+                        symbol_ranges.push((sym.name.clone(), sym.start_line, sym.end_line, id));
                     }
 
                     // Store imports
@@ -404,26 +402,25 @@ pub async fn index_project(
                     }
 
                     // Store function calls for call graph
-                    let mut symbol_ids: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-                    {
-                        let mut stmt = tx.prepare(
-                            "SELECT id, name FROM code_symbols WHERE project_id = ? AND file_path = ?"
-                        )?;
-                        let rows = stmt.query_map(params![project_id, &rel_path], |row| {
-                            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                        })?;
-                        for (id, name) in rows.flatten() {
-                            symbol_ids.insert(name, id);
-                        }
-                    }
-
+                    // Find caller by matching call_line to symbol's line range (handles nested functions correctly)
                     for call in &calls {
-                        if let Some(&caller_id) = symbol_ids.get(&call.caller_name) {
-                            let callee_id = symbol_ids.get(&call.callee_name).copied();
+                        // Find the caller symbol whose line range contains this call
+                        let caller_id = symbol_ranges.iter()
+                            .find(|(name, start, end, _)| {
+                                name == &call.caller_name && call.call_line >= *start && call.call_line <= *end
+                            })
+                            .map(|(_, _, _, id)| *id);
+
+                        if let Some(cid) = caller_id {
+                            // Try to find callee ID (may be in same file)
+                            let callee_id = symbol_ranges.iter()
+                                .find(|(name, _, _, _)| name == &call.callee_name)
+                                .map(|(_, _, _, id)| *id);
+
                             tx.execute(
                                 "INSERT INTO call_graph (caller_id, callee_name, callee_id)
                                  VALUES (?, ?, ?)",
-                                params![caller_id, call.callee_name, callee_id],
+                                params![cid, call.callee_name, callee_id],
                             )?;
                         }
                     }
@@ -434,17 +431,16 @@ pub async fn index_project(
                 tracing::debug!("  DB inserts in {:?} ({} calls)", db_start.elapsed(), call_count);
 
                 // Collect chunks for batch embedding (if embeddings enabled)
+                // Note: content was already read by extract_all, no need to re-read
                 if embeddings.is_some() {
-                    if let Ok(content) = std::fs::read_to_string(file_path) {
-                        let chunks = create_semantic_chunks(&content, &parsed_symbols);
-                        for chunk in chunks {
-                            if !chunk.content.trim().is_empty() {
-                                pending_chunks.push(PendingChunk {
-                                    file_path: relative_path.clone(),
-                                    start_line: chunk.start_line as usize,
-                                    content: chunk.content,
-                                });
-                            }
+                    let chunks = create_semantic_chunks(&content, &parsed_symbols);
+                    for chunk in chunks {
+                        if !chunk.content.trim().is_empty() {
+                            pending_chunks.push(PendingChunk {
+                                file_path: relative_path.clone(),
+                                start_line: chunk.start_line as usize,
+                                content: chunk.content,
+                            });
                         }
                     }
                 }

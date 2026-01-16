@@ -7,8 +7,39 @@ use std::process::Command;
 
 use crate::cartographer;
 use crate::db::Database;
-use crate::hooks::session::read_claude_session_id;
 use crate::tools::core::ToolContext;
+
+/// Shared project initialization logic
+async fn init_project<C: ToolContext>(
+    ctx: &C,
+    project_path: &str,
+    name: Option<&str>,
+) -> Result<(i64, Option<String>), String> {
+    let (project_id, project_name) = ctx
+        .db()
+        .get_or_create_project(project_path, name)
+        .map_err(|e| e.to_string())?;
+
+    let project_ctx = ProjectContext {
+        id: project_id,
+        path: project_path.to_string(),
+        name: project_name.clone(),
+    };
+
+    ctx.set_project(project_ctx).await;
+
+    // Register project with file watcher for automatic incremental indexing
+    if let Some(watcher) = ctx.watcher() {
+        watcher.watch(project_id, std::path::PathBuf::from(project_path)).await;
+    }
+
+    // Persist active project for restart recovery
+    if let Err(e) = ctx.db().save_active_project(project_path) {
+        tracing::warn!("Failed to persist active project: {}", e);
+    }
+
+    Ok((project_id, project_name))
+}
 
 /// Set current project
 pub async fn set_project<C: ToolContext>(
@@ -16,28 +47,7 @@ pub async fn set_project<C: ToolContext>(
     project_path: String,
     name: Option<String>,
 ) -> Result<String, String> {
-    let (project_id, project_name) = ctx
-        .db()
-        .get_or_create_project(&project_path, name.as_deref())
-        .map_err(|e| e.to_string())?;
-
-    let ctx_project = ProjectContext {
-        id: project_id,
-        path: project_path.clone(),
-        name: project_name.clone(),
-    };
-
-    ctx.set_project(ctx_project).await;
-
-    // Register project with file watcher for automatic incremental indexing
-    if let Some(watcher) = ctx.watcher() {
-        watcher.watch(project_id, std::path::PathBuf::from(&project_path)).await;
-    }
-
-    // Persist active project for restart recovery
-    if let Err(e) = ctx.db().save_active_project(&project_path) {
-        tracing::warn!("Failed to persist active project: {}", e);
-    }
+    let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
 
     let display_name = project_name.as_deref().unwrap_or(&project_path);
     Ok(format!("Project set: {} (id: {})", display_name, project_id))
@@ -67,35 +77,18 @@ pub async fn session_start<C: ToolContext>(
 ) -> Result<String, String> {
     let db = ctx.db();
 
-    // Set project
-    let (project_id, project_name) = db
-        .get_or_create_project(&project_path, name.as_deref())
-        .map_err(|e| e.to_string())?;
+    // Initialize project (shared with set_project)
+    let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
 
-    let project_ctx = ProjectContext {
-        id: project_id,
-        path: project_path.clone(),
-        name: project_name.clone(),
-    };
-
-    ctx.set_project(project_ctx).await;
-
-    // Register project with file watcher for automatic incremental indexing
-    if let Some(watcher) = ctx.watcher() {
-        watcher.watch(project_id, std::path::PathBuf::from(&project_path)).await;
-    }
-
-    // Persist active project for restart recovery
-    if let Err(e) = db.save_active_project(&project_path) {
-        tracing::warn!("Failed to persist active project: {}", e);
-    }
-
-    // Set session ID (use provided, or Claude's from hook, or generate new)
-    let sid = session_id
-        .or_else(read_claude_session_id)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // Set session ID (use provided, or generate new)
+    let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     db.create_session(&sid, Some(project_id)).map_err(|e| e.to_string())?;
     ctx.set_session_id(sid.clone()).await;
+
+    // Persist active session ID for restart recovery (CLI tools)
+    if let Err(e) = db.set_server_state("active_session_id", &sid) {
+        tracing::warn!("Failed to persist active session ID: {}", e);
+    }
 
     // Gather and store system context (for bash tool awareness)
     gather_system_context(db);

@@ -2,6 +2,7 @@
 // File system watcher for automatic incremental indexing
 
 use super::code_health;
+use crate::config::ignore;
 use crate::db::Database;
 use crate::indexer;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -10,22 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch, RwLock};
-
-/// Directories to skip when watching
-const SKIP_DIRS: &[&str] = &[
-    "node_modules",
-    "target",
-    ".git",
-    "pkg",
-    "dist",
-    "build",
-    "vendor",
-    "__pycache__",
-    ".next",
-    "out",
-    ".venv",
-    "venv",
-];
 
 /// Supported file extensions
 const SUPPORTED_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "go"];
@@ -184,7 +169,7 @@ impl FileWatcher {
         for component in path.components() {
             if let std::path::Component::Normal(name) = component {
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') || SKIP_DIRS.contains(&name_str.as_ref()) {
+                if ignore::should_skip(&name_str) {
                     return false;
                 }
             }
