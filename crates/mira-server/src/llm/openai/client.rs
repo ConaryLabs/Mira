@@ -227,6 +227,11 @@ impl OpenAiClient {
         }
     }
 
+    /// Enable or disable web search
+    pub fn set_web_search(&mut self, enabled: bool) {
+        self.enable_web_search = enabled;
+    }
+
     /// Convert internal Message to Responses API input items
     /// Returns a Vec because assistant messages with tool_calls produce multiple items
     fn convert_message(msg: &Message) -> Vec<InputItem> {
@@ -360,6 +365,10 @@ impl LlmClient for OpenAiClient {
         Provider::OpenAi
     }
 
+    fn model_name(&self) -> String {
+        self.model.clone()
+    }
+
     fn supports_stateful(&self) -> bool {
         true
     }
@@ -425,94 +434,135 @@ impl LlmClient for OpenAiClient {
             previous_response_id: None,
         };
 
-        debug!(request_id = %request_id, "GPT-5.2 request: {:?}", serde_json::to_string(&request)?);
+        let body = serde_json::to_string(&request)?;
+        debug!(request_id = %request_id, "GPT-5.2 request: {}", body);
 
-        let response = self
-            .client
-            .post(OPENAI_RESPONSES_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| anyhow!("GPT-5.2 request failed: {}", e))?;
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut backoff = Duration::from_secs(1);
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("GPT-5.2 API error {}: {}", status, body));
-        }
+        loop {
+            let response_result = self
+                .client
+                .post(OPENAI_RESPONSES_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .body(body.clone())
+                .send()
+                .await;
 
-        let data: ResponsesResponse = response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse GPT-5.2 response: {}", e))?;
+            match response_result {
+                Ok(response) => {
+                    let status = response.status();
+                    if !status.is_success() {
+                        let error_body = response.text().await.unwrap_or_default();
+                        
+                        // Check for transient errors
+                        if attempts < max_attempts && (status.as_u16() == 429 || status.is_server_error()) {
+                            tracing::warn!(
+                                request_id = %request_id,
+                                status = %status,
+                                error = %error_body,
+                                "Transient error from OpenAI, retrying in {:?}...",
+                                backoff
+                            );
+                            tokio::time::sleep(backoff).await;
+                            attempts += 1;
+                            backoff *= 2;
+                            continue;
+                        }
 
-        let duration_ms = start_time.elapsed().as_millis() as u64;
+                        return Err(anyhow!("GPT-5.2 API error {}: {}", status, error_body));
+                    }
 
-        // Extract content, reasoning, and tool calls from output
-        let content = Self::extract_content(&data.output);
-        let reasoning_content = Self::extract_reasoning(&data.output);
-        let tool_calls = Self::extract_tool_calls(&data.output);
+                    let data: ResponsesResponse = response
+                        .json()
+                        .await
+                        .map_err(|e| anyhow!("Failed to parse GPT-5.2 response: {}", e))?;
 
-        // Convert usage
-        let usage = data.usage.map(|u| Usage {
-            prompt_tokens: u.input_tokens,
-            completion_tokens: u.output_tokens + u.reasoning_tokens.unwrap_or(0),
-            total_tokens: u.input_tokens + u.output_tokens + u.reasoning_tokens.unwrap_or(0),
-            prompt_cache_hit_tokens: None,
-            prompt_cache_miss_tokens: None,
-        });
+                    let duration_ms = start_time.elapsed().as_millis() as u64;
 
-        // Log usage stats
-        if let Some(ref u) = usage {
-            info!(
-                request_id = %request_id,
-                prompt_tokens = u.prompt_tokens,
-                completion_tokens = u.completion_tokens,
-                total_tokens = u.total_tokens,
-                "GPT-5.2 usage stats"
-            );
-        }
+                    // Extract content, reasoning, and tool calls from output
+                    let content = Self::extract_content(&data.output);
+                    let reasoning_content = Self::extract_reasoning(&data.output);
+                    let tool_calls = Self::extract_tool_calls(&data.output);
 
-        // Log tool calls if any
-        if let Some(ref tcs) = tool_calls {
-            info!(
-                request_id = %request_id,
-                tool_count = tcs.len(),
-                tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
-                "GPT-5.2 requested tool calls"
-            );
-            for tc in tcs {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
-                debug!(
-                    request_id = %request_id,
-                    tool = %tc.function.name,
-                    call_id = %tc.id,
-                    args = %args,
-                    "Tool call"
-                );
+                    // Convert usage
+                    let usage = data.usage.map(|u| Usage {
+                        prompt_tokens: u.input_tokens,
+                        completion_tokens: u.output_tokens + u.reasoning_tokens.unwrap_or(0),
+                        total_tokens: u.input_tokens + u.output_tokens + u.reasoning_tokens.unwrap_or(0),
+                        prompt_cache_hit_tokens: None,
+                        prompt_cache_miss_tokens: None,
+                    });
+
+                    // Log usage stats
+                    if let Some(ref u) = usage {
+                        info!(
+                            request_id = %request_id,
+                            prompt_tokens = u.prompt_tokens,
+                            completion_tokens = u.completion_tokens,
+                            total_tokens = u.total_tokens,
+                            "GPT-5.2 usage stats"
+                        );
+                    }
+
+                    // Log tool calls if any
+                    if let Some(ref tcs) = tool_calls {
+                        info!(
+                            request_id = %request_id,
+                            tool_count = tcs.len(),
+                            tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
+                            "GPT-5.2 requested tool calls"
+                        );
+                        for tc in tcs {
+                            let args: serde_json::Value =
+                                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
+                            debug!(
+                                request_id = %request_id,
+                                tool = %tc.function.name,
+                                call_id = %tc.id,
+                                args = %args,
+                                "Tool call"
+                            );
+                        }
+                    }
+
+                    info!(
+                        request_id = %request_id,
+                        duration_ms = duration_ms,
+                        content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
+                        reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+                        tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
+                        "GPT-5.2 chat complete"
+                    );
+
+                    return Ok(ChatResult {
+                        request_id: data.id,
+                        content,
+                        reasoning_content,
+                        tool_calls,
+                        usage,
+                        duration_ms,
+                    });
+                }
+                Err(e) => {
+                    if attempts < max_attempts {
+                        tracing::warn!(
+                            request_id = %request_id,
+                            error = %e,
+                            "Request failed, retrying in {:?}...",
+                            backoff
+                        );
+                        tokio::time::sleep(backoff).await;
+                        attempts += 1;
+                        backoff *= 2;
+                        continue;
+                    }
+                    return Err(anyhow!("GPT-5.2 request failed after retries: {}", e));
+                }
             }
         }
-
-        info!(
-            request_id = %request_id,
-            duration_ms = duration_ms,
-            content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
-            reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
-            tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-            "GPT-5.2 chat complete"
-        );
-
-        Ok(ChatResult {
-            request_id: data.id,
-            content,
-            reasoning_content,
-            tool_calls,
-            usage,
-            duration_ms,
-        })
     }
 
     /// Stateful chat that uses previous_response_id to preserve reasoning context.
@@ -597,58 +647,99 @@ impl LlmClient for OpenAiClient {
             previous_response_id: previous_response_id.map(|s| s.to_string()),
         };
 
-        debug!(request_id = %request_id, "GPT-5.2 stateful request: {:?}", serde_json::to_string(&request)?);
+        let body = serde_json::to_string(&request)?;
+        debug!(request_id = %request_id, "GPT-5.2 stateful request: {}", body);
 
-        let response = self
-            .client
-            .post(OPENAI_RESPONSES_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| anyhow!("GPT-5.2 request failed: {}", e))?;
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut backoff = Duration::from_secs(1);
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("GPT-5.2 API error {}: {}", status, body));
+        loop {
+            let response_result = self
+                .client
+                .post(OPENAI_RESPONSES_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .body(body.clone())
+                .send()
+                .await;
+
+            match response_result {
+                Ok(response) => {
+                    let status = response.status();
+                    if !status.is_success() {
+                        let error_body = response.text().await.unwrap_or_default();
+                        
+                        // Check for transient errors
+                        if attempts < max_attempts && (status.as_u16() == 429 || status.is_server_error()) {
+                            tracing::warn!(
+                                request_id = %request_id,
+                                status = %status,
+                                error = %error_body,
+                                "Transient error from OpenAI, retrying in {:?}...",
+                                backoff
+                            );
+                            tokio::time::sleep(backoff).await;
+                            attempts += 1;
+                            backoff *= 2;
+                            continue;
+                        }
+                        
+                        return Err(anyhow!("GPT-5.2 API error {}: {}", status, error_body));
+                    }
+
+                    let data: ResponsesResponse = response
+                        .json()
+                        .await
+                        .map_err(|e| anyhow!("Failed to parse GPT-5.2 response: {}", e))?;
+
+                    let duration_ms = start_time.elapsed().as_millis() as u64;
+
+                    let content = Self::extract_content(&data.output);
+                    let reasoning_content = Self::extract_reasoning(&data.output);
+                    let tool_calls = Self::extract_tool_calls(&data.output);
+
+                    let usage = data.usage.map(|u| Usage {
+                        prompt_tokens: u.input_tokens,
+                        completion_tokens: u.output_tokens + u.reasoning_tokens.unwrap_or(0),
+                        total_tokens: u.input_tokens + u.output_tokens + u.reasoning_tokens.unwrap_or(0),
+                        prompt_cache_hit_tokens: None,
+                        prompt_cache_miss_tokens: None,
+                    });
+
+                    info!(
+                        request_id = %request_id,
+                        duration_ms = duration_ms,
+                        response_id = %data.id,
+                        tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
+                        "GPT-5.2 stateful chat complete"
+                    );
+
+                    return Ok(ChatResult {
+                        request_id: data.id, // This is the response ID for chaining
+                        content,
+                        reasoning_content,
+                        tool_calls,
+                        usage,
+                        duration_ms,
+                    });
+                }
+                Err(e) => {
+                    if attempts < max_attempts {
+                        tracing::warn!(
+                            request_id = %request_id,
+                            error = %e,
+                            "Request failed, retrying in {:?}...",
+                            backoff
+                        );
+                        tokio::time::sleep(backoff).await;
+                        attempts += 1;
+                        backoff *= 2;
+                        continue;
+                    }
+                    return Err(anyhow!("GPT-5.2 request failed after retries: {}", e));
+                }
+            }
         }
-
-        let data: ResponsesResponse = response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse GPT-5.2 response: {}", e))?;
-
-        let duration_ms = start_time.elapsed().as_millis() as u64;
-
-        let content = Self::extract_content(&data.output);
-        let reasoning_content = Self::extract_reasoning(&data.output);
-        let tool_calls = Self::extract_tool_calls(&data.output);
-
-        let usage = data.usage.map(|u| Usage {
-            prompt_tokens: u.input_tokens,
-            completion_tokens: u.output_tokens + u.reasoning_tokens.unwrap_or(0),
-            total_tokens: u.input_tokens + u.output_tokens + u.reasoning_tokens.unwrap_or(0),
-            prompt_cache_hit_tokens: None,
-            prompt_cache_miss_tokens: None,
-        });
-
-        info!(
-            request_id = %request_id,
-            duration_ms = duration_ms,
-            response_id = %data.id,
-            tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-            "GPT-5.2 stateful chat complete"
-        );
-
-        Ok(ChatResult {
-            request_id: data.id, // This is the response ID for chaining
-            content,
-            reasoning_content,
-            tool_calls,
-            usage,
-            duration_ms,
-        })
     }
 }

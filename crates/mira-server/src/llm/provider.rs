@@ -43,7 +43,7 @@ impl Provider {
     /// Default model for this provider
     pub fn default_model(&self) -> &'static str {
         match self {
-            Self::DeepSeek => "deepseek-reasoner",
+            Self::DeepSeek => "deepseek-reasoner-3.2",
             Self::OpenAi => "gpt-5.2",
             Self::Gemini => "gemini-3-pro-preview",
             Self::Ollama => "llama3.3",
@@ -115,6 +115,9 @@ pub trait LlmClient: Send + Sync {
 
     /// Get the provider type
     fn provider_type(&self) -> Provider;
+
+    /// Get the model name
+    fn model_name(&self) -> String;
 
     /// Get normalized usage from the last request (if available)
     fn normalize_usage(&self, result: &ChatResult) -> NormalizedUsage {

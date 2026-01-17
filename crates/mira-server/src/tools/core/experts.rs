@@ -395,7 +395,13 @@ async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize)
             } else {
                 let mut output = format!("Found {} results:\n\n", result.results.len());
                 for r in result.results {
-                    output.push_str(&format!("### {}\n```\n{}\n```\n\n", r.file_path, r.content));
+                    // Truncate content if too long
+                    let content_preview = if r.content.len() > 2000 {
+                        format!("{}\n... (truncated)", &r.content[..2000])
+                    } else {
+                        r.content
+                    };
+                    output.push_str(&format!("### {}\n```\n{}\n```\n\n", r.file_path, content_preview));
                 }
                 output
             }
@@ -429,7 +435,7 @@ async fn execute_get_symbols<C: ToolContext>(_ctx: &C, file_path: &str) -> Strin
                 format!("No symbols found in {}", file_path)
             } else {
                 let mut output = format!("{} symbols in {}:\n", symbols.len(), file_path);
-                for s in symbols.iter().take(20) {
+                for s in symbols.iter().take(50) { // Increased limit slightly, but capped
                     let lines = if s.start_line == s.end_line {
                         format!("line {}", s.start_line)
                     } else {
@@ -437,8 +443,8 @@ async fn execute_get_symbols<C: ToolContext>(_ctx: &C, file_path: &str) -> Strin
                     };
                     output.push_str(&format!("  {} ({}) {}\n", s.name, s.symbol_type, lines));
                 }
-                if symbols.len() > 20 {
-                    output.push_str(&format!("  ... and {} more\n", symbols.len() - 20));
+                if symbols.len() > 50 {
+                    output.push_str(&format!("  ... and {} more\n", symbols.len() - 50));
                 }
                 output
             }
@@ -470,7 +476,16 @@ async fn execute_read_file<C: ToolContext>(
         Ok(content) => {
             let lines: Vec<&str> = content.lines().collect();
             let start = start_line.unwrap_or(1).saturating_sub(1);
-            let end = end_line.unwrap_or(lines.len()).min(lines.len());
+            let mut end = end_line.unwrap_or(lines.len()).min(lines.len());
+            
+            // Cap output at 2000 lines max
+            let max_lines = 2000;
+            let mut truncated = false;
+            
+            if end - start > max_lines {
+                end = start + max_lines;
+                truncated = true;
+            }
 
             if start >= lines.len() {
                 return format!("Start line {} exceeds file length ({})", start + 1, lines.len());
@@ -482,7 +497,11 @@ async fn execute_read_file<C: ToolContext>(
                 .map(|(i, line)| format!("{:4} | {}", start + i + 1, line))
                 .collect();
 
-            format!("{}:\n{}", file_path, selected.join("\n"))
+            let mut output = format!("{}:\n{}", file_path, selected.join("\n"));
+            if truncated {
+                output.push_str("\n... (truncated, use start_line/end_line to read more)");
+            }
+            output
         }
         Err(e) => format!("Failed to read {}: {}", file_path, e),
     }
@@ -754,11 +773,21 @@ pub async fn consult_expert<C: ToolContext>(
                     assistant_msg.tool_calls = Some(tool_calls.clone());
                     messages.push(assistant_msg);
 
-                    // Execute each tool and add results
-                    for tc in tool_calls {
+                    // Execute tools in parallel for better performance
+                    let tool_futures = tool_calls.iter().map(|tc| {
+                        let ctx = ctx;  // ctx is already &C, just copy the reference
+                        let tc = tc.clone();
+                        async move {
+                            let result = execute_tool(ctx, &tc).await;
+                            (tc.id.clone(), result)
+                        }
+                    });
+
+                    let tool_results = futures::future::join_all(tool_futures).await;
+                    
+                    for (id, result) in tool_results {
                         total_tool_calls += 1;
-                        let tool_result = execute_tool(ctx, tc).await;
-                        messages.push(Message::tool_result(&tc.id, tool_result));
+                        messages.push(Message::tool_result(&id, result));
                     }
 
                     // Continue the loop to get the next response

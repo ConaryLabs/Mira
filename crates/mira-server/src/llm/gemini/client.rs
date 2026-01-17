@@ -201,7 +201,10 @@ impl GeminiClient {
 
     /// Convert Mira Message to Gemini Content
     /// Returns (content, is_system) - system messages are handled separately
-    fn convert_message(msg: &Message) -> Option<(GeminiContent, bool)> {
+    fn convert_message(
+        msg: &Message,
+        tool_id_map: Option<&std::collections::HashMap<String, String>>,
+    ) -> Option<(GeminiContent, bool)> {
         match msg.role.as_str() {
             "system" => {
                 // System messages go to system_instruction
@@ -262,13 +265,19 @@ impl GeminiClient {
             }
             "tool" => {
                 // Tool responses become function_response parts
-                // We need to find the function name from context - use a placeholder
+                // We need to find the function name from context
+                let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
+                let function_name = tool_id_map
+                    .and_then(|m| m.get(&tool_call_id))
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".into());
+
                 let response: Value = serde_json::from_str(msg.content.as_deref().unwrap_or("{}"))
                     .unwrap_or(Value::String(msg.content.clone().unwrap_or_default()));
 
                 let parts = vec![GeminiPart::FunctionResponse {
                     function_response: GeminiFunctionResponse {
-                        name: msg.tool_call_id.clone().unwrap_or_else(|| "unknown".into()),
+                        name: function_name,
                         response,
                     },
                 }];
@@ -387,6 +396,10 @@ impl LlmClient for GeminiClient {
         Provider::Gemini
     }
 
+    fn model_name(&self) -> String {
+        self.model.clone()
+    }
+
     #[instrument(skip(self, messages, tools), fields(request_id, model = %self.model, message_count = messages.len()))]
     async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
         let request_id = Uuid::new_v4().to_string();
@@ -403,12 +416,26 @@ impl LlmClient for GeminiClient {
             "Starting Gemini 3 chat request"
         );
 
+        // Build tool call ID to name mapping from assistant messages for correct response formatting
+        let mut call_id_to_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for msg in &messages {
+            if let Some(ref tool_calls) = msg.tool_calls {
+                for tc in tool_calls {
+                    call_id_to_name.insert(tc.id.clone(), tc.function.name.clone());
+                    // Also map item_id if present (used by OpenAI, but maybe present in shared structs)
+                    if let Some(ref item_id) = tc.item_id {
+                         call_id_to_name.insert(item_id.clone(), tc.function.name.clone());
+                    }
+                }
+            }
+        }
+
         // Convert messages, separating system instruction
         let mut system_instruction: Option<GeminiContent> = None;
         let mut contents: Vec<GeminiContent> = Vec::new();
 
         for msg in &messages {
-            if let Some((content, is_system)) = Self::convert_message(msg) {
+            if let Some((content, is_system)) = Self::convert_message(msg, Some(&call_id_to_name)) {
                 if is_system {
                     system_instruction = Some(content);
                 } else {
@@ -449,100 +476,141 @@ impl LlmClient for GeminiClient {
             GEMINI_API_BASE, self.model, self.api_key
         );
 
-        debug!(request_id = %request_id, "Gemini request: {:?}", serde_json::to_string(&request)?);
+        let body = serde_json::to_string(&request)?;
+        debug!(request_id = %request_id, "Gemini request: {}", body);
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| anyhow!("Gemini request failed: {}", e))?;
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut backoff = Duration::from_secs(1);
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("Gemini API error {}: {}", status, body));
-        }
+        loop {
+            let response_result = self
+                .client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(body.clone())
+                .send()
+                .await;
 
-        let data: GeminiResponse = response
-            .json()
-            .await
-            .map_err(|e| anyhow!("Failed to parse Gemini response: {}", e))?;
+            match response_result {
+                Ok(response) => {
+                    let status = response.status();
+                    if !status.is_success() {
+                        let error_body = response.text().await.unwrap_or_default();
+                        
+                        // Check for transient errors
+                        if attempts < max_attempts && (status.as_u16() == 429 || status.is_server_error()) {
+                            tracing::warn!(
+                                request_id = %request_id,
+                                status = %status,
+                                error = %error_body,
+                                "Transient error from Gemini, retrying in {:?}...",
+                                backoff
+                            );
+                            tokio::time::sleep(backoff).await;
+                            attempts += 1;
+                            backoff *= 2;
+                            continue;
+                        }
 
-        let duration_ms = start_time.elapsed().as_millis() as u64;
+                        return Err(anyhow!("Gemini API error {}: {}", status, error_body));
+                    }
 
-        // Extract response from first candidate
-        let (content, reasoning_content, tool_calls) = data
-            .candidates
-            .as_ref()
-            .and_then(|c| c.first())
-            .map(|candidate| {
-                let content = Self::extract_content(&candidate.content);
-                let reasoning = Self::extract_thoughts(&candidate.content);
-                let tool_calls = Self::extract_tool_calls(&candidate.content);
-                (content, reasoning, tool_calls)
-            })
-            .unwrap_or((None, None, None));
+                    let data: GeminiResponse = response
+                        .json()
+                        .await
+                        .map_err(|e| anyhow!("Failed to parse Gemini response: {}", e))?;
 
-        // Convert usage (Gemini uses different field names)
-        let usage = data.usage_metadata.map(|u| Usage {
-            prompt_tokens: u.prompt_token_count,
-            completion_tokens: u.candidates_token_count.unwrap_or(0),
-            total_tokens: u.total_token_count,
-            prompt_cache_hit_tokens: None,
-            prompt_cache_miss_tokens: None,
-        });
+                    let duration_ms = start_time.elapsed().as_millis() as u64;
 
-        // Log usage stats
-        if let Some(ref u) = usage {
-            info!(
-                request_id = %request_id,
-                prompt_tokens = u.prompt_tokens,
-                completion_tokens = u.completion_tokens,
-                total_tokens = u.total_tokens,
-                "Gemini usage stats"
-            );
-        }
+                    // Extract response from first candidate
+                    let (content, reasoning_content, tool_calls) = data
+                        .candidates
+                        .as_ref()
+                        .and_then(|c| c.first())
+                        .map(|candidate| {
+                            let content = Self::extract_content(&candidate.content);
+                            let reasoning = Self::extract_thoughts(&candidate.content);
+                            let tool_calls = Self::extract_tool_calls(&candidate.content);
+                            (content, reasoning, tool_calls)
+                        })
+                        .unwrap_or((None, None, None));
 
-        // Log tool calls if any
-        if let Some(ref tcs) = tool_calls {
-            info!(
-                request_id = %request_id,
-                tool_count = tcs.len(),
-                tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
-                "Gemini requested tool calls"
-            );
-            for tc in tcs {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
-                debug!(
-                    request_id = %request_id,
-                    tool = %tc.function.name,
-                    call_id = %tc.id,
-                    args = %args,
-                    "Tool call"
-                );
+                    // Convert usage (Gemini uses different field names)
+                    let usage = data.usage_metadata.map(|u| Usage {
+                        prompt_tokens: u.prompt_token_count,
+                        completion_tokens: u.candidates_token_count.unwrap_or(0),
+                        total_tokens: u.total_token_count,
+                        prompt_cache_hit_tokens: None,
+                        prompt_cache_miss_tokens: None,
+                    });
+
+                    // Log usage stats
+                    if let Some(ref u) = usage {
+                        info!(
+                            request_id = %request_id,
+                            prompt_tokens = u.prompt_tokens,
+                            completion_tokens = u.completion_tokens,
+                            total_tokens = u.total_tokens,
+                            "Gemini usage stats"
+                        );
+                    }
+
+                    // Log tool calls if any
+                    if let Some(ref tcs) = tool_calls {
+                        info!(
+                            request_id = %request_id,
+                            tool_count = tcs.len(),
+                            tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
+                            "Gemini requested tool calls"
+                        );
+                        for tc in tcs {
+                            let args: serde_json::Value =
+                                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
+                            debug!(
+                                request_id = %request_id,
+                                tool = %tc.function.name,
+                                call_id = %tc.id,
+                                args = %args,
+                                "Tool call"
+                            );
+                        }
+                    }
+
+                    info!(
+                        request_id = %request_id,
+                        duration_ms = duration_ms,
+                        content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
+                        reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+                        tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
+                        "Gemini 3 chat complete"
+                    );
+
+                    return Ok(ChatResult {
+                        request_id,
+                        content,
+                        reasoning_content, // Gemini 3 thought summaries
+                        tool_calls,
+                        usage,
+                        duration_ms,
+                    });
+                }
+                Err(e) => {
+                    if attempts < max_attempts {
+                        tracing::warn!(
+                            request_id = %request_id,
+                            error = %e,
+                            "Request failed, retrying in {:?}...",
+                            backoff
+                        );
+                        tokio::time::sleep(backoff).await;
+                        attempts += 1;
+                        backoff *= 2;
+                        continue;
+                    }
+                    return Err(anyhow!("Gemini request failed after retries: {}", e));
+                }
             }
         }
-
-        info!(
-            request_id = %request_id,
-            duration_ms = duration_ms,
-            content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
-            reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
-            tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-            "Gemini 3 chat complete"
-        );
-
-        Ok(ChatResult {
-            request_id,
-            content,
-            reasoning_content, // Gemini 3 thought summaries
-            tool_calls,
-            usage,
-            duration_ms,
-        })
     }
 }

@@ -15,12 +15,21 @@ pub struct ProviderFactory {
     clients: HashMap<Provider, Arc<dyn LlmClient>>,
     default_provider: Option<Provider>,
     fallback_order: Vec<Provider>,
+    // Store API keys to create custom clients on demand
+    deepseek_key: Option<String>,
+    openai_key: Option<String>,
+    gemini_key: Option<String>,
 }
 
 impl ProviderFactory {
     /// Create a new factory, initializing clients from environment variables
     pub fn new() -> Self {
         let mut clients: HashMap<Provider, Arc<dyn LlmClient>> = HashMap::new();
+        
+        // Load API keys
+        let deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok().filter(|k| !k.trim().is_empty());
+        let openai_key = std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.trim().is_empty());
+        let gemini_key = std::env::var("GEMINI_API_KEY").ok().filter(|k| !k.trim().is_empty());
 
         // Check for global default provider
         let default_provider = std::env::var("DEFAULT_LLM_PROVIDER")
@@ -32,27 +41,24 @@ impl ProviderFactory {
         }
 
         // Initialize DeepSeek client
-        if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
-            if !key.trim().is_empty() {
-                info!("DeepSeek client initialized");
-                clients.insert(Provider::DeepSeek, Arc::new(DeepSeekClient::new(key)));
-            }
+        if let Some(ref key) = deepseek_key {
+            info!("DeepSeek client initialized");
+            clients.insert(Provider::DeepSeek, Arc::new(DeepSeekClient::new(key.clone())));
         }
 
         // Initialize OpenAI client
-        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-            if !key.trim().is_empty() {
-                info!("OpenAI client initialized");
-                clients.insert(Provider::OpenAi, Arc::new(OpenAiClient::new(key)));
-            }
+        if let Some(ref key) = openai_key {
+            info!("OpenAI client initialized");
+            // Disable web_search by default to avoid 400s on models that don't support it
+            let mut client = OpenAiClient::new(key.clone());
+            client.set_web_search(false);
+            clients.insert(Provider::OpenAi, Arc::new(client));
         }
 
         // Initialize Gemini client
-        if let Ok(key) = std::env::var("GEMINI_API_KEY") {
-            if !key.trim().is_empty() {
-                info!("Gemini client initialized");
-                clients.insert(Provider::Gemini, Arc::new(GeminiClient::new(key)));
-            }
+        if let Some(ref key) = gemini_key {
+            info!("Gemini client initialized");
+            clients.insert(Provider::Gemini, Arc::new(GeminiClient::new(key.clone())));
         }
 
         // Log available providers
@@ -66,6 +72,9 @@ impl ProviderFactory {
             clients,
             default_provider,
             fallback_order,
+            deepseek_key,
+            openai_key,
+            gemini_key,
         }
     }
 
@@ -78,11 +87,42 @@ impl ProviderFactory {
     ) -> Result<Arc<dyn LlmClient>, String> {
         // 1. Check role-specific configuration in database
         if let Ok(config) = db.get_expert_config(role) {
+            // If a specific model is configured, try to create a client for it
+            if let Some(model) = config.model {
+                let client_opt: Option<Arc<dyn LlmClient>> = match config.provider {
+                    Provider::DeepSeek => self.deepseek_key.as_ref().map(|k| {
+                        Arc::new(DeepSeekClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
+                    }),
+                    Provider::OpenAi => self.openai_key.as_ref().map(|k| {
+                        let mut client = OpenAiClient::with_model(k.clone(), model);
+                        // For experts, we usually want tool access, not general web search unless specified
+                        // TODO: Make this configurable per expert
+                        client.set_web_search(false);
+                        Arc::new(client) as Arc<dyn LlmClient>
+                    }),
+                    Provider::Gemini => self.gemini_key.as_ref().map(|k| {
+                        Arc::new(GeminiClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
+                    }),
+                    _ => None,
+                };
+
+                if let Some(client) = client_opt {
+                    info!(
+                        role = role,
+                        provider = %config.provider,
+                        model = %client.model_name(),
+                        "Using configured provider and model for role"
+                    );
+                    return Ok(client);
+                }
+            }
+
+            // Fallback to default client for that provider
             if let Some(client) = self.clients.get(&config.provider) {
                 info!(
                     role = role,
                     provider = %config.provider,
-                    "Using configured provider for role"
+                    "Using configured provider for role (default model)"
                 );
                 return Ok(client.clone());
             } else {
