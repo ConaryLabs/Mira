@@ -177,6 +177,7 @@ impl DeepSeekClient {
                                             name: tc.function.name,
                                             arguments: tc.function.arguments,
                                         },
+                                        thought_signature: None, // DeepSeek doesn't use thought signatures
                                     })
                                     .collect()
                             });

@@ -36,16 +36,18 @@ struct GeminiRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GeminiTool>>,
     generation_config: GenerationConfig,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thinking_config: Option<ThinkingConfig>,
 }
 
-/// Thinking configuration for Gemini 3
+/// Thinking configuration for Gemini 3 (nested inside GenerationConfig)
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThinkingConfig {
+    /// Thinking level - Pro supports: "low", "high" (default)
+    /// Flash also supports: "minimal", "medium"
+    thinking_level: String,
     /// Include thought summaries in response
-    include_thoughts: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_thoughts: Option<bool>,
 }
 
 /// Gemini content (message)
@@ -68,6 +70,11 @@ enum GeminiPart {
     FunctionCall {
         #[serde(rename = "functionCall")]
         function_call: GeminiFunctionCall,
+        /// Gemini 3 thought signature - must be preserved and sent back
+        #[serde(rename = "thoughtSignature")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        thought_signature: Option<String>,
     },
     FunctionResponse {
         #[serde(rename = "functionResponse")]
@@ -128,13 +135,12 @@ struct GeminiFunctionDeclaration {
 #[serde(rename_all = "camelCase")]
 struct GenerationConfig {
     max_output_tokens: u32,
-    /// Thinking level for Gemini 3
-    /// Pro: "low", "high" (default) | Flash also: "minimal", "medium"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thinking_level: Option<String>,
     /// Temperature - keep at 1.0 for reasoning tasks per Google docs
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    /// Thinking configuration (nested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking_config: Option<ThinkingConfig>,
 }
 
 /// Gemini response
@@ -240,7 +246,7 @@ impl GeminiClient {
                     }
                 }
 
-                // Add function calls if present
+                // Add function calls if present (include thought signatures for Gemini 3)
                 if let Some(ref tool_calls) = msg.tool_calls {
                     for tc in tool_calls {
                         let args: Value =
@@ -250,6 +256,7 @@ impl GeminiClient {
                                 name: tc.function.name.clone(),
                                 args,
                             },
+                            thought_signature: tc.thought_signature.clone(),
                         });
                     }
                 }
@@ -272,8 +279,14 @@ impl GeminiClient {
                     .cloned()
                     .unwrap_or_else(|| "unknown".into());
 
-                let response: Value = serde_json::from_str(msg.content.as_deref().unwrap_or("{}"))
-                    .unwrap_or(Value::String(msg.content.clone().unwrap_or_default()));
+                // Gemini requires function_response.response to be a JSON object (Struct),
+                // not a string or other primitive. Always ensure we return an object.
+                let content_str = msg.content.as_deref().unwrap_or("");
+                let response: Value = match serde_json::from_str::<Value>(content_str) {
+                    Ok(Value::Object(obj)) => Value::Object(obj),
+                    Ok(other) => serde_json::json!({ "result": other }),
+                    Err(_) => serde_json::json!({ "result": content_str }),
+                };
 
                 let parts = vec![GeminiPart::FunctionResponse {
                     function_response: GeminiFunctionResponse {
@@ -317,7 +330,7 @@ impl GeminiClient {
         let mut tool_calls = Vec::new();
 
         for (idx, part) in content.parts.iter().enumerate() {
-            if let GeminiPart::FunctionCall { function_call } = part {
+            if let GeminiPart::FunctionCall { function_call, thought_signature } = part {
                 tool_calls.push(ToolCall {
                     id: format!("call_{}", idx),
                     item_id: None,
@@ -326,6 +339,7 @@ impl GeminiClient {
                         name: function_call.name.clone(),
                         arguments: serde_json::to_string(&function_call.args).unwrap_or_default(),
                     },
+                    thought_signature: thought_signature.clone(),
                 });
             }
         }
@@ -463,12 +477,12 @@ impl LlmClient for GeminiClient {
             tools: gemini_tools,
             generation_config: GenerationConfig {
                 max_output_tokens: 8192,
-                thinking_level: Some(self.thinking_level.clone()),
                 temperature: Some(1.0), // Keep at 1.0 for reasoning per Google docs
+                thinking_config: Some(ThinkingConfig {
+                    thinking_level: self.thinking_level.clone(),
+                    include_thoughts: Some(true), // Get thought summaries for reasoning_content
+                }),
             },
-            thinking_config: Some(ThinkingConfig {
-                include_thoughts: true, // Get thought summaries for reasoning_content
-            }),
         };
 
         let url = format!(

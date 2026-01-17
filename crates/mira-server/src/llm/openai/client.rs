@@ -344,6 +344,7 @@ impl OpenAiClient {
                             name: fc.name.clone(),
                             arguments: fc.arguments.clone(),
                         },
+                        thought_signature: None, // OpenAI doesn't use thought signatures
                     })
                 } else {
                     None
