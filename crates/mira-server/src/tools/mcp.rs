@@ -46,10 +46,14 @@ impl ToolContext for MiraServer {
     async fn get_or_create_session(&self) -> String {
         // For MCP, generate or return existing session ID
         let mut session_id = self.session_id.write().await;
-        if session_id.is_none() {
-            *session_id = Some(uuid::Uuid::new_v4().to_string());
+        match &*session_id {
+            Some(id) => id.clone(),
+            None => {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                *session_id = Some(new_id.clone());
+                new_id
+            }
         }
-        session_id.clone().unwrap()
     }
 
     fn broadcast(&self, event: WsEvent) {

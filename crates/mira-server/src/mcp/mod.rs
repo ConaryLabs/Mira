@@ -48,12 +48,16 @@ pub struct MiraServer {
 }
 
 impl MiraServer {
-    pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
-        // Try to create DeepSeek client from env (kept for backward compatibility)
-        let deepseek = std::env::var("DEEPSEEK_API_KEY")
+    fn create_deepseek_client() -> Option<Arc<DeepSeekClient>> {
+        std::env::var("DEEPSEEK_API_KEY")
             .ok()
             .filter(|k| !k.trim().is_empty())
-            .map(|key| Arc::new(DeepSeekClient::new(key)));
+            .map(|key| Arc::new(DeepSeekClient::new(key)))
+    }
+
+    pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
+        // Try to create DeepSeek client from env (kept for backward compatibility)
+        let deepseek = Self::create_deepseek_client();
 
         // Create provider factory with all available LLM clients
         let llm_factory = Arc::new(ProviderFactory::new());
@@ -78,10 +82,7 @@ impl MiraServer {
         embeddings: Option<Arc<Embeddings>>,
         watcher: WatcherHandle,
     ) -> Self {
-        let deepseek = std::env::var("DEEPSEEK_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .map(|key| Arc::new(DeepSeekClient::new(key)));
+        let deepseek = Self::create_deepseek_client();
 
         let llm_factory = Arc::new(ProviderFactory::new());
 
