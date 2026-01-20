@@ -2,7 +2,7 @@
 // LLM-powered code health analysis for complexity and error handling quality
 
 use crate::db::Database;
-use crate::llm::{DeepSeekClient, Message, PromptBuilder};
+use crate::llm::{DeepSeekClient, PromptBuilder};
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;

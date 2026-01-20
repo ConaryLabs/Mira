@@ -332,8 +332,53 @@ async fn run_mcp_server() -> Result<()> {
     let watcher_handle = background::watcher::spawn(db.clone(), watcher_shutdown_rx);
     info!("File watcher started");
 
+    // Clone db for restoration before moving ownership to server
+    let db_for_restore = db.clone();
+
     // Create MCP server with watcher
     let server = MiraServer::with_watcher(db, embeddings, watcher_handle);
+
+    // Restore context (Project & Session) - similar to run_tool()
+    if let Ok(Some(path)) = db_for_restore.get_last_active_project() {
+        if let Ok((id, name)) = db_for_restore.get_or_create_project(&path, None) {
+            let project = ProjectContext {
+                id,
+                path: path.clone(),
+                name,
+            };
+            info!("Restoring project: {} (id: {})", project.path, project.id);
+            server.set_project(project).await;
+
+            // Register with watcher if available
+            if let Some(watcher) = server.watcher() {
+                watcher.watch(id, std::path::PathBuf::from(path)).await;
+            }
+        }
+    } else {
+        // Fallback: Check if CWD is a project
+        if let Ok(cwd) = std::env::current_dir() {
+            let path_str = cwd.to_string_lossy().to_string();
+            // Simple heuristic: if we can get a name, it's likely a project
+            if let Ok((id, name)) = db_for_restore.get_or_create_project(&path_str, None) {
+                let project = ProjectContext {
+                    id,
+                    path: path_str,
+                    name,
+                };
+                info!("Restoring project from CWD: {} (id: {})", project.path, project.id);
+                server.set_project(project).await;
+
+                if let Some(watcher) = server.watcher() {
+                    watcher.watch(id, cwd).await;
+                }
+            }
+        }
+    }
+
+    if let Ok(Some(sid)) = db_for_restore.get_server_state("active_session_id") {
+        info!("Restoring session: {}", sid);
+        server.set_session_id(sid).await;
+    }
 
     // Run with stdio transport
     let transport = rmcp::transport::io::stdio();

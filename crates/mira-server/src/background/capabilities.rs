@@ -4,7 +4,7 @@
 use crate::cartographer;
 use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{DeepSeekClient, Message, PromptBuilder};
+use crate::llm::{DeepSeekClient, PromptBuilder};
 use crate::search::embedding_to_bytes;
 use rusqlite::params;
 use std::path::Path;
