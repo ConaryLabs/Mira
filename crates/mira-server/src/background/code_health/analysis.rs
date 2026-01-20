@@ -2,7 +2,7 @@
 // LLM-powered code health analysis for complexity and error handling quality
 
 use crate::db::Database;
-use crate::llm::{DeepSeekClient, Message};
+use crate::llm::{DeepSeekClient, Message, PromptBuilder};
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
@@ -78,10 +78,8 @@ SUGGESTION: <what to do>"#,
         );
 
         // Call DeepSeek Reasoner
-        let messages = vec![
-            Message::system("You are a code reviewer focused on function complexity and maintainability. Be direct and concise."),
-            Message::user(prompt),
-        ];
+        let messages = PromptBuilder::for_code_health_complexity()
+            .build_messages(prompt);
 
         match deepseek.chat(messages, None).await {
             Ok(result) => {
@@ -226,10 +224,8 @@ SUGGESTION: <what to do>"#,
             name, file_path, question_marks, function_code
         );
 
-        let messages = vec![
-            Message::system("You are a code reviewer focused on error handling quality and debuggability. Be direct and concise."),
-            Message::user(prompt),
-        ];
+        let messages = PromptBuilder::for_code_health_error_quality()
+            .build_messages(prompt);
 
         match deepseek.chat(messages, None).await {
             Ok(result) => {

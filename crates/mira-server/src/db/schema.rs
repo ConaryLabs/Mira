@@ -365,6 +365,49 @@ pub fn migrate_system_prompts_provider(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate system_prompts to strip old TOOL_USAGE_PROMPT suffix for KV cache optimization
+pub fn migrate_system_prompts_strip_tool_suffix(conn: &Connection) -> Result<()> {
+    // Check if system_prompts exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_prompts'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Get all prompts that might contain the old tool usage suffix
+    let mut stmt = conn.prepare("SELECT role, prompt FROM system_prompts WHERE prompt LIKE '%Use tools to explore codebase before analysis.%'")?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(Result::ok)
+        .collect();
+
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating {} system prompts to strip old tool usage suffix", rows.len());
+
+    for (role, prompt) in rows {
+        // Find the position of the tool usage suffix
+        if let Some(pos) = prompt.find("Use tools to explore codebase before analysis.") {
+            let stripped = prompt[..pos].trim_end().to_string();
+            conn.execute(
+                "UPDATE system_prompts SET prompt = ? WHERE role = ?",
+                [&stripped, &role],
+            )?;
+            tracing::debug!("Stripped tool usage suffix from prompt for role: {}", role);
+        }
+    }
+
+    Ok(())
+}
+
 /// Migrate imports table to add unique constraint and deduplicate
 pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
     // Check if imports table exists

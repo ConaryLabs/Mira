@@ -3,7 +3,7 @@
 
 use crate::cartographer;
 use crate::db::Database;
-use crate::llm::{DeepSeekClient, Message};
+use crate::llm::{DeepSeekClient, Message, PromptBuilder};
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
@@ -52,7 +52,8 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
         let prompt = cartographer::build_summary_prompt(&modules);
 
         // Call DeepSeek
-        let messages = vec![Message::user(prompt)];
+        let messages = PromptBuilder::for_summaries()
+            .build_messages(prompt);
         match deepseek.chat(messages, None).await {
             Ok(result) => {
                 if let Some(content) = result.content {

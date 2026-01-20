@@ -6,7 +6,7 @@ use tracing::{debug, info, warn};
 
 use crate::db::Database;
 use crate::embeddings::Embeddings;
-use crate::llm::{DeepSeekClient, Message};
+use crate::llm::{DeepSeekClient, Message, PromptBuilder};
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
@@ -18,33 +18,6 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
     "check_capability",  // Feature existence checks
 ];
 
-/// Prompt for extracting actionable outcomes from tool results
-const TOOL_EXTRACTION_PROMPT: &str = r#"Extract any significant outcomes from this tool call that would be useful to recall later. Focus on:
-- Decisions made (chose X over Y, will use Z approach)
-- Important discoveries (found that X is in Y, discovered Z pattern)
-- Task/goal completions with context
-- Architectural insights about the codebase
-
-Return ONLY a JSON array of outcomes. Each should have:
-- "content": clear statement of what was decided/found/completed
-- "category": one of "decision", "discovery", "completion", "architecture"
-- "key": optional unique identifier for deduplication
-
-Example output:
-[
-  {"content": "Decided to use tokio channels for background processing", "category": "decision", "key": "bg_processing_approach"},
-  {"content": "Found authentication logic in src/auth/middleware.rs", "category": "discovery"}
-]
-
-Rules:
-- Only extract NEW information, not routine queries
-- Skip if tool just listed/searched without actionable outcome
-- Skip trivial operations (listing tasks, checking status)
-- Focus on things the user would want to recall in future sessions
-
-If nothing worth remembering, return: []
-
-Respond with ONLY the JSON array, no other text."#;
 
 /// Spawn background extraction for a tool call
 pub fn spawn_tool_extraction(
@@ -110,10 +83,8 @@ async fn extract_and_store(
         if result.len() > 3000 { &result[..3000] } else { result }
     );
 
-    let messages = vec![
-        Message::system(TOOL_EXTRACTION_PROMPT.to_string()),
-        Message::user(tool_context),
-    ];
+    let messages = PromptBuilder::for_tool_extraction()
+        .build_messages(tool_context);
 
     // Call DeepSeek for extraction
     let response = deepseek.chat(messages, None).await?;

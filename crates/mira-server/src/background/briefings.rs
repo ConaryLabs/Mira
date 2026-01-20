@@ -2,7 +2,7 @@
 // Background worker for generating "What's New" project briefings
 
 use crate::db::Database;
-use crate::llm::DeepSeekClient;
+use crate::llm::{DeepSeekClient, Message, PromptBuilder};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -216,7 +216,8 @@ Summary:"#,
         context
     );
 
-    let messages = vec![Message::user(prompt)];
+    let messages = PromptBuilder::for_briefings()
+        .build_messages(prompt);
 
     // Use reasoner (chat method uses deepseek-reasoner model)
     match deepseek.chat(messages, None).await {

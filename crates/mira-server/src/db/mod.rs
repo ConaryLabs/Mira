@@ -190,6 +190,8 @@ impl Database {
 
         // Add provider and model columns to system_prompts for multi-LLM support
         schema::migrate_system_prompts_provider(&conn)?;
+        // Strip old TOOL_USAGE_PROMPT suffix from system prompts for KV cache optimization
+        schema::migrate_system_prompts_strip_tool_suffix(&conn)?;
 
         // Add FTS5 full-text search table if missing
         schema::migrate_code_fts(&conn)?;

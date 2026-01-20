@@ -188,12 +188,21 @@ impl DeepSeekClient {
 
                     // Log usage stats
                     if let Some(ref u) = data.usage {
+                        // Calculate cache hit ratio if both hit and miss are available
+                        let cache_hit_ratio = match (u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens) {
+                            (Some(hit), Some(miss)) if hit + miss > 0 => {
+                                Some((hit as f64) / ((hit + miss) as f64))
+                            }
+                            _ => None,
+                        };
+
                         info!(
                             request_id = %request_id,
                             prompt_tokens = u.prompt_tokens,
                             completion_tokens = u.completion_tokens,
                             cache_hit = ?u.prompt_cache_hit_tokens,
                             cache_miss = ?u.prompt_cache_miss_tokens,
+                            cache_hit_ratio = ?cache_hit_ratio.map(|r| format!("{:.1}%", r * 100.0)),
                             "DeepSeek usage stats"
                         );
                     }

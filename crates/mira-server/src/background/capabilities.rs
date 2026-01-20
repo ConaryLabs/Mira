@@ -4,7 +4,7 @@
 use crate::cartographer;
 use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{DeepSeekClient, Message};
+use crate::llm::{DeepSeekClient, Message, PromptBuilder};
 use crate::search::embedding_to_bytes;
 use rusqlite::params;
 use std::path::Path;
@@ -291,7 +291,8 @@ Only list working, implemented capabilities. Do NOT list problems, issues, or in
         module_context
     );
 
-    let messages = vec![Message::user(prompt)];
+    let messages = PromptBuilder::for_capabilities()
+        .build_messages(prompt);
 
     let result = deepseek
         .chat(messages, None)
