@@ -111,7 +111,7 @@ SUGGESTION: <what to do>"#,
                             Some("complexity"),
                             0.75,
                         )
-                    }).await.expect("spawn_blocking panicked")
+                    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?
                     .map_err(|e| e.to_string())?;
 
                     tracing::info!("Code health: complexity issue found in {}", name);
@@ -258,7 +258,7 @@ SUGGESTION: <what to do>"#,
                             Some("error_quality"),
                             0.75,
                         )
-                    }).await.expect("spawn_blocking panicked")
+                    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?
                     .map_err(|e| e.to_string())?;
 
                     tracing::info!("Code health: error quality issue found in {}", name);

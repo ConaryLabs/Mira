@@ -225,7 +225,7 @@ async fn scan_project_health(
         }
 
         Ok((warnings, todos, unimpl, unused, unwraps, error_handling))
-    }).await.expect("Code health detection spawn_blocking panicked")?;
+    }).await.map_err(|e| format!("Code health detection spawn_blocking panicked: {}", e))??;
 
     let (warnings, todos, unimpl, unused, unwraps, error_handling) = detection_results;
     total += warnings + todos + unimpl + unused + unwraps + error_handling;
