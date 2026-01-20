@@ -101,7 +101,7 @@ impl Database {
 
     /// Get a lock on the connection
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().expect("Database mutex poisoned")
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Run a blocking database operation on tokio's blocking thread pool.

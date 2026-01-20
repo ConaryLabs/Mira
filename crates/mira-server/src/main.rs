@@ -430,7 +430,10 @@ async fn main() -> Result<()> {
 
 /// Debug session_start output
 async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
-    let project_path = path.unwrap_or_else(|| std::env::current_dir().unwrap());
+    let project_path = match path {
+        Some(p) => p,
+        None => std::env::current_dir()?,
+    };
     println!("=== Debug Session Start ===\n");
     println!("Project: {:?}\n", project_path);
 
@@ -463,7 +466,10 @@ async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
 
 /// Debug cartographer module detection
 fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
-    let project_path = path.unwrap_or_else(|| std::env::current_dir().unwrap());
+    let project_path = match path {
+        Some(p) => p,
+        None => std::env::current_dir()?,
+    };
     println!("=== Cartographer Debug ===\n");
     println!("Project path: {:?}\n", project_path);
 
@@ -483,7 +489,7 @@ fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
     let db_path = get_db_path();
     let db = Database::open(&db_path)?;
     let (project_id, name) = db.get_or_create_project(
-        project_path.to_str().unwrap(),
+        project_path.to_string_lossy().as_ref(),
         None,
     )?;
     println!("Project ID: {}, Name: {:?}", project_id, name);
@@ -491,7 +497,7 @@ fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
     match mira::cartographer::get_or_generate_map(
         &db,
         project_id,
-        project_path.to_str().unwrap(),
+        project_path.to_string_lossy().as_ref(),
         name.as_deref().unwrap_or("unknown"),
         "rust",
     ) {
