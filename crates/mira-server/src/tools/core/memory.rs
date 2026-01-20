@@ -167,16 +167,16 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, Strin
 
     // Delete from both SQL and vector table on blocking thread pool
     let db_clone = ctx.db().clone();
-    let deleted = crate::db::Database::run_blocking(db_clone, move |conn| {
+    let deleted = crate::db::Database::run_blocking(db_clone, move |conn| -> Result<bool, rusqlite::Error> {
         use rusqlite::params;
         // Delete from vector table first
-        let _ = conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", params![id]);
+        conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", params![id])?;
         // Delete from facts table
-        conn.execute("DELETE FROM memory_facts WHERE id = ?", params![id])
-            .map(|n| n > 0)
-            .unwrap_or(false)
+        let deleted = conn.execute("DELETE FROM memory_facts WHERE id = ?", params![id])? > 0;
+        Ok(deleted)
     })
-    .await;
+    .await
+    .map_err(|e| e.to_string())?;
 
     if deleted {
         Ok(format!("Memory {} deleted.", id))

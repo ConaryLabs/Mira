@@ -46,7 +46,7 @@ const FILE_FLUSH_THRESHOLD: usize = 100;
 
 /// Flush accumulated chunks to database and generate embeddings
 async fn flush_chunks(
-    pending_chunks: &mut Vec<PendingChunk>,
+    mut pending_chunks: Vec<PendingChunk>,
     db: Arc<Database>,
     embeddings: Option<Arc<Embeddings>>,
     project_id: Option<i64>,
@@ -293,8 +293,8 @@ pub struct ParsedImport {
 /// Each chunk is a complete function/struct/etc with context metadata
 fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeChunk> {
     let lines: Vec<&str> = content.lines().collect();
-    let mut chunks: Vec<CodeChunk> = Vec::new();
-    let mut covered_lines: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut chunks: Vec<CodeChunk> = Vec::with_capacity(symbols.len());
+    let mut covered_lines: std::collections::HashSet<u32> = std::collections::HashSet::with_capacity(lines.len());
 
     // Sort symbols by start line
     let mut sorted_symbols: Vec<&ParsedSymbol> = symbols.iter().collect();
@@ -314,28 +314,33 @@ fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeCh
             covered_lines.insert(line);
         }
 
-        // Extract symbol code
-        let symbol_code: String = lines[start..end].join("\n");
-
-        // Skip empty symbols
-        if symbol_code.trim().is_empty() {
-            continue;
+        // Build context directly from lines to avoid intermediate allocation
+        let mut context = String::with_capacity((end - start) * 20); // Estimate average line length
+        match sym.signature.as_ref() {
+            Some(sig) => context.push_str(&format!("// {} {}: {}\n", sym.kind, sym.name, sig)),
+            None => context.push_str(&format!("// {} {}\n", sym.kind, sym.name)),
         }
 
-        // Add context header for better semantic matching
-        let context = match sym.signature.as_ref() {
-            Some(sig) => format!("// {} {}: {}\n{}", sym.kind, sym.name, sig, symbol_code),
-            None => format!("// {} {}\n{}", sym.kind, sym.name, symbol_code),
-        };
+        // Append symbol lines
+        for line in &lines[start..end] {
+            context.push_str(line);
+            context.push('\n');
+        }
+
+        // Skip empty symbols
+        if context.trim().is_empty() {
+            continue;
+        }
 
         // If symbol is very large (>2000 chars), split at logical boundaries
         if context.len() > 2000 {
             // Split into ~1000 char chunks at line boundaries
-            let mut current_chunk = String::new();
+            let mut current_chunk = String::with_capacity(1000);
             for line in context.lines() {
                 if current_chunk.len() + line.len() > 1000 && !current_chunk.is_empty() {
                     chunks.push(CodeChunk { content: current_chunk, start_line: sym.start_line });
-                    current_chunk = format!("// {} {} (continued)\n", sym.kind, sym.name);
+                    current_chunk = String::with_capacity(1000);
+                    current_chunk.push_str(&format!("// {} {} (continued)\n", sym.kind, sym.name));
                 }
                 current_chunk.push_str(line);
                 current_chunk.push('\n');
@@ -359,10 +364,22 @@ fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeCh
             }
         } else if let Some(start) = orphan_start {
             // End of orphan region - create chunk if substantial
-            let orphan_code: String = lines[(start - 1) as usize..(line_num - 1) as usize].join("\n");
-            if orphan_code.trim().len() > 50 {
+            let start_idx = (start - 1) as usize;
+            let end_idx = (line_num - 1) as usize;
+
+            // Check if region has substantial non-whitespace content
+            let has_substantial_content = lines[start_idx..end_idx].iter()
+                .any(|line| line.trim().len() > 10);
+
+            if has_substantial_content {
+                let mut content = String::with_capacity((end_idx - start_idx) * 20);
+                content.push_str("// module-level code\n");
+                for line in &lines[start_idx..end_idx] {
+                    content.push_str(line);
+                    content.push('\n');
+                }
                 chunks.push(CodeChunk {
-                    content: format!("// module-level code\n{}", orphan_code),
+                    content,
                     start_line: start,
                 });
             }
@@ -372,10 +389,21 @@ fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeCh
 
     // Handle trailing orphan code
     if let Some(start) = orphan_start {
-        let orphan_code: String = lines[(start - 1) as usize..].join("\n");
-        if orphan_code.trim().len() > 50 {
+        let start_idx = (start - 1) as usize;
+
+        // Check if region has substantial non-whitespace content
+        let has_substantial_content = lines[start_idx..].iter()
+            .any(|line| line.trim().len() > 10);
+
+        if has_substantial_content {
+            let mut content = String::with_capacity((lines.len() - start_idx) * 20);
+            content.push_str("// module-level code\n");
+            for line in &lines[start_idx..] {
+                content.push_str(line);
+                content.push('\n');
+            }
             chunks.push(CodeChunk {
-                content: format!("// module-level code\n{}", orphan_code),
+                content,
                 start_line: start,
             });
         }
@@ -584,8 +612,9 @@ pub async fn index_project(
 
                     // Flush if we've accumulated enough chunks
                     if pending_chunks.len() >= CHUNK_FLUSH_THRESHOLD {
+                        let chunks_to_flush = std::mem::replace(&mut pending_chunks, Vec::new());
                         flush_chunks(
-                            &mut pending_chunks,
+                            chunks_to_flush,
                             db.clone(),
                             embeddings.clone(),
                             project_id,
@@ -608,7 +637,7 @@ pub async fn index_project(
 
     // Flush any remaining chunks
     flush_chunks(
-        &mut pending_chunks,
+        pending_chunks,
         db.clone(),
         embeddings.clone(),
         project_id,

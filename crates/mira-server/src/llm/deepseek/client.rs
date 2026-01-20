@@ -89,6 +89,14 @@ impl DeepSeekClient {
         Self { api_key, model, client }
     }
 
+    /// Calculate cache hit ratio from hit and miss token counts
+    fn calculate_cache_hit_ratio(hit: Option<u32>, miss: Option<u32>) -> Option<f64> {
+        match (hit, miss) {
+            (Some(hit), Some(miss)) if hit + miss > 0 => Some((hit as f64) / ((hit + miss) as f64)),
+            _ => None,
+        }
+    }
+
     /// Chat using deepseek-reasoner model (non-streaming)
     #[instrument(skip(self, messages, tools), fields(request_id, model = %self.model, message_count = messages.len()))]
     pub async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
@@ -189,12 +197,7 @@ impl DeepSeekClient {
                     // Log usage stats
                     if let Some(ref u) = data.usage {
                         // Calculate cache hit ratio if both hit and miss are available
-                        let cache_hit_ratio = match (u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens) {
-                            (Some(hit), Some(miss)) if hit + miss > 0 => {
-                                Some((hit as f64) / ((hit + miss) as f64))
-                            }
-                            _ => None,
-                        };
+                        let cache_hit_ratio = Self::calculate_cache_hit_ratio(u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens);
 
                         info!(
                             request_id = %request_id,
@@ -279,5 +282,23 @@ impl LlmClient for DeepSeekClient {
     async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
         // Delegate to the existing implementation
         self.chat(messages, tools).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_cache_hit_ratio() {
+        // Test cases
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(100)), Some(0.5));
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(75), Some(25)), Some(0.75));
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(100)), Some(0.0));
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(0)), Some(1.0));
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(0)), None);
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(None, Some(100)), None);
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), None), None);
+        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(None, None), None);
     }
 }

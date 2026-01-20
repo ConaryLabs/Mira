@@ -114,7 +114,8 @@ fn get_db_path() -> PathBuf {
     home.join(".mira/mira.db")
 }
 
-async fn run_tool(name: String, args: String) -> Result<()> {
+/// Setup server context with database, embeddings, and restored project/session state
+async fn setup_server_context() -> Result<MiraServer> {
     // Open database
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
@@ -152,6 +153,13 @@ async fn run_tool(name: String, args: String) -> Result<()> {
     if let Ok(Some(sid)) = db.get_server_state("active_session_id") {
         server.set_session_id(sid).await;
     }
+
+    Ok(server)
+}
+
+async fn run_tool(name: String, args: String) -> Result<()> {
+    // Setup server context with restored project/session state
+    let server = setup_server_context().await?;
 
     // Execute tool
     let res = match name.as_str() {
@@ -219,40 +227,8 @@ async fn run_tool(name: String, args: String) -> Result<()> {
             mira::tools::get_session_recap(&server).await
         }
         "session_history" => {
-             let req: SessionHistoryRequest = serde_json::from_str(&args)?;
-             // Need to duplicate logic from MCP handler or expose it in tools/core?
-             // mcp/mod.rs implements logic inline for session_history.
-             // I'll leave it for now or implement a basic version.
-             // Actually, the logic is in MiraServer::session_history impl, which calls db methods directly.
-             let limit = req.limit.unwrap_or(20) as usize;
-             match req.action.as_str() {
-                "current" => {
-                    match server.session_id.read().await.as_ref() {
-                        Some(id) => Ok(format!("Current session: {}", id)),
-                        None => Ok("No active session".to_string()),
-                    }
-                }
-                "list_sessions" => {
-                    let project = server.project.read().await;
-                    let project_id = project.as_ref().map(|p| p.id).ok_or_else(|| anyhow::anyhow!("No active project"))?;
-                    let sessions = db.get_recent_sessions(project_id, limit)?;
-                    let mut output = format!("{} sessions:\n", sessions.len());
-                    for s in sessions {
-                         output.push_str(&format!("  [{}] {} - {}\n", &s.id[..8], s.started_at, s.status));
-                    }
-                    Ok(output)
-                }
-                "get_history" => {
-                     let session_id = req.session_id.or_else(|| futures::executor::block_on(server.session_id.read()).clone()).ok_or_else(|| anyhow::anyhow!("No session ID"))?;
-                     let history = db.get_session_history(&session_id, limit)?;
-                     let mut output = format!("History for {}:\n", &session_id[..8]);
-                     for h in history {
-                         output.push_str(&format!("  {} {}\n", h.tool_name, h.result_summary.unwrap_or_default()));
-                     }
-                     Ok(output)
-                }
-                _ => Err("Invalid action".to_string())
-             }
+            let req: SessionHistoryRequest = serde_json::from_str(&args)?;
+            mira::tools::session_history(&server, req.action, req.session_id, req.limit).await
         }
         "consult_architect" => {
             let req: ConsultArchitectRequest = serde_json::from_str(&args)?;

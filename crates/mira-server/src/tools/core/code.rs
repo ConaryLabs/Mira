@@ -500,10 +500,10 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
 
     // Clear cached modules to force regeneration
     let conn = ctx.db().conn();
-    let _ = conn.execute(
+    conn.execute(
         "DELETE FROM codebase_modules WHERE project_id = ? AND purpose IS NULL",
         rusqlite::params![project_id],
-    );
+    ).map_err(|e| e.to_string())?;
 
     Ok(format!(
         "Summarized {} modules:\n{}",
