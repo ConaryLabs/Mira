@@ -119,17 +119,58 @@ impl Database {
         F: FnOnce(&Connection) -> R + Send + 'static,
         R: Send + 'static,
     {
-        tokio::task::spawn_blocking(move || {
+        match tokio::task::spawn_blocking(move || {
             let conn = db.conn();
             f(&conn)
         })
         .await
-        .expect("Database spawn_blocking task panicked")
+        {
+            Ok(r) => r,
+            Err(e) if e.is_panic() => {
+                // Preserve original panic payload/message.
+                std::panic::resume_unwind(e.into_panic())
+            }
+            Err(e) => {
+                // Cancellation usually means runtime shutdown or task was aborted.
+                // You *cannot* return an error here without changing the signature.
+                panic!("Database spawn_blocking task failed (cancelled): {e}");
+            }
+        }
+    }
+
+    /// Run a blocking database operation, returning a Result for explicit error handling.
+    ///
+    /// This variant returns `Result<R, tokio::task::JoinError>` instead of panicking
+    /// on cancellation, allowing callers to handle task failure gracefully.
+    ///
+    /// Example:
+    /// ```ignore
+    /// match Database::run_blocking_result(db.clone(), |conn| {
+    ///     conn.execute("INSERT INTO ...", params![...])?;
+    ///     Ok(())
+    /// }).await {
+    ///     Ok(result) => { ... },
+    ///     Err(e) if e.is_cancelled() => { ... },
+    ///     Err(e) if e.is_panic() => { ... },
+    /// }
+    /// ```
+    pub async fn run_blocking_result<F, R>(db: Arc<Database>, f: F) -> Result<R, tokio::task::JoinError>
+    where
+        F: FnOnce(&Connection) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            f(&conn)
+        }).await
     }
 
     /// Initialize schema (idempotent)
     fn init_schema(&self) -> Result<()> {
         let conn = self.conn();
+
+        // Create tables first
+        conn.execute_batch(schema::SCHEMA)?;
 
         // Check if vec tables need migration (dimension change)
         schema::migrate_vec_tables(&conn)?;
@@ -154,8 +195,6 @@ impl Database {
 
         // Add provider and model columns to system_prompts for multi-LLM support
         schema::migrate_system_prompts_provider(&conn)?;
-
-        conn.execute_batch(schema::SCHEMA)?;
 
         // Add FTS5 full-text search table if missing
         schema::migrate_code_fts(&conn)?;

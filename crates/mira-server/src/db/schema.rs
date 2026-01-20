@@ -332,6 +332,19 @@ pub fn rebuild_code_fts_for_project(conn: &Connection, project_id: i64) -> Resul
 
 /// Migrate system_prompts to add provider and model columns
 pub fn migrate_system_prompts_provider(conn: &Connection) -> Result<()> {
+    // Check if system_prompts exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_prompts'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
     // Check if provider column exists
     let has_provider: bool = conn
         .query_row(

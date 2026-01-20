@@ -9,6 +9,40 @@ use rusqlite::params;
 use std::fs;
 use std::path::Path;
 
+/// Check if a line contains a #[cfg(...)] attribute that includes `test`
+fn is_cfg_test(line: &str) -> bool {
+    let line = line.trim();
+    let mut start = 0;
+    while let Some(pos) = line[start..].find("#[cfg(") {
+        let cfg_start = start + pos;
+        let mut paren_count = 1;
+        let mut i = cfg_start + "#[cfg(".len();
+        let mut content_end = i;
+        while i < line.len() && paren_count > 0 {
+            match line.as_bytes()[i] {
+                b'(' => paren_count += 1,
+                b')' => {
+                    paren_count -= 1;
+                    if paren_count == 0 {
+                        content_end = i; // position of ')'
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if paren_count == 0 && i < line.len() && line.as_bytes()[i] == b']' {
+            let content = &line[cfg_start + "#[cfg(".len()..content_end];
+            // Check if content contains "test" as a separate word
+            if content.split(|c: char| !c.is_alphanumeric() && c != '_').any(|part| part == "test") {
+                return true;
+            }
+        }
+        start = cfg_start + 1;
+    }
+    false
+}
+
 /// Walk Rust files in a project, respecting .gitignore
 fn walk_rust_files(project_path: &str) -> Vec<String> {
     let prefix = project_path.to_string();
@@ -302,7 +336,7 @@ pub fn scan_unwrap_usage(
             let trimmed = line.trim();
 
             // Track #[cfg(test)] modules
-            if trimmed.contains("#[cfg(test)]") {
+            if is_cfg_test(trimmed) {
                 in_test_module = true;
                 test_module_start_depth = brace_depth;
             }
@@ -454,7 +488,7 @@ pub fn scan_error_handling(
             let trimmed = line.trim();
 
             // Track test modules
-            if trimmed.contains("#[cfg(test)]") {
+            if is_cfg_test(trimmed) {
                 in_test_module = true;
                 test_module_start_depth = brace_depth;
             }
