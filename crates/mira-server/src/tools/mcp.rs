@@ -3,6 +3,8 @@
 
 use crate::mcp::MiraServer;
 use crate::tools::core::ToolContext;
+use crate::tools::core::ensure_session;
+use uuid::Uuid;
 use async_trait::async_trait;
 use mira_types::WsEvent;
 use std::collections::HashMap;
@@ -44,14 +46,20 @@ impl ToolContext for MiraServer {
     }
 
     async fn get_or_create_session(&self) -> String {
-        // For MCP, generate or return existing session ID
-        let mut session_id = self.session_id.write().await;
-        match &*session_id {
-            Some(id) => id.clone(),
-            None => {
-                let new_id = uuid::Uuid::new_v4().to_string();
-                *session_id = Some(new_id.clone());
-                new_id
+        match ensure_session(self).await {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("[SESSION] Failed to create session in database: {}", e);
+                // Fallback to local session ID generation
+                let mut session_id = self.session_id.write().await;
+                match &*session_id {
+                    Some(id) => id.clone(),
+                    None => {
+                        let new_id = Uuid::new_v4().to_string();
+                        *session_id = Some(new_id.clone());
+                        new_id
+                    }
+                }
             }
         }
     }

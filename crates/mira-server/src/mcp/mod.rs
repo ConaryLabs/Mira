@@ -4,6 +4,7 @@
 mod extraction;
 
 use crate::tools::core as tools;
+use crate::tools::core::ToolContext;
 
 use std::collections::HashMap;
 use tokio::sync::oneshot;
@@ -128,27 +129,6 @@ impl MiraServer {
         }
     }
 
-    /// Get or create the current session ID
-    pub async fn get_or_create_session(&self) -> String {
-        let mut session_guard = self.session_id.write().await;
-        if let Some(ref id) = *session_guard {
-            return id.clone();
-        }
-
-        // Generate new session ID
-        let new_id = uuid::Uuid::new_v4().to_string();
-
-        // Get project_id if available
-        let project_id = self.project.read().await.as_ref().map(|p| p.id);
-
-        // Create session in database
-        if let Err(e) = self.db.create_session(&new_id, project_id) {
-            eprintln!("[SESSION] Failed to create session: {}", e);
-        }
-
-        *session_guard = Some(new_id.clone());
-        new_id
-    }
 
     /// Broadcast an event (no-op in MCP-only mode)
     pub fn broadcast(&self, event: mira_types::WsEvent) {
@@ -574,70 +554,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<SessionHistoryRequest>,
     ) -> Result<String, String> {
-        let limit = req.limit.unwrap_or(20) as usize;
-
-        match req.action.as_str() {
-            "current" => {
-                let session_id = self.session_id.read().await;
-                match session_id.as_ref() {
-                    Some(id) => Ok(format!("Current session: {}", id)),
-                    None => Ok("No active session".to_string()),
-                }
-            }
-            "list_sessions" => {
-                let project = self.project.read().await;
-                let project_id = project.as_ref().map(|p| p.id).ok_or("No active project")?;
-
-                let sessions = self.db.get_recent_sessions(project_id, limit)
-                    .map_err(|e| e.to_string())?;
-
-                if sessions.is_empty() {
-                    return Ok("No sessions found.".to_string());
-                }
-
-                let mut output = format!("{} sessions:\n", sessions.len());
-                for s in sessions {
-                    output.push_str(&format!(
-                        "  [{}] {} - {} ({} tool calls)\n",
-                        &s.id[..8],
-                        s.started_at,
-                        s.status,
-                        s.summary.as_deref().unwrap_or("no summary")
-                    ));
-                }
-                Ok(output)
-            }
-            "get_history" => {
-                // Use provided session_id or fall back to current session
-                let session_id = match req.session_id {
-                    Some(id) => id,
-                    None => self.session_id.read().await.clone()
-                        .ok_or("No session_id provided and no active session")?,
-                };
-
-                let history = self.db.get_session_history(&session_id, limit)
-                    .map_err(|e| e.to_string())?;
-
-                if history.is_empty() {
-                    return Ok(format!("No history for session {}", &session_id[..8]));
-                }
-
-                let mut output = format!("{} tool calls in session {}:\n", history.len(), &session_id[..8]);
-                for entry in history {
-                    let status = if entry.success { "✓" } else { "✗" };
-                    let preview = entry.result_summary
-                        .as_ref()
-                        .map(|s| if s.len() > 60 { format!("{}...", &s[..60]) } else { s.clone() })
-                        .unwrap_or_default();
-                    output.push_str(&format!(
-                        "  {} {} [{}] {}\n",
-                        status, entry.tool_name, entry.created_at, preview
-                    ));
-                }
-                Ok(output)
-            }
-            _ => Err(format!("Unknown action: {}. Use: list_sessions, get_history, current", req.action)),
-        }
+        tools::session_history(self, req.action, req.session_id, req.limit).await
     }
 
     #[tool(description = "Send a response back to Mira during collaboration. Use this when Mira asks you a question via discuss().")]

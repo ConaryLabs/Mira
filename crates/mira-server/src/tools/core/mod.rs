@@ -78,6 +78,7 @@ pub mod dev;
 pub mod experts;
 pub mod memory;
 pub mod project;
+pub mod session;
 pub mod tasks_goals;
 
 // Re-export commonly used functions
@@ -86,4 +87,5 @@ pub use dev::*;
 pub use experts::*;
 pub use memory::*;
 pub use project::*;
+pub use session::*;
 pub use tasks_goals::*;
