@@ -260,6 +260,79 @@ pub async fn index_project(
         chunks: 0,
         errors: 0,
     };
+    const CHUNK_FLUSH_THRESHOLD: usize = 1000;
+
+    // Helper to flush accumulated chunks to database
+    async fn flush_chunks(
+        pending_chunks: &mut Vec<PendingChunk>,
+        db: Arc<Database>,
+        embeddings: Option<Arc<Embeddings>>,
+        project_id: Option<i64>,
+        stats: &mut IndexStats,
+    ) -> Result<()> {
+        if pending_chunks.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(ref emb) = embeddings {
+            let chunk_count = pending_chunks.len();
+            tracing::info!("Flushing {} chunks...", chunk_count);
+
+            // Extract texts for embedding
+            let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
+
+            // Embed all at once (client handles batching internally)
+            match emb.embed_batch(&texts).await {
+                Ok(vectors) => {
+                    tracing::info!("Embedded {} chunks", vectors.len());
+
+                    // Store all embeddings (runs on blocking thread pool with transaction)
+                    let chunk_data: Vec<_> = pending_chunks
+                        .iter()
+                        .zip(vectors.iter())
+                        .map(|(chunk, embedding)| {
+                            (
+                                chunk.file_path.clone(),
+                                chunk.content.clone(),
+                                chunk.start_line,
+                                embedding_to_bytes(embedding),
+                            )
+                        })
+                        .collect();
+
+                    let error_count = Database::run_blocking(db.clone(), move |conn| {
+                        let tx = conn.unchecked_transaction()?;
+                        let mut errors = 0usize;
+
+                        for (file_path, content, start_line, embedding_bytes) in &chunk_data {
+                            if let Err(e) = tx.execute(
+                                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
+                                 VALUES (?, ?, ?, ?, ?)",
+                                params![embedding_bytes, file_path, content, project_id, start_line],
+                            ) {
+                                tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
+                                errors += 1;
+                            }
+                        }
+
+                        tx.commit()?;
+                        Ok::<_, rusqlite::Error>(errors)
+                    }).await.unwrap_or(chunk_count);
+
+                    stats.chunks += chunk_count - error_count;
+                    stats.errors += error_count;
+                }
+                Err(e) => {
+                    tracing::error!("Batch embedding failed: {}", e);
+                    stats.errors += pending_chunks.len();
+                }
+            }
+        }
+
+        // Clear the pending chunks after flush
+        pending_chunks.clear();
+        Ok(())
+    }
 
     tracing::info!("Collecting files...");
 
@@ -443,6 +516,17 @@ pub async fn index_project(
                             });
                         }
                     }
+
+                    // Flush if we've accumulated enough chunks
+                    if pending_chunks.len() >= CHUNK_FLUSH_THRESHOLD {
+                        flush_chunks(
+                            &mut pending_chunks,
+                            db.clone(),
+                            embeddings.clone(),
+                            project_id,
+                            &mut stats,
+                        ).await?;
+                    }
                 }
             }
             Err(e) => {
@@ -452,64 +536,14 @@ pub async fn index_project(
         }
     }
 
-    // Batch embed all collected chunks
-    if let Some(ref emb) = embeddings {
-        if !pending_chunks.is_empty() {
-            tracing::info!("Embedding {} chunks in parallel batches...", pending_chunks.len());
-            let embed_start = std::time::Instant::now();
-
-            // Extract texts for embedding
-            let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
-
-            // Embed all at once (client handles batching internally)
-            match emb.embed_batch(&texts).await {
-                Ok(vectors) => {
-                    tracing::info!("Embedded {} chunks in {:?}", vectors.len(), embed_start.elapsed());
-
-                    // Store all embeddings (runs on blocking thread pool with transaction)
-                    let chunk_data: Vec<_> = pending_chunks
-                        .iter()
-                        .zip(vectors.iter())
-                        .map(|(chunk, embedding)| {
-                            (
-                                chunk.file_path.clone(),
-                                chunk.content.clone(),
-                                chunk.start_line,
-                                embedding_to_bytes(embedding),
-                            )
-                        })
-                        .collect();
-
-                    let chunk_count = chunk_data.len();
-                    let error_count = Database::run_blocking(db.clone(), move |conn| {
-                        let tx = conn.unchecked_transaction()?;
-                        let mut errors = 0usize;
-
-                        for (file_path, content, start_line, embedding_bytes) in &chunk_data {
-                            if let Err(e) = tx.execute(
-                                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
-                                 VALUES (?, ?, ?, ?, ?)",
-                                params![embedding_bytes, file_path, content, project_id, start_line],
-                            ) {
-                                tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
-                                errors += 1;
-                            }
-                        }
-
-                        tx.commit()?;
-                        Ok::<_, rusqlite::Error>(errors)
-                    }).await.unwrap_or(chunk_count);
-
-                    stats.chunks += chunk_count - error_count;
-                    stats.errors += error_count;
-                }
-                Err(e) => {
-                    tracing::error!("Batch embedding failed: {}", e);
-                    stats.errors += pending_chunks.len();
-                }
-            }
-        }
-    }
+    // Flush any remaining chunks
+    flush_chunks(
+        &mut pending_chunks,
+        db.clone(),
+        embeddings.clone(),
+        project_id,
+        &mut stats,
+    ).await?;
 
     // Rebuild FTS5 full-text search index for this project
     if let Some(pid) = project_id {

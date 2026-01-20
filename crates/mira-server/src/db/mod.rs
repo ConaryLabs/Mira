@@ -119,12 +119,7 @@ impl Database {
         F: FnOnce(&Connection) -> R + Send + 'static,
         R: Send + 'static,
     {
-        match tokio::task::spawn_blocking(move || {
-            let conn = db.conn();
-            f(&conn)
-        })
-        .await
-        {
+        match Self::run_blocking_result(db, f).await {
             Ok(r) => r,
             Err(e) if e.is_panic() => {
                 // Preserve original panic payload/message.
@@ -132,7 +127,7 @@ impl Database {
             }
             Err(e) => {
                 // Cancellation usually means runtime shutdown or task was aborted.
-                // You *cannot* return an error here without changing the signature.
+                // Panic to preserve existing behavior while callers migrate to run_blocking_result.
                 panic!("Database spawn_blocking task failed (cancelled): {e}");
             }
         }

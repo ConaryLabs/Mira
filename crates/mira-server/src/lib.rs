@@ -5,6 +5,8 @@
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
 
 pub mod background;
 pub mod cartographer;
@@ -17,3 +19,5 @@ pub mod llm;
 pub mod mcp;
 pub mod search;
 pub mod tools;
+pub mod error;
+pub use error::{MiraError, Result};
