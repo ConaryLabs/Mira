@@ -12,34 +12,41 @@ use std::path::Path;
 /// Check if a line contains a #[cfg(...)] attribute that includes `test`
 fn is_cfg_test(line: &str) -> bool {
     let line = line.trim();
-    let mut start = 0;
-    while let Some(pos) = line[start..].find("#[cfg(") {
-        let cfg_start = start + pos;
+    let mut search_start = 0;
+
+    while let Some(cfg_start) = line[search_start..].find("#[cfg(") {
+        let cfg_start = search_start + cfg_start;
+        let mut pos = cfg_start + "#[cfg(".len();
         let mut paren_count = 1;
-        let mut i = cfg_start + "#[cfg(".len();
-        let mut content_end = i;
-        while i < line.len() && paren_count > 0 {
-            match line.as_bytes()[i] {
-                b'(' => paren_count += 1,
-                b')' => {
+
+        // Parse until we find the matching closing parenthesis
+        while let Some(ch) = line[pos..].chars().next() {
+            match ch {
+                '(' => paren_count += 1,
+                ')' => {
                     paren_count -= 1;
                     if paren_count == 0 {
-                        content_end = i; // position of ')'
+                        // Check if next character is ']'
+                        if line[pos + 1..].starts_with(']') {
+                            let content = &line[cfg_start + "#[cfg(".len()..pos];
+                            // Check if content contains "test" as a separate word
+                            if content.split(|c: char| !c.is_alphanumeric() && c != '_')
+                                .any(|part| part == "test") {
+                                return true;
+                            }
+                        }
+                        break;
                     }
                 }
                 _ => {}
             }
-            i += 1;
+            pos += ch.len_utf8();
         }
-        if paren_count == 0 && i < line.len() && line.as_bytes()[i] == b']' {
-            let content = &line[cfg_start + "#[cfg(".len()..content_end];
-            // Check if content contains "test" as a separate word
-            if content.split(|c: char| !c.is_alphanumeric() && c != '_').any(|part| part == "test") {
-                return true;
-            }
-        }
-        start = cfg_start + 1;
+
+        // Continue searching after this position
+        search_start = cfg_start + 1;
     }
+
     false
 }
 

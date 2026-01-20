@@ -46,6 +46,60 @@ const FILE_FLUSH_THRESHOLD: usize = 100;
 /// Maximum chunks to accumulate before flushing to database
 const CHUNK_FLUSH_THRESHOLD: usize = 1000;
 
+/// Helper to embed chunks and return vectors
+async fn embed_chunks(
+    embeddings: &Embeddings,
+    pending_chunks: &[PendingChunk],
+) -> Result<Vec<Vec<f32>>, String> {
+    let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
+    embeddings.embed_batch(&texts).await.map_err(|e| e.to_string())
+}
+
+/// Helper to prepare chunk data for database storage
+fn prepare_chunk_data(
+    pending_chunks: &[PendingChunk],
+    vectors: &[Vec<f32>],
+) -> Vec<(String, String, usize, Vec<u8>)> {
+    pending_chunks
+        .iter()
+        .zip(vectors.iter())
+        .map(|(chunk, embedding)| {
+            (
+                chunk.file_path.clone(),
+                chunk.content.clone(),
+                chunk.start_line,
+                embedding_to_bytes(embedding),
+            )
+        })
+        .collect()
+}
+
+/// Helper to store chunk embeddings in database
+async fn store_chunk_embeddings(
+    db: Arc<Database>,
+    chunk_data: Vec<(String, String, usize, Vec<u8>)>,
+    project_id: Option<i64>,
+) -> Result<usize, rusqlite::Error> {
+    Database::run_blocking(db, move |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let mut errors = 0usize;
+
+        for (file_path, content, start_line, embedding_bytes) in &chunk_data {
+            if let Err(e) = tx.execute(
+                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
+                 VALUES (?, ?, ?, ?, ?)",
+                params![embedding_bytes, file_path, content, project_id, start_line],
+            ) {
+                tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
+                errors += 1;
+            }
+        }
+
+        tx.commit()?;
+        Ok(errors)
+    }).await
+}
+
 /// Flush accumulated chunks to database and generate embeddings
 async fn flush_chunks(
     mut pending_chunks: Vec<PendingChunk>,
@@ -62,49 +116,22 @@ async fn flush_chunks(
         let chunk_count = pending_chunks.len();
         tracing::info!("Flushing {} chunks...", chunk_count);
 
-        // Extract texts for embedding
-        let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
-
-        // Embed all at once (client handles batching internally)
-        match emb.embed_batch(&texts).await {
+        match embed_chunks(emb, &pending_chunks).await {
             Ok(vectors) => {
                 tracing::info!("Embedded {} chunks", vectors.len());
 
-                // Store all embeddings (runs on blocking thread pool with transaction)
-                let chunk_data: Vec<_> = pending_chunks
-                    .iter()
-                    .zip(vectors.iter())
-                    .map(|(chunk, embedding)| {
-                        (
-                            chunk.file_path.clone(),
-                            chunk.content.clone(),
-                            chunk.start_line,
-                            embedding_to_bytes(embedding),
-                        )
-                    })
-                    .collect();
+                let chunk_data = prepare_chunk_data(&pending_chunks, &vectors);
 
-                let error_count = Database::run_blocking(db.clone(), move |conn| {
-                    let tx = conn.unchecked_transaction()?;
-                    let mut errors = 0usize;
-
-                    for (file_path, content, start_line, embedding_bytes) in &chunk_data {
-                        if let Err(e) = tx.execute(
-                            "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
-                             VALUES (?, ?, ?, ?, ?)",
-                            params![embedding_bytes, file_path, content, project_id, start_line],
-                        ) {
-                            tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
-                            errors += 1;
-                        }
+                match store_chunk_embeddings(db.clone(), chunk_data, project_id).await {
+                    Ok(error_count) => {
+                        stats.chunks += chunk_count - error_count;
+                        stats.errors += error_count;
                     }
-
-                    tx.commit()?;
-                    Ok::<_, rusqlite::Error>(errors)
-                }).await.unwrap_or(chunk_count);
-
-                stats.chunks += chunk_count - error_count;
-                stats.errors += error_count;
+                    Err(e) => {
+                        tracing::error!("Failed to store embeddings: {}", e);
+                        stats.errors += chunk_count;
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!("Batch embedding failed: {}", e);
@@ -116,6 +143,109 @@ async fn flush_chunks(
     // Clear the pending chunks after flush
     pending_chunks.clear();
     Ok(())
+}
+
+/// Helper to store symbols and capture their IDs
+fn store_symbols_and_capture_ids(
+    tx: &rusqlite::Transaction,
+    project_id: Option<i64>,
+    file_path: &str,
+    symbols: &[Symbol],
+) -> rusqlite::Result<(Vec<(String, u32, u32, i64)>, usize)> {
+    let mut symbol_ranges = Vec::new();
+    let mut errors = 0usize;
+
+    for sym in symbols {
+        if let Err(e) = tx.execute(
+            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![
+                project_id,
+                file_path,
+                sym.name,
+                sym.symbol_type,
+                sym.start_line,
+                sym.end_line,
+                sym.signature
+            ],
+        ) {
+            tracing::warn!("Failed to store symbol {} ({}): {}", sym.name, file_path, e);
+            errors += 1;
+            continue;
+        }
+        let id = tx.last_insert_rowid();
+        symbol_ranges.push((sym.name.clone(), sym.start_line, sym.end_line, id));
+    }
+
+    Ok((symbol_ranges, errors))
+}
+
+/// Helper to store imports
+fn store_imports(
+    tx: &rusqlite::Transaction,
+    project_id: Option<i64>,
+    file_path: &str,
+    imports: &[Import],
+) -> rusqlite::Result<usize> {
+    let mut errors = 0usize;
+
+    for import in imports {
+        if let Err(e) = tx.execute(
+            "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
+             VALUES (?, ?, ?, ?)",
+            params![
+                project_id,
+                file_path,
+                import.import_path,
+                import.is_external as i32
+            ],
+        ) {
+            tracing::warn!("Failed to store import {} ({}): {}", import.import_path, file_path, e);
+            errors += 1;
+        }
+    }
+
+    Ok(errors)
+}
+
+/// Helper to store function calls
+fn store_function_calls(
+    tx: &rusqlite::Transaction,
+    file_path: &str,
+    calls: &[FunctionCall],
+    symbol_ranges: &[(String, u32, u32, i64)],
+) -> rusqlite::Result<usize> {
+    let mut errors = 0usize;
+
+    for call in calls {
+        // Find the caller symbol whose line range contains this call
+        let caller_id = symbol_ranges.iter()
+            .find(|(name, start, end, _)| {
+                name == &call.caller_name && call.call_line >= *start && call.call_line <= *end
+            })
+            .map(|(_, _, _, id)| *id);
+
+        if let Some(cid) = caller_id {
+            // Try to find callee ID (may be in same file)
+            let callee_id = symbol_ranges.iter()
+                .find(|(name, _, _, _)| name == &call.callee_name)
+                .map(|(_, _, _, id)| *id);
+
+            if let Err(e) = tx.execute(
+                "INSERT INTO call_graph (caller_id, callee_name, callee_id)
+                 VALUES (?, ?, ?)",
+                params![cid, call.callee_name, callee_id],
+            ) {
+                tracing::warn!("Failed to store call {} -> {} ({}): {}", call.caller_name, call.callee_name, file_path, e);
+                errors += 1;
+            }
+        } else {
+            // Caller not found (could be module-level call)
+            tracing::debug!("Skipping call {} -> {} (caller not found in {})", call.caller_name, call.callee_name, file_path);
+        }
+    }
+
+    Ok(errors)
 }
 
 /// Flush accumulated file data (symbols, imports, calls) to database
@@ -137,83 +267,31 @@ async fn flush_code_batch(
     // Process all batches in a single transaction
     let error_count = Database::run_blocking(db.clone(), move |conn| {
         let tx = conn.unchecked_transaction()?;
-        let mut errors = 0usize;
+        let mut total_errors = 0usize;
 
         // Process each file batch
         for batch in batches {
             // Store symbols and capture IDs
-            let mut symbol_ranges: Vec<(String, u32, u32, i64)> = Vec::new(); // (name, start, end, id)
-            for sym in &batch.symbols {
-                if let Err(e) = tx.execute(
-                    "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    params![
-                        project_id,
-                        &batch.file_path,
-                        sym.name,
-                        sym.symbol_type,
-                        sym.start_line,
-                        sym.end_line,
-                        sym.signature
-                    ],
-                ) {
-                    tracing::warn!("Failed to store symbol {} ({}): {}", sym.name, batch.file_path, e);
-                    errors += 1;
-                    continue;
-                }
-                let id = tx.last_insert_rowid();
-                symbol_ranges.push((sym.name.clone(), sym.start_line, sym.end_line, id));
-            }
+            let (symbol_ranges, symbol_errors) = store_symbols_and_capture_ids(
+                &tx, project_id, &batch.file_path, &batch.symbols
+            )?;
+            total_errors += symbol_errors;
 
             // Store imports
-            for import in &batch.imports {
-                if let Err(e) = tx.execute(
-                    "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
-                     VALUES (?, ?, ?, ?)",
-                    params![
-                        project_id,
-                        &batch.file_path,
-                        import.import_path,
-                        import.is_external as i32
-                    ],
-                ) {
-                    tracing::warn!("Failed to store import {} ({}): {}", import.import_path, batch.file_path, e);
-                    errors += 1;
-                }
-            }
+            let import_errors = store_imports(
+                &tx, project_id, &batch.file_path, &batch.imports
+            )?;
+            total_errors += import_errors;
 
             // Store function calls for call graph
-            for call in &batch.calls {
-                // Find the caller symbol whose line range contains this call
-                let caller_id = symbol_ranges.iter()
-                    .find(|(name, start, end, _)| {
-                        name == &call.caller_name && call.call_line >= *start && call.call_line <= *end
-                    })
-                    .map(|(_, _, _, id)| *id);
-
-                if let Some(cid) = caller_id {
-                    // Try to find callee ID (may be in same file)
-                    let callee_id = symbol_ranges.iter()
-                        .find(|(name, _, _, _)| name == &call.callee_name)
-                        .map(|(_, _, _, id)| *id);
-
-                    if let Err(e) = tx.execute(
-                        "INSERT INTO call_graph (caller_id, callee_name, callee_id)
-                         VALUES (?, ?, ?)",
-                        params![cid, call.callee_name, callee_id],
-                    ) {
-                        tracing::warn!("Failed to store call {} -> {} ({}): {}", call.caller_name, call.callee_name, batch.file_path, e);
-                        errors += 1;
-                    }
-                } else {
-                    // Caller not found (could be module-level call)
-                    tracing::debug!("Skipping call {} -> {} (caller not found in {})", call.caller_name, call.callee_name, batch.file_path);
-                }
-            }
+            let call_errors = store_function_calls(
+                &tx, &batch.file_path, &batch.calls, &symbol_ranges
+            )?;
+            total_errors += call_errors;
         }
 
         tx.commit()?;
-        Ok::<_, rusqlite::Error>(errors)
+        Ok::<_, rusqlite::Error>(total_errors)
     }).await?;
 
     stats.symbols += total_symbols - error_count;
