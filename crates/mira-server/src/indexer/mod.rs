@@ -43,6 +43,8 @@ struct PendingFileBatch {
 const SYMBOL_FLUSH_THRESHOLD: usize = 1000;
 /// Maximum files to accumulate before flushing to database
 const FILE_FLUSH_THRESHOLD: usize = 100;
+/// Maximum chunks to accumulate before flushing to database
+const CHUNK_FLUSH_THRESHOLD: usize = 1000;
 
 /// Flush accumulated chunks to database and generate embeddings
 async fn flush_chunks(
@@ -289,72 +291,68 @@ pub struct ParsedImport {
     pub is_external: bool,
 }
 
-/// Create semantic chunks based on symbol boundaries
-/// Each chunk is a complete function/struct/etc with context metadata
-fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeChunk> {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut chunks: Vec<CodeChunk> = Vec::with_capacity(symbols.len());
-    let mut covered_lines: std::collections::HashSet<u32> = std::collections::HashSet::with_capacity(lines.len());
+/// Create chunks for a single symbol, handling large symbol splitting
+fn create_chunks_for_symbol(sym: &ParsedSymbol, lines: &[&str]) -> Vec<CodeChunk> {
+    let start = sym.start_line.saturating_sub(1) as usize; // 1-indexed to 0-indexed
+    let end = std::cmp::min(sym.end_line as usize, lines.len());
 
-    // Sort symbols by start line
-    let mut sorted_symbols: Vec<&ParsedSymbol> = symbols.iter().collect();
-    sorted_symbols.sort_by_key(|s| s.start_line);
-
-    // Create a chunk for each symbol
-    for sym in &sorted_symbols {
-        let start = sym.start_line.saturating_sub(1) as usize; // 1-indexed to 0-indexed
-        let end = std::cmp::min(sym.end_line as usize, lines.len());
-
-        if start >= lines.len() {
-            continue;
-        }
-
-        // Mark lines as covered
-        for line in sym.start_line..=sym.end_line {
-            covered_lines.insert(line);
-        }
-
-        // Build context directly from lines to avoid intermediate allocation
-        let mut context = String::with_capacity((end - start) * 20); // Estimate average line length
-        match sym.signature.as_ref() {
-            Some(sig) => context.push_str(&format!("// {} {}: {}\n", sym.kind, sym.name, sig)),
-            None => context.push_str(&format!("// {} {}\n", sym.kind, sym.name)),
-        }
-
-        // Append symbol lines
-        for line in &lines[start..end] {
-            context.push_str(line);
-            context.push('\n');
-        }
-
-        // Skip empty symbols
-        if context.trim().is_empty() {
-            continue;
-        }
-
-        // If symbol is very large (>2000 chars), split at logical boundaries
-        if context.len() > 2000 {
-            // Split into ~1000 char chunks at line boundaries
-            let mut current_chunk = String::with_capacity(1000);
-            for line in context.lines() {
-                if current_chunk.len() + line.len() > 1000 && !current_chunk.is_empty() {
-                    chunks.push(CodeChunk { content: current_chunk, start_line: sym.start_line });
-                    current_chunk = String::with_capacity(1000);
-                    current_chunk.push_str(&format!("// {} {} (continued)\n", sym.kind, sym.name));
-                }
-                current_chunk.push_str(line);
-                current_chunk.push('\n');
-            }
-            if !current_chunk.trim().is_empty() {
-                chunks.push(CodeChunk { content: current_chunk, start_line: sym.start_line });
-            }
-        } else {
-            chunks.push(CodeChunk { content: context, start_line: sym.start_line });
-        }
+    if start >= lines.len() {
+        return Vec::new();
     }
 
-    // Handle orphan code (not part of any symbol) - typically module-level items
+    // Build context directly from lines to avoid intermediate allocation
+    let mut context = String::with_capacity((end - start) * 20); // Estimate average line length
+    match sym.signature.as_ref() {
+        Some(sig) => context.push_str(&format!("// {} {}: {}\n", sym.kind, sym.name, sig)),
+        None => context.push_str(&format!("// {} {}\n", sym.kind, sym.name)),
+    }
+
+    // Append symbol lines
+    for line in &lines[start..end] {
+        context.push_str(line);
+        context.push('\n');
+    }
+
+    // Skip empty symbols
+    if context.trim().is_empty() {
+        return Vec::new();
+    }
+
+    // If symbol is very large (>2000 chars), split at logical boundaries
+    if context.len() > 2000 {
+        split_large_chunk(context, sym.start_line, &sym.kind, &sym.name)
+    } else {
+        vec![CodeChunk { content: context, start_line: sym.start_line }]
+    }
+}
+
+/// Split a large chunk into smaller chunks at line boundaries
+fn split_large_chunk(chunk: String, start_line: u32, kind: &str, name: &str) -> Vec<CodeChunk> {
+    let mut result = Vec::new();
+    let mut current_chunk = String::with_capacity(1000);
+    let lines = chunk.lines().collect::<Vec<_>>();
+
+    for line in lines {
+        if current_chunk.len() + line.len() > 1000 && !current_chunk.is_empty() {
+            result.push(CodeChunk { content: current_chunk, start_line });
+            current_chunk = String::with_capacity(1000);
+            current_chunk.push_str(&format!("// {} {} (continued)\n", kind, name));
+        }
+        current_chunk.push_str(line);
+        current_chunk.push('\n');
+    }
+
+    if !current_chunk.trim().is_empty() {
+        result.push(CodeChunk { content: current_chunk, start_line });
+    }
+
+    result
+}
+
+/// Create chunks for orphan code (lines not covered by any symbol)
+fn create_chunks_for_orphan_code(lines: &[&str], covered_lines: &std::collections::HashSet<u32>) -> Vec<CodeChunk> {
     let total_lines = lines.len() as u32;
+    let mut chunks = Vec::new();
     let mut orphan_start: Option<u32> = None;
 
     for line_num in 1..=total_lines {
@@ -412,6 +410,36 @@ fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeCh
     chunks
 }
 
+/// Create semantic chunks based on symbol boundaries
+/// Each chunk is a complete function/struct/etc with context metadata
+fn create_semantic_chunks(content: &str, symbols: &[ParsedSymbol]) -> Vec<CodeChunk> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut chunks: Vec<CodeChunk> = Vec::with_capacity(symbols.len());
+    let mut covered_lines: std::collections::HashSet<u32> = std::collections::HashSet::with_capacity(lines.len());
+
+    // Sort symbols by start line
+    let mut sorted_symbols: Vec<&ParsedSymbol> = symbols.iter().collect();
+    sorted_symbols.sort_by_key(|s| s.start_line);
+
+    // Create chunks for each symbol
+    for sym in &sorted_symbols {
+        // Mark lines as covered
+        for line in sym.start_line..=sym.end_line {
+            covered_lines.insert(line);
+        }
+
+        // Create chunks for this symbol
+        let mut symbol_chunks = create_chunks_for_symbol(sym, &lines);
+        chunks.append(&mut symbol_chunks);
+    }
+
+    // Create chunks for orphan code (lines not covered by any symbol)
+    let mut orphan_chunks = create_chunks_for_orphan_code(&lines, &covered_lines);
+    chunks.append(&mut orphan_chunks);
+
+    chunks
+}
+
 /// Parse file content directly (for incremental updates)
 /// Returns symbols, imports, and content chunks for embedding
 pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
@@ -463,28 +491,8 @@ pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
     })
 }
 
-/// Index an entire project
-pub async fn index_project(
-    path: &Path,
-    db: Arc<Database>,
-    embeddings: Option<Arc<Embeddings>>,
-    project_id: Option<i64>,
-) -> Result<IndexStats> {
-    tracing::info!("Starting index_project for {:?}", path);
-
-    let mut stats = IndexStats {
-        files: 0,
-        symbols: 0,
-        chunks: 0,
-        errors: 0,
-    };
-    const CHUNK_FLUSH_THRESHOLD: usize = 1000;
-
-
-
-    tracing::info!("Collecting files...");
-
-    // Collect files to index, tracking any walk errors
+/// Collect files to index, filtering by extension and ignoring patterns
+fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<walkdir::DirEntry> {
     let mut files = Vec::new();
     for entry in WalkDir::new(path)
         .follow_links(true)
@@ -511,12 +519,13 @@ pub async fn index_project(
             }
         }
     }
+    files
+}
 
-    tracing::info!("Found {} files to index", files.len());
-
-    // Clear existing data for this project (runs on blocking thread pool)
+/// Clear existing data for a project from all relevant tables
+async fn clear_existing_project_data(db: Arc<Database>, project_id: Option<i64>) -> Result<()> {
     tracing::info!("Clearing existing data...");
-    Database::run_blocking(db.clone(), move |conn| {
+    Database::run_blocking(db, move |conn| {
         // Delete call_graph first (references code_symbols)
         conn.execute(
             "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
@@ -540,14 +549,20 @@ pub async fn index_project(
         )?;
         Ok::<_, rusqlite::Error>(())
     }).await?;
+    Ok(())
+}
 
-    tracing::info!("Processing files...");
-
-    // Collect chunks for batch embedding
-    let mut pending_chunks: Vec<PendingChunk> = Vec::new();
-    // Collect file data for batch database insertion
-    let mut pending_batches: Vec<PendingFileBatch> = Vec::new();
-
+/// Process files in a loop, accumulating batches and chunks, flushing when thresholds reached
+async fn process_files_loop(
+    files: Vec<walkdir::DirEntry>,
+    path: &Path,
+    pending_batches: &mut Vec<PendingFileBatch>,
+    pending_chunks: &mut Vec<PendingChunk>,
+    db: Arc<Database>,
+    embeddings: Option<Arc<Embeddings>>,
+    project_id: Option<i64>,
+    stats: &mut IndexStats,
+) -> Result<()> {
     // Index each file (parse and store symbols, collect chunks)
     for (i, entry) in files.iter().enumerate() {
         let file_path = entry.path();
@@ -592,7 +607,7 @@ pub async fn index_project(
                 let total_batched_symbols: usize = pending_batches.iter().map(|b| b.symbols.len()).sum();
                 if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD || pending_batches.len() >= FILE_FLUSH_THRESHOLD {
                     let flush_start = std::time::Instant::now();
-                    flush_code_batch(&mut pending_batches, db.clone(), project_id, &mut stats).await?;
+                    flush_code_batch(pending_batches, db.clone(), project_id, stats).await?;
                     tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
                 }
 
@@ -612,13 +627,13 @@ pub async fn index_project(
 
                     // Flush if we've accumulated enough chunks
                     if pending_chunks.len() >= CHUNK_FLUSH_THRESHOLD {
-                        let chunks_to_flush = std::mem::replace(&mut pending_chunks, Vec::new());
+                        let chunks_to_flush = std::mem::replace(pending_chunks, Vec::new());
                         flush_chunks(
                             chunks_to_flush,
                             db.clone(),
                             embeddings.clone(),
                             project_id,
-                            &mut stats,
+                            stats,
                         ).await?;
                     }
                 }
@@ -629,10 +644,21 @@ pub async fn index_project(
             }
         }
     }
+    Ok(())
+}
 
+/// Flush any remaining batches and chunks after processing all files
+async fn flush_remaining_data(
+    pending_batches: &mut Vec<PendingFileBatch>,
+    pending_chunks: Vec<PendingChunk>,
+    db: Arc<Database>,
+    embeddings: Option<Arc<Embeddings>>,
+    project_id: Option<i64>,
+    stats: &mut IndexStats,
+) -> Result<()> {
     // Flush any remaining file batches
     if !pending_batches.is_empty() {
-        flush_code_batch(&mut pending_batches, db.clone(), project_id, &mut stats).await?;
+        flush_code_batch(pending_batches, db.clone(), project_id, stats).await?;
     }
 
     // Flush any remaining chunks
@@ -641,16 +667,79 @@ pub async fn index_project(
         db.clone(),
         embeddings.clone(),
         project_id,
-        &mut stats,
+        stats,
     ).await?;
 
-    // Rebuild FTS5 full-text search index for this project
+    Ok(())
+}
+
+/// Rebuild FTS5 full-text search index for a project if project_id is Some
+fn rebuild_fts_index_if_needed(db: Arc<Database>, project_id: Option<i64>) {
     if let Some(pid) = project_id {
         tracing::info!("Rebuilding FTS5 search index for project {}", pid);
         if let Err(e) = db.rebuild_fts_for_project(pid) {
             tracing::warn!("Failed to rebuild FTS5 index: {}", e);
         }
     }
+}
+
+/// Index an entire project
+pub async fn index_project(
+    path: &Path,
+    db: Arc<Database>,
+    embeddings: Option<Arc<Embeddings>>,
+    project_id: Option<i64>,
+) -> Result<IndexStats> {
+    tracing::info!("Starting index_project for {:?}", path);
+
+    let mut stats = IndexStats {
+        files: 0,
+        symbols: 0,
+        chunks: 0,
+        errors: 0,
+    };
+
+
+
+    tracing::info!("Collecting files...");
+    let files = collect_files_to_index(path, &mut stats);
+
+    tracing::info!("Found {} files to index", files.len());
+
+    // Clear existing data for this project
+    clear_existing_project_data(db.clone(), project_id).await?;
+
+    tracing::info!("Processing files...");
+
+    // Collect chunks for batch embedding
+    let mut pending_chunks: Vec<PendingChunk> = Vec::new();
+    // Collect file data for batch database insertion
+    let mut pending_batches: Vec<PendingFileBatch> = Vec::new();
+
+    // Index each file (parse and store symbols, collect chunks)
+    process_files_loop(
+        files,
+        path,
+        &mut pending_batches,
+        &mut pending_chunks,
+        db.clone(),
+        embeddings.clone(),
+        project_id,
+        &mut stats,
+    ).await?;
+
+    // Flush any remaining batches and chunks
+    flush_remaining_data(
+        &mut pending_batches,
+        pending_chunks,
+        db.clone(),
+        embeddings.clone(),
+        project_id,
+        &mut stats,
+    ).await?;
+
+    // Rebuild FTS5 full-text search index for this project
+    rebuild_fts_index_if_needed(db.clone(), project_id);
 
     if stats.errors > 0 {
         tracing::warn!(
