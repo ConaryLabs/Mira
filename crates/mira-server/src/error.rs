@@ -59,6 +59,22 @@ impl MiraError {
     }
 }
 
+impl From<String> for MiraError {
+    fn from(s: String) -> Self {
+        MiraError::Other(s)
+    }
+}
+
+impl From<tokio::task::JoinError> for MiraError {
+    fn from(err: tokio::task::JoinError) -> Self {
+        if err.is_cancelled() {
+            MiraError::Cancelled
+        } else {
+            MiraError::Other(err.to_string())
+        }
+    }
+}
+
 impl From<MiraError> for String {
     fn from(err: MiraError) -> Self {
         err.to_string()

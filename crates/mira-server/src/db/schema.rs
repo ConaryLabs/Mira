@@ -27,10 +27,10 @@ pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
             if dim != 1536 {
                 tracing::info!("Migrating vector tables from {} to 1536 dimensions", dim);
                 // Drop old tables - CASCADE not supported, drop in order
-                let _ = conn.execute_batch(
+                conn.execute_batch(
                     "DROP TABLE IF EXISTS vec_memory;
                      DROP TABLE IF EXISTS vec_code;"
-                );
+                )?;
             }
         }
     }
@@ -66,7 +66,7 @@ pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
         tracing::info!("Migrating vec_code to add start_line column");
         // Virtual tables can't be altered - must drop and recreate
         // Embeddings will be regenerated on next indexing
-        let _ = conn.execute("DROP TABLE IF EXISTS vec_code", []);
+        conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
     }
 
     Ok(())
@@ -98,10 +98,10 @@ pub fn migrate_pending_embeddings_line_numbers(conn: &Connection) -> Result<()> 
 
     if !has_column {
         tracing::info!("Migrating pending_embeddings to add start_line column");
-        let _ = conn.execute(
+        conn.execute(
             "ALTER TABLE pending_embeddings ADD COLUMN start_line INTEGER NOT NULL DEFAULT 1",
             [],
-        );
+        )?;
     }
 
     Ok(())
@@ -133,10 +133,10 @@ pub fn migrate_tool_history_full_result(conn: &Connection) -> Result<()> {
 
     if !has_column {
         tracing::info!("Migrating tool_history to add full_result column");
-        let _ = conn.execute(
+        conn.execute(
             "ALTER TABLE tool_history ADD COLUMN full_result TEXT",
             [],
-        );
+        )?;
     }
 
     Ok(())
@@ -168,15 +168,15 @@ pub fn migrate_memory_facts_has_embedding(conn: &Connection) -> Result<()> {
 
     if !has_column {
         tracing::info!("Migrating memory_facts to add has_embedding column");
-        let _ = conn.execute(
+        conn.execute(
             "ALTER TABLE memory_facts ADD COLUMN has_embedding INTEGER DEFAULT 0",
             [],
-        );
+        )?;
         // Backfill: mark existing facts that have embeddings
-        let _ = conn.execute(
+        conn.execute(
             "UPDATE memory_facts SET has_embedding = 1 WHERE id IN (SELECT fact_id FROM vec_memory)",
             [],
-        );
+        )?;
     }
 
     Ok(())
@@ -208,15 +208,15 @@ pub fn migrate_chat_messages_summary_id(conn: &Connection) -> Result<()> {
 
     if !has_column {
         tracing::info!("Migrating chat_messages to add summary_id column for reversible summarization");
-        let _ = conn.execute(
+        conn.execute(
             "ALTER TABLE chat_messages ADD COLUMN summary_id INTEGER REFERENCES chat_summaries(id) ON DELETE SET NULL",
             [],
-        );
+        )?;
         // Add index for efficient lookup by summary
-        let _ = conn.execute(
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_messages_summary ON chat_messages(summary_id)",
             [],
-        );
+        )?;
     }
 
     Ok(())
@@ -248,15 +248,15 @@ pub fn migrate_chat_summaries_project_id(conn: &Connection) -> Result<()> {
 
     if !has_column {
         tracing::info!("Migrating chat_summaries to add project_id column");
-        let _ = conn.execute(
+        conn.execute(
             "ALTER TABLE chat_summaries ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE",
             [],
-        );
+        )?;
         // Add index for efficient project-scoped queries
-        let _ = conn.execute(
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_summaries_project ON chat_summaries(project_id, summary_level, created_at DESC)",
             [],
-        );
+        )?;
     }
 
     Ok(())
@@ -361,6 +361,50 @@ pub fn migrate_system_prompts_provider(conn: &Connection) -> Result<()> {
              ALTER TABLE system_prompts ADD COLUMN model TEXT;",
         )?;
     }
+
+    Ok(())
+}
+
+/// Migrate imports table to add unique constraint and deduplicate
+pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
+    // Check if imports table exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='imports'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if unique index already exists
+    let index_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='uniq_imports'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if index_exists {
+        return Ok(());
+    }
+
+    tracing::info!("Deduplicating imports and adding unique constraint");
+
+    // Delete duplicate rows, keeping the one with the smallest id
+    conn.execute_batch(
+        "DELETE FROM imports
+         WHERE id NOT IN (
+             SELECT MIN(id)
+             FROM imports
+             GROUP BY project_id, file_path, import_path
+         )"
+    )?;
+
+    // Create unique index
+    conn.execute_batch("CREATE UNIQUE INDEX uniq_imports ON imports(project_id, file_path, import_path)")?;
 
     Ok(())
 }

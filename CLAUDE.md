@@ -19,6 +19,9 @@ STOP before using Grep or Glob. Use Mira tools instead:
 - `find_callers` / `find_callees` - for call graph (not Grep)
 - `recall` - for past decisions and preferences
 - `check_capability` - to find if something exists in the codebase
+- `resolve-library-id` + `query-docs` - for library documentation (use Context7 MCP server)
+
+**Auto-invocation:** When user asks about library documentation, automatically use Context7 tools (`resolve-library-id` then `query-docs`). For OpenAI API questions, use OpenAI Docs MCP server.
 
 **Only use Grep** for literal strings (error messages, UUIDs, specific constants).
 **Only use Glob** for exact filename patterns when you know the name.
@@ -75,6 +78,7 @@ Use experts for second opinions before major decisions:
 | Past decisions | `recall` |
 | Feature exists? | `check_capability` |
 | Codebase overview | `session_start` output |
+| Library documentation | `resolve-library-id` + `query-docs` |
 
 ## rust-analyzer LSP Plugin
 
@@ -95,6 +99,30 @@ The `rust-analyzer@claude-code-lsps` plugin is enabled in `~/.claude/settings.js
 | Memory/context | Yes | No |
 
 **Usage:** Just edit `.rs` files normally. Diagnostics appear automatically if there are errors. No explicit invocation needed.
+
+## Documentation MCP Servers
+
+This project has two documentation MCP servers configured:
+
+### Context7
+- Provides up-to-date documentation and code examples for any library
+- Tools: `resolve-library-id` and `query-docs`
+- Always call `resolve-library-id` first to get library ID unless user provides ID in format `/org/project` or `/org/project/version`
+- Add "use context7" to prompts or set up auto-invocation rules
+- Specify library IDs like `/supabase/supabase` for direct access
+- Mention versions (e.g., "Next.js 14") to get version-specific docs
+- API key is configured in `.mcp.json`; consider moving to `.env` for security
+
+### OpenAI Docs
+- Provides documentation for OpenAI API, SDKs, and related tools
+- Tools: `search_openai_docs`, `fetch_openai_doc`, `list_openai_docs`, `list_api_endpoints`, `get_openapi_spec`
+- Use when working with OpenAI API (including Responses API), SDKs, ChatGPT Apps SDK, or Codex
+
+### Usage Tips
+- For library documentation queries, use Context7 first
+- For OpenAI-specific queries, use OpenAI Docs
+- Always include a "Sources:" section with markdown links when using web search results
+- Today's date is 2026-01-20; use current year when searching for recent information
 
 ## Build & Test
 

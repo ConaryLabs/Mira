@@ -6,6 +6,7 @@ use super::keyword::keyword_search;
 use super::utils::{distance_to_score, embedding_to_bytes};
 use crate::db::Database;
 use crate::embeddings::Embeddings;
+use crate::Result;
 use rusqlite::params;
 use std::collections::HashMap;
 use std::path::Path;
@@ -49,11 +50,8 @@ pub async fn semantic_search(
     query: &str,
     project_id: Option<i64>,
     limit: usize,
-) -> Result<Vec<SearchResult>, String> {
-    let query_embedding = embeddings
-        .embed(query)
-        .await
-        .map_err(|e| format!("Embedding failed: {}", e))?;
+) -> Result<Vec<SearchResult>> {
+    let query_embedding = embeddings.embed(query).await?;
 
     let embedding_bytes = embedding_to_bytes(&query_embedding);
 
@@ -68,7 +66,7 @@ pub async fn semantic_search(
                  ORDER BY distance
                  LIMIT ?3",
             )
-            .map_err(|e| e.to_string())?;
+            ?;
 
         let results: Vec<SearchResult> = stmt
             .query_map(params![project_id, embedding_bytes, limit as i64], |row| {
@@ -294,7 +292,7 @@ pub async fn hybrid_search(
     project_id: Option<i64>,
     project_path: Option<&str>,
     limit: usize,
-) -> Result<HybridSearchResult, String> {
+) -> Result<HybridSearchResult> {
     // Fetch more results from each backend to account for deduplication
     let fetch_limit = limit * 2;
 

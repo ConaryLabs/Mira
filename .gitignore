@@ -9,6 +9,7 @@
 .env.local
 .env.*.local
 .mcp.json
+.claude/
 
 # Database files
 *.db

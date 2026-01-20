@@ -152,7 +152,7 @@ pub struct SessionStartRequest {
     pub project_path: String,
     #[schemars(description = "Project name")]
     pub name: Option<String>,
-    #[schemars(description = "Session ID (from Claude Code). If not provided, one will be generated.")]
+    #[schemars(description = "Optional session ID")]
     pub session_id: Option<String>,
 }
 
@@ -174,7 +174,7 @@ pub struct RememberRequest {
     pub fact_type: Option<String>,
     #[schemars(description = "Category")]
     pub category: Option<String>,
-    #[schemars(description = "Confidence/truthiness (0.0-1.0, default 1.0). Use 0.8 for compaction summaries.")]
+    #[schemars(description = "Confidence score (0.0-1.0)")]
     pub confidence: Option<f64>,
 }
 
@@ -232,7 +232,7 @@ pub struct FindCalleesRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CheckCapabilityRequest {
-    #[schemars(description = "Description of the capability/feature to check for (e.g., 'semantic search', 'git change tracking')")]
+    #[schemars(description = "Description of capability to check")]
     pub description: String,
 }
 
@@ -395,7 +395,7 @@ pub struct ConfigureExpertRequest {
 
 #[tool_router]
 impl MiraServer {
-    #[tool(description = "Initialize session: sets project, loads persona, context, corrections, goals. Call once at session start.")]
+    #[tool(description = "Initialize session with project and context.")]
     async fn session_start(
         &self,
         Parameters(req): Parameters<SessionStartRequest>,
@@ -418,7 +418,7 @@ impl MiraServer {
         tools::get_project(self).await
     }
 
-    #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]
+    #[tool(description = "Store a fact for future recall (scoped to project).")]
     async fn remember(
         &self,
         Parameters(req): Parameters<RememberRequest>,
@@ -482,7 +482,7 @@ impl MiraServer {
         tools::find_function_callees(self, req.function_name, req.limit).await
     }
 
-    #[tool(description = "Check if a capability/feature exists in the codebase. Searches cached capabilities first, then falls back to live code search.")]
+    #[tool(description = "Check if a capability exists in codebase (cached first).")]
     async fn check_capability(
         &self,
         Parameters(req): Parameters<CheckCapabilityRequest>,
@@ -490,7 +490,7 @@ impl MiraServer {
         tools::check_capability(self, req.description).await
     }
 
-    #[tool(description = "Manage tasks. Actions: create/bulk_create/list/get/update/complete/delete. Use bulk_create with tasks param for multiple tasks in one call.")]
+    #[tool(description = "Manage tasks (create, list, update, delete). Supports bulk operations.")]
     async fn task(
         &self,
         Parameters(req): Parameters<TaskRequest>,
@@ -510,7 +510,7 @@ impl MiraServer {
         .await
     }
 
-    #[tool(description = "Manage goals/milestones. Actions: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/progress. Use bulk_create with goals param for multiple goals in one call.")]
+    #[tool(description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations.")]
     async fn goal(
         &self,
         Parameters(req): Parameters<GoalRequest>,
@@ -539,7 +539,7 @@ impl MiraServer {
         tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
     }
 
-    #[tool(description = "Generate LLM-powered summaries for codebase modules. Uses DeepSeek to analyze code and create descriptions.")]
+    #[tool(description = "Generate LLM-powered summaries for codebase modules.")]
     async fn summarize_codebase(&self) -> Result<String, String> {
         tools::summarize_codebase(self).await
     }
@@ -549,7 +549,7 @@ impl MiraServer {
         tools::get_session_recap(self).await
     }
 
-    #[tool(description = "Query session history. Actions: list_sessions, get_history, current")]
+    #[tool(description = "Query session history (list_sessions, get_history, current).")]
     async fn session_history(
         &self,
         Parameters(req): Parameters<SessionHistoryRequest>,
@@ -557,7 +557,7 @@ impl MiraServer {
         tools::session_history(self, req.action, req.session_id, req.limit).await
     }
 
-    #[tool(description = "Send a response back to Mira during collaboration. Use this when Mira asks you a question via discuss().")]
+    #[tool(description = "Send a response back to Mira during collaboration.")]
     async fn reply_to_mira(
         &self,
         Parameters(req): Parameters<ReplyToMiraRequest>,
@@ -596,7 +596,7 @@ impl MiraServer {
 
     // Expert consultation tools - delegate to DeepSeek Reasoner
 
-    #[tool(description = "Consult the Architect expert for system design, patterns, tradeoffs, and architectural decisions. Provides deep analysis using extended reasoning.")]
+    #[tool(description = "Consult the Architect expert for system design and architectural decisions.")]
     async fn consult_architect(
         &self,
         Parameters(req): Parameters<ConsultArchitectRequest>,
@@ -604,7 +604,7 @@ impl MiraServer {
         tools::consult_architect(self, req.context, req.question).await
     }
 
-    #[tool(description = "Consult the Plan Reviewer expert to validate implementation plans before coding. Identifies risks, gaps, and blockers.")]
+    #[tool(description = "Consult the Plan Reviewer expert to validate implementation plans.")]
     async fn consult_plan_reviewer(
         &self,
         Parameters(req): Parameters<ConsultPlanReviewerRequest>,
@@ -612,7 +612,7 @@ impl MiraServer {
         tools::consult_plan_reviewer(self, req.context, req.question).await
     }
 
-    #[tool(description = "Consult the Scope Analyst expert to find missing requirements, unstated assumptions, and edge cases. Surfaces unknowns early.")]
+    #[tool(description = "Consult the Scope Analyst expert to find missing requirements and edge cases.")]
     async fn consult_scope_analyst(
         &self,
         Parameters(req): Parameters<ConsultScopeAnalystRequest>,
@@ -620,7 +620,7 @@ impl MiraServer {
         tools::consult_scope_analyst(self, req.context, req.question).await
     }
 
-    #[tool(description = "Consult the Code Reviewer expert to find bugs, quality issues, and improvements. Reviews code for correctness and maintainability.")]
+    #[tool(description = "Consult the Code Reviewer expert to find bugs and quality issues.")]
     async fn consult_code_reviewer(
         &self,
         Parameters(req): Parameters<ConsultCodeReviewerRequest>,
@@ -628,7 +628,7 @@ impl MiraServer {
         tools::consult_code_reviewer(self, req.context, req.question).await
     }
 
-    #[tool(description = "Consult the Security Analyst expert to identify vulnerabilities, attack vectors, and hardening opportunities. Reviews for security best practices.")]
+    #[tool(description = "Consult the Security Analyst expert to identify vulnerabilities.")]
     async fn consult_security(
         &self,
         Parameters(req): Parameters<ConsultSecurityRequest>,
@@ -636,7 +636,7 @@ impl MiraServer {
         tools::consult_security(self, req.context, req.question).await
     }
 
-    #[tool(description = "Consult multiple experts in parallel. Runs all specified expert consultations concurrently and returns combined results. More efficient than calling individual experts sequentially.")]
+    #[tool(description = "Consult multiple experts in parallel (combined results).")]
     async fn consult_experts(
         &self,
         Parameters(req): Parameters<ConsultExpertsRequest>,
@@ -644,7 +644,7 @@ impl MiraServer {
         tools::consult_experts(self, req.roles, req.context, req.question).await
     }
 
-    #[tool(description = "Configure expert system prompts. Actions: set (customize prompt), get (view current), delete (revert to default), list (show all custom prompts), providers (list available LLM providers).")]
+    #[tool(description = "Configure expert system prompts (set, get, delete, list, providers).")]
     async fn configure_expert(
         &self,
         Parameters(req): Parameters<ConfigureExpertRequest>,

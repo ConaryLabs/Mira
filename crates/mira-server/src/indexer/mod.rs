@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tree_sitter::Parser;
 use walkdir::WalkDir;
 
-pub use parsers::{Import, Symbol};
+pub use parsers::{Import, Symbol, FunctionCall};
 
 /// Index statistics
 pub struct IndexStats {
@@ -29,6 +29,196 @@ struct PendingChunk {
     file_path: String,
     start_line: usize,
     content: String,
+}
+
+/// Pending file data for batch database insertion
+struct PendingFileBatch {
+    file_path: String,
+    symbols: Vec<Symbol>,
+    imports: Vec<Import>,
+    calls: Vec<FunctionCall>,
+}
+
+/// Maximum symbols to accumulate before flushing to database
+const SYMBOL_FLUSH_THRESHOLD: usize = 1000;
+/// Maximum files to accumulate before flushing to database
+const FILE_FLUSH_THRESHOLD: usize = 100;
+
+/// Flush accumulated chunks to database and generate embeddings
+async fn flush_chunks(
+    pending_chunks: &mut Vec<PendingChunk>,
+    db: Arc<Database>,
+    embeddings: Option<Arc<Embeddings>>,
+    project_id: Option<i64>,
+    stats: &mut IndexStats,
+) -> Result<()> {
+    if pending_chunks.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(ref emb) = embeddings {
+        let chunk_count = pending_chunks.len();
+        tracing::info!("Flushing {} chunks...", chunk_count);
+
+        // Extract texts for embedding
+        let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
+
+        // Embed all at once (client handles batching internally)
+        match emb.embed_batch(&texts).await {
+            Ok(vectors) => {
+                tracing::info!("Embedded {} chunks", vectors.len());
+
+                // Store all embeddings (runs on blocking thread pool with transaction)
+                let chunk_data: Vec<_> = pending_chunks
+                    .iter()
+                    .zip(vectors.iter())
+                    .map(|(chunk, embedding)| {
+                        (
+                            chunk.file_path.clone(),
+                            chunk.content.clone(),
+                            chunk.start_line,
+                            embedding_to_bytes(embedding),
+                        )
+                    })
+                    .collect();
+
+                let error_count = Database::run_blocking(db.clone(), move |conn| {
+                    let tx = conn.unchecked_transaction()?;
+                    let mut errors = 0usize;
+
+                    for (file_path, content, start_line, embedding_bytes) in &chunk_data {
+                        if let Err(e) = tx.execute(
+                            "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
+                             VALUES (?, ?, ?, ?, ?)",
+                            params![embedding_bytes, file_path, content, project_id, start_line],
+                        ) {
+                            tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
+                            errors += 1;
+                        }
+                    }
+
+                    tx.commit()?;
+                    Ok::<_, rusqlite::Error>(errors)
+                }).await.unwrap_or(chunk_count);
+
+                stats.chunks += chunk_count - error_count;
+                stats.errors += error_count;
+            }
+            Err(e) => {
+                tracing::error!("Batch embedding failed: {}", e);
+                stats.errors += pending_chunks.len();
+            }
+        }
+    }
+
+    // Clear the pending chunks after flush
+    pending_chunks.clear();
+    Ok(())
+}
+
+/// Flush accumulated file data (symbols, imports, calls) to database
+async fn flush_code_batch(
+    pending_batches: &mut Vec<PendingFileBatch>,
+    db: Arc<Database>,
+    project_id: Option<i64>,
+    stats: &mut IndexStats,
+) -> Result<()> {
+    if pending_batches.is_empty() {
+        return Ok(());
+    }
+
+    let batches = std::mem::take(pending_batches);
+    let total_symbols: usize = batches.iter().map(|b| b.symbols.len()).sum();
+    let total_calls: usize = batches.iter().map(|b| b.calls.len()).sum();
+    tracing::info!("Flushing {} files ({} symbols, {} calls)...", batches.len(), total_symbols, total_calls);
+
+    // Process all batches in a single transaction
+    let error_count = Database::run_blocking(db.clone(), move |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let mut errors = 0usize;
+
+        // Process each file batch
+        for batch in batches {
+            // Store symbols and capture IDs
+            let mut symbol_ranges: Vec<(String, u32, u32, i64)> = Vec::new(); // (name, start, end, id)
+            for sym in &batch.symbols {
+                if let Err(e) = tx.execute(
+                    "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        project_id,
+                        &batch.file_path,
+                        sym.name,
+                        sym.symbol_type,
+                        sym.start_line,
+                        sym.end_line,
+                        sym.signature
+                    ],
+                ) {
+                    tracing::warn!("Failed to store symbol {} ({}): {}", sym.name, batch.file_path, e);
+                    errors += 1;
+                    continue;
+                }
+                let id = tx.last_insert_rowid();
+                symbol_ranges.push((sym.name.clone(), sym.start_line, sym.end_line, id));
+            }
+
+            // Store imports
+            for import in &batch.imports {
+                if let Err(e) = tx.execute(
+                    "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
+                     VALUES (?, ?, ?, ?)",
+                    params![
+                        project_id,
+                        &batch.file_path,
+                        import.import_path,
+                        import.is_external as i32
+                    ],
+                ) {
+                    tracing::warn!("Failed to store import {} ({}): {}", import.import_path, batch.file_path, e);
+                    errors += 1;
+                }
+            }
+
+            // Store function calls for call graph
+            for call in &batch.calls {
+                // Find the caller symbol whose line range contains this call
+                let caller_id = symbol_ranges.iter()
+                    .find(|(name, start, end, _)| {
+                        name == &call.caller_name && call.call_line >= *start && call.call_line <= *end
+                    })
+                    .map(|(_, _, _, id)| *id);
+
+                if let Some(cid) = caller_id {
+                    // Try to find callee ID (may be in same file)
+                    let callee_id = symbol_ranges.iter()
+                        .find(|(name, _, _, _)| name == &call.callee_name)
+                        .map(|(_, _, _, id)| *id);
+
+                    if let Err(e) = tx.execute(
+                        "INSERT INTO call_graph (caller_id, callee_name, callee_id)
+                         VALUES (?, ?, ?)",
+                        params![cid, call.callee_name, callee_id],
+                    ) {
+                        tracing::warn!("Failed to store call {} -> {} ({}): {}", call.caller_name, call.callee_name, batch.file_path, e);
+                        errors += 1;
+                    }
+                } else {
+                    // Caller not found (could be module-level call)
+                    tracing::debug!("Skipping call {} -> {} (caller not found in {})", call.caller_name, call.callee_name, batch.file_path);
+                }
+            }
+        }
+
+        tx.commit()?;
+        Ok::<_, rusqlite::Error>(errors)
+    }).await?;
+
+    stats.symbols += total_symbols - error_count;
+    stats.errors += error_count;
+
+    // pending_batches already cleared by std::mem::take
+    Ok(())
 }
 
 /// Create a parser for a given file extension
@@ -262,77 +452,7 @@ pub async fn index_project(
     };
     const CHUNK_FLUSH_THRESHOLD: usize = 1000;
 
-    // Helper to flush accumulated chunks to database
-    async fn flush_chunks(
-        pending_chunks: &mut Vec<PendingChunk>,
-        db: Arc<Database>,
-        embeddings: Option<Arc<Embeddings>>,
-        project_id: Option<i64>,
-        stats: &mut IndexStats,
-    ) -> Result<()> {
-        if pending_chunks.is_empty() {
-            return Ok(());
-        }
 
-        if let Some(ref emb) = embeddings {
-            let chunk_count = pending_chunks.len();
-            tracing::info!("Flushing {} chunks...", chunk_count);
-
-            // Extract texts for embedding
-            let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
-
-            // Embed all at once (client handles batching internally)
-            match emb.embed_batch(&texts).await {
-                Ok(vectors) => {
-                    tracing::info!("Embedded {} chunks", vectors.len());
-
-                    // Store all embeddings (runs on blocking thread pool with transaction)
-                    let chunk_data: Vec<_> = pending_chunks
-                        .iter()
-                        .zip(vectors.iter())
-                        .map(|(chunk, embedding)| {
-                            (
-                                chunk.file_path.clone(),
-                                chunk.content.clone(),
-                                chunk.start_line,
-                                embedding_to_bytes(embedding),
-                            )
-                        })
-                        .collect();
-
-                    let error_count = Database::run_blocking(db.clone(), move |conn| {
-                        let tx = conn.unchecked_transaction()?;
-                        let mut errors = 0usize;
-
-                        for (file_path, content, start_line, embedding_bytes) in &chunk_data {
-                            if let Err(e) = tx.execute(
-                                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
-                                 VALUES (?, ?, ?, ?, ?)",
-                                params![embedding_bytes, file_path, content, project_id, start_line],
-                            ) {
-                                tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
-                                errors += 1;
-                            }
-                        }
-
-                        tx.commit()?;
-                        Ok::<_, rusqlite::Error>(errors)
-                    }).await.unwrap_or(chunk_count);
-
-                    stats.chunks += chunk_count - error_count;
-                    stats.errors += error_count;
-                }
-                Err(e) => {
-                    tracing::error!("Batch embedding failed: {}", e);
-                    stats.errors += pending_chunks.len();
-                }
-            }
-        }
-
-        // Clear the pending chunks after flush
-        pending_chunks.clear();
-        Ok(())
-    }
 
     tracing::info!("Collecting files...");
 
@@ -397,6 +517,8 @@ pub async fn index_project(
 
     // Collect chunks for batch embedding
     let mut pending_chunks: Vec<PendingChunk> = Vec::new();
+    // Collect file data for batch database insertion
+    let mut pending_batches: Vec<PendingFileBatch> = Vec::new();
 
     // Index each file (parse and store symbols, collect chunks)
     for (i, entry) in files.iter().enumerate() {
@@ -414,7 +536,6 @@ pub async fn index_project(
             Ok((symbols, imports, calls, content)) => {
                 let parse_time = start.elapsed();
                 stats.files += 1;
-                stats.symbols += symbols.len();
 
                 tracing::info!("  Parsed in {:?} ({} symbols, {} imports)", parse_time, symbols.len(), imports.len());
 
@@ -431,77 +552,21 @@ pub async fn index_project(
                     })
                     .collect();
 
-                // Store symbols, imports, and calls in database (runs on blocking thread pool)
-                let db_start = std::time::Instant::now();
-                let rel_path = relative_path.clone();
-                let call_count = calls.len();
-                Database::run_blocking(db.clone(), move |conn| {
-                    let tx = conn.unchecked_transaction()?;
+                // Accumulate file data for batch insertion
+                pending_batches.push(PendingFileBatch {
+                    file_path: relative_path.clone(),
+                    symbols,
+                    imports,
+                    calls,
+                });
 
-                    // Store symbols and capture IDs immediately (keyed by name+start_line for uniqueness)
-                    // This avoids the issue where duplicate names (nested functions, impl methods) overwrite each other
-                    let mut symbol_ranges: Vec<(String, u32, u32, i64)> = Vec::new(); // (name, start, end, id)
-
-                    for sym in &symbols {
-                        tx.execute(
-                            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            params![
-                                project_id,
-                                &rel_path,
-                                sym.name,
-                                sym.symbol_type,
-                                sym.start_line,
-                                sym.end_line,
-                                sym.signature
-                            ],
-                        )?;
-                        let id = tx.last_insert_rowid();
-                        symbol_ranges.push((sym.name.clone(), sym.start_line, sym.end_line, id));
-                    }
-
-                    // Store imports
-                    for import in &imports {
-                        tx.execute(
-                            "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
-                             VALUES (?, ?, ?, ?)",
-                            params![
-                                project_id,
-                                &rel_path,
-                                import.import_path,
-                                import.is_external as i32
-                            ],
-                        )?;
-                    }
-
-                    // Store function calls for call graph
-                    // Find caller by matching call_line to symbol's line range (handles nested functions correctly)
-                    for call in &calls {
-                        // Find the caller symbol whose line range contains this call
-                        let caller_id = symbol_ranges.iter()
-                            .find(|(name, start, end, _)| {
-                                name == &call.caller_name && call.call_line >= *start && call.call_line <= *end
-                            })
-                            .map(|(_, _, _, id)| *id);
-
-                        if let Some(cid) = caller_id {
-                            // Try to find callee ID (may be in same file)
-                            let callee_id = symbol_ranges.iter()
-                                .find(|(name, _, _, _)| name == &call.callee_name)
-                                .map(|(_, _, _, id)| *id);
-
-                            tx.execute(
-                                "INSERT INTO call_graph (caller_id, callee_name, callee_id)
-                                 VALUES (?, ?, ?)",
-                                params![cid, call.callee_name, callee_id],
-                            )?;
-                        }
-                    }
-
-                    tx.commit()?;
-                    Ok::<_, rusqlite::Error>(())
-                }).await?;
-                tracing::debug!("  DB inserts in {:?} ({} calls)", db_start.elapsed(), call_count);
+                // Check if we should flush accumulated batches
+                let total_batched_symbols: usize = pending_batches.iter().map(|b| b.symbols.len()).sum();
+                if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD || pending_batches.len() >= FILE_FLUSH_THRESHOLD {
+                    let flush_start = std::time::Instant::now();
+                    flush_code_batch(&mut pending_batches, db.clone(), project_id, &mut stats).await?;
+                    tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
+                }
 
                 // Collect chunks for batch embedding (if embeddings enabled)
                 // Note: content was already read by extract_all, no need to re-read
@@ -534,6 +599,11 @@ pub async fn index_project(
                 stats.errors += 1;
             }
         }
+    }
+
+    // Flush any remaining file batches
+    if !pending_batches.is_empty() {
+        flush_code_batch(&mut pending_batches, db.clone(), project_id, &mut stats).await?;
     }
 
     // Flush any remaining chunks

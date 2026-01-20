@@ -194,6 +194,9 @@ impl Database {
         // Add FTS5 full-text search table if missing
         schema::migrate_code_fts(&conn)?;
 
+        // Add unique constraint to imports table for deduplication
+        schema::migrate_imports_unique(&conn)?;
+
         Ok(())
     }
 
