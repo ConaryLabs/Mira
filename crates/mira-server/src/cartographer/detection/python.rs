@@ -221,7 +221,8 @@ fn parse_setup_py_name(content: &str) -> Option<String> {
         let line = line.trim();
         if line.starts_with("name") && line.contains('=') {
             if let Some(start) = line.find('"').or_else(|| line.find('\'')) {
-                let quote = line.chars().nth(start).unwrap();
+                // Safe because we found an ASCII quote character at byte position `start`
+                let quote = line.as_bytes()[start] as char;
                 let rest = &line[start + 1..];
                 if let Some(end) = rest.find(quote) {
                     return Some(rest[..end].to_string());
