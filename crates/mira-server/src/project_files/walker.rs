@@ -176,14 +176,15 @@ impl FileWalker {
         let language = self.language;
 
         if self.use_gitignore {
+            let extra_patterns = crate::config::ignore::load_project_ignore_patterns(&self.path);
             let predicate = move |name: &str| {
                 if skip_hidden && name.starts_with('.') {
                     return true;
                 }
                 if let Some(lang) = language {
-                    crate::config::ignore::should_skip_for_lang(name, lang)
+                    crate::config::ignore::should_skip_for_lang_with_patterns(name, lang, &extra_patterns)
                 } else {
-                    crate::config::ignore::should_skip(name)
+                    crate::config::ignore::should_skip_with_patterns(name, &extra_patterns)
                 }
             };
             // Use ignore::WalkBuilder for .gitignore support
@@ -209,14 +210,15 @@ impl FileWalker {
                 });
             Box::new(iter)
         } else {
+            let extra_patterns = crate::config::ignore::load_project_ignore_patterns(&self.path);
             let predicate = move |name: &str| {
                 if skip_hidden && name.starts_with('.') {
                     return true;
                 }
                 if let Some(lang) = language {
-                    crate::config::ignore::should_skip_for_lang(name, lang)
+                    crate::config::ignore::should_skip_for_lang_with_patterns(name, lang, &extra_patterns)
                 } else {
-                    crate::config::ignore::should_skip(name)
+                    crate::config::ignore::should_skip_with_patterns(name, &extra_patterns)
                 }
             };
             // Use walkdir::WalkDir for simple walking
