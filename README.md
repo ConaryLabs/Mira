@@ -169,6 +169,44 @@ Simplified schema with 19 tables + 2 vector tables:
 - `vec_memory` - Memory embeddings (1536 dimensions)
 - `vec_code` - Code chunk embeddings
 
+## Testing
+
+Mira includes comprehensive test coverage with both unit and integration tests.
+
+### Unit Tests
+- **37 unit tests** across core modules (database, indexer, search, etc.)
+- Run with `cargo test` (excludes integration tests)
+
+### Integration Tests
+- **24 integration tests** covering all MCP tool categories
+- Uses `TestContext` with in-memory SQLite database for isolation
+- Tests include:
+  - Project management (`session_start`, `set_project`, `get_project`)
+  - Memory operations (`remember`, `recall`, `forget`)
+  - Code intelligence (`search_code`, `find_callers`, `get_symbols`, `check_capability`, `index`, `summarize_codebase`)
+  - Session management (`ensure_session`, `session_history`)
+  - Task/goal tracking (`task`, `goal`)
+  - Expert configuration (`configure_expert`)
+  - Developer experience (`get_session_recap`)
+
+### Running Tests
+```bash
+# All tests (unit + integration)
+cargo test
+
+# Only integration tests
+cargo test --test integration
+
+# With verbose output
+cargo test -- --nocapture
+```
+
+### Test Architecture
+- **`TestContext`** - Implements `ToolContext` with mocked dependencies
+- **In-memory database** - Isolated SQLite instance per test
+- **No external API calls** - Embeddings and LLM clients are mocked
+- **Independent test execution** - Each test creates its own project context
+
 ## Requirements
 
 - Rust toolchain (for building)
