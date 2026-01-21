@@ -11,6 +11,7 @@
 pub mod background;
 pub mod cartographer;
 pub mod config;
+pub mod project_files;
 pub mod db;
 pub mod embeddings;
 pub mod hooks;

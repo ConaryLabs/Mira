@@ -2,10 +2,9 @@
 // Rust module detection from project structure
 
 use super::super::types::Module;
-use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
-use walkdir::WalkDir;
+use crate::project_files::walker::FileWalker;
 
 /// Detect Rust modules from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {
@@ -14,19 +13,19 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     tracing::info!("detect_rust_modules: scanning {:?}", project_path);
 
     // Find all Cargo.toml files (workspace members)
-    let cargo_tomls: Vec<_> = WalkDir::new(project_path)
-        .max_depth(3)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name() == "Cargo.toml")
-        .filter(|e| e.path() != project_path.join("Cargo.toml") || !is_workspace(e.path()))
+    let cargo_tomls: Vec<_> = FileWalker::new(project_path)
+        .max_depth(8)
+        .walk_paths()
+        .filter_map(|p| p.ok())
+        .filter(|p| p.file_name().map(|n| n == "Cargo.toml").unwrap_or(false))
+        .filter(|p| p != &project_path.join("Cargo.toml") || !is_workspace(p))
         .collect();
 
     tracing::info!("Found {} Cargo.toml files", cargo_tomls.len());
 
     for entry in cargo_tomls {
-        let crate_root = entry.path().parent().unwrap_or(project_path);
-        let crate_name = parse_crate_name(entry.path()).unwrap_or_else(|| {
+        let crate_root = entry.parent().unwrap_or(project_path);
+        let crate_name = parse_crate_name(&entry).unwrap_or_else(|| {
             crate_root
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -98,83 +97,55 @@ fn detect_modules_in_src(
 ) {
     let mut seen_dirs: HashSet<String> = HashSet::new();
 
-    for entry in WalkDir::new(src_dir)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip(&name)
-        })
-        .filter_map(|e| e.ok())
+    for path in FileWalker::new(src_dir)
+        .for_language("rust")
+        .walk_paths()
+        .filter_map(|p| p.ok())
     {
-        let path = entry.path();
-        let relative = path.strip_prefix(project_path).unwrap_or(path);
+        let relative = path.strip_prefix(project_path).unwrap_or(&path);
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-        if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        // Entry points become top-level modules
+        if file_name == "lib.rs" || file_name == "main.rs" {
+            let module_path = relative
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
 
-            // Entry points become top-level modules
-            if file_name == "lib.rs" || file_name == "main.rs" {
-                let module_path = relative
-                    .parent()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-
-                if !seen_dirs.contains(&module_path) {
-                    seen_dirs.insert(module_path.clone());
-                    modules.push(Module {
-                        id: crate_name.to_string(),
-                        name: crate_name.to_string(),
-                        path: module_path,
-                        purpose: None,
-                        exports: vec![],
-                        depends_on: vec![],
-                        symbol_count: 0,
-                        line_count: 0,
-                    });
-                }
+            if !seen_dirs.contains(&module_path) {
+                seen_dirs.insert(module_path.clone());
+                modules.push(Module {
+                    id: crate_name.to_string(),
+                    name: crate_name.to_string(),
+                    path: module_path,
+                    purpose: None,
+                    exports: vec![],
+                    depends_on: vec![],
+                    symbol_count: 0,
+                    line_count: 0,
+                });
             }
-            // mod.rs indicates a module directory
-            else if file_name == "mod.rs" {
-                if let Some(parent) = path.parent() {
-                    let module_name = parent
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
-                    let module_path = parent
-                        .strip_prefix(project_path)
-                        .unwrap_or(parent)
-                        .to_string_lossy()
-                        .to_string();
+        }
+        // mod.rs indicates a module directory
+        else if file_name == "mod.rs" {
+            if let Some(parent) = path.parent() {
+                let module_name = parent
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                let module_path = parent
+                    .strip_prefix(project_path)
+                    .unwrap_or(parent)
+                    .to_string_lossy()
+                    .to_string();
 
-                    // Create module ID: crate_name/relative_module_path
-                    let src_relative = parent.strip_prefix(src_dir).unwrap_or(parent);
-                    let module_id = if src_relative.as_os_str().is_empty() {
-                        crate_name.to_string()
-                    } else {
-                        format!("{}/{}", crate_name, src_relative.to_string_lossy())
-                    };
-
-                    if !seen_dirs.contains(&module_path) {
-                        seen_dirs.insert(module_path.clone());
-                        modules.push(Module {
-                            id: module_id,
-                            name: module_name.to_string(),
-                            path: module_path,
-                            purpose: None,
-                            exports: vec![],
-                            depends_on: vec![],
-                            symbol_count: 0,
-                            line_count: 0,
-                        });
-                    }
-                }
-            }
-            // Regular .rs files in src/ are also modules
-            else if path.parent() == Some(src_dir) && file_name != "lib.rs" && file_name != "main.rs"
-            {
-                let module_name = file_name.trim_end_matches(".rs");
-                let module_id = format!("{}/{}", crate_name, module_name);
-                let module_path = relative.to_string_lossy().to_string();
+                // Create module ID: crate_name/relative_module_path
+                let src_relative = parent.strip_prefix(src_dir).unwrap_or(parent);
+                let module_id = if src_relative.as_os_str().is_empty() {
+                    crate_name.to_string()
+                } else {
+                    format!("{}/{}", crate_name, src_relative.to_string_lossy())
+                };
 
                 if !seen_dirs.contains(&module_path) {
                     seen_dirs.insert(module_path.clone());
@@ -191,6 +162,27 @@ fn detect_modules_in_src(
                 }
             }
         }
+        // Regular .rs files in src/ are also modules
+        else if path.parent() == Some(src_dir) && file_name != "lib.rs" && file_name != "main.rs"
+        {
+            let module_name = file_name.trim_end_matches(".rs");
+            let module_id = format!("{}/{}", crate_name, module_name);
+            let module_path = relative.to_string_lossy().to_string();
+
+            if !seen_dirs.contains(&module_path) {
+                seen_dirs.insert(module_path.clone());
+                modules.push(Module {
+                    id: module_id,
+                    name: module_name.to_string(),
+                    path: module_path,
+                    purpose: None,
+                    exports: vec![],
+                    depends_on: vec![],
+                    symbol_count: 0,
+                    line_count: 0,
+                });
+            }
+        }
     }
 }
 
@@ -198,18 +190,15 @@ fn detect_modules_in_src(
 pub fn find_entry_points(project_path: &Path) -> Vec<String> {
     let mut entries = Vec::new();
 
-    for entry in WalkDir::new(project_path)
-        .max_depth(5)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip(&name)
-        })
-        .filter_map(|e| e.ok())
+    for path in FileWalker::new(project_path)
+        .for_language("rust")
+        .max_depth(8)
+        .walk_paths()
+        .filter_map(|p| p.ok())
     {
-        let name = entry.file_name().to_string_lossy();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name == "main.rs" || name == "lib.rs" {
-            if let Ok(rel) = entry.path().strip_prefix(project_path) {
+            if let Ok(rel) = path.strip_prefix(project_path) {
                 entries.push(rel.to_string_lossy().to_string());
             }
         }
@@ -241,12 +230,12 @@ pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
     let full_path = project_path.join(module_path);
 
     let mut count = 0u32;
-    for entry in WalkDir::new(&full_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    for path in FileWalker::new(&full_path)
+        .for_language("rust")
+        .walk_paths()
+        .filter_map(|p| p.ok())
     {
-        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+        if let Ok(content) = std::fs::read_to_string(&path) {
             count += content.lines().count() as u32;
         }
     }

@@ -3,16 +3,15 @@
 
 pub mod parsers;
 
-use crate::config::ignore;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
+use crate::project_files::walker::FileWalker;
 use crate::search::embedding_to_bytes;
 use anyhow::{Context, Result};
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
 use tree_sitter::Parser;
-use walkdir::WalkDir;
 
 pub use parsers::{Import, Symbol, FunctionCall};
 
@@ -570,33 +569,34 @@ pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
 }
 
 /// Collect files to index, filtering by extension and ignoring patterns
-fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<walkdir::DirEntry> {
+fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(path)
+
+    // Create a FileWalker for all supported language extensions
+    let walker = FileWalker::new(path)
         .follow_links(true)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            // Skip hidden, build outputs, dependencies, assets
-            !ignore::should_skip(&name)
-        })
-    {
-        match entry {
-            Ok(e) if e.file_type().is_file() => {
-                if matches!(
-                    e.path().extension().and_then(|ext| ext.to_str()),
-                    Some("rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "go")
-                ) {
-                    files.push(e);
-                }
+        .use_gitignore(true)
+        .skip_hidden(true)
+        .with_extension("rs")
+        .with_extension("py")
+        .with_extension("ts")
+        .with_extension("tsx")
+        .with_extension("js")
+        .with_extension("jsx")
+        .with_extension("go");
+
+    for result in walker.walk_paths() {
+        match result {
+            Ok(path) => {
+                files.push(path);
             }
-            Ok(_) => {} // Directory, skip
             Err(e) => {
                 tracing::warn!("Failed to access path during indexing: {}", e);
                 stats.errors += 1;
             }
         }
     }
+
     files
 }
 
@@ -632,7 +632,7 @@ async fn clear_existing_project_data(db: Arc<Database>, project_id: Option<i64>)
 
 /// Process files in a loop, accumulating batches and chunks, flushing when thresholds reached
 async fn process_files_loop(
-    files: Vec<walkdir::DirEntry>,
+    files: Vec<std::path::PathBuf>,
     path: &Path,
     pending_batches: &mut Vec<PendingFileBatch>,
     pending_chunks: &mut Vec<PendingChunk>,
@@ -642,8 +642,7 @@ async fn process_files_loop(
     stats: &mut IndexStats,
 ) -> Result<()> {
     // Index each file (parse and store symbols, collect chunks)
-    for (i, entry) in files.iter().enumerate() {
-        let file_path = entry.path();
+    for (i, file_path) in files.iter().enumerate() {
         let relative_path = file_path
             .strip_prefix(path)
             .unwrap_or(file_path)

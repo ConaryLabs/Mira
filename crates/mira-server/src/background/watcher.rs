@@ -89,7 +89,9 @@ impl FileWatcher {
                     if let Some(ct) = change_type {
                         for path in event.paths {
                             if Self::should_process_path(&path) {
-                                let _ = tx_clone.blocking_send((path, ct));
+                                if let Err(e) = tx_clone.blocking_send((path, ct)) {
+                                    tracing::debug!("Channel closed, ignoring file change: {}", e);
+                                }
                             }
                         }
                     }
@@ -132,7 +134,9 @@ impl FileWatcher {
                 let current_paths: HashSet<_> = projects.values().cloned().collect();
                 for path in watched_paths.clone() {
                     if !current_paths.contains(&path) {
-                        let _ = watcher.unwatch(&path);
+                        if let Err(e) = watcher.unwatch(&path) {
+                            tracing::debug!("Failed to unwatch path {:?}: {}", path, e);
+                        }
                         watched_paths.remove(&path);
                         tracing::debug!("Stopped watching {:?}", path);
                     }
@@ -254,7 +258,9 @@ impl FileWatcher {
         }
 
         // Mark project for health rescan (will run on next background cycle)
-        let _ = code_health::mark_health_scan_needed(&self.db, project_id);
+        if let Err(e) = code_health::mark_health_scan_needed(&self.db, project_id) {
+            tracing::warn!("Failed to mark project for health scan: {}", e);
+        }
 
         Ok(())
     }

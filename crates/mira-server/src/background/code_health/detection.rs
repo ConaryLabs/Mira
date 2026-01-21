@@ -3,7 +3,7 @@
 // Uses pure Rust implementation (no shell commands) for cross-platform support
 
 use crate::db::Database;
-use ignore::WalkBuilder;
+use crate::project_files::walker;
 use regex::Regex;
 use rusqlite::params;
 use std::fs;
@@ -51,34 +51,9 @@ fn is_cfg_test(line: &str) -> bool {
 }
 
 /// Walk Rust files in a project, respecting .gitignore
-fn walk_rust_files(project_path: &str) -> Vec<String> {
-    let prefix = project_path.to_string();
-    WalkBuilder::new(project_path)
-        .hidden(true) // Skip hidden files
-        .git_ignore(true) // Respect .gitignore
-        .git_exclude(true)
-        .build()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|ext| ext == "rs")
-        })
-        .filter(|entry| {
-            let path = entry.path();
-            // Skip target directory explicitly (in case .gitignore is missing)
-            !path.components().any(|c| c.as_os_str() == "target")
-        })
-        .filter_map(|entry| {
-            entry
-                .path()
-                .strip_prefix(&prefix)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        })
-        .collect()
+fn walk_rust_files(project_path: &str) -> Result<Vec<String>, String> {
+    walker::walk_rust_files(project_path)
+        .map_err(|e| e.to_string())
 }
 
 /// Scan for TODO/FIXME/HACK comments
@@ -92,7 +67,7 @@ pub fn scan_todo_comments(
 
     let mut stored = 0;
 
-    for file in walk_rust_files(project_path) {
+    for file in walk_rust_files(project_path)? {
         let full_path = Path::new(project_path).join(&file);
         let content = match fs::read_to_string(&full_path) {
             Ok(c) => c,
@@ -141,7 +116,7 @@ pub fn scan_unimplemented(
 
     let mut stored = 0;
 
-    for file in walk_rust_files(project_path) {
+    for file in walk_rust_files(project_path)? {
         let full_path = Path::new(project_path).join(&file);
         let content = match fs::read_to_string(&full_path) {
             Ok(c) => c,
@@ -321,7 +296,7 @@ pub fn scan_unwrap_usage(
 ) -> Result<usize, String> {
     let mut stored = 0;
 
-    for file in walk_rust_files(project_path) {
+    for file in walk_rust_files(project_path)? {
         // Skip test files entirely
         if file.contains("/tests/") || file.ends_with("_test.rs") {
             continue;
@@ -473,7 +448,7 @@ pub fn scan_error_handling(
 ) -> Result<usize, String> {
     let mut stored = 0;
 
-    for file in walk_rust_files(project_path) {
+    for file in walk_rust_files(project_path)? {
         // Skip test files
         if file.contains("/tests/") || file.ends_with("_test.rs") {
             continue;

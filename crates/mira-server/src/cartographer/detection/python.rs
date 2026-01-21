@@ -2,10 +2,9 @@
 // Python package/module detection from project structure
 
 use super::super::types::Module;
-use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
-use walkdir::WalkDir;
+use crate::project_files::walker::FileWalker;
 
 /// Detect Python modules from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {
@@ -19,13 +18,10 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     // Walk directory looking for packages (__init__.py) and modules (.py files)
     let mut seen_dirs: HashSet<String> = HashSet::new();
 
-    for entry in WalkDir::new(project_path)
-        .max_depth(6)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip_for_lang(&name, "python")
-        })
+    for entry in FileWalker::new(project_path)
+        .for_language("python")
+        .max_depth(8)
+        .walk_entries()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
@@ -125,13 +121,10 @@ fn detect_in_src(
     modules: &mut Vec<Module>,
     seen_dirs: &mut HashSet<String>,
 ) {
-    for entry in WalkDir::new(src_dir)
-        .max_depth(5)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip_for_lang(&name, "python")
-        })
+    for entry in FileWalker::new(src_dir)
+        .for_language("python")
+        .max_depth(8)
+        .walk_entries()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
@@ -247,17 +240,14 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
         "manage.py",
     ];
 
-    for entry in WalkDir::new(project_path)
-        .max_depth(3)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip_for_lang(&name, "python")
-        })
+    for entry in FileWalker::new(project_path)
+        .for_language("python")
+        .max_depth(8)
+        .walk_entries()
         .filter_map(|e| e.ok())
     {
-        let name = entry.file_name().to_string_lossy();
-        if candidates.contains(&name.as_ref()) {
+        let name = entry.path().file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if candidates.contains(&name) {
             if let Ok(rel) = entry.path().strip_prefix(project_path) {
                 entries.push(rel.to_string_lossy().to_string());
             }
@@ -297,12 +287,12 @@ pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
         }
     }
 
-    for entry in WalkDir::new(&full_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "py"))
+    for path in FileWalker::new(&full_path)
+        .for_language("python")
+        .walk_paths()
+        .filter_map(|p| p.ok())
     {
-        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+        if let Ok(content) = std::fs::read_to_string(&path) {
             count += content.lines().count() as u32;
         }
     }

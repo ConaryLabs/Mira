@@ -66,7 +66,9 @@ impl ToolContext for MiraServer {
 
     fn broadcast(&self, event: WsEvent) {
         if let Some(tx) = &self.ws_tx {
-            let _ = tx.send(event);
+            if let Err(e) = tx.send(event) {
+                tracing::debug!("WebSocket channel closed, ignoring broadcast: {}", e);
+            }
         }
     }
 

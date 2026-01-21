@@ -2,10 +2,9 @@
 // Go package detection from project structure
 
 use super::super::types::Module;
-use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
-use walkdir::WalkDir;
+use crate::project_files::walker::FileWalker;
 
 /// Detect Go packages from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {
@@ -18,13 +17,10 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     // Walk directory looking for Go packages (directories with .go files)
     let mut seen_dirs: HashSet<String> = HashSet::new();
 
-    for entry in WalkDir::new(project_path)
-        .max_depth(6)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip_for_lang(&name, "go")
-        })
+    for entry in FileWalker::new(project_path)
+        .for_language("go")
+        .max_depth(8)
+        .walk_entries()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
@@ -130,20 +126,17 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
     let mut entries = Vec::new();
 
     // Look for main packages (directories with main.go or package main declaration)
-    for entry in WalkDir::new(project_path)
-        .max_depth(4)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip_for_lang(&name, "go")
-        })
+    for entry in FileWalker::new(project_path)
+        .for_language("go")
+        .max_depth(8)
+        .walk_entries()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
 
         // Look for main.go or cmd/ directories
         if path.is_file() {
-            let name = entry.file_name().to_string_lossy();
+            let name = entry.path().file_name().unwrap_or_default().to_string_lossy();
             if name == "main.go" {
                 if let Ok(rel) = path.strip_prefix(project_path) {
                     entries.push(rel.to_string_lossy().to_string());

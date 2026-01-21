@@ -7,7 +7,7 @@ use anyhow::Result;
 use rusqlite::params;
 use std::collections::HashMap;
 use std::path::Path;
-use walkdir::WalkDir;
+use crate::project_files::walker::FileWalker;
 
 /// Get modules that need LLM summaries (no purpose or heuristic-only)
 pub fn get_modules_needing_summaries(
@@ -72,13 +72,13 @@ pub fn get_module_code_preview(project_path: &Path, module_path: &str) -> String
 
     // If still empty, try to find any .rs file in the directory
     if preview.is_empty() && full_path.is_dir() {
-        for entry in WalkDir::new(&full_path)
+        for path in FileWalker::new(&full_path)
+            .for_language("rust")
             .max_depth(1)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+            .walk_paths()
+            .filter_map(|p| p.ok())
         {
-            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            if let Ok(content) = std::fs::read_to_string(&path) {
                 let lines: Vec<&str> = content.lines().take(50).collect();
                 preview = lines.join("\n");
                 break;
@@ -98,12 +98,11 @@ pub fn get_module_full_code(project_path: &Path, module_path: &str, max_bytes: u
 
     // Collect all .rs files in the module
     let mut rs_files: Vec<_> = if full_path.is_dir() {
-        WalkDir::new(&full_path)
-            .max_depth(2) // Include immediate subdirectories
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
-            .map(|e| e.path().to_path_buf())
+        FileWalker::new(&full_path)
+            .for_language("rust")
+            .max_depth(2)
+            .walk_paths()
+            .filter_map(|p| p.ok())
             .collect()
     } else if full_path.extension().is_some_and(|e| e == "rs") && full_path.exists() {
         vec![full_path.clone()]

@@ -108,7 +108,9 @@ pub async fn session_start<C: ToolContext>(
     }
 
     // Mark that a session occurred (clears briefing for next time)
-    let _ = db.mark_session_for_briefing(project_id);
+    if let Err(e) = db.mark_session_for_briefing(project_id) {
+        tracing::warn!("Failed to mark session for briefing: {}", e);
+    }
 
     // Show recent sessions (skip current, show last 3)
     let recent_sessions = db
@@ -311,14 +313,16 @@ fn gather_system_context(db: &Database) {
     // Store as memory with key for upsert
     if !context_parts.is_empty() {
         let content = context_parts.join("\n");
-        let _ = db.store_memory(
+        if let Err(e) = db.store_memory(
             None, // global, not project-specific
             Some("system_context"),
             &content,
             "context",
             Some("system"),
             1.0,
-        );
+        ) {
+            tracing::warn!("Failed to store system context memory: {}", e);
+        }
     }
 }
 

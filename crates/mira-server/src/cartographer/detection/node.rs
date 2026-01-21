@@ -2,10 +2,9 @@
 // Node.js/TypeScript module detection from project structure
 
 use super::super::types::Module;
-use crate::config::ignore;
 use std::collections::HashSet;
 use std::path::Path;
-use walkdir::WalkDir;
+use crate::project_files::walker::FileWalker;
 
 /// Detect Node.js/TypeScript modules from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {
@@ -53,13 +52,10 @@ fn detect_in_package(
         package_path.to_path_buf()
     };
 
-    for entry in WalkDir::new(&search_root)
-        .max_depth(5)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !ignore::should_skip_for_lang(&name, "node")
-        })
+    for entry in FileWalker::new(&search_root)
+        .for_language("node")
+        .max_depth(8)
+        .walk_entries()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
@@ -316,12 +312,13 @@ pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
         }
     }
 
-    for entry in WalkDir::new(&full_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| is_source_file(e.path()))
+    for path in FileWalker::new(&full_path)
+        .for_language("node")
+        .walk_paths()
+        .filter_map(|p| p.ok())
+        .filter(|p| is_source_file(p))
     {
-        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+        if let Ok(content) = std::fs::read_to_string(&path) {
             count += content.lines().count() as u32;
         }
     }
