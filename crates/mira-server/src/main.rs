@@ -106,6 +106,8 @@ enum HookAction {
     SessionStart,
     /// Handle PreCompact hooks - preserve context before summarization
     PreCompact,
+    /// Handle UserPromptSubmit hooks - inject proactive context
+    UserPrompt,
     /// Legacy PostToolUse hook (no-op for compatibility)
     Posttool,
     /// Legacy PreToolUse hook (no-op for compatibility)
@@ -445,6 +447,9 @@ async fn main() -> Result<()> {
             }
             HookAction::PreCompact => {
                 mira::hooks::precompact::run().await?;
+            }
+            HookAction::UserPrompt => {
+                mira::hooks::user_prompt::run().await?;
             }
             HookAction::Posttool | HookAction::Pretool => {
                 // Legacy no-op hooks for compatibility

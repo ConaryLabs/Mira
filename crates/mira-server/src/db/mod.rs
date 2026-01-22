@@ -6,6 +6,8 @@ mod config;
 pub mod documentation;
 mod embeddings;
 mod memory;
+#[cfg(test)]
+mod memory_tests;
 pub mod pool;
 mod project;
 mod reviews;

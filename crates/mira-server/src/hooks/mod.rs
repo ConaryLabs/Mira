@@ -4,6 +4,7 @@
 pub mod permission;
 pub mod precompact;
 pub mod session;
+pub mod user_prompt;
 
 use anyhow::Result;
 
