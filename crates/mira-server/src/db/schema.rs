@@ -446,13 +446,13 @@ pub fn migrate_memory_facts_evidence_tracking(conn: &Connection) -> Result<()> {
             "UPDATE memory_facts SET status = 'confirmed' WHERE confidence >= 0.8",
             [],
         )?;
-
-        // Create index for status-based queries
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_facts(status)",
-            [],
-        )?;
     }
+
+    // Create index for status-based queries (runs for both new and migrated databases)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_facts(status)",
+        [],
+    )?;
 
     Ok(())
 }
@@ -536,7 +536,7 @@ CREATE TABLE IF NOT EXISTS memory_facts (
 CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
 CREATE INDEX IF NOT EXISTS idx_memory_key ON memory_facts(key);
 CREATE INDEX IF NOT EXISTS idx_memory_no_embedding ON memory_facts(has_embedding) WHERE has_embedding = 0;
-CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_facts(status);
+-- Note: idx_memory_status is created in migrate_memory_facts_evidence_tracking() for compatibility with existing databases
 
 CREATE TABLE IF NOT EXISTS corrections (
     id INTEGER PRIMARY KEY,
