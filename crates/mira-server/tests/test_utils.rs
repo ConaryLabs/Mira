@@ -1,6 +1,6 @@
 //! Test utilities for Mira integration tests
 
-use mira::{db::Database, llm::ProviderFactory, embeddings::Embeddings, llm::DeepSeekClient, background::watcher::WatcherHandle};
+use mira::{db::Database, db::pool::DatabasePool, llm::ProviderFactory, embeddings::Embeddings, llm::DeepSeekClient, background::watcher::WatcherHandle};
 use mira_types::{ProjectContext, WsEvent};
 use std::sync::Arc;
 use tokio::sync::{RwLock, oneshot};
@@ -11,6 +11,7 @@ use uuid::Uuid;
 /// Test context that implements ToolContext for integration testing
 pub struct TestContext {
     db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     llm_factory: Arc<ProviderFactory>,
     project_state: Arc<RwLock<Option<ProjectContext>>>,
     session_state: Arc<RwLock<Option<String>>>,
@@ -19,15 +20,23 @@ pub struct TestContext {
 #[allow(dead_code)]
 impl TestContext {
     /// Create a new test context with in-memory database
-    pub fn new() -> Self {
-        // Create in-memory database for tests
-        let db = Arc::new(Database::open_in_memory().expect("Failed to create in-memory database"));
+    pub async fn new() -> Self {
+        // Create pool first (it generates the shared memory URI)
+        let pool = Arc::new(DatabasePool::open_in_memory().await.expect("Failed to create in-memory pool"));
+
+        // Create legacy Database sharing the same in-memory database via the URI
+        let db = Arc::new(
+            Database::open_in_memory_shared(
+                pool.memory_uri().expect("Pool should have memory URI")
+            ).expect("Failed to create shared in-memory database")
+        );
 
         // Create LLM factory (will have no clients since no API keys are set in test env)
         let llm_factory = Arc::new(ProviderFactory::new());
 
         Self {
             db,
+            pool,
             llm_factory,
             project_state: Arc::new(RwLock::new(None)),
             session_state: Arc::new(RwLock::new(None)),
@@ -59,6 +68,10 @@ impl TestContext {
 impl mira::tools::core::ToolContext for TestContext {
     fn db(&self) -> &Arc<Database> {
         &self.db
+    }
+
+    fn pool(&self) -> &Arc<DatabasePool> {
+        &self.pool
     }
 
     fn embeddings(&self) -> Option<&Arc<Embeddings>> {

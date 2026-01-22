@@ -77,9 +77,10 @@ where
     // Query database for functions to analyze
     let db_clone = db.clone();
     let project_path_owned = project_path.to_string();
-    let functions = Database::run_blocking(db_clone, move |conn| {
-        query_fn(conn, project_id, &project_path_owned)
-    }).await?;
+    let functions = tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        query_fn(&conn, project_id, &project_path_owned)
+    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
 
     if functions.is_empty() {
         return Ok(0);

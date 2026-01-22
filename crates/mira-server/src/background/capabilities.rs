@@ -19,9 +19,10 @@ pub async fn process_capabilities(
 ) -> Result<usize, String> {
     // Get projects that need capability scanning (run on blocking thread)
     let db_clone = db.clone();
-    let projects = Database::run_blocking(db_clone, |conn| {
-        get_projects_needing_scan(conn)
-    }).await?;
+    let projects = tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        get_projects_needing_scan(&conn)
+    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
     if !projects.is_empty() {
         tracing::info!("Capabilities: found {} projects needing scan", projects.len());
     }
@@ -320,9 +321,10 @@ async fn parse_and_store_capabilities(
 
     // Clear old capabilities for this project (run on blocking thread)
     let db_clone = db.clone();
-    Database::run_blocking(db_clone, move |conn| {
-        clear_old_capabilities(conn, project_id)
-    }).await?;
+    tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        clear_old_capabilities(&conn, project_id)
+    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
 
     let mut in_capabilities = false;
     let mut capability_index = 0;
@@ -364,9 +366,10 @@ async fn parse_and_store_capabilities(
                 if let Ok(embedding) = emb_client.embed(content).await {
                     let db_clone = db.clone();
                     let content_owned = content.to_string();
-                    Database::run_blocking(db_clone, move |conn| {
-                        store_embedding(conn, id, &content_owned, &embedding)
-                    }).await?;
+                    tokio::task::spawn_blocking(move || {
+                        let conn = db_clone.conn();
+                        store_embedding(&conn, id, &content_owned, &embedding)
+                    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
                 }
             }
 

@@ -8,51 +8,42 @@ use super::Database;
 
 impl Database {
     /// Get or create project by path, returns (id, name)
+    ///
+    /// Uses UPSERT pattern (INSERT ... ON CONFLICT) to be safe under concurrent access.
+    /// If a name is stored, returns it. Otherwise, auto-detects from project files.
     pub fn get_or_create_project(&self, path: &str, name: Option<&str>) -> Result<(i64, Option<String>)> {
         let conn = self.conn();
 
-        // Try to find existing with its stored name
-        let existing: Option<(i64, Option<String>)> = conn
-            .query_row(
-                "SELECT id, name FROM projects WHERE path = ?",
-                [path],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
+        // UPSERT: insert or get existing.
+        // COALESCE(projects.name, excluded.name) keeps existing name if present,
+        // otherwise uses the provided name.
+        let (id, stored_name): (i64, Option<String>) = conn.query_row(
+            "INSERT INTO projects (path, name) VALUES (?, ?)
+             ON CONFLICT(path) DO UPDATE SET
+                 name = COALESCE(projects.name, excluded.name),
+                 created_at = projects.created_at
+             RETURNING id, name",
+            params![path, name],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
 
-        if let Some((id, stored_name)) = existing {
-            // Return stored name if we have one
-            if stored_name.is_some() {
-                return Ok((id, stored_name));
-            }
-
-            // No stored name - use caller's name or auto-detect
-            let final_name = name.map(|s| s.to_string()).or_else(|| {
-                Self::detect_project_name(path)
-            });
-
-            // Update the database with the detected name
-            if final_name.is_some() {
-                conn.execute(
-                    "UPDATE projects SET name = ? WHERE id = ?",
-                    params![&final_name, id],
-                )?;
-            }
-
-            return Ok((id, final_name));
+        // If we have a name (either stored or just provided), return it
+        if stored_name.is_some() {
+            return Ok((id, stored_name));
         }
 
-        // Auto-detect name if not provided
-        let detected_name = name.map(|s| s.to_string()).or_else(|| {
-            Self::detect_project_name(path)
-        });
+        // Auto-detect name from project files (Cargo.toml, package.json, etc.)
+        let detected_name = Self::detect_project_name(path);
 
-        // Create new
-        conn.execute(
-            "INSERT INTO projects (path, name) VALUES (?, ?)",
-            params![path, detected_name],
-        )?;
-        Ok((conn.last_insert_rowid(), detected_name))
+        if detected_name.is_some() {
+            // Update with detected name (idempotent, safe to race)
+            conn.execute(
+                "UPDATE projects SET name = ? WHERE id = ?",
+                params![&detected_name, id],
+            )?;
+        }
+
+        Ok((id, detected_name))
     }
 
     /// Auto-detect project name from path

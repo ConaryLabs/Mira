@@ -79,7 +79,8 @@ async fn store_chunk_embeddings(
     chunk_data: Vec<(String, String, usize, Vec<u8>)>,
     project_id: Option<i64>,
 ) -> Result<usize, rusqlite::Error> {
-    Database::run_blocking(db, move |conn| {
+    tokio::task::spawn_blocking(move || {
+        let conn = db.conn();
         let tx = conn.unchecked_transaction()?;
         let mut errors = 0usize;
 
@@ -96,7 +97,7 @@ async fn store_chunk_embeddings(
 
         tx.commit()?;
         Ok(errors)
-    }).await
+    }).await.expect("store_chunk_embeddings spawn_blocking panicked")
 }
 
 /// Flush accumulated chunks to database and generate embeddings
@@ -264,7 +265,8 @@ async fn flush_code_batch(
     tracing::info!("Flushing {} files ({} symbols, {} calls)...", batches.len(), total_symbols, total_calls);
 
     // Process all batches in a single transaction
-    let error_count = Database::run_blocking(db.clone(), move |conn| {
+    let error_count = tokio::task::spawn_blocking(move || {
+        let conn = db.conn();
         let tx = conn.unchecked_transaction()?;
         let mut total_errors = 0usize;
 
@@ -291,7 +293,7 @@ async fn flush_code_batch(
 
         tx.commit()?;
         Ok::<_, rusqlite::Error>(total_errors)
-    }).await?;
+    }).await.expect("flush_code_batch spawn_blocking panicked")?;
 
     stats.symbols += total_symbols - error_count;
     stats.errors += error_count;
@@ -603,7 +605,8 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
 /// Clear existing data for a project from all relevant tables
 async fn clear_existing_project_data(db: Arc<Database>, project_id: Option<i64>) -> Result<()> {
     tracing::info!("Clearing existing data...");
-    Database::run_blocking(db, move |conn| {
+    tokio::task::spawn_blocking(move || {
+        let conn = db.conn();
         // Delete call_graph first (references code_symbols)
         conn.execute(
             "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
@@ -626,7 +629,7 @@ async fn clear_existing_project_data(db: Arc<Database>, project_id: Option<i64>)
             params![project_id],
         )?;
         Ok::<_, rusqlite::Error>(())
-    }).await?;
+    }).await.expect("clear_existing_project_data spawn_blocking panicked")?;
     Ok(())
 }
 

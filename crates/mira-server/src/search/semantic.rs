@@ -57,7 +57,8 @@ pub async fn semantic_search(
 
     // Run vector search on blocking thread pool to avoid blocking tokio
     let db_clone = db.clone();
-    Database::run_blocking(db_clone, move |conn| {
+    tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT file_path, chunk_content, vec_distance_cosine(embedding, ?2) as distance, start_line
@@ -85,6 +86,7 @@ pub async fn semantic_search(
         Ok(results)
     })
     .await
+    .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {}", e))?
 }
 
 // ============================================================================
@@ -301,9 +303,10 @@ pub async fn hybrid_search(
     let query_for_keyword = query.to_string();
     let project_path_for_keyword = project_path.map(|s| s.to_string());
     let keyword_future = async move {
-        Database::run_blocking(db_for_keyword, move |conn| {
+        tokio::task::spawn_blocking(move || {
+            let conn = db_for_keyword.conn();
             keyword_search(
-                conn,
+                &conn,
                 &query_for_keyword,
                 project_id,
                 project_path_for_keyword.as_deref(),
@@ -311,6 +314,7 @@ pub async fn hybrid_search(
             )
         })
         .await
+        .expect("keyword search spawn_blocking panicked")
     };
 
     // Run searches in parallel

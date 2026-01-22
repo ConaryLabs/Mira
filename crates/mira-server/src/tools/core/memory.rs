@@ -1,6 +1,5 @@
 //! Unified memory tools (recall, remember, forget)
 
-use crate::db::Database;
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
@@ -20,82 +19,86 @@ pub async fn remember<C: ToolContext>(
     let fact_type = fact_type.unwrap_or_else(|| "general".to_string());
     let confidence = confidence.unwrap_or(0.5); // Start with lower confidence for evidence-based system
 
-    // Store in SQL with session tracking (run on blocking thread pool to avoid blocking tokio)
-    let db_clone = ctx.db().clone();
+    // Store in SQL with session tracking via connection pool
     let content_for_store = content.clone();
     let key_for_store = key.clone();
     let category_for_store = category.clone();
     let fact_type_for_store = fact_type.clone();
     let session_id_for_store = session_id.clone();
-    let id: i64 = Database::run_blocking(db_clone, move |conn| -> Result<i64, String> {
-        use rusqlite::params;
+    let id: i64 = ctx
+        .pool()
+        .interact(move |conn| {
+            use rusqlite::params;
 
-        // Upsert by key if provided
-        if let Some(ref k) = key_for_store {
-            let existing: Option<(i64, Option<String>)> = conn
-                .query_row(
-                    "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
-                    params![k, project_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .ok();
+            // Upsert by key if provided
+            if let Some(ref k) = key_for_store {
+                let existing: Option<(i64, Option<String>)> = conn
+                    .query_row(
+                        "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
+                        params![k, project_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .ok();
 
-            if let Some((id, last_session)) = existing {
-                let is_new_session = session_id_for_store
-                    .as_ref()
-                    .map(|s| last_session.as_deref() != Some(s))
-                    .unwrap_or(false);
+                if let Some((id, last_session)) = existing {
+                    let is_new_session = session_id_for_store
+                        .as_ref()
+                        .map(|s| last_session.as_deref() != Some(s))
+                        .unwrap_or(false);
 
-                if is_new_session {
-                    conn.execute(
-                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
-                         session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        params![content_for_store, fact_type_for_store, category_for_store, confidence, session_id_for_store, id],
-                    ).map_err(|e| e.to_string())?;
-                    // Check for promotion
-                    conn.execute(
-                        "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
-                         WHERE id = ? AND status = 'candidate' AND session_count >= 3",
-                        [id],
-                    ).map_err(|e| e.to_string())?;
-                } else {
-                    conn.execute(
-                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        params![content_for_store, fact_type_for_store, category_for_store, confidence, id],
-                    ).map_err(|e| e.to_string())?;
+                    if is_new_session {
+                        conn.execute(
+                            "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+                             session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            params![content_for_store, fact_type_for_store, category_for_store, confidence, session_id_for_store, id],
+                        )?;
+                        // Check for promotion
+                        conn.execute(
+                            "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
+                             WHERE id = ? AND status = 'candidate' AND session_count >= 3",
+                            [id],
+                        )?;
+                    } else {
+                        conn.execute(
+                            "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            params![content_for_store, fact_type_for_store, category_for_store, confidence, id],
+                        )?;
+                    }
+                    return Ok(id);
                 }
-                return Ok(id);
             }
-        }
 
-        // New memory - starts as candidate with low confidence
-        let initial_confidence = if confidence < 1.0 { confidence } else { 0.5 };
-        conn.execute(
-            "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-             session_count, first_session_id, last_session_id, status)
-             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
-            params![project_id, key_for_store, content_for_store, fact_type_for_store, category_for_store, initial_confidence, session_id_for_store, session_id_for_store],
-        ).map_err(|e| e.to_string())?;
-        Ok(conn.last_insert_rowid())
-    })
-    .await?;
+            // New memory - starts as candidate with low confidence
+            let initial_confidence = if confidence < 1.0 { confidence } else { 0.5 };
+            conn.execute(
+                "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
+                 session_count, first_session_id, last_session_id, status)
+                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
+                params![project_id, key_for_store, content_for_store, fact_type_for_store, category_for_store, initial_confidence, session_id_for_store, session_id_for_store],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Store embedding if available
     if let Some(embeddings) = ctx.embeddings() {
         match embeddings.embed(&content).await {
             Ok(embedding) => {
-                // Insert into vec_memory on blocking thread pool
-                let db_clone = ctx.db().clone();
+                // Insert into vec_memory via connection pool
                 let embedding_bytes = embedding_to_bytes(&embedding);
                 let content_clone = content.clone();
-                let result = crate::db::Database::run_blocking(db_clone, move |conn| {
-                    use rusqlite::params;
-                    conn.execute(
-                        "INSERT INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
-                        params![id, embedding_bytes, id, &content_clone],
-                    )
-                })
-                .await;
+                let result = ctx
+                    .pool()
+                    .interact(move |conn| {
+                        use rusqlite::params;
+                        conn.execute(
+                            "INSERT INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
+                            params![id, embedding_bytes, id, &content_clone],
+                        )?;
+                        Ok(())
+                    })
+                    .await;
                 if let Err(e) = result {
                     tracing::warn!("Failed to store embedding: {}", e);
                 }
@@ -133,51 +136,51 @@ pub async fn recall<C: ToolContext>(
         if let Ok(query_embedding) = embeddings.embed(&query).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
 
-            // Run vector search on blocking thread pool
-            let db_clone = ctx.db().clone();
-            let results: Result<Vec<(i64, String, f32)>, String> =
-                crate::db::Database::run_blocking(db_clone, move |conn| {
+            // Run vector search via connection pool
+            let results: Result<Vec<(i64, String, f32)>, String> = ctx
+                .pool()
+                .interact(move |conn| {
                     use rusqlite::params;
-                    let mut stmt = conn
-                        .prepare(
-                            "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
-                             FROM vec_memory v
-                             JOIN memory_facts f ON v.fact_id = f.id
-                             WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-                             ORDER BY distance
-                             LIMIT ?3",
-                        )
-                        .map_err(|e| e.to_string())?;
+                    let mut stmt = conn.prepare(
+                        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
+                         FROM vec_memory v
+                         JOIN memory_facts f ON v.fact_id = f.id
+                         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+                         ORDER BY distance
+                         LIMIT ?3",
+                    )?;
 
                     let results: Vec<(i64, String, f32)> = stmt
                         .query_map(params![embedding_bytes, project_id, limit as i64], |row| {
                             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                        })
-                        .map_err(|e| e.to_string())?
+                        })?
                         .filter_map(|r| r.ok())
                         .collect();
 
                     Ok(results)
                 })
-                .await;
+                .await
+                .map_err(|e| e.to_string());
 
             if let Ok(results) = results {
                 if !results.is_empty() {
-                    // Record memory access for evidence-based tracking (batch in run_blocking)
+                    // Record memory access for evidence-based tracking
                     if let Some(ref sid) = session_id {
                         let ids: Vec<i64> = results.iter().map(|(id, _, _)| *id).collect();
-                        let db_clone = ctx.db().clone();
+                        let pool_clone = ctx.pool().clone();
                         let sid_clone = sid.clone();
                         // Fire and forget - don't block on this
                         tokio::spawn(async move {
-                            let _ = Database::run_blocking(db_clone, move |conn| {
-                                for id in ids {
-                                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
-                                        tracing::debug!("Failed to record memory access: {}", e);
+                            let _ = pool_clone
+                                .interact(move |conn| {
+                                    for id in ids {
+                                        if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
+                                            tracing::debug!("Failed to record memory access: {}", e);
+                                        }
                                     }
-                                }
-                            })
-                            .await;
+                                    Ok::<_, anyhow::Error>(())
+                                })
+                                .await;
                         });
                     }
 
@@ -199,34 +202,38 @@ pub async fn recall<C: ToolContext>(
         }
     }
 
-    // Fall back to SQL search (run on blocking thread pool)
-    let db_clone = ctx.db().clone();
+    // Fall back to SQL search via connection pool
     let query_clone = query.clone();
-    let results: Vec<MemoryFact> = Database::run_blocking(db_clone, move |conn| {
-        search_memories_sync(conn, project_id, &query_clone, limit)
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let results: Vec<MemoryFact> = ctx
+        .pool()
+        .interact(move |conn| {
+            search_memories_sync(conn, project_id, &query_clone, limit)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if results.is_empty() {
         return Ok(format!("{}No memories found.", context_header));
     }
 
-    // Record memory access for evidence-based tracking (batch in run_blocking)
+    // Record memory access for evidence-based tracking
     if let Some(ref sid) = session_id {
         let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
-        let db_clone = ctx.db().clone();
+        let pool_clone = ctx.pool().clone();
         let sid_clone = sid.clone();
         // Fire and forget - don't block on this
         tokio::spawn(async move {
-            let _ = Database::run_blocking(db_clone, move |conn| {
-                for id in ids {
-                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
-                        tracing::debug!("Failed to record memory access: {}", e);
+            let _ = pool_clone
+                .interact(move |conn| {
+                    for id in ids {
+                        if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
+                            tracing::debug!("Failed to record memory access: {}", e);
+                        }
                     }
-                }
-            })
-            .await;
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await;
         });
     }
 
@@ -345,18 +352,19 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, Strin
         return Err("Invalid memory ID: must be positive".to_string());
     }
 
-    // Delete from both SQL and vector table on blocking thread pool
-    let db_clone = ctx.db().clone();
-    let deleted = crate::db::Database::run_blocking(db_clone, move |conn| -> Result<bool, rusqlite::Error> {
-        use rusqlite::params;
-        // Delete from vector table first
-        conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", params![id])?;
-        // Delete from facts table
-        let deleted = conn.execute("DELETE FROM memory_facts WHERE id = ?", params![id])? > 0;
-        Ok(deleted)
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    // Delete from both SQL and vector table via connection pool
+    let deleted = ctx
+        .pool()
+        .interact(move |conn| {
+            use rusqlite::params;
+            // Delete from vector table first
+            conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", params![id])?;
+            // Delete from facts table
+            let deleted = conn.execute("DELETE FROM memory_facts WHERE id = ?", params![id])? > 0;
+            Ok(deleted)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if deleted {
         Ok(format!("Memory {} deleted.", id))

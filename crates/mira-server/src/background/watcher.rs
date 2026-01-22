@@ -268,7 +268,9 @@ impl FileWatcher {
     /// Delete all data associated with a file (runs on blocking thread pool)
     async fn delete_file_data(&self, project_id: i64, file_path: &str) -> Result<(), String> {
         let file_path = file_path.to_string();
-        Database::run_blocking(self.db.clone(), move |conn| {
+        let db_clone = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db_clone.conn();
             // Delete symbols
             conn.execute(
                 "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
@@ -289,7 +291,7 @@ impl FileWatcher {
 
             tracing::debug!("Deleted data for file {} in project {}", file_path, project_id);
             Ok::<_, rusqlite::Error>(())
-        }).await.map_err(|e| e.to_string())
+        }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?.map_err(|e| e.to_string())
     }
 
     /// Update a file (re-parse and queue embeddings) - runs DB ops on blocking thread pool
@@ -322,7 +324,9 @@ impl FileWatcher {
         let relative_path_for_db = relative_path.clone();
         let symbol_count = parse_result.symbols.len();
         let chunk_count = parse_result.chunks.len();
-        Database::run_blocking(self.db.clone(), move |conn| {
+        let db_clone = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db_clone.conn();
             let relative_path = relative_path_for_db;
             // Use a transaction for batch inserts (much faster)
             let tx = conn.unchecked_transaction()?;
@@ -364,7 +368,7 @@ impl FileWatcher {
 
             tx.commit()?;
             Ok::<_, rusqlite::Error>(())
-        }).await.map_err(|e| e.to_string())?;
+        }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?.map_err(|e| e.to_string())?;
 
         // Embeddings queued in pending_embeddings - background worker will process
 

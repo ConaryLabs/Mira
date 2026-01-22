@@ -11,7 +11,7 @@ use mira::tools::core::{ToolContext, session_start, set_project, get_project, re
 
 #[tokio::test]
 async fn test_session_start_basic() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // Test session_start with a project path
     let project_path = "/tmp/test_project".to_string();
@@ -43,7 +43,7 @@ async fn test_session_start_basic() {
 
 #[tokio::test]
 async fn test_set_project_get_project() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // Test set_project
     let project_path = "/tmp/another_project".to_string();
@@ -71,7 +71,7 @@ async fn test_set_project_get_project() {
 
 #[tokio::test]
 async fn test_session_start_with_existing_session_id() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // Provide a custom session ID
     let custom_session_id = "test-session-123".to_string();
@@ -88,7 +88,7 @@ async fn test_session_start_with_existing_session_id() {
 
 #[tokio::test]
 async fn test_session_start_twice_different_projects() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // First session_start
     let result1 = session_start(&ctx, "/tmp/project1".to_string(), Some("Project 1".to_string()), None).await;
@@ -114,7 +114,7 @@ async fn test_session_start_twice_different_projects() {
 
 #[tokio::test]
 async fn test_remember_basic() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // Need a project for memory operations
     let project_path = "/tmp/test_memory_project".to_string();
@@ -151,7 +151,7 @@ async fn test_remember_basic() {
 
 #[tokio::test]
 async fn test_remember_with_key() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_memory_key".to_string();
     session_start(&ctx, project_path.clone(), Some("Memory Key Test".to_string()), None)
@@ -198,7 +198,7 @@ async fn test_remember_with_key() {
 
 #[tokio::test]
 async fn test_forget_invalid_id() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // Forget with negative ID
     let result = forget(&ctx, "-5".to_string()).await;
@@ -215,7 +215,7 @@ async fn test_forget_invalid_id() {
 
 #[tokio::test]
 async fn test_search_code_empty() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_code_search".to_string();
     session_start(&ctx, project_path.clone(), Some("Code Search Test".to_string()), None)
@@ -230,7 +230,7 @@ async fn test_search_code_empty() {
 
 #[tokio::test]
 async fn test_find_function_callers_empty() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_callers".to_string();
     session_start(&ctx, project_path.clone(), Some("Callers Test".to_string()), None)
@@ -245,7 +245,7 @@ async fn test_find_function_callers_empty() {
 
 #[tokio::test]
 async fn test_find_function_callees_empty() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_callees".to_string();
     session_start(&ctx, project_path.clone(), Some("Callees Test".to_string()), None)
@@ -260,7 +260,7 @@ async fn test_find_function_callees_empty() {
 
 #[tokio::test]
 async fn test_check_capability_empty() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_capability".to_string();
     session_start(&ctx, project_path.clone(), Some("Capability Test".to_string()), None)
@@ -275,7 +275,7 @@ async fn test_check_capability_empty() {
 
 #[tokio::test]
 async fn test_index_status() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_index".to_string();
     session_start(&ctx, project_path.clone(), Some("Index Test".to_string()), None)
@@ -330,7 +330,7 @@ impl Point {
 
 #[tokio::test]
 async fn test_summarize_codebase_no_deepseek() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_summarize".to_string();
     session_start(&ctx, project_path.clone(), Some("Summarize Test".to_string()), None)
@@ -346,7 +346,7 @@ async fn test_summarize_codebase_no_deepseek() {
 
 #[tokio::test]
 async fn test_ensure_session() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // No session initially
     let session_id = ctx.get_session_id().await;
@@ -365,7 +365,7 @@ async fn test_ensure_session() {
 
 #[tokio::test]
 async fn test_session_history_current() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     // No active session
     let result = session_history(&ctx, "current".to_string(), None, None).await;
@@ -387,7 +387,7 @@ async fn test_session_history_current() {
 
 #[tokio::test]
 async fn test_session_history_list_sessions() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_list_sessions".to_string();
     session_start(&ctx, project_path.clone(), Some("List Sessions Test".to_string()), None)
@@ -404,7 +404,7 @@ async fn test_session_history_list_sessions() {
 
 #[tokio::test]
 async fn test_task_create_and_list() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_tasks".to_string();
     session_start(&ctx, project_path.clone(), Some("Task Test".to_string()), None)
@@ -452,7 +452,7 @@ async fn test_task_create_and_list() {
 
 #[tokio::test]
 async fn test_task_update_and_complete() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_tasks_update".to_string();
     session_start(&ctx, project_path.clone(), Some("Task Update Test".to_string()), None)
@@ -526,7 +526,7 @@ async fn test_task_update_and_complete() {
 
 #[tokio::test]
 async fn test_goal_create_and_list() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_goals".to_string();
     session_start(&ctx, project_path.clone(), Some("Goal Test".to_string()), None)
@@ -576,7 +576,7 @@ async fn test_goal_create_and_list() {
 
 #[tokio::test]
 async fn test_configure_expert_providers() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_expert".to_string();
     session_start(&ctx, project_path.clone(), Some("Expert Test".to_string()), None)
@@ -593,7 +593,7 @@ async fn test_configure_expert_providers() {
 
 #[tokio::test]
 async fn test_configure_expert_list() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_expert_list".to_string();
     session_start(&ctx, project_path.clone(), Some("Expert List Test".to_string()), None)
@@ -609,7 +609,7 @@ async fn test_configure_expert_list() {
 
 #[tokio::test]
 async fn test_configure_expert_set_get_delete() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_expert_crud".to_string();
     session_start(&ctx, project_path.clone(), Some("Expert CRUD Test".to_string()), None)
@@ -663,7 +663,7 @@ async fn test_configure_expert_set_get_delete() {
 
 #[tokio::test]
 async fn test_get_session_recap() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_recap".to_string();
     session_start(&ctx, project_path.clone(), Some("Recap Test".to_string()), None)
@@ -676,4 +676,129 @@ async fn test_get_session_recap() {
     let output = result.unwrap();
     // Either has recap or says no recap
     assert!(output.contains("recap") || output.contains("No session recap"), "Output: {}", output);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Pool Behavior Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_pool_concurrent_access() {
+    let ctx = TestContext::new().await;
+
+    // Set up a project first
+    let project_path = "/tmp/test_pool_concurrent".to_string();
+    session_start(&ctx, project_path.clone(), Some("Pool Test".to_string()), None)
+        .await
+        .expect("session_start failed");
+
+    // Run multiple concurrent memory operations
+    let futures: Vec<_> = (0..5)
+        .map(|i| {
+            let ctx_ref = &ctx;
+            async move {
+                remember(
+                    ctx_ref,
+                    format!("Concurrent memory {}", i),
+                    Some(format!("concurrent_key_{}", i)),
+                    Some("general".to_string()),
+                    None,
+                    Some(0.8),
+                )
+                .await
+            }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    // All should succeed
+    for (i, result) in results.iter().enumerate() {
+        assert!(
+            result.is_ok(),
+            "Concurrent remember {} failed: {:?}",
+            i,
+            result.as_ref().err()
+        );
+    }
+
+    // Verify all memories were stored
+    let recall_result = recall(&ctx, "Concurrent memory".to_string(), Some(10), None, None).await;
+    assert!(recall_result.is_ok(), "recall failed: {:?}", recall_result.err());
+    let output = recall_result.unwrap();
+    assert!(output.contains("memories"), "Should find memories: {}", output);
+}
+
+#[tokio::test]
+async fn test_pool_and_database_share_state() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    // Create a project using pool (via session_start)
+    let project_path = "/tmp/test_pool_share".to_string();
+    session_start(&ctx, project_path.clone(), Some("Share Test".to_string()), None)
+        .await
+        .expect("session_start failed");
+
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Verify project exists via legacy Database
+    let db = ctx.db();
+    let conn = db.conn();
+    let project_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM projects WHERE id = ?",
+            [project_id],
+            |_row| Ok(true),
+        )
+        .unwrap_or(false);
+
+    assert!(project_exists, "Project created via pool should be visible via legacy Database");
+
+    // Create a memory via pool
+    remember(
+        &ctx,
+        "Pool-created memory".to_string(),
+        Some("pool_share_test".to_string()),
+        Some("general".to_string()),
+        None,
+        Some(0.9),
+    )
+    .await
+    .expect("remember failed");
+
+    // Verify memory exists via legacy Database
+    let memory_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM memory_facts WHERE key = ?",
+            ["pool_share_test"],
+            |_row| Ok(true),
+        )
+        .unwrap_or(false);
+
+    assert!(memory_exists, "Memory created via pool should be visible via legacy Database");
+}
+
+#[tokio::test]
+async fn test_pool_error_handling() {
+    let ctx = TestContext::new().await;
+
+    // Try to recall without a project (should still work, just return no results)
+    let result = recall(&ctx, "nonexistent".to_string(), Some(5), None, None).await;
+    assert!(result.is_ok(), "recall should handle missing project gracefully");
+
+    // Try forget with invalid ID
+    let result = forget(&ctx, "invalid".to_string()).await;
+    assert!(result.is_err(), "forget should fail with invalid ID");
+    assert!(
+        result.unwrap_err().contains("Invalid"),
+        "Error should mention invalid ID"
+    );
+
+    // Try forget with non-existent ID
+    let result = forget(&ctx, "999999".to_string()).await;
+    assert!(result.is_ok(), "forget should handle non-existent ID gracefully");
+    let output = result.unwrap();
+    assert!(output.contains("not found"), "Should indicate memory not found: {}", output);
 }

@@ -1,0 +1,384 @@
+// db/pool.rs
+// Async connection pool using deadpool-sqlite
+//
+// # Async Database Access Patterns
+//
+// ## Primary Pattern: pool.interact()
+// Use `pool.interact()` for MCP tool handlers and other code that has access to a `DatabasePool`:
+// ```ignore
+// let result = ctx.pool().interact(move |conn| {
+//     some_sync_function(conn, arg1, arg2)
+// }).await?;
+// ```
+//
+// ## Background Worker Pattern: tokio::task::spawn_blocking()
+// Use `tokio::task::spawn_blocking()` for background workers that use the legacy `Database` struct:
+// ```ignore
+// let db_clone = db.clone();
+// let result = tokio::task::spawn_blocking(move || {
+//     let conn = db_clone.conn();
+//     some_sync_function(&conn, arg1, arg2)
+// }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+// ```
+//
+// Note the double `?`:
+// - First `?` handles the JoinError from spawn_blocking
+// - Second `?` handles the inner Result from the closure
+//
+// ## Common Pitfalls
+//
+// 1. **Don't block the async runtime**: Never call `db.conn()` directly in async code.
+//    Always wrap in `spawn_blocking()` or use `pool.interact()`.
+//
+// 2. **Type inference**: Rust needs help inferring types for closures. If you get
+//    "type annotations needed", add explicit types to the return value:
+//    `Ok::<_, rusqlite::Error>(result)`
+//
+// 3. **Capturing variables**: Move semantics can be tricky. Clone `Arc` values
+//    before the closure to avoid lifetime issues.
+//
+// 4. **In-memory testing**: Use shared cache URI (`file:memdb_xxx?mode=memory&cache=shared`)
+//    so multiple pool connections share the same database state.
+
+use anyhow::{Context, Result};
+use deadpool_sqlite::{Config, Hook, Pool, Runtime};
+use rusqlite::Connection;
+use sqlite_vec::sqlite3_vec_init;
+use std::path::{Path, PathBuf};
+use std::sync::Once;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+/// Registers sqlite-vec extension globally (once per process).
+/// Must be called before any SQLite connections are opened.
+static SQLITE_VEC_INIT: Once = Once::new();
+
+#[allow(clippy::missing_transmute_annotations)]
+fn ensure_sqlite_vec_registered() {
+    SQLITE_VEC_INIT.call_once(|| {
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite3_vec_init as *const (),
+            )));
+        }
+        tracing::debug!("sqlite-vec extension registered globally");
+    });
+}
+
+/// Database pool wrapper with sqlite-vec support and per-connection setup.
+///
+/// This replaces the old `Database` struct's single Mutex<Connection> with
+/// a proper connection pool that scales for concurrent access.
+pub struct DatabasePool {
+    pool: Pool,
+    path: Option<PathBuf>,
+    /// URI for in-memory databases (used to share state with legacy Database)
+    memory_uri: Option<String>,
+}
+
+impl DatabasePool {
+    /// Open a pooled database at the given path.
+    ///
+    /// This will:
+    /// 1. Register sqlite-vec extension globally (if not already done)
+    /// 2. Ensure parent directory exists with secure permissions
+    /// 3. Create the pool with post_create hooks for per-connection setup
+    /// 4. Run schema migrations on a dedicated connection before returning
+    pub async fn open(path: &Path) -> Result<Self> {
+        // Step 1: Register sqlite-vec globally
+        ensure_sqlite_vec_registered();
+
+        // Step 2: Ensure parent directory exists with secure permissions
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                let mut perms = std::fs::metadata(parent)?.permissions();
+                perms.set_mode(0o700); // rwx------
+                std::fs::set_permissions(parent, perms)?;
+            }
+        }
+
+        let path_buf = path.to_path_buf();
+        let path_str = path.to_string_lossy().to_string();
+
+        // Step 3: Create pool with post_create hook
+        let cfg = Config::new(&path_str);
+        let pool = cfg
+            .builder(Runtime::Tokio1)
+            .context("Failed to create pool builder")?
+            .post_create(Hook::async_fn(move |conn, _metrics| {
+                let path_for_perms = path_buf.clone();
+                Box::pin(async move {
+                    conn.interact(move |conn| {
+                        setup_connection(conn)?;
+
+                        // Set file permissions on first access
+                        #[cfg(unix)]
+                        if let Ok(metadata) = std::fs::metadata(&path_for_perms) {
+                            let mut perms = metadata.permissions();
+                            perms.set_mode(0o600); // rw-------
+                            let _ = std::fs::set_permissions(&path_for_perms, perms);
+                        }
+
+                        Ok::<_, rusqlite::Error>(())
+                    })
+                    .await
+                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into()))?
+                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("connection setup failed: {e}").into()))
+                })
+            }))
+            .build()
+            .context("Failed to build connection pool")?;
+
+        let db_pool = Self {
+            pool,
+            path: Some(path.to_path_buf()),
+            memory_uri: None,
+        };
+
+        // Step 4: Run migrations on a dedicated connection
+        db_pool.run_migrations().await?;
+
+        Ok(db_pool)
+    }
+
+    /// Open a pooled in-memory database.
+    ///
+    /// Uses a shared cache URI so all connections access the same in-memory database.
+    /// This is critical for tests - without shared cache, each connection would get
+    /// its own separate in-memory database.
+    pub async fn open_in_memory() -> Result<Self> {
+        ensure_sqlite_vec_registered();
+
+        // Use shared cache mode for in-memory DB so all pool connections share state.
+        // The unique ID ensures different test instances don't collide.
+        let unique_id = uuid::Uuid::new_v4();
+        let uri = format!("file:memdb_{unique_id}?mode=memory&cache=shared");
+
+        let cfg = Config::new(&uri);
+        let pool = cfg
+            .builder(Runtime::Tokio1)
+            .context("Failed to create pool builder for in-memory DB")?
+            .post_create(Hook::async_fn(|conn, _metrics| {
+                Box::pin(async move {
+                    conn.interact(|conn| {
+                        // WAL mode doesn't work for in-memory, just set foreign keys
+                        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+                        Ok::<_, rusqlite::Error>(())
+                    })
+                    .await
+                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into()))?
+                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("connection setup failed: {e}").into()))
+                })
+            }))
+            .build()
+            .context("Failed to build in-memory connection pool")?;
+
+        let db_pool = Self {
+            pool,
+            path: None,
+            memory_uri: Some(uri),
+        };
+        db_pool.run_migrations().await?;
+        Ok(db_pool)
+    }
+
+    /// Get the memory URI (for sharing with legacy Database in tests)
+    pub fn memory_uri(&self) -> Option<&str> {
+        self.memory_uri.as_deref()
+    }
+
+    /// Run a closure with a connection from the pool.
+    ///
+    /// This is the primary API for database access. The closure runs on a
+    /// blocking thread pool, so it won't block the async runtime.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let result = pool.interact(|conn| {
+    ///     conn.execute("INSERT INTO ...", params![...])?;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    pub async fn interact<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let conn = self
+            .pool
+            .get()
+            .await
+            .context("Failed to get connection from pool")?;
+
+        conn.interact(move |conn| f(conn))
+            .await
+            .map_err(|e| anyhow::anyhow!("interact failed: {e}"))?
+    }
+
+    /// Run a closure that may return a rusqlite::Error.
+    ///
+    /// Convenience wrapper for operations that return rusqlite::Result.
+    pub async fn interact_raw<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> rusqlite::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.interact(move |conn| f(conn).map_err(Into::into)).await
+    }
+
+    /// Get the database file path (None for in-memory).
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Run schema migrations.
+    ///
+    /// Called during pool creation, but can also be called explicitly if needed.
+    async fn run_migrations(&self) -> Result<()> {
+        self.interact(|conn| {
+            super::schema::run_all_migrations(conn)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Rebuild FTS5 search index from vec_code.
+    pub async fn rebuild_fts(&self) -> Result<()> {
+        self.interact(|conn| {
+            super::schema::rebuild_code_fts(conn)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Rebuild FTS5 search index for a specific project.
+    pub async fn rebuild_fts_for_project(&self, project_id: i64) -> Result<()> {
+        self.interact(move |conn| {
+            super::schema::rebuild_code_fts_for_project(conn, project_id)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Get pool status for monitoring.
+    pub fn status(&self) -> PoolStatus {
+        let status = self.pool.status();
+        PoolStatus {
+            size: status.size,
+            available: status.available,
+            waiting: status.waiting,
+        }
+    }
+}
+
+/// Pool status for monitoring.
+#[derive(Debug, Clone)]
+pub struct PoolStatus {
+    pub size: usize,
+    pub available: usize,
+    pub waiting: usize,
+}
+
+/// Configure a connection after it's created.
+/// Called from the post_create hook.
+fn setup_connection(conn: &Connection) -> rusqlite::Result<()> {
+    // Enable WAL mode for better concurrency and foreign key enforcement
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_pool_in_memory() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("Failed to open in-memory pool");
+
+        // Test basic operation
+        let result = pool
+            .interact(|conn| {
+                conn.execute(
+                    "INSERT INTO projects (path, name) VALUES (?, ?)",
+                    rusqlite::params!["/test/path", "test"],
+                )?;
+                Ok(conn.last_insert_rowid())
+            })
+            .await
+            .expect("Failed to insert");
+
+        assert!(result > 0);
+
+        // Verify from another connection in the pool (tests shared cache)
+        let name: String = pool
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT name FROM projects WHERE id = ?",
+                    [result],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .await
+            .expect("Failed to query");
+
+        assert_eq!(name, "test");
+    }
+
+    #[tokio::test]
+    async fn test_pool_status() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("Failed to open pool");
+
+        let status = pool.status();
+        // Verify we can get status without panicking
+        let _ = status;
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_access() {
+        let pool = std::sync::Arc::new(
+            DatabasePool::open_in_memory()
+                .await
+                .expect("Failed to open pool"),
+        );
+
+        // Spawn multiple concurrent tasks
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                pool.interact(move |conn| {
+                    conn.execute(
+                        "INSERT INTO projects (path, name) VALUES (?, ?)",
+                        rusqlite::params![format!("/test/{i}"), format!("project-{i}")],
+                    )?;
+                    Ok(())
+                })
+                .await
+            }));
+        }
+
+        // Wait for all to complete
+        for handle in handles {
+            handle.await.unwrap().expect("Insert failed");
+        }
+
+        // Verify all inserted
+        let count: i64 = pool
+            .interact(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+                    .map_err(Into::into)
+            })
+            .await
+            .expect("Count failed");
+
+        assert_eq!(count, 10);
+    }
+}

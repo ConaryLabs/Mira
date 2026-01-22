@@ -19,9 +19,10 @@ pub async fn process_code_health(
     tracing::debug!("Code health: checking for projects needing scan");
     // Run on blocking thread to avoid blocking tokio
     let db_clone = db.clone();
-    let projects = Database::run_blocking(db_clone, |conn| {
-        get_projects_needing_health_check(conn)
-    }).await?;
+    let projects = tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        get_projects_needing_health_check(&conn)
+    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
     if !projects.is_empty() {
         tracing::info!("Code health: found {} projects needing scan", projects.len());
     }
@@ -43,9 +44,10 @@ pub async fn process_code_health(
                 processed += count;
                 // Run on blocking thread
                 let db_clone = db.clone();
-                Database::run_blocking(db_clone, move |conn| {
-                    mark_health_scanned(conn, project_id)
-                }).await?;
+                tokio::task::spawn_blocking(move || {
+                    let conn = db_clone.conn();
+                    mark_health_scanned(&conn, project_id)
+                }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
             }
             Err(e) => {
                 tracing::warn!("Failed to scan health for {}: {}", project_path, e);
@@ -177,9 +179,10 @@ async fn scan_project_health(
 
     // Clear old health issues (run on blocking thread)
     let db_clone = db.clone();
-    Database::run_blocking(db_clone, move |conn| {
-        clear_old_health_issues(conn, project_id)
-    }).await?;
+    tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        clear_old_health_issues(&conn, project_id)
+    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
 
     let mut total = 0;
 

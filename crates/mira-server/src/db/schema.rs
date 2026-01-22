@@ -4,6 +4,31 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+/// Run all schema setup and migrations.
+///
+/// Called during database initialization. This function is idempotent -
+/// it checks for existing tables/columns before making changes.
+pub fn run_all_migrations(conn: &Connection) -> Result<()> {
+    // Create base tables
+    conn.execute_batch(SCHEMA)?;
+
+    // Run migrations in order
+    migrate_vec_tables(conn)?;
+    migrate_pending_embeddings_line_numbers(conn)?;
+    migrate_vec_code_line_numbers(conn)?;
+    migrate_tool_history_full_result(conn)?;
+    migrate_chat_summaries_project_id(conn)?;
+    migrate_chat_messages_summary_id(conn)?;
+    migrate_memory_facts_has_embedding(conn)?;
+    migrate_memory_facts_evidence_tracking(conn)?;
+    migrate_system_prompts_provider(conn)?;
+    migrate_system_prompts_strip_tool_suffix(conn)?;
+    migrate_code_fts(conn)?;
+    migrate_imports_unique(conn)?;
+
+    Ok(())
+}
+
 /// Migrate vector tables if dimensions changed
 pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
     // Check if vec_memory exists and has wrong dimensions

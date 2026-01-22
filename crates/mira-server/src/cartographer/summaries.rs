@@ -2,20 +2,17 @@
 // LLM-powered module summaries
 
 use super::types::ModuleSummaryContext;
-use crate::db::Database;
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
 use crate::project_files::walker::FileWalker;
 
 /// Get modules that need LLM summaries (no purpose or heuristic-only)
 pub fn get_modules_needing_summaries(
-    db: &Database,
+    conn: &Connection,
     project_id: i64,
 ) -> Result<Vec<ModuleSummaryContext>> {
-    let conn = db.conn();
-
     // Get modules without purposes or with generic heuristic purposes
     let mut stmt = conn.prepare(
         "SELECT module_id, name, path, exports, line_count
@@ -217,13 +214,12 @@ pub fn parse_summary_response(response: &str) -> HashMap<String, String> {
     summaries
 }
 
-/// Update module purposes in database
+/// Update module purposes in database (connection-based)
 pub fn update_module_purposes(
-    db: &Database,
+    conn: &Connection,
     project_id: i64,
     summaries: &HashMap<String, String>,
 ) -> Result<usize> {
-    let conn = db.conn();
     let mut updated = 0;
 
     for (module_id, purpose) in summaries {

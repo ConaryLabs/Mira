@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 
+use crate::db::pool::DatabasePool;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::llm::{DeepSeekClient, ProviderFactory};
@@ -20,8 +21,11 @@ use crate::background::watcher::WatcherHandle;
 pub trait ToolContext: Send + Sync {
     // === Core Resources (always available) ===
 
-    /// Database connection with semantic search capabilities
+    /// Legacy sync database (being phased out - prefer pool())
     fn db(&self) -> &Arc<Database>;
+
+    /// Async connection pool (preferred for new code)
+    fn pool(&self) -> &Arc<DatabasePool>;
 
     /// Embeddings client for semantic search (optional)
     fn embeddings(&self) -> Option<&Arc<Embeddings>>;

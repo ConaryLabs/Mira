@@ -17,6 +17,10 @@ impl ToolContext for MiraServer {
         &self.db
     }
 
+    fn pool(&self) -> &Arc<crate::db::pool::DatabasePool> {
+        &self.pool
+    }
+
     fn embeddings(&self) -> Option<&Arc<crate::embeddings::Embeddings>> {
         self.embeddings.as_ref()
     }

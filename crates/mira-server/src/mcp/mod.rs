@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use tokio::sync::oneshot;
 
 use crate::background::watcher::WatcherHandle;
+use crate::db::pool::DatabasePool;
 use crate::db::Database;
 use crate::embeddings::Embeddings;
 use crate::hooks::session::read_claude_session_id;
@@ -32,7 +33,10 @@ use tokio::sync::RwLock;
 /// MCP Server state
 #[derive(Clone)]
 pub struct MiraServer {
+    /// Legacy sync database (being phased out)
     pub db: Arc<Database>,
+    /// Async connection pool (preferred for new code)
+    pub pool: Arc<DatabasePool>,
     pub embeddings: Option<Arc<Embeddings>>,
     pub deepseek: Option<Arc<DeepSeekClient>>,
     pub llm_factory: Arc<ProviderFactory>,
@@ -56,7 +60,7 @@ impl MiraServer {
             .map(|key| Arc::new(DeepSeekClient::new(key)))
     }
 
-    pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
+    pub fn new(db: Arc<Database>, pool: Arc<DatabasePool>, embeddings: Option<Arc<Embeddings>>) -> Self {
         // Try to create DeepSeek client from env (kept for backward compatibility)
         let deepseek = Self::create_deepseek_client();
 
@@ -65,6 +69,7 @@ impl MiraServer {
 
         Self {
             db,
+            pool,
             embeddings,
             deepseek,
             llm_factory,
@@ -80,6 +85,7 @@ impl MiraServer {
     /// Create with a file watcher for incremental indexing
     pub fn with_watcher(
         db: Arc<Database>,
+        pool: Arc<DatabasePool>,
         embeddings: Option<Arc<Embeddings>>,
         watcher: WatcherHandle,
     ) -> Self {
@@ -89,6 +95,7 @@ impl MiraServer {
 
         Self {
             db,
+            pool,
             embeddings,
             deepseek,
             llm_factory,
@@ -105,6 +112,7 @@ impl MiraServer {
     #[allow(dead_code)]
     pub fn with_broadcaster(
         db: Arc<Database>,
+        pool: Arc<DatabasePool>,
         embeddings: Option<Arc<Embeddings>>,
         deepseek: Option<Arc<DeepSeekClient>>,
         ws_tx: tokio::sync::broadcast::Sender<mira_types::WsEvent>,
@@ -117,6 +125,7 @@ impl MiraServer {
 
         Self {
             db,
+            pool,
             embeddings,
             deepseek,
             llm_factory,

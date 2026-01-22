@@ -28,6 +28,7 @@ serde_json = "1.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 sqlite-vec = "0.1.6"
 zerocopy = "0.7"
+deadpool-sqlite = { version = "0.9", features = ["rt_tokio_1", "tracing"] }
 
 # MCP Server
 rmcp = { version = "0.12", features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }

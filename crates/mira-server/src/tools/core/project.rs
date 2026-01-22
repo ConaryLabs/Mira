@@ -143,15 +143,135 @@ fn get_health_alerts_sync(
         .map_err(|e| e.to_string())
 }
 
+/// Sync helper: create or update session (for use inside pool.interact)
+fn create_session_sync(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    project_id: Option<i64>,
+) -> Result<(), String> {
+    use rusqlite::params;
+    conn.execute(
+        "INSERT INTO sessions (id, project_id, status, started_at, last_activity)
+         VALUES (?1, ?2, 'active', datetime('now'), datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET last_activity = datetime('now')",
+        params![session_id, project_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Sync helper: get or create project (for use inside pool.interact)
+fn get_or_create_project_sync(
+    conn: &rusqlite::Connection,
+    path: &str,
+    name: Option<&str>,
+) -> Result<(i64, Option<String>), String> {
+    use rusqlite::params;
+
+    // UPSERT: insert or get existing.
+    let (id, stored_name): (i64, Option<String>) = conn
+        .query_row(
+            "INSERT INTO projects (path, name) VALUES (?, ?)
+             ON CONFLICT(path) DO UPDATE SET
+                 name = COALESCE(projects.name, excluded.name),
+                 created_at = projects.created_at
+             RETURNING id, name",
+            params![path, name],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // If we have a name, return it
+    if stored_name.is_some() {
+        return Ok((id, stored_name));
+    }
+
+    // Auto-detect name from project files
+    let detected_name = detect_project_name(path);
+
+    if detected_name.is_some() {
+        conn.execute(
+            "UPDATE projects SET name = ? WHERE id = ?",
+            params![&detected_name, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok((id, detected_name))
+}
+
+/// Auto-detect project name from path (sync helper)
+fn detect_project_name(path: &str) -> Option<String> {
+    let path = Path::new(path);
+    let dir_name = || {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+    };
+
+    // Try Cargo.toml for Rust projects
+    let cargo_toml = path.join("Cargo.toml");
+    if cargo_toml.exists() {
+        if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+            if content.contains("[workspace]") {
+                return dir_name();
+            }
+
+            let mut in_package = false;
+            for line in content.lines() {
+                let line = line.trim();
+                if line.starts_with('[') {
+                    in_package = line == "[package]";
+                } else if in_package && line.starts_with("name") {
+                    if let Some(name) = line.split('=').nth(1) {
+                        let name = name.trim().trim_matches('"').trim_matches('\'');
+                        if !name.is_empty() {
+                            return Some(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Try package.json for Node projects
+    let package_json = path.join("package.json");
+    if package_json.exists() {
+        if let Ok(content) = std::fs::read_to_string(&package_json) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.starts_with("\"name\"") {
+                    if let Some(name) = line.split(':').nth(1) {
+                        let name = name.trim().trim_matches(',').trim_matches('"').trim();
+                        if !name.is_empty() {
+                            return Some(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to directory name
+    dir_name()
+}
+
 /// Shared project initialization logic
 async fn init_project<C: ToolContext>(
     ctx: &C,
     project_path: &str,
     name: Option<&str>,
 ) -> Result<(i64, Option<String>), String> {
+    // Use pool for project creation (ensures same database as memory operations)
+    let path_owned = project_path.to_string();
+    let name_owned = name.map(|s| s.to_string());
     let (project_id, project_name) = ctx
-        .db()
-        .get_or_create_project(project_path, name)
+        .pool()
+        .interact(move |conn| {
+            get_or_create_project_sync(conn, &path_owned, name_owned.as_deref())
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     let project_ctx = ProjectContext {
@@ -164,10 +284,12 @@ async fn init_project<C: ToolContext>(
 
     // Register project with file watcher for automatic incremental indexing
     if let Some(watcher) = ctx.watcher() {
-        watcher.watch(project_id, std::path::PathBuf::from(project_path)).await;
+        watcher
+            .watch(project_id, std::path::PathBuf::from(project_path))
+            .await;
     }
 
-    // Persist active project for restart recovery
+    // Persist active project for restart recovery (still use legacy db for this non-critical operation)
     if let Err(e) = ctx.db().save_active_project(project_path) {
         tracing::warn!("Failed to persist active project: {}", e);
     }
@@ -216,7 +338,16 @@ pub async fn session_start<C: ToolContext>(
 
     // Set session ID (use provided, or generate new)
     let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    db.create_session(&sid, Some(project_id)).map_err(|e| e.to_string())?;
+
+    // Create session via pool (same database as project)
+    let sid_clone = sid.clone();
+    ctx.pool()
+        .interact(move |conn| {
+            create_session_sync(conn, &sid_clone, Some(project_id)).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
     ctx.set_session_id(sid.clone()).await;
 
     // Persist active session ID for restart recovery (CLI tools)
@@ -228,7 +359,7 @@ pub async fn session_start<C: ToolContext>(
     gather_system_context(db);
 
     // Import CLAUDE.local.md entries as memories (if file exists)
-    let imported_count = claude_local::import_claude_local_md_async(db, project_id, &project_path)
+    let imported_count = claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
         .await
         .unwrap_or(0);
 
@@ -298,22 +429,23 @@ pub async fn session_start<C: ToolContext>(
         );
     }
 
-    // Load preferences, memories, and health alerts in a single blocking call
-    let db_clone = db.clone();
+    // Load preferences, memories, and health alerts in a single pool call
     let (preferences, memories, health_alerts): (Vec<MemoryFact>, Vec<MemoryFact>, Vec<MemoryFact>) =
-        Database::run_blocking(db_clone, move |conn| {
-            // Get preferences
-            let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
+        ctx.pool()
+            .interact(move |conn| {
+                // Get preferences
+                let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
 
-            // Get recent memories
-            let memories = search_memories_sync(conn, Some(project_id), "", 10).unwrap_or_default();
+                // Get recent memories
+                let memories = search_memories_sync(conn, Some(project_id), "", 10).unwrap_or_default();
 
-            // Get health alerts
-            let health_alerts = get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
+                // Get health alerts
+                let health_alerts = get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
 
-            (preferences, memories, health_alerts)
-        })
-        .await;
+                Ok((preferences, memories, health_alerts))
+            })
+            .await
+            .map_err(|e| e.to_string())?;
 
     if !preferences.is_empty() {
         response.push_str("\nPreferences:\n");

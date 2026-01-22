@@ -40,7 +40,8 @@ pub async fn process_pending_embeddings(
     // Store embeddings and cleanup pending queue
     let db_clone = db.clone();
     let pending_clone = pending.clone();
-    let count = Database::run_blocking(db_clone, move |conn| {
+    let count = tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
         let tx = conn.unchecked_transaction()?;
         let mut stored = 0;
 
@@ -71,7 +72,7 @@ pub async fn process_pending_embeddings(
 
         tx.commit()?;
         Ok::<_, rusqlite::Error>(stored)
-    }).await.map_err(|e| e.to_string())?;
+    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?.map_err(|e| e.to_string())?;
 
     tracing::info!("Stored {} embeddings from pending queue", count);
     Ok(count)

@@ -1,7 +1,7 @@
 // crates/mira-server/src/tools/core/claude_local.rs
 // CLAUDE.local.md integration - bidirectional sync with Mira memories
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
 use crate::tools::core::ToolContext;
 use std::collections::HashSet;
 use std::path::Path;
@@ -14,14 +14,16 @@ pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, Stri
         return Err("No active project. Call session_start first.".to_string());
     };
 
-    // Run on blocking thread pool to avoid blocking tokio
-    let db_clone = ctx.db().clone();
     let project_id = project.id;
     let project_path = project.path.clone();
-    let count = Database::run_blocking(db_clone, move |conn| {
-        write_claude_local_md_sync(conn, project_id, &project_path)
-    })
-    .await?;
+    let count = ctx
+        .pool()
+        .interact(move |conn| {
+            write_claude_local_md_sync(conn, project_id, &project_path)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if count == 0 {
         Ok("No memories to export (or all memories are low-confidence).".to_string())
@@ -35,16 +37,17 @@ pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, Stri
 
 /// Async wrapper for importing CLAUDE.local.md entries
 pub async fn import_claude_local_md_async(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    let db_clone = db.clone();
     let project_path = project_path.to_string();
-    Database::run_blocking(db_clone, move |conn| {
+    pool.interact(move |conn| {
         import_claude_local_md_sync(conn, project_id, &project_path)
+            .map_err(|e| anyhow::anyhow!(e))
     })
     .await
+    .map_err(|e| e.to_string())
 }
 
 /// Parse CLAUDE.local.md and extract memory entries

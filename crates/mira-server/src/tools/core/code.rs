@@ -26,8 +26,19 @@ pub async fn search_code<C: ToolContext>(
     let context_header = format_project_header(project.as_ref());
 
     // Check for cross-reference query patterns first ("who calls X", "callers of X", etc.)
-    if let Some((target, ref_type, results)) = crossref_search(ctx.db(), &query, project_id, limit) {
-        return Ok(format!("{}{}", context_header, format_crossref_results(&target, ref_type, &results)));
+    let query_clone = query.clone();
+    let crossref_result = ctx
+        .pool()
+        .interact(move |conn| Ok(crossref_search(conn, &query_clone, project_id, limit)))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some((target, ref_type, results)) = crossref_result {
+        return Ok(format!(
+            "{}{}",
+            context_header,
+            format_crossref_results(&target, ref_type, &results)
+        ));
     }
 
     // Use shared hybrid search
@@ -104,13 +115,25 @@ pub async fn find_function_callers<C: ToolContext>(
     let project = ctx.get_project().await;
     let context_header = format_project_header(project.as_ref());
 
-    let results = find_callers(ctx.db(), project_id, &function_name, limit);
-    
+    let fn_name = function_name.clone();
+    let results = ctx
+        .pool()
+        .interact(move |conn| Ok(find_callers(conn, project_id, &fn_name, limit)))
+        .await
+        .map_err(|e| e.to_string())?;
+
     if results.is_empty() {
-        return Ok(format!("{}No callers found for `{}`.", context_header, function_name));
+        return Ok(format!(
+            "{}No callers found for `{}`.",
+            context_header, function_name
+        ));
     }
 
-    Ok(format!("{}{}", context_header, format_crossref_results(&function_name, CrossRefType::Caller, &results)))
+    Ok(format!(
+        "{}{}",
+        context_header,
+        format_crossref_results(&function_name, CrossRefType::Caller, &results)
+    ))
 }
 
 /// Find functions called by a specific function
@@ -128,13 +151,25 @@ pub async fn find_function_callees<C: ToolContext>(
     let project = ctx.get_project().await;
     let context_header = format_project_header(project.as_ref());
 
-    let results = find_callees(ctx.db(), project_id, &function_name, limit);
+    let fn_name = function_name.clone();
+    let results = ctx
+        .pool()
+        .interact(move |conn| Ok(find_callees(conn, project_id, &fn_name, limit)))
+        .await
+        .map_err(|e| e.to_string())?;
 
     if results.is_empty() {
-        return Ok(format!("{}No callees found for `{}`.", context_header, function_name));
+        return Ok(format!(
+            "{}No callees found for `{}`.",
+            context_header, function_name
+        ));
     }
 
-    Ok(format!("{}{}", context_header, format_crossref_results(&function_name, CrossRefType::Callee, &results)))
+    Ok(format!(
+        "{}{}",
+        context_header,
+        format_crossref_results(&function_name, CrossRefType::Callee, &results)
+    ))
 }
 
 /// Check if a capability/feature exists in the codebase.
@@ -160,33 +195,31 @@ pub async fn check_capability<C: ToolContext>(
         if let Ok(query_embedding) = embeddings.embed(&description).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
 
-            // Run vector search on blocking thread pool
-            let db_clone = ctx.db().clone();
-            let capability_results: Result<Vec<(i64, String, String, f32)>, String> =
-                crate::db::Database::run_blocking(db_clone, move |conn| {
-                    let mut stmt = conn
-                        .prepare(
-                            "SELECT f.id, f.content, f.fact_type, vec_distance_cosine(v.embedding, ?1) as distance
-                             FROM vec_memory v
-                             JOIN memory_facts f ON v.fact_id = f.id
-                             WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-                               AND f.fact_type IN ('capability', 'issue')
-                             ORDER BY distance
-                             LIMIT 5",
-                        )
-                        .map_err(|e| e.to_string())?;
+            // Run vector search via connection pool
+            let capability_results: Result<Vec<(i64, String, String, f32)>, String> = ctx
+                .pool()
+                .interact(move |conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT f.id, f.content, f.fact_type, vec_distance_cosine(v.embedding, ?1) as distance
+                         FROM vec_memory v
+                         JOIN memory_facts f ON v.fact_id = f.id
+                         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+                           AND f.fact_type IN ('capability', 'issue')
+                         ORDER BY distance
+                         LIMIT 5",
+                    )?;
 
                     let results: Vec<(i64, String, String, f32)> = stmt
                         .query_map(params![embedding_bytes, project_id, 5i64], |row| {
                             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                        })
-                        .map_err(|e| e.to_string())?
+                        })?
                         .filter_map(|r| r.ok())
                         .collect();
 
                     Ok(results)
                 })
-                .await;
+                .await
+                .map_err(|e| e.to_string());
 
             if let Ok(capability_results) = capability_results {
                 // Check if we have good matches (similarity > 0.6)
@@ -407,8 +440,12 @@ async fn auto_summarize_modules(
     deepseek: &crate::llm::DeepSeekClient,
 ) -> Result<usize, String> {
     // Get modules needing summaries
-    let mut modules = cartographer::get_modules_needing_summaries(db, project_id)
-        .map_err(|e| e.to_string())?;
+    let db_clone = db.clone();
+    let mut modules = tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        cartographer::get_modules_needing_summaries(&conn, project_id).map_err(|e| e.to_string())
+    })
+    .await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
 
     if modules.is_empty() {
         return Ok(0);
@@ -436,8 +473,12 @@ async fn auto_summarize_modules(
         return Err("Failed to parse summaries".to_string());
     }
 
-    let updated = cartographer::update_module_purposes(db, project_id, &summaries)
-        .map_err(|e| e.to_string())?;
+    let db_clone = db.clone();
+    let updated = tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        cartographer::update_module_purposes(&conn, project_id, &summaries).map_err(|e| e.to_string())
+    })
+    .await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
 
     Ok(updated)
 }
@@ -457,7 +498,13 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         .ok_or("DeepSeek not configured. Set DEEPSEEK_API_KEY.")?;
 
     // Get modules needing summaries
-    let mut modules = cartographer::get_modules_needing_summaries(ctx.db(), project_id)
+    let mut modules = ctx
+        .pool()
+        .interact(move |conn| {
+            cartographer::get_modules_needing_summaries(conn, project_id)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if modules.is_empty() {
@@ -494,16 +541,24 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         ));
     }
 
-    // Update database
-    let updated = cartographer::update_module_purposes(ctx.db(), project_id, &summaries)
-        .map_err(|e| e.to_string())?;
+    // Update database and clear cached modules
+    let summaries_clone = summaries.clone();
+    let updated = ctx
+        .pool()
+        .interact(move |conn| {
+            let count = cartographer::update_module_purposes(conn, project_id, &summaries_clone)
+                .map_err(|e| anyhow::anyhow!(e))?;
 
-    // Clear cached modules to force regeneration
-    let conn = ctx.db().conn();
-    conn.execute(
-        "DELETE FROM codebase_modules WHERE project_id = ? AND purpose IS NULL",
-        rusqlite::params![project_id],
-    ).map_err(|e| e.to_string())?;
+            // Clear cached modules to force regeneration
+            conn.execute(
+                "DELETE FROM codebase_modules WHERE project_id = ? AND purpose IS NULL",
+                rusqlite::params![project_id],
+            )?;
+
+            Ok(count)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(format!(
         "Summarized {} modules:\n{}",

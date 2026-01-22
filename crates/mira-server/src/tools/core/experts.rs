@@ -499,14 +499,23 @@ async fn execute_read_file<C: ToolContext>(
 
 async fn execute_find_callers<C: ToolContext>(ctx: &C, function_name: &str, limit: usize) -> String {
     let project_id = ctx.project_id().await;
+    let fn_name = function_name.to_string();
 
-    let callers = find_callers(ctx.db(), project_id, function_name, limit);
+    let callers = ctx
+        .pool()
+        .interact(move |conn| Ok(find_callers(conn, project_id, &fn_name, limit)))
+        .await
+        .unwrap_or_default();
+
     if callers.is_empty() {
         format!("No callers found for `{}`", function_name)
     } else {
         let mut output = format!("Functions that call `{}`:\n", function_name);
         for caller in callers {
-            output.push_str(&format!("  {} in {} ({}x)\n", caller.symbol_name, caller.file_path, caller.call_count));
+            output.push_str(&format!(
+                "  {} in {} ({}x)\n",
+                caller.symbol_name, caller.file_path, caller.call_count
+            ));
         }
         output
     }
@@ -514,8 +523,14 @@ async fn execute_find_callers<C: ToolContext>(ctx: &C, function_name: &str, limi
 
 async fn execute_find_callees<C: ToolContext>(ctx: &C, function_name: &str, limit: usize) -> String {
     let project_id = ctx.project_id().await;
+    let fn_name = function_name.to_string();
 
-    let callees = find_callees(ctx.db(), project_id, function_name, limit);
+    let callees = ctx
+        .pool()
+        .interact(move |conn| Ok(find_callees(conn, project_id, &fn_name, limit)))
+        .await
+        .unwrap_or_default();
+
     if callees.is_empty() {
         format!("No callees found for `{}`", function_name)
     } else {
@@ -535,10 +550,10 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
         if let Ok(query_embedding) = embeddings.embed(query).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
 
-            // Run vector search on blocking thread pool
-            let db_clone = ctx.db().clone();
-            let results: Result<Vec<(i64, String, f32)>, String> =
-                Database::run_blocking(db_clone, move |conn| {
+            // Run vector search via connection pool
+            let results: Result<Vec<(i64, String, f32)>, String> = ctx
+                .pool()
+                .interact(move |conn| {
                     use rusqlite::params;
                     let mut stmt = conn
                         .prepare(
@@ -549,19 +564,20 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
                              ORDER BY distance
                              LIMIT ?3",
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| anyhow::anyhow!(e))?;
 
                     let results: Vec<(i64, String, f32)> = stmt
                         .query_map(params![embedding_bytes, project_id, limit as i64], |row| {
                             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                         })
-                        .map_err(|e| e.to_string())?
+                        .map_err(|e| anyhow::anyhow!(e))?
                         .filter_map(|r| r.ok())
                         .collect();
 
                     Ok(results)
                 })
-                .await;
+                .await
+                .map_err(|e| e.to_string());
 
             if let Ok(results) = results {
                 if !results.is_empty() {
@@ -581,13 +597,16 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
         }
     }
 
-    // Fallback to keyword search (run on blocking thread pool)
-    let db_clone = ctx.db().clone();
+    // Fallback to keyword search via connection pool
     let query_owned = query.to_string();
-    let result = Database::run_blocking(db_clone, move |conn| {
-        search_memories_sync(conn, project_id, &query_owned, limit)
-    })
-    .await;
+    let result = ctx
+        .pool()
+        .interact(move |conn| {
+            search_memories_sync(conn, project_id, &query_owned, limit)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .map_err(|e| e.to_string());
 
     match result {
         Ok(memories) => {

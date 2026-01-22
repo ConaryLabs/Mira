@@ -1,8 +1,7 @@
 // crates/mira-server/src/search/crossref.rs
 // Cross-reference search (call graph) functionality
 
-use crate::db::Database;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 /// Result from cross-reference search
 #[derive(Debug, Clone)]
@@ -77,15 +76,13 @@ fn extract_crossref_target(query: &str) -> Option<(String, CrossRefType)> {
     None
 }
 
-/// Find functions that call a given symbol
+/// Find functions that call a given symbol (connection-based version)
 pub fn find_callers(
-    db: &Database,
+    conn: &Connection,
     project_id: Option<i64>,
     target_name: &str,
     limit: usize,
 ) -> Vec<CrossRefResult> {
-    let conn = db.conn();
-
     // Find all call_graph entries where callee_name matches target
     // Join with code_symbols to get caller details
     let query = if project_id.is_some() {
@@ -196,15 +193,13 @@ fn is_stdlib_call(name: &str) -> bool {
     false
 }
 
-/// Find functions called by a given symbol
+/// Find functions called by a given symbol (connection-based version)
 pub fn find_callees(
-    db: &Database,
+    conn: &Connection,
     project_id: Option<i64>,
     caller_name: &str,
     limit: usize,
 ) -> Vec<CrossRefResult> {
-    let conn = db.conn();
-
     // Find the caller symbol(s), then get all their callees
     let query = if project_id.is_some() {
         "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
@@ -255,15 +250,16 @@ pub fn find_callees(
     };
 
     // Filter out stdlib/utility calls
-    results.into_iter()
+    results
+        .into_iter()
         .filter(|r| !is_stdlib_call(&r.symbol_name))
         .collect()
 }
 
-/// Cross-reference search: find callers or callees based on query
+/// Cross-reference search: find callers or callees based on query (connection-based)
 /// Returns None if query doesn't match cross-reference patterns
 pub fn crossref_search(
-    db: &Database,
+    conn: &Connection,
     query: &str,
     project_id: Option<i64>,
     limit: usize,
@@ -273,8 +269,8 @@ pub fn crossref_search(
     tracing::info!(target = %target, ref_type = ?ref_type, "crossref_search: pattern matched");
 
     let results = match ref_type {
-        CrossRefType::Caller => find_callers(db, project_id, &target, limit),
-        CrossRefType::Callee => find_callees(db, project_id, &target, limit),
+        CrossRefType::Caller => find_callers(conn, project_id, &target, limit),
+        CrossRefType::Callee => find_callees(conn, project_id, &target, limit),
     };
 
     Some((target, ref_type, results))

@@ -19,9 +19,10 @@ const RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
 pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -> Result<usize, String> {
     // Get all projects with pending summaries (run on blocking thread)
     let db_clone = db.clone();
-    let projects = Database::run_blocking(db_clone, |conn| {
-        get_projects_with_pending_summaries(conn)
-    }).await?;
+    let projects = tokio::task::spawn_blocking(move || {
+        let conn = db_clone.conn();
+        get_projects_with_pending_summaries(&conn)
+    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
     if projects.is_empty() {
         return Ok(0);
     }
@@ -30,8 +31,13 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
 
     for (project_id, project_path) in projects {
         // Get modules needing summaries for this project
-        let mut modules = cartographer::get_modules_needing_summaries(db, project_id)
-            .map_err(|e| e.to_string())?;
+        let db_clone = db.clone();
+        let mut modules = tokio::task::spawn_blocking(move || {
+            let conn = db_clone.conn();
+            cartographer::get_modules_needing_summaries(&conn, project_id)
+                .map_err(|e| e.to_string())
+        })
+        .await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
 
         if modules.is_empty() {
             continue;
@@ -59,9 +65,20 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
                 if let Some(content) = result.content {
                     let summaries = cartographer::parse_summary_response(&content);
                     if !summaries.is_empty() {
-                        match cartographer::update_module_purposes(db, project_id, &summaries) {
+                        let db_clone = db.clone();
+                        match tokio::task::spawn_blocking(move || {
+                            let conn = db_clone.conn();
+                            cartographer::update_module_purposes(&conn, project_id, &summaries)
+                                .map_err(|e| e.to_string())
+                        })
+                        .await.map_err(|e| format!("spawn_blocking panicked: {}", e))?
+                        {
                             Ok(count) => {
-                                tracing::info!("Updated {} module summaries for project {}", count, project_id);
+                                tracing::info!(
+                                    "Updated {} module summaries for project {}",
+                                    count,
+                                    project_id
+                                );
                                 total_processed += count;
                             }
                             Err(e) => {

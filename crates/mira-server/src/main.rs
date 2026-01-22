@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mira::background;
+use mira::db::pool::DatabasePool;
 use mira::db::Database;
 use mira::embeddings::Embeddings;
 use mira::llm::DeepSeekClient;
@@ -118,13 +119,14 @@ fn get_db_path() -> PathBuf {
 
 /// Setup server context with database, embeddings, and restored project/session state
 async fn setup_server_context() -> Result<MiraServer> {
-    // Open database
+    // Open database (both legacy sync and new async pool)
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
+    let pool = Arc::new(DatabasePool::open(&db_path).await?);
     let embeddings = get_embeddings();
 
     // Create server context
-    let server = MiraServer::new(db.clone(), embeddings);
+    let server = MiraServer::new(db.clone(), pool, embeddings);
 
     // Restore context (Project & Session)
     if let Ok(Some(path)) = db.get_last_active_project() {
@@ -276,9 +278,10 @@ async fn run_tool(name: String, args: String) -> Result<()> {
 }
 
 async fn run_mcp_server() -> Result<()> {
-    // Open database
+    // Open database (both legacy sync and new async pool)
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
+    let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Initialize embeddings if API key available
     let embeddings = get_embeddings();
@@ -314,7 +317,7 @@ async fn run_mcp_server() -> Result<()> {
     let db_for_restore = db.clone();
 
     // Create MCP server with watcher
-    let server = MiraServer::with_watcher(db, embeddings, watcher_handle);
+    let server = MiraServer::with_watcher(db, pool, embeddings, watcher_handle);
 
     // Restore context (Project & Session) - similar to run_tool()
     if let Ok(Some(path)) = db_for_restore.get_last_active_project() {
@@ -469,9 +472,10 @@ async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
 
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
+    let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Create a minimal MCP server context
-    let server = mira::mcp::MiraServer::new(db.clone(), None);
+    let server = mira::mcp::MiraServer::new(db.clone(), pool, None);
 
     // Call session_start
     let result = mira::tools::session_start(

@@ -5,6 +5,7 @@ mod chat;
 mod config;
 mod embeddings;
 mod memory;
+pub mod pool;
 mod project;
 mod schema;
 mod session;
@@ -21,7 +22,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -99,65 +100,38 @@ impl Database {
         Ok(db)
     }
 
+    /// Open a shared in-memory database by URI (for testing, to share with pool)
+    #[allow(clippy::missing_transmute_annotations)]
+    pub fn open_in_memory_shared(uri: &str) -> Result<Self> {
+        use rusqlite::OpenFlags;
+
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite3_vec_init as *const (),
+            )));
+        }
+
+        let conn = Connection::open_with_flags(
+            uri,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_URI
+                | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
+        )?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+
+        let db = Self {
+            conn: Mutex::new(conn),
+            path: None,
+        };
+        // Schema should already be initialized by the pool, but ensure it's there
+        db.init_schema()?;
+        Ok(db)
+    }
+
     /// Get a lock on the connection
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Run a blocking database operation on tokio's blocking thread pool.
-    /// Use this for heavy DB operations in async code to avoid blocking tokio worker threads.
-    ///
-    /// Example:
-    /// ```ignore
-    /// let result = Database::run_blocking(db.clone(), |conn| {
-    ///     conn.execute("INSERT INTO ...", params![...])?;
-    ///     Ok(())
-    /// }).await?;
-    /// ```
-    pub async fn run_blocking<F, R>(db: Arc<Database>, f: F) -> R
-    where
-        F: FnOnce(&Connection) -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        match Self::run_blocking_result(db, f).await {
-            Ok(r) => r,
-            Err(e) if e.is_panic() => {
-                // Preserve original panic payload/message.
-                std::panic::resume_unwind(e.into_panic())
-            }
-            Err(e) => {
-                // Cancellation usually means runtime shutdown or task was aborted.
-                // Panic to preserve existing behavior while callers migrate to run_blocking_result.
-                panic!("Database spawn_blocking task failed (cancelled): {e}");
-            }
-        }
-    }
-
-    /// Run a blocking database operation, returning a Result for explicit error handling.
-    ///
-    /// This variant returns `Result<R, tokio::task::JoinError>` instead of panicking
-    /// on cancellation, allowing callers to handle task failure gracefully.
-    ///
-    /// Example:
-    /// ```ignore
-    /// match Database::run_blocking_result(db.clone(), |conn| {
-    ///     conn.execute("INSERT INTO ...", params![...])?;
-    ///     Ok(())
-    /// }).await {
-    ///     Ok(result) => { ... },
-    ///     Err(e) if e.is_cancelled() => { ... },
-    ///     Err(e) if e.is_panic() => { ... },
-    /// }
-    /// ```
-    pub async fn run_blocking_result<F, R>(db: Arc<Database>, f: F) -> Result<R, tokio::task::JoinError>
-    where
-        F: FnOnce(&Connection) -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        tokio::task::spawn_blocking(move || {
-            let conn = db.conn();
-            f(&conn)
-        }).await
     }
 
     /// Initialize schema (idempotent)
