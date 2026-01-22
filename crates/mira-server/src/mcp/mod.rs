@@ -459,6 +459,51 @@ pub struct TeamRequest {
     pub role: Option<String>,
 }
 
+// Review findings request types
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListFindingsRequest {
+    #[schemars(description = "Filter by status: pending/accepted/rejected/fixed")]
+    pub status: Option<String>,
+    #[schemars(description = "Filter by file path")]
+    pub file_path: Option<String>,
+    #[schemars(description = "Filter by expert role: code_reviewer/security/architect/etc.")]
+    pub expert_role: Option<String>,
+    #[schemars(description = "Max results (default: 20)")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReviewFindingRequest {
+    #[schemars(description = "Finding ID to review")]
+    pub finding_id: i64,
+    #[schemars(description = "New status: accepted/rejected/fixed")]
+    pub status: String,
+    #[schemars(description = "Optional feedback explaining why (helps learning)")]
+    pub feedback: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BulkReviewFindingsRequest {
+    #[schemars(description = "List of finding IDs to update")]
+    pub finding_ids: Vec<i64>,
+    #[schemars(description = "New status: accepted/rejected/fixed")]
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetFindingRequest {
+    #[schemars(description = "Finding ID to retrieve")]
+    pub finding_id: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetLearnedPatternsRequest {
+    #[schemars(description = "Filter by correction type: bug/style/security/performance")]
+    pub correction_type: Option<String>,
+    #[schemars(description = "Max results (default: 20)")]
+    pub limit: Option<i64>,
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(description = "Initialize session with project and context.")]
@@ -791,6 +836,58 @@ impl MiraServer {
             req.role,
         )
         .await
+    }
+
+    // Code Review Learning Loop tools
+
+    #[tool(description = "List code review findings with optional filters. Shows findings from expert consultations.")]
+    async fn list_findings(
+        &self,
+        Parameters(req): Parameters<ListFindingsRequest>,
+    ) -> Result<String, String> {
+        tools::list_findings(self, req.status, req.file_path, req.expert_role, req.limit).await
+    }
+
+    #[tool(description = "Review a finding (accept/reject/fixed). Feedback helps improve future suggestions.")]
+    async fn review_finding(
+        &self,
+        Parameters(req): Parameters<ReviewFindingRequest>,
+    ) -> Result<String, String> {
+        tools::review_finding(self, req.finding_id, req.status, req.feedback).await
+    }
+
+    #[tool(description = "Bulk review multiple findings at once.")]
+    async fn bulk_review_findings(
+        &self,
+        Parameters(req): Parameters<BulkReviewFindingsRequest>,
+    ) -> Result<String, String> {
+        tools::bulk_review_findings(self, req.finding_ids, req.status).await
+    }
+
+    #[tool(description = "Get detailed information about a specific finding.")]
+    async fn get_finding(
+        &self,
+        Parameters(req): Parameters<GetFindingRequest>,
+    ) -> Result<String, String> {
+        tools::get_finding(self, req.finding_id).await
+    }
+
+    #[tool(description = "Get learned correction patterns from reviewed findings.")]
+    async fn get_learned_patterns(
+        &self,
+        Parameters(req): Parameters<GetLearnedPatternsRequest>,
+    ) -> Result<String, String> {
+        tools::get_learned_patterns(self, req.correction_type, req.limit).await
+    }
+
+    #[tool(description = "Get statistics about review findings (pending, accepted, rejected, fixed).")]
+    async fn get_finding_stats(&self) -> Result<String, String> {
+        tools::get_finding_stats(self).await
+    }
+
+    #[tool(description = "Extract patterns from accepted findings to improve future reviews.")]
+    async fn extract_patterns(&self) -> Result<String, String> {
+        tools::extract_patterns(self).await
     }
 }
 

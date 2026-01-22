@@ -30,6 +30,12 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     migrate_memory_user_scope(conn)?;
     migrate_teams_tables(conn)?;
 
+    // Add review findings table for code review learning loop
+    migrate_review_findings_table(conn)?;
+
+    // Add learning columns to corrections table
+    migrate_corrections_learning_columns(conn)?;
+
     Ok(())
 }
 
@@ -759,6 +765,88 @@ pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_identity);
         "#
     )?;
+
+    Ok(())
+}
+
+/// Migrate to add review_findings table for code review learning loop
+pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_findings'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if table_exists {
+        return Ok(());
+    }
+
+    tracing::info!("Creating review_findings table for code review learning loop");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS review_findings (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            expert_role TEXT NOT NULL,
+            file_path TEXT,
+            finding_type TEXT NOT NULL,
+            severity TEXT DEFAULT 'medium',
+            content TEXT NOT NULL,
+            code_snippet TEXT,
+            suggestion TEXT,
+            status TEXT DEFAULT 'pending',
+            feedback TEXT,
+            confidence REAL DEFAULT 0.5,
+            user_id TEXT,
+            reviewed_by TEXT,
+            session_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_findings_project ON review_findings(project_id, status);
+        CREATE INDEX IF NOT EXISTS idx_review_findings_expert ON review_findings(expert_role);
+        CREATE INDEX IF NOT EXISTS idx_review_findings_file ON review_findings(file_path);
+        CREATE INDEX IF NOT EXISTS idx_review_findings_status ON review_findings(status);
+        "#
+    )?;
+
+    Ok(())
+}
+
+/// Migrate corrections table to add learning columns
+pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
+    // Check if corrections table exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='corrections'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if occurrence_count column exists
+    let has_occurrence_count: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('corrections') WHERE name='occurrence_count'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_occurrence_count {
+        tracing::info!("Adding learning columns to corrections table");
+        conn.execute_batch(
+            "ALTER TABLE corrections ADD COLUMN occurrence_count INTEGER DEFAULT 1;
+             ALTER TABLE corrections ADD COLUMN acceptance_rate REAL DEFAULT 1.0;",
+        )?;
+    }
 
     Ok(())
 }

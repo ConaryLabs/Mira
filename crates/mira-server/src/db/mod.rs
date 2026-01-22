@@ -8,6 +8,7 @@ mod embeddings;
 mod memory;
 pub mod pool;
 mod project;
+mod reviews;
 mod schema;
 mod session;
 mod tasks;
@@ -18,6 +19,7 @@ pub use config::ExpertConfig;
 pub use documentation::{DocGap, DocInventory, DocTask};
 pub use embeddings::PendingEmbedding;
 pub use memory::parse_memory_fact_row;
+pub use reviews::{Correction, ReviewFinding};
 pub use teams::{Team, TeamMember};
 pub use types::*;
 pub use tasks::{parse_task_row, parse_goal_row};
@@ -191,6 +193,12 @@ impl Database {
 
         // Add teams tables for team-based memory sharing
         schema::migrate_teams_tables(&conn)?;
+
+        // Add review findings table for code review learning loop
+        schema::migrate_review_findings_table(&conn)?;
+
+        // Add learning columns to corrections table
+        schema::migrate_corrections_learning_columns(&conn)?;
 
         Ok(())
     }
