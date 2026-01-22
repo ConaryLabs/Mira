@@ -1,12 +1,12 @@
 // crates/mira-server/src/tools/core/documentation.rs
 // MCP tools for documentation review and approval workflow
 
+use crate::background::documentation::clear_documentation_scan_marker;
 use crate::db::documentation::{
     get_doc_task, mark_doc_task_applied, mark_doc_task_skipped,
     get_doc_inventory, mark_doc_task_approved, DocTask, DocInventory,
 };
 use crate::tools::core::ToolContext;
-use rusqlite::params;
 use sha2::Digest;
 use std::path::Path;
 
@@ -299,13 +299,9 @@ pub async fn scan_documentation(
     let project_id = project_id_opt.ok_or("No active project")?;
 
     let db = ctx.db();
-    let conn = db.conn();
 
     // Clear the scan marker to force new scan
-    conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND key = 'documentation_last_scan'",
-        params![project_id],
-    ).map_err(|e| e.to_string())?;
+    clear_documentation_scan_marker(db, project_id)?;
 
     Ok(format!(
         "✅ **Documentation scan triggered**\n\n\

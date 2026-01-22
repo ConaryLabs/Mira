@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{calculate_source_signature_hash, get_git_head, is_ancestor};
+use super::{calculate_source_signature_hash, get_git_head, is_ancestor, read_file_content};
 
 /// Scan for documentation gaps and stale docs
 /// Returns number of new tasks created
@@ -56,12 +56,26 @@ pub async fn scan_documentation_gaps(db: &Arc<Database>) -> Result<usize, String
             continue;
         }
 
+        // First, scan existing documentation to build inventory
+        match super::inventory::scan_existing_docs(db, project_id, project_path.to_str().unwrap_or("")).await {
+            Ok(scanned) if scanned > 0 => {
+                tracing::debug!("Documentation: scanned {} existing docs for project {}", scanned, project_id);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("Failed to scan existing docs for project {}: {}", project_id, e);
+            }
+        }
+
         // Scan for gaps
         let created = detect_gaps_for_project(db, project_id, project_path).await?;
         total_created += created;
 
         // Scan for stale docs
         let stale = detect_stale_docs_for_project(db, project_id, project_path).await?;
+        if stale > 0 {
+            tracing::info!("Documentation: detected {} stale docs for project {}", stale, project_id);
+        }
 
         // Mark as scanned
         super::mark_documentation_scanned(db, project_id, project_path.to_str().unwrap_or(""))?;
@@ -81,6 +95,7 @@ async fn detect_gaps_for_project(
 
     // Get current git commit
     let git_commit = get_git_head(project_str);
+
 
     // Detect MCP tool documentation gaps
     gaps.extend(detect_mcp_tool_gaps(db, project_id, project_path).await?);
@@ -137,7 +152,7 @@ async fn detect_mcp_tool_gaps(
     }
 
     let content = tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&mcp_mod_path)
+        read_file_content(&mcp_mod_path)
     })
     .await
     .map_err(|e| format!("spawn_blocking panicked: {}", e))?
@@ -209,9 +224,9 @@ async fn detect_mcp_tool_gaps(
 
 /// Detect undocumented CLI commands
 async fn detect_cli_gaps(
-    db: &Arc<Database>,
-    project_id: i64,
-    project_path: &Path,
+    _db: &Arc<Database>,
+    _project_id: i64,
+    _project_path: &Path,
 ) -> Result<Vec<DocGap>, String> {
     // For now, return empty - CLI commands are documented in README
     // This could be extended to parse main.rs clap Command definitions

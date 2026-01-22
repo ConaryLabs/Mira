@@ -3,7 +3,7 @@
 
 mod briefings;
 mod capabilities;
-mod documentation;
+pub mod documentation;
 mod embeddings;
 mod summaries;
 pub mod code_health;

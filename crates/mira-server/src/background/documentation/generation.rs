@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
-use super::file_checksum;
+use super::{file_checksum, read_file_content};
 
 /// Max drafts to generate per cycle (rate limiting)
 const MAX_DRAFTS_PER_CYCLE: usize = 3;
@@ -158,7 +158,7 @@ async fn build_generation_prompt(
 
 /// Build prompt for MCP tool documentation
 async fn build_mcp_tool_prompt(
-    db: &Arc<Database>,
+    _db: &Arc<Database>,
     project_path: &Path,
     task: &DocTask,
 ) -> Result<String, String> {
@@ -171,7 +171,7 @@ async fn build_mcp_tool_prompt(
     // Read the tool implementation from mcp/mod.rs
     let mcp_mod_path = project_path.join("crates/mira-server/src/mcp/mod.rs");
     let mcp_content = tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&mcp_mod_path).unwrap_or_default()
+        read_file_content(&mcp_mod_path).unwrap_or_default()
     })
     .await
     .unwrap_or_default();
@@ -285,7 +285,7 @@ async fn build_module_prompt(
     // Get module code
     let module_path = project_path.join(&format!("src/{}.rs", module_id.replace("::", "/")));
     let module_code = tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&module_path).unwrap_or_else(|_| "// Code not found".to_string())
+        read_file_content(&module_path).unwrap_or_else(|_| "// Code not found".to_string())
     })
     .await
     .unwrap_or_default();

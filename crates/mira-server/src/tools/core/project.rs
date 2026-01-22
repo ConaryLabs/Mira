@@ -488,16 +488,23 @@ pub async fn session_start<C: ToolContext>(
 
     // Load codebase map (only for Rust projects for now)
     if project_type == "rust" {
-        if let Ok(map) = cartographer::get_or_generate_map(
-            db,
+        let db_clone = db.clone();
+        match cartographer::get_or_generate_map_async(
+            db_clone,
             project_id,
             &project_path,
             display_name,
             project_type,
-        ) {
-            if !map.modules.is_empty() {
-                let formatted = cartographer::format_compact(&map);
-                response.push_str(&formatted);
+        ).await {
+            Ok(map) => {
+                if !map.modules.is_empty() {
+                    let formatted = cartographer::format_compact(&map);
+                    response.push_str(&formatted);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to generate codebase map: {}", e);
+                // Continue without map - non-fatal error
             }
         }
     }

@@ -7,7 +7,7 @@ use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{calculate_source_signature_hash, get_git_head};
+use super::{calculate_source_signature_hash, get_git_head, read_file_content};
 
 /// Scan existing documentation and update inventory
 pub async fn scan_existing_docs(
@@ -173,7 +173,7 @@ fn classify_document(path: &str) -> (String, Option<String>) {
 async fn extract_title(file_path: &Path) -> Option<String> {
     let file_path_buf = file_path.to_path_buf();
     let content = tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&file_path_buf).ok()
+        read_file_content(&file_path_buf).ok()
     })
     .await
     .ok()

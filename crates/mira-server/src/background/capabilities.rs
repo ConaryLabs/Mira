@@ -209,7 +209,8 @@ async fn generate_capabilities_inventory(
     project_path: &str,
 ) -> Result<usize, String> {
     // Get the codebase map with module info
-    let modules = cartographer::get_modules_with_purposes(db, project_id)
+    let modules = cartographer::get_modules_with_purposes_async(db.clone(), project_id)
+        .await
         .map_err(|e| e.to_string())?;
 
     if modules.is_empty() {

@@ -15,6 +15,7 @@ pub use generation::*;
 
 /// Local struct for code symbol data (used in signature hash calculation)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CodeSymbol {
     pub id: i64,
     pub project_id: i64,
@@ -73,8 +74,6 @@ pub async fn process_documentation(
     db: &Arc<Database>,
     llm_factory: &Arc<crate::llm::ProviderFactory>,
 ) -> Result<usize, String> {
-    let mut processed = 0;
-
     // Step 1: Scan for missing and stale documentation
     let scan_count = scan_documentation_gaps(db).await?;
     if scan_count > 0 {
@@ -87,7 +86,7 @@ pub async fn process_documentation(
         tracing::info!("Documentation generated {} drafts", draft_count);
     }
 
-    processed = scan_count + draft_count;
+    let processed = scan_count + draft_count;
     Ok(processed)
 }
 
@@ -133,12 +132,12 @@ pub fn file_checksum(path: &std::path::Path) -> Option<String> {
 }
 
 /// Get a file's content as string
-pub fn read_file_content(path: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+pub fn read_file_content(path: &std::path::Path) -> Result<String, std::io::Error> {
+    std::fs::read_to_string(path)
 }
 
 /// Memory fact key for documentation scan marker
-const DOC_SCAN_MARKER_KEY: &str = "documentation_last_scan";
+pub const DOC_SCAN_MARKER_KEY: &str = "documentation_last_scan";
 
 /// Check if project needs documentation scan
 pub fn needs_documentation_scan(
