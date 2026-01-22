@@ -581,8 +581,15 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
         }
     }
 
-    // Fallback to keyword search
-    match ctx.db().search_memories(project_id, query, limit) {
+    // Fallback to keyword search (run on blocking thread pool)
+    let db_clone = ctx.db().clone();
+    let query_owned = query.to_string();
+    let result = Database::run_blocking(db_clone, move |conn| {
+        search_memories_sync(conn, project_id, &query_owned, limit)
+    })
+    .await;
+
+    match result {
         Ok(memories) => {
             if memories.is_empty() {
                 "No relevant memories found.".to_string()
@@ -601,6 +608,55 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
         }
         Err(e) => format!("Recall failed: {}", e),
     }
+}
+
+/// Sync helper: search memories by text (for use inside run_blocking)
+fn search_memories_sync(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<mira_types::MemoryFact>, String> {
+    use rusqlite::params;
+
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
+             FROM memory_facts
+             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
+             ORDER BY updated_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![project_id, pattern, limit as i64], |row| {
+            Ok(mira_types::MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+                session_count: row.get(8).unwrap_or(1),
+                first_session_id: row.get(9).ok(),
+                last_session_id: row.get(10).ok(),
+                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// Build the user prompt from context and optional question

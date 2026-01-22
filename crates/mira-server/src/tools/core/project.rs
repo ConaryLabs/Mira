@@ -1,7 +1,7 @@
 // crates/mira-server/src/tools/core/project.rs
 // Unified project tools
 
-use mira_types::ProjectContext;
+use mira_types::{MemoryFact, ProjectContext};
 use std::path::Path;
 use std::process::Command;
 
@@ -9,6 +9,139 @@ use crate::cartographer;
 use crate::db::Database;
 use crate::tools::core::claude_local;
 use crate::tools::core::ToolContext;
+
+/// Sync helper: search memories by text (for use inside run_blocking)
+fn search_memories_sync(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MemoryFact>, String> {
+    use rusqlite::params;
+
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
+             FROM memory_facts
+             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
+             ORDER BY updated_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![project_id, pattern, limit as i64], |row| {
+            Ok(MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+                session_count: row.get(8).unwrap_or(1),
+                first_session_id: row.get(9).ok(),
+                last_session_id: row.get(10).ok(),
+                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Sync helper: get preferences (for use inside run_blocking)
+fn get_preferences_sync(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+) -> Result<Vec<MemoryFact>, String> {
+    use rusqlite::params;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
+             FROM memory_facts
+             WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
+             ORDER BY category, created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![project_id], |row| {
+            Ok(MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+                session_count: row.get(8).unwrap_or(1),
+                first_session_id: row.get(9).ok(),
+                last_session_id: row.get(10).ok(),
+                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Sync helper: get health alerts (for use inside run_blocking)
+fn get_health_alerts_sync(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+    limit: usize,
+) -> Result<Vec<MemoryFact>, String> {
+    use rusqlite::params;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
+             FROM memory_facts
+             WHERE (project_id = ? OR project_id IS NULL)
+               AND fact_type = 'health'
+               AND confidence >= 0.7
+             ORDER BY confidence DESC, updated_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![project_id, limit as i64], |row| {
+            Ok(MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+                session_count: row.get(8).unwrap_or(1),
+                first_session_id: row.get(9).ok(),
+                last_session_id: row.get(10).ok(),
+                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
 
 /// Shared project initialization logic
 async fn init_project<C: ToolContext>(
@@ -95,7 +228,8 @@ pub async fn session_start<C: ToolContext>(
     gather_system_context(db);
 
     // Import CLAUDE.local.md entries as memories (if file exists)
-    let imported_count = claude_local::import_claude_local_md(db, project_id, &project_path)
+    let imported_count = claude_local::import_claude_local_md_async(db, project_id, &project_path)
+        .await
         .unwrap_or(0);
 
     // Detect project type
@@ -164,10 +298,22 @@ pub async fn session_start<C: ToolContext>(
         );
     }
 
-    // Load preferences
-    let preferences = db
-        .get_preferences(Some(project_id))
-        .map_err(|e| e.to_string())?;
+    // Load preferences, memories, and health alerts in a single blocking call
+    let db_clone = db.clone();
+    let (preferences, memories, health_alerts): (Vec<MemoryFact>, Vec<MemoryFact>, Vec<MemoryFact>) =
+        Database::run_blocking(db_clone, move |conn| {
+            // Get preferences
+            let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
+
+            // Get recent memories
+            let memories = search_memories_sync(conn, Some(project_id), "", 10).unwrap_or_default();
+
+            // Get health alerts
+            let health_alerts = get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
+
+            (preferences, memories, health_alerts)
+        })
+        .await;
 
     if !preferences.is_empty() {
         response.push_str("\nPreferences:\n");
@@ -176,11 +322,6 @@ pub async fn session_start<C: ToolContext>(
             response.push_str(&format!("  [{}] {}\n", category, pref.content));
         }
     }
-
-    // Load recent memories (excluding preferences)
-    let memories = db
-        .search_memories(Some(project_id), "", 5)
-        .map_err(|e| e.to_string())?;
 
     let non_pref_memories: Vec<_> = memories
         .iter()
@@ -199,11 +340,6 @@ pub async fn session_start<C: ToolContext>(
             response.push_str(&format!("  - {}\n", preview));
         }
     }
-
-    // Load health alerts (high-confidence issues found by background scanner)
-    let health_alerts = db
-        .get_health_alerts(Some(project_id), 5)
-        .unwrap_or_default();
 
     if !health_alerts.is_empty() {
         response.push_str("\nHealth alerts:\n");

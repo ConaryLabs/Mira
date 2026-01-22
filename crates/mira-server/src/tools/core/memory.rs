@@ -1,7 +1,9 @@
 //! Unified memory tools (recall, remember, forget)
 
+use crate::db::Database;
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
+use mira_types::MemoryFact;
 
 /// Store a memory fact
 pub async fn remember<C: ToolContext>(
@@ -18,19 +20,65 @@ pub async fn remember<C: ToolContext>(
     let fact_type = fact_type.unwrap_or_else(|| "general".to_string());
     let confidence = confidence.unwrap_or(0.5); // Start with lower confidence for evidence-based system
 
-    // Store in SQL with session tracking
-    let id = ctx
-        .db()
-        .store_memory_with_session(
-            project_id,
-            key.as_deref(),
-            &content,
-            &fact_type,
-            category.as_deref(),
-            confidence,
-            session_id.as_deref(),
-        )
-        .map_err(|e| e.to_string())?;
+    // Store in SQL with session tracking (run on blocking thread pool to avoid blocking tokio)
+    let db_clone = ctx.db().clone();
+    let content_for_store = content.clone();
+    let key_for_store = key.clone();
+    let category_for_store = category.clone();
+    let fact_type_for_store = fact_type.clone();
+    let session_id_for_store = session_id.clone();
+    let id: i64 = Database::run_blocking(db_clone, move |conn| -> Result<i64, String> {
+        use rusqlite::params;
+
+        // Upsert by key if provided
+        if let Some(ref k) = key_for_store {
+            let existing: Option<(i64, Option<String>)> = conn
+                .query_row(
+                    "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
+                    params![k, project_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .ok();
+
+            if let Some((id, last_session)) = existing {
+                let is_new_session = session_id_for_store
+                    .as_ref()
+                    .map(|s| last_session.as_deref() != Some(s))
+                    .unwrap_or(false);
+
+                if is_new_session {
+                    conn.execute(
+                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+                         session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        params![content_for_store, fact_type_for_store, category_for_store, confidence, session_id_for_store, id],
+                    ).map_err(|e| e.to_string())?;
+                    // Check for promotion
+                    conn.execute(
+                        "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
+                         WHERE id = ? AND status = 'candidate' AND session_count >= 3",
+                        [id],
+                    ).map_err(|e| e.to_string())?;
+                } else {
+                    conn.execute(
+                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        params![content_for_store, fact_type_for_store, category_for_store, confidence, id],
+                    ).map_err(|e| e.to_string())?;
+                }
+                return Ok(id);
+            }
+        }
+
+        // New memory - starts as candidate with low confidence
+        let initial_confidence = if confidence < 1.0 { confidence } else { 0.5 };
+        conn.execute(
+            "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
+             session_count, first_session_id, last_session_id, status)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
+            params![project_id, key_for_store, content_for_store, fact_type_for_store, category_for_store, initial_confidence, session_id_for_store, session_id_for_store],
+        ).map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    })
+    .await?;
 
     // Store embedding if available
     if let Some(embeddings) = ctx.embeddings() {
@@ -115,14 +163,22 @@ pub async fn recall<C: ToolContext>(
 
             if let Ok(results) = results {
                 if !results.is_empty() {
-                    // Record memory access for evidence-based tracking
+                    // Record memory access for evidence-based tracking (batch in run_blocking)
                     if let Some(ref sid) = session_id {
-                        let db = ctx.db();
-                        for (id, _, _) in &results {
-                            if let Err(e) = db.record_memory_access(*id, sid) {
-                                tracing::debug!("Failed to record memory access: {}", e);
-                            }
-                        }
+                        let ids: Vec<i64> = results.iter().map(|(id, _, _)| *id).collect();
+                        let db_clone = ctx.db().clone();
+                        let sid_clone = sid.clone();
+                        // Fire and forget - don't block on this
+                        tokio::spawn(async move {
+                            let _ = Database::run_blocking(db_clone, move |conn| {
+                                for id in ids {
+                                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
+                                        tracing::debug!("Failed to record memory access: {}", e);
+                                    }
+                                }
+                            })
+                            .await;
+                        });
                     }
 
                     let mut response =
@@ -143,24 +199,35 @@ pub async fn recall<C: ToolContext>(
         }
     }
 
-    // Fall back to SQL search
-    let results = ctx
-        .db()
-        .search_memories(project_id, &query, limit)
-        .map_err(|e| e.to_string())?;
+    // Fall back to SQL search (run on blocking thread pool)
+    let db_clone = ctx.db().clone();
+    let query_clone = query.clone();
+    let results: Vec<MemoryFact> = Database::run_blocking(db_clone, move |conn| {
+        search_memories_sync(conn, project_id, &query_clone, limit)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     if results.is_empty() {
         return Ok(format!("{}No memories found.", context_header));
     }
 
-    // Record memory access for evidence-based tracking
+    // Record memory access for evidence-based tracking (batch in run_blocking)
     if let Some(ref sid) = session_id {
-        let db = ctx.db();
-        for mem in &results {
-            if let Err(e) = db.record_memory_access(mem.id, sid) {
-                tracing::debug!("Failed to record memory access: {}", e);
-            }
-        }
+        let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
+        let db_clone = ctx.db().clone();
+        let sid_clone = sid.clone();
+        // Fire and forget - don't block on this
+        tokio::spawn(async move {
+            let _ = Database::run_blocking(db_clone, move |conn| {
+                for id in ids {
+                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
+                        tracing::debug!("Failed to record memory access: {}", e);
+                    }
+                }
+            })
+            .await;
+        });
     }
 
     let mut response = format!("{}Found {} memories:\n", context_header, results.len());
@@ -179,6 +246,96 @@ pub async fn recall<C: ToolContext>(
     }
 
     Ok(response)
+}
+
+/// Sync helper: search memories by text (basic SQL LIKE)
+/// This version takes a Connection reference for use inside run_blocking
+fn search_memories_sync(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MemoryFact>, String> {
+    use rusqlite::params;
+
+    // Escape SQL LIKE wildcards to prevent injection
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
+             FROM memory_facts
+             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
+             ORDER BY updated_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![project_id, pattern, limit as i64], |row| {
+            Ok(MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+                session_count: row.get(8).unwrap_or(1),
+                first_session_id: row.get(9).ok(),
+                last_session_id: row.get(10).ok(),
+                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Sync helper: record that a memory was accessed in a session
+/// This version takes a Connection reference for use inside run_blocking
+fn record_memory_access_sync(
+    conn: &rusqlite::Connection,
+    memory_id: i64,
+    session_id: &str,
+) -> Result<(), String> {
+    use rusqlite::params;
+
+    // Get current session info
+    let current: Option<String> = conn
+        .query_row(
+            "SELECT last_session_id FROM memory_facts WHERE id = ?",
+            [memory_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+
+    // Only increment if this is a new session
+    if current.as_deref() != Some(session_id) {
+        conn.execute(
+            "UPDATE memory_facts SET session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            params![session_id, memory_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Check for promotion
+        conn.execute(
+            "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
+             WHERE id = ? AND status = 'candidate' AND session_count >= 3",
+            [memory_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 /// Delete a memory
