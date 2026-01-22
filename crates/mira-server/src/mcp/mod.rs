@@ -402,6 +402,45 @@ pub struct ConfigureExpertRequest {
     pub model: Option<String>,
 }
 
+// Documentation request types
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListDocTasksRequest {
+    #[schemars(description = "Filter by status")]
+    pub status: Option<String>,
+    #[schemars(description = "Filter by documentation type")]
+    pub doc_type: Option<String>,
+    #[schemars(description = "Filter by priority")]
+    pub priority: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReviewDocDraftRequest {
+    #[schemars(description = "Task ID to review")]
+    pub task_id: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ApplyDocDraftRequest {
+    #[schemars(description = "Task ID to apply")]
+    pub task_id: i64,
+    #[schemars(description = "Force apply even if target file changed")]
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SkipDocTaskRequest {
+    #[schemars(description = "Task ID to skip")]
+    pub task_id: i64,
+    #[schemars(description = "Reason for skipping")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ApproveDocDraftRequest {
+    #[schemars(description = "Task ID to approve")]
+    pub task_id: i64,
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(description = "Initialize session with project and context.")]
@@ -664,6 +703,58 @@ impl MiraServer {
     #[tool(description = "Export Mira memories to CLAUDE.local.md for persistence across Claude Code sessions.")]
     async fn export_claude_local(&self) -> Result<String, String> {
         tools::export_claude_local(self).await
+    }
+
+    // Documentation tools
+
+    #[tool(description = "List pending documentation tasks with optional filters.")]
+    async fn list_doc_tasks(
+        &self,
+        Parameters(req): Parameters<ListDocTasksRequest>,
+    ) -> Result<String, String> {
+        tools::list_doc_tasks(self, req.status, req.doc_type, req.priority).await
+    }
+
+    #[tool(description = "Review a generated documentation draft.")]
+    async fn review_doc_draft(
+        &self,
+        Parameters(req): Parameters<ReviewDocDraftRequest>,
+    ) -> Result<String, String> {
+        tools::review_doc_draft(self, req.task_id).await
+    }
+
+    #[tool(description = "Apply an approved documentation draft.")]
+    async fn apply_doc_draft(
+        &self,
+        Parameters(req): Parameters<ApplyDocDraftRequest>,
+    ) -> Result<String, String> {
+        tools::apply_doc_draft(self, req.task_id, req.force.unwrap_or(false)).await
+    }
+
+    #[tool(description = "Skip a documentation task.")]
+    async fn skip_doc_task(
+        &self,
+        Parameters(req): Parameters<SkipDocTaskRequest>,
+    ) -> Result<String, String> {
+        tools::skip_doc_task(self, req.task_id, req.reason).await
+    }
+
+    #[tool(description = "Show documentation inventory with staleness indicators.")]
+    async fn show_doc_inventory(&self) -> Result<String, String> {
+        tools::show_doc_inventory(self).await
+    }
+
+    #[tool(description = "Trigger manual documentation scan.")]
+    async fn scan_documentation(&self) -> Result<String, String> {
+        tools::scan_documentation(self).await
+    }
+
+    #[tool(description = "Approve a documentation draft (marks it as ready to apply).")]
+    async fn approve_doc_draft(
+        &self,
+        Parameters(req): Parameters<ApproveDocDraftRequest>,
+    ) -> Result<String, String> {
+        tools::approve_doc_draft(self, req.task_id).await
     }
 }
 

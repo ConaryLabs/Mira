@@ -25,6 +25,7 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     migrate_system_prompts_strip_tool_suffix(conn)?;
     migrate_code_fts(conn)?;
     migrate_imports_unique(conn)?;
+    migrate_documentation_tables(conn)?;
 
     Ok(())
 }
@@ -522,6 +523,83 @@ pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
 
     // Create unique index
     conn.execute_batch("CREATE UNIQUE INDEX uniq_imports ON imports(project_id, file_path, import_path)")?;
+
+    Ok(())
+}
+
+/// Migrate to add documentation tracking tables
+pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
+    let tables_exist: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='documentation_tasks'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if tables_exist {
+        return Ok(());
+    }
+
+    tracing::info!("Creating documentation tracking tables");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS documentation_tasks (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            doc_type TEXT NOT NULL,
+            doc_category TEXT NOT NULL,
+            source_file_path TEXT,
+            target_doc_path TEXT NOT NULL,
+            priority TEXT DEFAULT 'medium',
+            status TEXT DEFAULT 'pending',
+            reason TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            git_commit TEXT,
+            -- Safety rails for concurrent edits
+            source_signature_hash TEXT,
+            target_doc_checksum_at_generation TEXT,
+            -- Draft content with preview for list views
+            draft_content TEXT,
+            draft_preview TEXT,
+            draft_sha256 TEXT,
+            draft_generated_at TEXT,
+            reviewed_at TEXT,
+            applied_at TEXT,
+            -- Retry tracking
+            retry_count INTEGER DEFAULT 0,
+            last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_doc_tasks_status ON documentation_tasks(project_id, status);
+        CREATE INDEX IF NOT EXISTS idx_doc_tasks_type ON documentation_tasks(doc_type, doc_category);
+        CREATE INDEX IF NOT EXISTS idx_doc_tasks_priority ON documentation_tasks(project_id, priority, status);
+        -- Uniqueness constraint to prevent duplicate tasks for same target
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_doc_tasks_unique
+            ON documentation_tasks(project_id, target_doc_path, doc_type, doc_category)
+            WHERE status IN ('pending', 'draft_ready');
+
+        CREATE TABLE IF NOT EXISTS documentation_inventory (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            doc_path TEXT NOT NULL,
+            doc_type TEXT NOT NULL,
+            doc_category TEXT,
+            title TEXT,
+            -- Normalized source signature hash (not raw checksum)
+            source_signature_hash TEXT,
+            source_symbols TEXT,
+            last_seen_commit TEXT,
+            is_stale INTEGER DEFAULT 0,
+            staleness_reason TEXT,
+            verified_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, doc_path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_doc_inventory_stale ON documentation_inventory(project_id, is_stale);
+        "#
+    )?;
 
     Ok(())
 }

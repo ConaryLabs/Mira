@@ -3,6 +3,7 @@
 
 mod chat;
 mod config;
+pub mod documentation;
 mod embeddings;
 mod memory;
 pub mod pool;
@@ -13,6 +14,7 @@ mod tasks;
 mod types;
 
 pub use config::ExpertConfig;
+pub use documentation::{DocGap, DocInventory, DocTask};
 pub use embeddings::PendingEmbedding;
 pub use memory::parse_memory_fact_row;
 pub use types::*;

@@ -3,6 +3,7 @@
 
 mod briefings;
 mod capabilities;
+mod documentation;
 mod embeddings;
 mod summaries;
 pub mod code_health;
@@ -10,7 +11,7 @@ pub mod watcher;
 
 use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::DeepSeekClient;
+use crate::llm::{DeepSeekClient, ProviderFactory};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -20,7 +21,9 @@ pub struct BackgroundWorker {
     db: Arc<Database>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
+    llm_factory: Arc<ProviderFactory>,
     shutdown: watch::Receiver<bool>,
+    cycle_count: u64,
 }
 
 impl BackgroundWorker {
@@ -30,11 +33,14 @@ impl BackgroundWorker {
         deepseek: Option<Arc<DeepSeekClient>>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
-        Self { db, embeddings, deepseek, shutdown }
+        // Create provider factory with all available LLM clients
+        let llm_factory = Arc::new(ProviderFactory::new());
+
+        Self { db, embeddings, deepseek, llm_factory, shutdown, cycle_count: 0 }
     }
 
     /// Start the background worker loop
-    pub async fn run(self) {
+    pub async fn run(mut self) {
         tracing::info!("Background worker started");
 
         // Initial delay to let the service start up
@@ -73,8 +79,11 @@ impl BackgroundWorker {
     }
 
     /// Process a batch of work items
-    async fn process_batch(&self) -> Result<usize, String> {
+    async fn process_batch(&mut self) -> Result<usize, String> {
         let mut processed = 0;
+
+        // Increment cycle counter
+        self.cycle_count += 1;
 
         // Process pending embeddings first (highest priority - enables search for new files)
         if let Some(ref emb) = self.embeddings {
@@ -107,6 +116,15 @@ impl BackgroundWorker {
                 tracing::info!("Background: processed {} capabilities", count);
             }
             processed += count;
+
+            // Process documentation tasks (lower priority - run every 3rd cycle)
+            if self.cycle_count % 3 == 0 {
+                let count = self.process_documentation(&self.llm_factory).await?;
+                if count > 0 {
+                    tracing::info!("Background: processed {} documentation tasks", count);
+                }
+                processed += count;
+            }
         }
 
         // Process code health (cargo warnings, TODOs, unused functions)
@@ -141,6 +159,11 @@ impl BackgroundWorker {
     /// Process code health (compiler warnings, TODOs, unused code, complexity)
     async fn process_code_health(&self) -> Result<usize, String> {
         code_health::process_code_health(&self.db, self.deepseek.as_ref()).await
+    }
+
+    /// Process documentation tasks (gap detection and draft generation)
+    async fn process_documentation(&self, client: &Arc<ProviderFactory>) -> Result<usize, String> {
+        documentation::process_documentation(&self.db, client).await
     }
 
     /// Process pending embeddings from file watcher queue

@@ -133,4 +133,10 @@ You are advisory - analyze and recommend, not implement."#
         let instructions = "You are a project analyst providing briefings on codebase status, recent changes, and recommendations.";
         Self::new(instructions)
     }
+
+    /// Factory method for documentation generation
+    pub fn for_documentation() -> Self {
+        let instructions = "You are a technical writer creating comprehensive documentation for codebases. Write clear, concise markdown documentation that helps developers understand and use the code effectively. Focus on accuracy, completeness, and practical examples.";
+        Self::new(instructions)
+    }
 }
