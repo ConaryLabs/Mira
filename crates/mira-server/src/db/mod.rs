@@ -11,12 +11,14 @@ mod project;
 mod schema;
 mod session;
 mod tasks;
+mod teams;
 mod types;
 
 pub use config::ExpertConfig;
 pub use documentation::{DocGap, DocInventory, DocTask};
 pub use embeddings::PendingEmbedding;
 pub use memory::parse_memory_fact_row;
+pub use teams::{Team, TeamMember};
 pub use types::*;
 pub use tasks::{parse_task_row, parse_goal_row};
 
@@ -177,6 +179,18 @@ impl Database {
 
         // Add unique constraint to imports table for deduplication
         schema::migrate_imports_unique(&conn)?;
+
+        // Add documentation tracking tables
+        schema::migrate_documentation_tables(&conn)?;
+
+        // Add users table for multi-user support
+        schema::migrate_users_table(&conn)?;
+
+        // Add user_id, scope, team_id columns to memory_facts
+        schema::migrate_memory_user_scope(&conn)?;
+
+        // Add teams tables for team-based memory sharing
+        schema::migrate_teams_tables(&conn)?;
 
         Ok(())
     }

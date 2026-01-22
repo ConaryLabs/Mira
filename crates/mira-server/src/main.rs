@@ -182,7 +182,7 @@ async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "remember" => {
              let req: RememberRequest = serde_json::from_str(&args)?;
-             mira::tools::remember(&server, req.content, req.key, req.fact_type, req.category, req.confidence).await
+             mira::tools::remember(&server, req.content, req.key, req.fact_type, req.category, req.confidence, req.scope).await
         }
         "recall" => {
             let req: RecallRequest = serde_json::from_str(&args)?;

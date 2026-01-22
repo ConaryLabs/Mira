@@ -185,6 +185,8 @@ pub struct RememberRequest {
     pub category: Option<String>,
     #[schemars(description = "Confidence score (0.0-1.0)")]
     pub confidence: Option<f64>,
+    #[schemars(description = "Visibility scope: personal (only creator), project (default, anyone with project access), team (team members only)")]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -441,6 +443,22 @@ pub struct ApproveDocDraftRequest {
     pub task_id: i64,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TeamRequest {
+    #[schemars(description = "Action: create/invite/remove/list/members")]
+    pub action: String,
+    #[schemars(description = "Team ID (for invite/remove/members actions)")]
+    pub team_id: Option<i64>,
+    #[schemars(description = "Team name (for create action)")]
+    pub name: Option<String>,
+    #[schemars(description = "Team description (for create action)")]
+    pub description: Option<String>,
+    #[schemars(description = "User identity to invite/remove")]
+    pub user_identity: Option<String>,
+    #[schemars(description = "Role for invited user: member/admin (default: member)")]
+    pub role: Option<String>,
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(description = "Initialize session with project and context.")]
@@ -466,7 +484,7 @@ impl MiraServer {
         tools::get_project(self).await
     }
 
-    #[tool(description = "Store a fact for future recall (scoped to project).")]
+    #[tool(description = "Store a fact for future recall. Scope controls visibility: personal (only you), project (default), team.")]
     async fn remember(
         &self,
         Parameters(req): Parameters<RememberRequest>,
@@ -478,6 +496,7 @@ impl MiraServer {
             req.fact_type,
             req.category,
             req.confidence,
+            req.scope,
         )
         .await
     }
@@ -755,6 +774,23 @@ impl MiraServer {
         Parameters(req): Parameters<ApproveDocDraftRequest>,
     ) -> Result<String, String> {
         tools::approve_doc_draft(self, req.task_id).await
+    }
+
+    #[tool(description = "Manage teams for shared memory (create, invite, remove, list, members).")]
+    async fn team(
+        &self,
+        Parameters(req): Parameters<TeamRequest>,
+    ) -> Result<String, String> {
+        tools::team(
+            self,
+            req.action,
+            req.team_id,
+            req.name,
+            req.description,
+            req.user_identity,
+            req.role,
+        )
+        .await
     }
 }
 

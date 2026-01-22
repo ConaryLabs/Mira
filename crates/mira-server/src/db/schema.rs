@@ -26,6 +26,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     migrate_code_fts(conn)?;
     migrate_imports_unique(conn)?;
     migrate_documentation_tables(conn)?;
+    migrate_users_table(conn)?;
+    migrate_memory_user_scope(conn)?;
+    migrate_teams_tables(conn)?;
 
     Ok(())
 }
@@ -598,6 +601,162 @@ pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
             UNIQUE(project_id, doc_path)
         );
         CREATE INDEX IF NOT EXISTS idx_doc_inventory_stale ON documentation_inventory(project_id, is_stale);
+        "#
+    )?;
+
+    Ok(())
+}
+
+/// Migrate to add users table for multi-user support
+pub fn migrate_users_table(conn: &Connection) -> Result<()> {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if table_exists {
+        return Ok(());
+    }
+
+    tracing::info!("Creating users table for multi-user support");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            identity TEXT UNIQUE NOT NULL,
+            display_name TEXT,
+            email TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_users_identity ON users(identity);
+        "#
+    )?;
+
+    Ok(())
+}
+
+/// Migrate memory_facts to add user_id and scope columns for multi-user sharing
+pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
+    // Check if memory_facts exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_facts'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if user_id column exists
+    let has_user_id: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='user_id'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_user_id {
+        tracing::info!("Adding user_id column to memory_facts for multi-user support");
+        conn.execute(
+            "ALTER TABLE memory_facts ADD COLUMN user_id TEXT",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_facts(user_id)",
+            [],
+        )?;
+    }
+
+    // Check if scope column exists
+    let has_scope: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='scope'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_scope {
+        tracing::info!("Adding scope column to memory_facts for visibility control");
+        conn.execute(
+            "ALTER TABLE memory_facts ADD COLUMN scope TEXT DEFAULT 'project'",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory_facts(scope)",
+            [],
+        )?;
+    }
+
+    // Check if team_id column exists
+    let has_team_id: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='team_id'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_team_id {
+        tracing::info!("Adding team_id column to memory_facts for team sharing");
+        conn.execute(
+            "ALTER TABLE memory_facts ADD COLUMN team_id INTEGER",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_team ON memory_facts(team_id)",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Migrate to add teams tables for team-based memory sharing
+pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
+    let teams_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='teams'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if teams_exists {
+        return Ok(());
+    }
+
+    tracing::info!("Creating teams tables for team-based memory sharing");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS teams (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_by TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
+
+        CREATE TABLE IF NOT EXISTS team_members (
+            id INTEGER PRIMARY KEY,
+            team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+            user_identity TEXT NOT NULL,
+            role TEXT DEFAULT 'member',
+            joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(team_id, user_identity)
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
+        CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_identity);
         "#
     )?;
 

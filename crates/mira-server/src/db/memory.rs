@@ -10,7 +10,7 @@ use crate::search::embedding_to_bytes;
 
 /// Parse MemoryFact from a rusqlite Row with standard column order:
 /// (id, project_id, key, content, fact_type, category, confidence, created_at,
-///  session_count, first_session_id, last_session_id, status)
+///  session_count, first_session_id, last_session_id, status, user_id, scope, team_id)
 pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact> {
     Ok(MemoryFact {
         id: row.get(0)?,
@@ -25,6 +25,9 @@ pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact
         first_session_id: row.get(9).ok(),
         last_session_id: row.get(10).ok(),
         status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+        user_id: row.get(12).ok(),
+        scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
+        team_id: row.get(14).ok(),
     })
 }
 
@@ -174,7 +177,8 @@ impl Database {
 
         let mut stmt = conn.prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
              ORDER BY updated_at DESC
@@ -192,7 +196,8 @@ impl Database {
 
         let mut stmt = conn.prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
              ORDER BY category, created_at DESC"
@@ -217,7 +222,8 @@ impl Database {
 
         let mut stmt = conn.prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL)
                AND fact_type = 'health'
@@ -261,7 +267,8 @@ impl Database {
         let (query, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(cat) = category {
             (
                 "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                        session_count, first_session_id, last_session_id, status
+                        session_count, first_session_id, last_session_id, status,
+                        user_id, scope, team_id
                  FROM memory_facts
                  WHERE project_id IS NULL AND category = ?
                  ORDER BY confidence DESC, updated_at DESC
@@ -271,7 +278,8 @@ impl Database {
         } else {
             (
                 "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                        session_count, first_session_id, last_session_id, status
+                        session_count, first_session_id, last_session_id, status,
+                        user_id, scope, team_id
                  FROM memory_facts
                  WHERE project_id IS NULL AND fact_type = 'personal'
                  ORDER BY confidence DESC, updated_at DESC
@@ -390,7 +398,8 @@ impl Database {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
              WHERE has_embedding = 0
              ORDER BY created_at ASC

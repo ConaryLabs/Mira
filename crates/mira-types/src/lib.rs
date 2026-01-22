@@ -36,6 +36,13 @@ pub struct MemoryFact {
     pub last_session_id: Option<String>,
     #[serde(default = "default_status")]
     pub status: String,
+    // Multi-user memory sharing fields
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default = "default_scope")]
+    pub scope: String,
+    #[serde(default)]
+    pub team_id: Option<i64>,
 }
 
 fn default_session_count() -> i32 {
@@ -44,6 +51,10 @@ fn default_session_count() -> i32 {
 
 fn default_status() -> String {
     "candidate".to_string()
+}
+
+fn default_scope() -> String {
+    "project".to_string()
 }
 
 // ═══════════════════════════════════════

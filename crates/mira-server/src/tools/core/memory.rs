@@ -12,12 +12,26 @@ pub async fn remember<C: ToolContext>(
     fact_type: Option<String>,
     category: Option<String>,
     confidence: Option<f64>,
+    scope: Option<String>,
 ) -> Result<String, String> {
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_session_id().await;
+    let user_id = ctx.get_user_identity();
 
     let fact_type = fact_type.unwrap_or_else(|| "general".to_string());
     let confidence = confidence.unwrap_or(0.5); // Start with lower confidence for evidence-based system
+    // Default scope is "project" for backward compatibility
+    let scope = scope.unwrap_or_else(|| "project".to_string());
+
+    // Validate scope
+    if !["personal", "project", "team"].contains(&scope.as_str()) {
+        return Err(format!("Invalid scope '{}'. Must be one of: personal, project, team", scope));
+    }
+
+    // Personal scope requires user_id
+    if scope == "personal" && user_id.is_none() {
+        return Err("Cannot create personal memory: user identity not available".to_string());
+    }
 
     // Store in SQL with session tracking via connection pool
     let content_for_store = content.clone();
@@ -25,6 +39,8 @@ pub async fn remember<C: ToolContext>(
     let category_for_store = category.clone();
     let fact_type_for_store = fact_type.clone();
     let session_id_for_store = session_id.clone();
+    let user_id_for_store = user_id.clone();
+    let scope_for_store = scope.clone();
     let id: i64 = ctx
         .pool()
         .interact(move |conn| {
@@ -49,8 +65,10 @@ pub async fn remember<C: ToolContext>(
                     if is_new_session {
                         conn.execute(
                             "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
-                             session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                            params![content_for_store, fact_type_for_store, category_for_store, confidence, session_id_for_store, id],
+                             session_count = session_count + 1, last_session_id = ?, user_id = COALESCE(user_id, ?),
+                             scope = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            params![content_for_store, fact_type_for_store, category_for_store, confidence,
+                                    session_id_for_store, user_id_for_store, scope_for_store, id],
                         )?;
                         // Check for promotion
                         conn.execute(
@@ -60,8 +78,10 @@ pub async fn remember<C: ToolContext>(
                         )?;
                     } else {
                         conn.execute(
-                            "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                            params![content_for_store, fact_type_for_store, category_for_store, confidence, id],
+                            "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+                             user_id = COALESCE(user_id, ?), scope = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            params![content_for_store, fact_type_for_store, category_for_store, confidence,
+                                    user_id_for_store, scope_for_store, id],
                         )?;
                     }
                     return Ok(id);
@@ -72,9 +92,10 @@ pub async fn remember<C: ToolContext>(
             let initial_confidence = if confidence < 1.0 { confidence } else { 0.5 };
             conn.execute(
                 "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-                 session_count, first_session_id, last_session_id, status)
-                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
-                params![project_id, key_for_store, content_for_store, fact_type_for_store, category_for_store, initial_confidence, session_id_for_store, session_id_for_store],
+                 session_count, first_session_id, last_session_id, status, user_id, scope)
+                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?)",
+                params![project_id, key_for_store, content_for_store, fact_type_for_store, category_for_store,
+                        initial_confidence, session_id_for_store, session_id_for_store, user_id_for_store, scope_for_store],
             )?;
             Ok(conn.last_insert_rowid())
         })
@@ -127,6 +148,7 @@ pub async fn recall<C: ToolContext>(
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_session_id().await;
     let project = ctx.get_project().await;
+    let user_id = ctx.get_user_identity();
     let context_header = format_project_header(project.as_ref());
 
     let limit = limit.unwrap_or(10) as usize;
@@ -135,23 +157,35 @@ pub async fn recall<C: ToolContext>(
     if let Some(embeddings) = ctx.embeddings() {
         if let Ok(query_embedding) = embeddings.embed(&query).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
+            let user_id_for_query = user_id.clone();
 
-            // Run vector search via connection pool
+            // Run vector search via connection pool with scope filtering
             let results: Result<Vec<(i64, String, f32)>, String> = ctx
                 .pool()
                 .interact(move |conn| {
                     use rusqlite::params;
+                    // Scope filtering logic:
+                    // - project scope: visible to all with project access
+                    // - personal scope: only visible to creator (user_id match)
+                    // - team scope: TODO - requires team membership check
+                    // - legacy memories (user_id IS NULL): treated as project scope
                     let mut stmt = conn.prepare(
                         "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
                          FROM vec_memory v
                          JOIN memory_facts f ON v.fact_id = f.id
                          WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+                           AND (
+                             f.scope = 'project'
+                             OR f.scope IS NULL
+                             OR (f.scope = 'personal' AND f.user_id = ?4)
+                             OR f.user_id IS NULL
+                           )
                          ORDER BY distance
                          LIMIT ?3",
                     )?;
 
                     let results: Vec<(i64, String, f32)> = stmt
-                        .query_map(params![embedding_bytes, project_id, limit as i64], |row| {
+                        .query_map(params![embedding_bytes, project_id, limit as i64, user_id_for_query], |row| {
                             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                         })?
                         .filter_map(|r| r.ok())
@@ -204,10 +238,11 @@ pub async fn recall<C: ToolContext>(
 
     // Fall back to SQL search via connection pool
     let query_clone = query.clone();
+    let user_id_clone = user_id.clone();
     let results: Vec<MemoryFact> = ctx
         .pool()
         .interact(move |conn| {
-            search_memories_sync(conn, project_id, &query_clone, limit)
+            search_memories_sync(conn, project_id, &query_clone, limit, user_id_clone.as_deref())
                 .map_err(|e| anyhow::anyhow!(e))
         })
         .await
@@ -255,13 +290,14 @@ pub async fn recall<C: ToolContext>(
     Ok(response)
 }
 
-/// Sync helper: search memories by text (basic SQL LIKE)
+/// Sync helper: search memories by text (basic SQL LIKE) with scope filtering
 /// This version takes a Connection reference for use inside run_blocking
 fn search_memories_sync(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
     query: &str,
     limit: usize,
+    user_id: Option<&str>,
 ) -> Result<Vec<MemoryFact>, String> {
     use rusqlite::params;
 
@@ -272,19 +308,28 @@ fn search_memories_sync(
         .replace('_', "\\_");
     let pattern = format!("%{}%", escaped);
 
+    // Scope filtering: project and legacy memories visible to all, personal only to creator
     let mut stmt = conn
         .prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
-             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
+             WHERE (project_id = ? OR project_id IS NULL)
+               AND content LIKE ? ESCAPE '\\'
+               AND (
+                 scope = 'project'
+                 OR scope IS NULL
+                 OR (scope = 'personal' AND user_id = ?)
+                 OR user_id IS NULL
+               )
              ORDER BY updated_at DESC
              LIMIT ?",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![project_id, pattern, limit as i64], |row| {
+        .query_map(params![project_id, pattern, user_id, limit as i64], |row| {
             Ok(MemoryFact {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
@@ -298,6 +343,9 @@ fn search_memories_sync(
                 first_session_id: row.get(9).ok(),
                 last_session_id: row.get(10).ok(),
                 status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+                user_id: row.get(12).ok(),
+                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
+                team_id: row.get(14).ok(),
             })
         })
         .map_err(|e| e.to_string())?;

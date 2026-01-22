@@ -15,6 +15,7 @@ pub mod project_files;
 pub mod db;
 pub mod embeddings;
 pub mod hooks;
+pub mod identity;
 pub mod indexer;
 pub mod llm;
 pub mod mcp;

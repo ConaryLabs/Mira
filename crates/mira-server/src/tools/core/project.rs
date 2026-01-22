@@ -28,7 +28,8 @@ fn search_memories_sync(
     let mut stmt = conn
         .prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
              ORDER BY updated_at DESC
@@ -51,6 +52,9 @@ fn search_memories_sync(
                 first_session_id: row.get(9).ok(),
                 last_session_id: row.get(10).ok(),
                 status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+                user_id: row.get(12).ok(),
+                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
+                team_id: row.get(14).ok(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -69,7 +73,8 @@ fn get_preferences_sync(
     let mut stmt = conn
         .prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
              ORDER BY category, created_at DESC",
@@ -91,6 +96,9 @@ fn get_preferences_sync(
                 first_session_id: row.get(9).ok(),
                 last_session_id: row.get(10).ok(),
                 status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+                user_id: row.get(12).ok(),
+                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
+                team_id: row.get(14).ok(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -110,7 +118,8 @@ fn get_health_alerts_sync(
     let mut stmt = conn
         .prepare(
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL)
                AND fact_type = 'health'
@@ -135,6 +144,9 @@ fn get_health_alerts_sync(
                 first_session_id: row.get(9).ok(),
                 last_session_id: row.get(10).ok(),
                 status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
+                user_id: row.get(12).ok(),
+                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
+                team_id: row.get(14).ok(),
             })
         })
         .map_err(|e| e.to_string())?;

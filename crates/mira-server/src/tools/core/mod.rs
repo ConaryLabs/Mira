@@ -58,6 +58,14 @@ pub trait ToolContext: Send + Sync {
     /// Get or create a session ID for the current project
     async fn get_or_create_session(&self) -> String;
 
+    // === User Identity ===
+
+    /// Get the current user's identity (for multi-user memory scoping)
+    /// Returns None if identity cannot be determined
+    fn get_user_identity(&self) -> Option<String> {
+        crate::identity::get_current_user_identity()
+    }
+
     // === Event Broadcasting ===
 
     /// Broadcast a WebSocket event to connected clients (no-op if no broadcaster)
@@ -87,6 +95,7 @@ pub mod project;
 pub mod session;
 pub mod session_notes;
 pub mod tasks_goals;
+pub mod teams;
 
 // Re-export commonly used functions
 pub use claude_local::export_claude_local;
@@ -98,3 +107,4 @@ pub use memory::*;
 pub use project::*;
 pub use session::*;
 pub use tasks_goals::*;
+pub use teams::*;

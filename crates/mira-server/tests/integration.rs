@@ -131,6 +131,7 @@ async fn test_remember_basic() {
         Some("decision".to_string()),
         Some("architecture".to_string()),
         Some(0.9),
+        None, // scope (default to project)
     )
     .await;
 
@@ -168,6 +169,7 @@ async fn test_remember_with_key() {
         Some("preference".to_string()),
         Some("security".to_string()),
         Some(1.0),
+        None, // scope (default to project)
     )
     .await;
 
@@ -704,6 +706,7 @@ async fn test_pool_concurrent_access() {
                     Some("general".to_string()),
                     None,
                     Some(0.8),
+                    None, // scope (default to project)
                 )
                 .await
             }
@@ -764,6 +767,7 @@ async fn test_pool_and_database_share_state() {
         Some("general".to_string()),
         None,
         Some(0.9),
+        None, // scope (default to project)
     )
     .await
     .expect("remember failed");
