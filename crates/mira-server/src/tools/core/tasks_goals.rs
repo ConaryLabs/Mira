@@ -22,7 +22,7 @@ struct BulkGoal {
     status: Option<String>,
 }
 
-/// Unified task tool with actions: create, bulk_create, list, update, complete, delete
+/// Unified task tool with actions: create, bulk_create, list, get, update, complete, delete
 pub async fn task<C: ToolContext>(
     ctx: &C,
     action: String,
@@ -38,6 +38,28 @@ pub async fn task<C: ToolContext>(
     let project_id = ctx.project_id().await;
 
     match action.as_str() {
+        "get" => {
+            let id: i64 = task_id
+                .ok_or("Task ID is required for get action".to_string())?
+                .parse()
+                .map_err(|_| "Invalid task ID".to_string())?;
+
+            let task = ctx.db().get_task_by_id(id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Task {} not found", id))?;
+
+            let mut response = format!("Task [{}]: {}\n", task.id, task.title);
+            response.push_str(&format!("  Status: {}\n", task.status));
+            response.push_str(&format!("  Priority: {}\n", task.priority));
+            if let Some(desc) = &task.description {
+                response.push_str(&format!("  Description: {}\n", desc));
+            }
+            if let Some(goal_id) = task.goal_id {
+                response.push_str(&format!("  Goal: {}\n", goal_id));
+            }
+            response.push_str(&format!("  Created: {}\n", task.created_at));
+            Ok(response)
+        }
         "create" => {
             let title = title.ok_or("Title is required for create action".to_string())?;
             let id = ctx.db().create_task(
@@ -133,11 +155,11 @@ pub async fn task<C: ToolContext>(
 
             Ok(format!("Deleted task {}", id))
         }
-        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, update, complete, delete", action))
+        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, get, update, complete, delete", action))
     }
 }
 
-/// Unified goal tool with actions: create, bulk_create, list, update, progress, delete
+/// Unified goal tool with actions: create, bulk_create, list, get, update, progress, delete
 pub async fn goal<C: ToolContext>(
     ctx: &C,
     action: String,
@@ -154,6 +176,46 @@ pub async fn goal<C: ToolContext>(
     let project_id = ctx.project_id().await;
 
     match action.as_str() {
+        "get" => {
+            let id: i64 = goal_id
+                .ok_or("Goal ID is required for get action".to_string())?
+                .parse()
+                .map_err(|_| "Invalid goal ID".to_string())?;
+
+            let goal = ctx.db().get_goal_by_id(id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Goal {} not found", id))?;
+
+            let mut response = format!("Goal [{}]: {}\n", goal.id, goal.title);
+            response.push_str(&format!("  Status: {}\n", goal.status));
+            response.push_str(&format!("  Priority: {}\n", goal.priority));
+            response.push_str(&format!("  Progress: {}%\n", goal.progress_percent));
+            if let Some(desc) = &goal.description {
+                response.push_str(&format!("  Description: {}\n", desc));
+            }
+            response.push_str(&format!("  Created: {}\n", goal.created_at));
+
+            // Also show related tasks
+            let tasks = ctx.db().get_tasks(project_id, None)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .filter(|t| t.goal_id == Some(id))
+                .collect::<Vec<_>>();
+
+            if !tasks.is_empty() {
+                response.push_str(&format!("\n  Related tasks ({}):\n", tasks.len()));
+                for task in tasks {
+                    let icon = match task.status.as_str() {
+                        "completed" => "v",
+                        "in_progress" => ">",
+                        "blocked" => "x",
+                        _ => "o",
+                    };
+                    response.push_str(&format!("    {} [{}] {}\n", icon, task.id, task.title));
+                }
+            }
+            Ok(response)
+        }
         "create" => {
             let title = title.ok_or("Title is required for create action".to_string())?;
             let id = ctx.db().create_goal(
@@ -249,6 +311,6 @@ pub async fn goal<C: ToolContext>(
 
             Ok(format!("Deleted goal {}", id))
         }
-        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, update, progress, delete", action))
+        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, get, update, progress, delete", action))
     }
 }

@@ -10,10 +10,16 @@ mod memory;
 mod memory_tests;
 pub mod pool;
 mod project;
+#[cfg(test)]
+mod project_tests;
 mod reviews;
 mod schema;
 mod session;
+#[cfg(test)]
+mod session_tests;
 mod tasks;
+#[cfg(test)]
+mod tasks_tests;
 mod teams;
 mod types;
 

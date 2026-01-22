@@ -2,7 +2,7 @@
 // Task and goal database operations
 
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use super::types::{Task, Goal};
 use super::Database;
@@ -38,6 +38,26 @@ pub fn parse_goal_row(row: &rusqlite::Row) -> rusqlite::Result<Goal> {
 }
 
 impl Database {
+    /// Get a single task by ID
+    pub fn get_task_by_id(&self, id: i64) -> Result<Option<Task>> {
+        let conn = self.conn();
+        let sql = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                   FROM tasks WHERE id = ?";
+        conn.query_row(sql, [id], parse_task_row)
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Get a single goal by ID
+    pub fn get_goal_by_id(&self, id: i64) -> Result<Option<Goal>> {
+        let conn = self.conn();
+        let sql = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+                   FROM goals WHERE id = ?";
+        conn.query_row(sql, [id], parse_goal_row)
+            .optional()
+            .map_err(Into::into)
+    }
+
     /// Get pending tasks for a project (status != 'completed')
     pub fn get_pending_tasks(&self, project_id: Option<i64>, limit: usize) -> Result<Vec<Task>> {
         let conn = self.conn();
