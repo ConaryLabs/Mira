@@ -188,6 +188,9 @@ impl Database {
         // Add has_embedding column to memory_facts for tracking embedding status
         schema::migrate_memory_facts_has_embedding(&conn)?;
 
+        // Add evidence-based tracking columns to memory_facts
+        schema::migrate_memory_facts_evidence_tracking(&conn)?;
+
         // Add provider and model columns to system_prompts for multi-LLM support
         schema::migrate_system_prompts_provider(&conn)?;
         // Strip old TOOL_USAGE_PROMPT suffix from system prompts for KV cache optimization

@@ -1,13 +1,25 @@
 // crates/mira-server/src/tools/core/dev.rs
 // Developer experience tools
 
+use crate::tools::core::session_notes;
 use crate::tools::core::ToolContext;
 
 /// Get session recap for MCP clients
-/// Returns recent context, preferences, and project state
+/// Returns recent context, preferences, project state, and Claude Code session notes
 pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, String> {
-    let project_id = ctx.project_id().await;
-    let recap = ctx.db().build_session_recap(project_id);
+    let project = ctx.get_project().await;
+    let project_id = project.as_ref().map(|p| p.id);
+
+    let mut recap = ctx.db().build_session_recap(project_id);
+
+    // Add Claude Code session notes if available
+    if let Some(proj) = &project {
+        let notes = session_notes::get_recent_session_notes(&proj.path, 3);
+        if !notes.is_empty() {
+            recap.push_str(&session_notes::format_session_notes(&notes));
+        }
+    }
+
     if recap.is_empty() {
         Ok("No session recap available.".to_string())
     } else {

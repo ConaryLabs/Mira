@@ -103,6 +103,8 @@ enum HookAction {
     Permission,
     /// Handle SessionStart hooks - captures Claude's session_id
     SessionStart,
+    /// Handle PreCompact hooks - preserve context before summarization
+    PreCompact,
     /// Legacy PostToolUse hook (no-op for compatibility)
     Posttool,
     /// Legacy PreToolUse hook (no-op for compatibility)
@@ -437,6 +439,9 @@ async fn main() -> Result<()> {
             }
             HookAction::SessionStart => {
                 mira::hooks::session::run()?;
+            }
+            HookAction::PreCompact => {
+                mira::hooks::precompact::run().await?;
             }
             HookAction::Posttool | HookAction::Pretool => {
                 // Legacy no-op hooks for compatibility

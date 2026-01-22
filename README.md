@@ -25,10 +25,16 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 
 ## Features
 
-### Memory
-- **remember** - Store facts, decisions, preferences
-- **recall** - Semantic search through memories
+### Memory (Evidence-Based)
+- **remember** - Store facts, decisions, preferences (with session tracking)
+- **recall** - Semantic search through memories (records access for evidence tracking)
 - **forget** - Delete memories by ID
+
+Memories use an evidence-based system:
+- New memories start as "candidate" with lower confidence (0.5)
+- Each session that uses/recalls a memory increments its session count
+- After appearing in 3+ sessions, memories are promoted to "confirmed" status
+- Confidence increases automatically based on cross-session usage
 
 ### Code Intelligence
 - **get_symbols** - Extract functions, structs, classes from files
@@ -97,7 +103,9 @@ Set `OPENAI_API_KEY` for semantic search (embeddings).
 |---------|-------------|
 | `mira serve` | Run as MCP server (default, for Claude Code) |
 | `mira index --path /project` | Index a project's code |
-| `mira hook permission` | Permission hook for Claude Code |
+| `mira hook session-start` | SessionStart hook - captures Claude's session ID |
+| `mira hook pre-compact` | PreCompact hook - preserves context before summarization |
+| `mira hook permission` | PermissionRequest hook for Claude Code |
 | `mira debug-carto` | Debug cartographer module detection |
 | `mira debug-session` | Debug session_start output |
 
@@ -117,6 +125,36 @@ All data stored in `~/.mira/mira.db`:
 - Code symbols (functions, structs, classes)
 - Tasks and goals
 - Session history
+
+### Claude Code Hooks
+
+Add to `~/.claude/settings.json` for automatic context preservation:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/mira hook session-start",
+        "timeout": 3000
+      }]
+    }],
+    "PreCompact": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/mira hook pre-compact",
+        "timeout": 5000
+      }]
+    }]
+  }
+}
+```
+
+- **SessionStart** - Captures Claude's session ID for cross-tool tracking
+- **PreCompact** - Fires before context summarization, extracts and saves important decisions, TODOs, and issues from the transcript
 
 ## Supported Languages
 
@@ -151,7 +189,7 @@ Simplified schema with 19 tables + 2 vector tables:
 
 ### Core Tables
 - `projects` - Project paths and names
-- `memory_facts` - Semantic memories with embeddings
+- `memory_facts` - Semantic memories with evidence-based tracking (session_count, status: candidate/confirmed)
 - `corrections` - Style/approach corrections
 - `code_symbols` - Indexed code symbols
 - `call_graph` - Function call relationships

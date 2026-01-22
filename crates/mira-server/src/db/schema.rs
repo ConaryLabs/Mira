@@ -408,6 +408,55 @@ pub fn migrate_system_prompts_strip_tool_suffix(conn: &Connection) -> Result<()>
     Ok(())
 }
 
+/// Migrate memory_facts to add evidence-based tracking columns
+pub fn migrate_memory_facts_evidence_tracking(conn: &Connection) -> Result<()> {
+    // Check if memory_facts exists
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_facts'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    // Check if session_count column exists (indicator of migration status)
+    let has_session_count: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='session_count'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_session_count {
+        tracing::info!("Migrating memory_facts to add evidence-based tracking columns");
+        conn.execute_batch(
+            "ALTER TABLE memory_facts ADD COLUMN session_count INTEGER DEFAULT 1;
+             ALTER TABLE memory_facts ADD COLUMN first_session_id TEXT;
+             ALTER TABLE memory_facts ADD COLUMN last_session_id TEXT;
+             ALTER TABLE memory_facts ADD COLUMN status TEXT DEFAULT 'candidate';",
+        )?;
+
+        // Backfill: existing memories with high confidence are already 'confirmed'
+        conn.execute(
+            "UPDATE memory_facts SET status = 'confirmed' WHERE confidence >= 0.8",
+            [],
+        )?;
+
+        // Create index for status-based queries
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_facts(status)",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Migrate imports table to add unique constraint and deduplicate
 pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
     // Check if imports table exists
@@ -474,14 +523,20 @@ CREATE TABLE IF NOT EXISTS memory_facts (
     content TEXT NOT NULL,
     fact_type TEXT DEFAULT 'general',
     category TEXT,
-    confidence REAL DEFAULT 1.0,
+    confidence REAL DEFAULT 0.5,
     has_embedding INTEGER DEFAULT 0,  -- 1 if fact has embedding in vec_memory
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    -- Evidence-based memory tracking
+    session_count INTEGER DEFAULT 1,       -- number of sessions where this was seen/used
+    first_session_id TEXT,                 -- session when first created
+    last_session_id TEXT,                  -- most recent session that referenced this
+    status TEXT DEFAULT 'candidate'        -- 'candidate' or 'confirmed'
 );
 CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
 CREATE INDEX IF NOT EXISTS idx_memory_key ON memory_facts(key);
 CREATE INDEX IF NOT EXISTS idx_memory_no_embedding ON memory_facts(has_embedding) WHERE has_embedding = 0;
+CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_facts(status);
 
 CREATE TABLE IF NOT EXISTS corrections (
     id INTEGER PRIMARY KEY,

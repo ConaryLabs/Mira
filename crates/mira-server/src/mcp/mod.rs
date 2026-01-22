@@ -651,6 +651,11 @@ impl MiraServer {
     ) -> Result<String, String> {
         tools::configure_expert(self, req.action, req.role, req.prompt, req.provider, req.model).await
     }
+
+    #[tool(description = "Export Mira memories to CLAUDE.local.md for persistence across Claude Code sessions.")]
+    async fn export_claude_local(&self) -> Result<String, String> {
+        tools::export_claude_local(self).await
+    }
 }
 
 impl ServerHandler for MiraServer {

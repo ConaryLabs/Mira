@@ -1,7 +1,8 @@
-// src/hooks/mod.rs
+// crates/mira-server/src/hooks/mod.rs
 // Claude Code hook handlers
 
 pub mod permission;
+pub mod precompact;
 pub mod session;
 
 use anyhow::Result;

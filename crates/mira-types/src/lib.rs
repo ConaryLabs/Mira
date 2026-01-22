@@ -27,6 +27,23 @@ pub struct MemoryFact {
     pub category: Option<String>,
     pub confidence: f64,
     pub created_at: String,
+    // Evidence-based memory fields
+    #[serde(default = "default_session_count")]
+    pub session_count: i32,
+    #[serde(default)]
+    pub first_session_id: Option<String>,
+    #[serde(default)]
+    pub last_session_id: Option<String>,
+    #[serde(default = "default_status")]
+    pub status: String,
+}
+
+fn default_session_count() -> i32 {
+    1
+}
+
+fn default_status() -> String {
+    "candidate".to_string()
 }
 
 // ═══════════════════════════════════════

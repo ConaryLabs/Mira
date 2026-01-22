@@ -73,15 +73,18 @@ pub trait ToolContext: Send + Sync {
 }
 
 // Sub-modules with tool implementations
+pub mod claude_local;
 pub mod code;
 pub mod dev;
 pub mod experts;
 pub mod memory;
 pub mod project;
 pub mod session;
+pub mod session_notes;
 pub mod tasks_goals;
 
 // Re-export commonly used functions
+pub use claude_local::export_claude_local;
 pub use code::*;
 pub use dev::*;
 pub use experts::*;

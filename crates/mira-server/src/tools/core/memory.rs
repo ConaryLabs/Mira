@@ -13,20 +13,22 @@ pub async fn remember<C: ToolContext>(
     confidence: Option<f64>,
 ) -> Result<String, String> {
     let project_id = ctx.project_id().await;
+    let session_id = ctx.get_session_id().await;
 
     let fact_type = fact_type.unwrap_or_else(|| "general".to_string());
-    let confidence = confidence.unwrap_or(1.0);
+    let confidence = confidence.unwrap_or(0.5); // Start with lower confidence for evidence-based system
 
-    // Store in SQL
+    // Store in SQL with session tracking
     let id = ctx
         .db()
-        .store_memory(
+        .store_memory_with_session(
             project_id,
             key.as_deref(),
             &content,
             &fact_type,
             category.as_deref(),
             confidence,
+            session_id.as_deref(),
         )
         .map_err(|e| e.to_string())?;
 
@@ -72,6 +74,7 @@ pub async fn recall<C: ToolContext>(
     _fact_type: Option<String>,
 ) -> Result<String, String> {
     let project_id = ctx.project_id().await;
+    let session_id = ctx.get_session_id().await;
     let project = ctx.get_project().await;
     let context_header = format_project_header(project.as_ref());
 
@@ -112,6 +115,16 @@ pub async fn recall<C: ToolContext>(
 
             if let Ok(results) = results {
                 if !results.is_empty() {
+                    // Record memory access for evidence-based tracking
+                    if let Some(ref sid) = session_id {
+                        let db = ctx.db();
+                        for (id, _, _) in &results {
+                            if let Err(e) = db.record_memory_access(*id, sid) {
+                                tracing::debug!("Failed to record memory access: {}", e);
+                            }
+                        }
+                    }
+
                     let mut response =
                         format!("{}Found {} memories:\n", context_header, results.len());
                     for (id, content, distance) in results {
@@ -138,6 +151,16 @@ pub async fn recall<C: ToolContext>(
 
     if results.is_empty() {
         return Ok(format!("{}No memories found.", context_header));
+    }
+
+    // Record memory access for evidence-based tracking
+    if let Some(ref sid) = session_id {
+        let db = ctx.db();
+        for mem in &results {
+            if let Err(e) = db.record_memory_access(mem.id, sid) {
+                tracing::debug!("Failed to record memory access: {}", e);
+            }
+        }
     }
 
     let mut response = format!("{}Found {} memories:\n", context_header, results.len());

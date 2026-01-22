@@ -7,6 +7,7 @@ use std::process::Command;
 
 use crate::cartographer;
 use crate::db::Database;
+use crate::tools::core::claude_local;
 use crate::tools::core::ToolContext;
 
 /// Shared project initialization logic
@@ -93,12 +94,24 @@ pub async fn session_start<C: ToolContext>(
     // Gather and store system context (for bash tool awareness)
     gather_system_context(db);
 
+    // Import CLAUDE.local.md entries as memories (if file exists)
+    let imported_count = claude_local::import_claude_local_md(db, project_id, &project_path)
+        .unwrap_or(0);
+
     // Detect project type
     let project_type = detect_project_type(&project_path);
 
     // Build response with context
     let display_name = project_name.as_deref().unwrap_or("unnamed");
     let mut response = format!("Project: {} ({})\n", display_name, project_type);
+
+    // Report CLAUDE.local.md imports
+    if imported_count > 0 {
+        response.push_str(&format!(
+            "\nImported {} entries from CLAUDE.local.md\n",
+            imported_count
+        ));
+    }
 
     // Check for "What's New" briefing (git changes since last session)
     if let Ok(Some(briefing)) = db.get_project_briefing(project_id) {

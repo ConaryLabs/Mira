@@ -9,7 +9,8 @@ use super::Database;
 use crate::search::embedding_to_bytes;
 
 /// Parse MemoryFact from a rusqlite Row with standard column order:
-/// (id, project_id, key, content, fact_type, category, confidence, created_at)
+/// (id, project_id, key, content, fact_type, category, confidence, created_at,
+///  session_count, first_session_id, last_session_id, status)
 pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact> {
     Ok(MemoryFact {
         id: row.get(0)?,
@@ -20,11 +21,15 @@ pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact
         category: row.get(5)?,
         confidence: row.get(6)?,
         created_at: row.get(7)?,
+        session_count: row.get(8).unwrap_or(1),
+        first_session_id: row.get(9).ok(),
+        last_session_id: row.get(10).ok(),
+        status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
     })
 }
 
 impl Database {
-    /// Store a memory fact
+    /// Store a memory fact with session tracking
     pub fn store_memory(
         &self,
         project_id: Option<i64>,
@@ -34,32 +39,127 @@ impl Database {
         category: Option<&str>,
         confidence: f64,
     ) -> Result<i64> {
+        self.store_memory_with_session(project_id, key, content, fact_type, category, confidence, None)
+    }
+
+    /// Store a memory fact with explicit session tracking
+    pub fn store_memory_with_session(
+        &self,
+        project_id: Option<i64>,
+        key: Option<&str>,
+        content: &str,
+        fact_type: &str,
+        category: Option<&str>,
+        confidence: f64,
+        session_id: Option<&str>,
+    ) -> Result<i64> {
         let conn = self.conn();
 
         // Upsert by key if provided
         if let Some(k) = key {
-            let existing: Option<i64> = conn
+            let existing: Option<(i64, Option<String>)> = conn
                 .query_row(
-                    "SELECT id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
+                    "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
                     params![k, project_id],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .ok();
 
-            if let Some(id) = existing {
-                conn.execute(
-                    "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    params![content, fact_type, category, confidence, id],
-                )?;
+            if let Some((id, last_session)) = existing {
+                // Check if this is a new session
+                let is_new_session = session_id.map(|s| last_session.as_deref() != Some(s)).unwrap_or(false);
+
+                if is_new_session {
+                    // Increment session count and update last_session_id
+                    conn.execute(
+                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+                         session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        params![content, fact_type, category, confidence, session_id, id],
+                    )?;
+                    // Check for promotion
+                    self.maybe_promote_memory(id)?;
+                } else {
+                    conn.execute(
+                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        params![content, fact_type, category, confidence, id],
+                    )?;
+                }
                 return Ok(id);
             }
         }
 
+        // New memory - starts as candidate with low confidence
+        let initial_confidence = if confidence < 1.0 { confidence } else { 0.5 };
         conn.execute(
-            "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence) VALUES (?, ?, ?, ?, ?, ?)",
-            params![project_id, key, content, fact_type, category, confidence],
+            "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
+             session_count, first_session_id, last_session_id, status)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
+            params![project_id, key, content, fact_type, category, initial_confidence, session_id, session_id],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Record that a memory was accessed in a session (for recall tracking)
+    pub fn record_memory_access(&self, memory_id: i64, session_id: &str) -> Result<()> {
+        let conn = self.conn();
+
+        // Get current session info
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT last_session_id FROM memory_facts WHERE id = ?",
+                [memory_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+
+        // Only increment if this is a new session
+        if current.as_deref() != Some(session_id) {
+            conn.execute(
+                "UPDATE memory_facts SET session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                params![session_id, memory_id],
+            )?;
+            self.maybe_promote_memory(memory_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Check if memory should be promoted from candidate to confirmed
+    fn maybe_promote_memory(&self, memory_id: i64) -> Result<()> {
+        let conn = self.conn();
+
+        // Promote to confirmed if session_count >= 3 and still candidate
+        let updated = conn.execute(
+            "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
+             WHERE id = ? AND status = 'candidate' AND session_count >= 3",
+            [memory_id],
+        )?;
+
+        if updated > 0 {
+            tracing::info!("Memory {} promoted from candidate to confirmed", memory_id);
+        }
+
+        Ok(())
+    }
+
+    /// Get memory statistics
+    pub fn get_memory_stats(&self, project_id: Option<i64>) -> Result<(i64, i64)> {
+        let conn = self.conn();
+
+        let candidates: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_facts WHERE (project_id = ? OR project_id IS NULL) AND status = 'candidate'",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        let confirmed: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_facts WHERE (project_id = ? OR project_id IS NULL) AND status = 'confirmed'",
+            params![project_id],
+            |row| row.get(0),
+        )?;
+
+        Ok((candidates, confirmed))
     }
 
     /// Search memories by text (basic SQL LIKE)
@@ -73,7 +173,8 @@ impl Database {
         let pattern = format!("%{}%", escaped);
 
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
              ORDER BY updated_at DESC
@@ -90,7 +191,8 @@ impl Database {
         let conn = self.conn();
 
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
              ORDER BY category, created_at DESC"
@@ -114,7 +216,8 @@ impl Database {
         let conn = self.conn();
 
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL)
                AND fact_type = 'health'
@@ -157,7 +260,8 @@ impl Database {
 
         let (query, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(cat) = category {
             (
-                "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+                "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                        session_count, first_session_id, last_session_id, status
                  FROM memory_facts
                  WHERE project_id IS NULL AND category = ?
                  ORDER BY confidence DESC, updated_at DESC
@@ -166,7 +270,8 @@ impl Database {
             )
         } else {
             (
-                "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+                "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                        session_count, first_session_id, last_session_id, status
                  FROM memory_facts
                  WHERE project_id IS NULL AND fact_type = 'personal'
                  ORDER BY confidence DESC, updated_at DESC
@@ -284,7 +389,8 @@ impl Database {
     pub fn find_facts_without_embeddings(&self, limit: usize) -> Result<Vec<MemoryFact>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status
              FROM memory_facts
              WHERE has_embedding = 0
              ORDER BY created_at ASC
