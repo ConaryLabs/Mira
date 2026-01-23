@@ -1,7 +1,8 @@
 // crates/mira-server/src/background/diff_analysis.rs
 // Core logic for semantic diff analysis
 
-use crate::db::{Database, map_files_to_symbols_sync};
+use crate::db::{map_files_to_symbols_sync, get_cached_diff_analysis_sync, store_diff_analysis_sync};
+use crate::db::pool::DatabasePool;
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use crate::search::find_callers;
 use serde::{Deserialize, Serialize};
@@ -316,7 +317,7 @@ pub fn calculate_risk_level(flags: &[String], changes: &[SemanticChange]) -> Str
 
 /// Perform complete diff analysis
 pub async fn analyze_diff(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     deepseek: &Arc<DeepSeekClient>,
     project_path: &Path,
     project_id: Option<i64>,
@@ -329,7 +330,14 @@ pub async fn analyze_diff(
     let to_commit = resolve_ref(project_path, to_ref)?;
 
     // Check cache first
-    if let Ok(Some(cached)) = db.get_cached_diff_analysis(project_id, &from_commit, &to_commit) {
+    let from_for_cache = from_commit.clone();
+    let to_for_cache = to_commit.clone();
+    let cached = pool.interact(move |conn| {
+        get_cached_diff_analysis_sync(conn, project_id, &from_for_cache, &to_for_cache)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }).await.map_err(|e| e.to_string())?;
+
+    if let Some(cached) = cached {
         tracing::info!("Using cached diff analysis for {}..{}", from_commit, to_commit);
         return Ok(DiffAnalysisResult {
             from_ref: from_commit,
@@ -371,12 +379,10 @@ pub async fn analyze_diff(
 
     // Build impact analysis if requested
     let impact = if include_impact && !changes.is_empty() {
-        let db_clone = db.clone();
         let files = stats.files.clone();
         let changes_clone = changes.clone();
-        let impact_result = tokio::task::spawn_blocking(move || {
-            let conn = db_clone.conn();
-            let symbols = map_to_symbols(&conn, project_id, &files);
+        let impact_result = pool.interact(move |conn| -> Result<ImpactAnalysis, anyhow::Error> {
+            let symbols = map_to_symbols(conn, project_id, &files);
             if symbols.is_empty() {
                 // If no symbols found, use changes from LLM
                 let pseudo_symbols: Vec<(String, String, String)> = changes_clone
@@ -387,13 +393,13 @@ pub async fn analyze_diff(
                         })
                     })
                     .collect();
-                build_impact_graph(&conn, project_id, &pseudo_symbols, 2)
+                Ok(build_impact_graph(conn, project_id, &pseudo_symbols, 2))
             } else {
-                build_impact_graph(&conn, project_id, &symbols, 2)
+                Ok(build_impact_graph(conn, project_id, &symbols, 2))
             }
         })
         .await
-        .map_err(|e| format!("spawn_blocking panicked: {}", e))?;
+        .map_err(|e| e.to_string())?;
         Some(impact_result)
     } else {
         None
@@ -410,19 +416,30 @@ pub async fn analyze_diff(
     let impact_json = impact.as_ref().and_then(|i| serde_json::to_string(i).ok());
     let risk_json = serde_json::to_string(&risk).ok();
 
-    if let Err(e) = db.store_diff_analysis(
-        project_id,
-        &from_commit,
-        &to_commit,
-        "commit",
-        changes_json.as_deref(),
-        impact_json.as_deref(),
-        risk_json.as_deref(),
-        Some(&summary),
-        Some(stats.files_changed),
-        Some(stats.lines_added),
-        Some(stats.lines_removed),
-    ) {
+    // Clone values for the closure
+    let from_for_store = from_commit.clone();
+    let to_for_store = to_commit.clone();
+    let summary_for_store = summary.clone();
+    let files_changed = stats.files_changed;
+    let lines_added = stats.lines_added;
+    let lines_removed = stats.lines_removed;
+
+    if let Err(e) = pool.interact(move |conn| {
+        store_diff_analysis_sync(
+            conn,
+            project_id,
+            &from_for_store,
+            &to_for_store,
+            "commit",
+            changes_json.as_deref(),
+            impact_json.as_deref(),
+            risk_json.as_deref(),
+            Some(&summary_for_store),
+            Some(files_changed),
+            Some(lines_added),
+            Some(lines_removed),
+        ).map_err(|e| anyhow::anyhow!("{}", e))
+    }).await {
         tracing::warn!("Failed to cache diff analysis: {}", e);
     }
 

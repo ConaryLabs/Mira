@@ -1,57 +1,51 @@
 // crates/mira-server/src/background/documentation/detection.rs
 // Documentation gap and staleness detection
 
-use crate::db::Database;
 use crate::db::documentation::{create_doc_task, mark_doc_stale, DocGap, get_inventory_for_stale_check};
 use crate::db::{
     get_indexed_projects_sync, get_documented_by_category_sync, get_lib_symbols_sync,
     get_modules_for_doc_gaps_sync, get_symbols_for_file_sync,
 };
+use crate::db::pool::DatabasePool;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{get_git_head, is_ancestor, read_file_content};
+use super::{get_git_head, is_ancestor, read_file_content, mark_documentation_scanned_sync};
 
 /// Scan for documentation gaps and stale docs
 /// Returns number of new tasks created
-pub async fn scan_documentation_gaps(db: &Arc<Database>) -> Result<usize, String> {
-    let db_clone = db.clone();
-
+pub async fn scan_documentation_gaps(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     // Get all indexed projects
-    let projects = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_indexed_projects_sync(&conn).map_err(|e| e.to_string())
+    let projects = pool.interact(move |conn| {
+        get_indexed_projects_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| e.to_string())?;
 
     let mut total_created = 0;
 
     for (project_id, project_path) in projects {
         // Check if project needs scan
-        let needs_scan = tokio::task::spawn_blocking({
-            let db_clone = db.clone();
-            let project_path = project_path.clone();
-            move || {
-                let conn = db_clone.conn();
-                super::needs_documentation_scan(&conn, project_id, &project_path)
-            }
+        let project_path_clone = project_path.clone();
+        let needs_scan = pool.interact(move |conn| {
+            super::needs_documentation_scan(conn, project_id, &project_path_clone)
+                .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+        .map_err(|e| e.to_string())?;
 
         if !needs_scan {
             continue;
         }
 
-        let project_path = Path::new(&project_path);
-        if !project_path.exists() {
+        let project_path_ref = Path::new(&project_path);
+        if !project_path_ref.exists() {
             continue;
         }
 
         // First, scan existing documentation to build inventory
-        match super::inventory::scan_existing_docs(db, project_id, project_path.to_str().unwrap_or("")).await {
+        match super::inventory::scan_existing_docs(pool, project_id, project_path_ref.to_str().unwrap_or("")).await {
             Ok(scanned) if scanned > 0 => {
                 tracing::debug!("Documentation: scanned {} existing docs for project {}", scanned, project_id);
             }
@@ -62,17 +56,21 @@ pub async fn scan_documentation_gaps(db: &Arc<Database>) -> Result<usize, String
         }
 
         // Scan for gaps
-        let created = detect_gaps_for_project(db, project_id, project_path).await?;
+        let created = detect_gaps_for_project(pool, project_id, project_path_ref).await?;
         total_created += created;
 
         // Scan for stale docs
-        let stale = detect_stale_docs_for_project(db, project_id, project_path).await?;
+        let stale = detect_stale_docs_for_project(pool, project_id, project_path_ref).await?;
         if stale > 0 {
             tracing::info!("Documentation: detected {} stale docs for project {}", stale, project_id);
         }
 
         // Mark as scanned
-        super::mark_documentation_scanned(db, project_id, project_path.to_str().unwrap_or(""))?;
+        let project_path_for_scan = project_path.clone();
+        pool.interact(move |conn| {
+            mark_documentation_scanned_sync(conn, project_id, &project_path_for_scan)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        }).await.map_err(|e| e.to_string())?;
     }
 
     Ok(total_created)
@@ -80,7 +78,7 @@ pub async fn scan_documentation_gaps(db: &Arc<Database>) -> Result<usize, String
 
 /// Detect missing documentation for a project
 async fn detect_gaps_for_project(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     project_path: &Path,
 ) -> Result<usize, String> {
@@ -92,26 +90,24 @@ async fn detect_gaps_for_project(
 
 
     // Detect MCP tool documentation gaps
-    gaps.extend(detect_mcp_tool_gaps(db, project_id, project_path).await?);
+    gaps.extend(detect_mcp_tool_gaps(pool, project_id, project_path).await?);
 
     // Detect CLI command documentation gaps
-    gaps.extend(detect_cli_gaps(db, project_id, project_path).await?);
+    gaps.extend(detect_cli_gaps(pool, project_id, project_path).await?);
 
     // Detect public API documentation gaps
-    gaps.extend(detect_public_api_gaps(db, project_id, project_path).await?);
+    gaps.extend(detect_public_api_gaps(pool, project_id, project_path).await?);
 
     // Detect module documentation gaps
-    gaps.extend(detect_module_doc_gaps(db, project_id, project_path).await?);
+    gaps.extend(detect_module_doc_gaps(pool, project_id, project_path).await?);
 
     // Create tasks for all gaps
-    let db_clone = db.clone();
     let gaps_to_create = gaps.clone();
 
-    let created = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
+    let created = pool.interact(move |conn| {
         let mut count = 0;
         for gap in gaps_to_create {
-            match create_doc_task(&conn, &gap, git_commit.as_deref()) {
+            match create_doc_task(conn, &gap, git_commit.as_deref()) {
                 Ok(_) => count += 1,
                 Err(e) => {
                     // Likely a uniqueness constraint violation - task already exists
@@ -119,10 +115,10 @@ async fn detect_gaps_for_project(
                 }
             }
         }
-        Ok::<usize, String>(count)
+        Ok::<usize, anyhow::Error>(count)
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| e.to_string())?;
 
     if created > 0 {
         tracing::info!("Documentation: created {} tasks for project {}", created, project_id);
@@ -133,7 +129,7 @@ async fn detect_gaps_for_project(
 
 /// Detect undocumented MCP tools by parsing mcp/mod.rs
 async fn detect_mcp_tool_gaps(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     project_path: &Path,
 ) -> Result<Vec<DocGap>, String> {
@@ -176,16 +172,12 @@ async fn detect_mcp_tool_gaps(
     }
 
     // Check which tools have documentation
-    let documented: HashSet<String> = tokio::task::spawn_blocking({
-        let db_clone = db.clone();
-        move || {
-            let conn = db_clone.conn();
-            get_documented_by_category_sync(&conn, project_id, "mcp_tool")
-                .map(|v| v.into_iter().collect())
-        }
+    let documented: HashSet<String> = pool.interact(move |conn| {
+        get_documented_by_category_sync(conn, project_id, "mcp_tool")
+            .map(|v| v.into_iter().collect())
+            .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
     .map_err(|e| e.to_string())?;
 
     // Create gaps for undocumented tools
@@ -210,7 +202,7 @@ async fn detect_mcp_tool_gaps(
 
 /// Detect undocumented CLI commands
 async fn detect_cli_gaps(
-    _db: &Arc<Database>,
+    _pool: &Arc<DatabasePool>,
     _project_id: i64,
     _project_path: &Path,
 ) -> Result<Vec<DocGap>, String> {
@@ -221,33 +213,26 @@ async fn detect_cli_gaps(
 
 /// Detect undocumented public APIs
 async fn detect_public_api_gaps(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     _project_path: &Path,
 ) -> Result<Vec<DocGap>, String> {
     let mut gaps = Vec::new();
 
     // Find public symbols in lib.rs
-    let db_clone = db.clone();
-    let lib_symbols = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_lib_symbols_sync(&conn, project_id)
+    let lib_symbols = pool.interact(move |conn| {
+        get_lib_symbols_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
     .map_err(|e| e.to_string())?;
 
     // Get documented public APIs
-    let documented: HashSet<String> = tokio::task::spawn_blocking({
-        let db_clone = db.clone();
-        move || {
-            let conn = db_clone.conn();
-            get_documented_by_category_sync(&conn, project_id, "public_api")
-                .map(|v| v.into_iter().collect())
-        }
+    let documented: HashSet<String> = pool.interact(move |conn| {
+        get_documented_by_category_sync(conn, project_id, "public_api")
+            .map(|v| v.into_iter().collect())
+            .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
     .map_err(|e| e.to_string())?;
 
     for (name, _signature) in lib_symbols {
@@ -271,33 +256,26 @@ async fn detect_public_api_gaps(
 
 /// Detect undocumented modules
 async fn detect_module_doc_gaps(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     _project_path: &Path,
 ) -> Result<Vec<DocGap>, String> {
     let mut gaps = Vec::new();
 
     // Get all modules from codebase_modules
-    let db_clone = db.clone();
-    let modules = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_modules_for_doc_gaps_sync(&conn, project_id)
+    let modules = pool.interact(move |conn| {
+        get_modules_for_doc_gaps_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
     .map_err(|e| e.to_string())?;
 
     // Get documented modules
-    let documented: HashSet<String> = tokio::task::spawn_blocking({
-        let db_clone = db.clone();
-        move || {
-            let conn = db_clone.conn();
-            get_documented_by_category_sync(&conn, project_id, "module")
-                .map(|v| v.into_iter().collect())
-        }
+    let documented: HashSet<String> = pool.interact(move |conn| {
+        get_documented_by_category_sync(conn, project_id, "module")
+            .map(|v| v.into_iter().collect())
+            .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
     .map_err(|e| e.to_string())?;
 
     for (module_id, path, purpose) in modules {
@@ -327,7 +305,7 @@ async fn detect_module_doc_gaps(
 
 /// Detect stale documentation
 async fn detect_stale_docs_for_project(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     project_path: &Path,
 ) -> Result<usize, String> {
@@ -336,13 +314,11 @@ async fn detect_stale_docs_for_project(
     let current_commit = get_git_head(project_str);
 
     // Get all documented items with source info
-    let db_clone = db.clone();
-    let inventory = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_inventory_for_stale_check(&conn, project_id)
+    let inventory = pool.interact(move |conn| {
+        get_inventory_for_stale_check(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| e.to_string())?;
 
     for item in inventory {
         let mut is_stale = false;
@@ -372,11 +348,11 @@ async fn detect_stale_docs_for_project(
                 None
             }
         }) {
-            if let Some(new_hash) = check_source_signature_changed(db, project_id, &source_file).await? {
+            if let Some(new_hash) = check_source_signature_changed(pool, project_id, &source_file).await? {
                 if item.source_signature_hash.as_ref() != Some(&new_hash) {
                     is_stale = true;
                     if reason.is_empty() {
-                        reason = format!("Source signatures changed");
+                        reason = "Source signatures changed".to_string();
                     }
                 }
             }
@@ -384,10 +360,14 @@ async fn detect_stale_docs_for_project(
 
         if is_stale {
             // Mark as stale (synchronous DB operation)
-            {
-                let conn = db.conn();
-                mark_doc_stale(&conn, project_id, &item.doc_path, &reason)?;
-            }
+            let doc_path = item.doc_path.clone();
+            let reason_clone = reason.clone();
+            pool.interact(move |conn| {
+                mark_doc_stale(conn, project_id, &doc_path, &reason_clone)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .map_err(|e| e.to_string())?;
             stale_count += 1;
             tracing::debug!("Stale documentation: {} - {}", item.doc_path, reason);
         }
@@ -398,22 +378,20 @@ async fn detect_stale_docs_for_project(
 
 /// Check if source signatures have changed
 async fn check_source_signature_changed(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     source_path: &str,
 ) -> Result<Option<String>, String> {
     use sha2::Digest;
 
-    let db_clone = db.clone();
     let source_path = source_path.to_string();
 
     // Get symbols from db - returns (id, name, symbol_type, start_line, end_line, signature)
-    let symbols = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_symbols_for_file_sync(&conn, project_id, &source_path)
+    let symbols = pool.interact(move |conn| {
+        get_symbols_for_file_sync(conn, project_id, &source_path)
+            .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
     .map_err(|e| e.to_string())?;
 
     if symbols.is_empty() {

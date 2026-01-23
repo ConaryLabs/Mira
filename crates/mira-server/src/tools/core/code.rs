@@ -44,7 +44,7 @@ pub async fn search_code<C: ToolContext>(
 
     // Use shared hybrid search
     let result = hybrid_search(
-        ctx.db(),
+        ctx.pool(),
         ctx.embeddings(),
         &query,
         project_id,
@@ -238,7 +238,7 @@ pub async fn check_capability<C: ToolContext>(
 
     // Step 2: Fall back to live code search
     let search_result = hybrid_search(
-        ctx.db(),
+        ctx.pool(),
         ctx.embeddings(),
         &format!("feature capability {}", description),
         project_id,

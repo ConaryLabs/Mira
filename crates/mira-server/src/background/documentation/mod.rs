@@ -4,7 +4,8 @@
 mod detection;
 mod inventory;
 
-use crate::db::{Database, get_scan_info_sync, is_time_older_than_sync, delete_memory_by_key_sync};
+use crate::db::{get_scan_info_sync, is_time_older_than_sync, delete_memory_by_key_sync, store_memory_sync, StoreMemoryParams};
+use crate::db::pool::DatabasePool;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -69,11 +70,11 @@ pub fn calculate_source_signature_hash(
 /// Called from BackgroundWorker::process_batch()
 /// Only detects gaps - Claude decides when to write docs via write_documentation()
 pub async fn process_documentation(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     _llm_factory: &Arc<crate::llm::ProviderFactory>,
 ) -> Result<usize, String> {
     // Scan for missing and stale documentation (detection only)
-    let scan_count = scan_documentation_gaps(db).await?;
+    let scan_count = scan_documentation_gaps(pool).await?;
     if scan_count > 0 {
         tracing::info!("Documentation scan found {} gaps", scan_count);
     }
@@ -181,33 +182,34 @@ pub fn needs_documentation_scan(
     Ok(false)
 }
 
-/// Mark that we've scanned a project's documentation
-pub fn mark_documentation_scanned(
-    db: &Database,
+/// Mark that we've scanned a project's documentation (sync version)
+pub fn mark_documentation_scanned_sync(
+    conn: &rusqlite::Connection,
     project_id: i64,
     project_path: &str,
 ) -> Result<(), String> {
     let commit = get_git_head(project_path).unwrap_or_else(|| "unknown".to_string());
 
-    db.store_memory(
-        Some(project_id),
-        Some(DOC_SCAN_MARKER_KEY),
-        &commit,
-        "system",
-        Some("documentation"),
-        1.0,
-    )
-    .map_err(|e| e.to_string())?;
+    store_memory_sync(conn, StoreMemoryParams {
+        project_id: Some(project_id),
+        key: Some(DOC_SCAN_MARKER_KEY),
+        content: &commit,
+        fact_type: "system",
+        category: Some("documentation"),
+        confidence: 1.0,
+        session_id: None,
+        user_id: None,
+        scope: "project",
+    }).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Clear documentation scan marker to force new scan
-pub fn clear_documentation_scan_marker(
-    db: &Database,
+/// Clear documentation scan marker to force new scan (sync version)
+pub fn clear_documentation_scan_marker_sync(
+    conn: &rusqlite::Connection,
     project_id: i64,
 ) -> Result<(), String> {
-    let conn = db.conn();
-    delete_memory_by_key_sync(&conn, project_id, DOC_SCAN_MARKER_KEY)
+    delete_memory_by_key_sync(conn, project_id, DOC_SCAN_MARKER_KEY)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

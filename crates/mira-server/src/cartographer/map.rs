@@ -8,6 +8,7 @@ use crate::db::{
     count_symbols_in_path_sync, get_module_dependencies_sync, upsert_module_sync,
     get_external_deps_sync, Database,
 };
+use crate::db::pool::DatabasePool;
 use anyhow::{Result, anyhow};
 use std::collections::HashSet;
 use std::path::Path;
@@ -225,6 +226,19 @@ pub async fn get_modules_with_purposes_async(
     })
     .await
     .map_err(|e| anyhow!("spawn_blocking panicked: {}", e))?
+}
+
+/// Pool-based async version of get_modules_with_purposes
+pub async fn get_modules_with_purposes_pool(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<Vec<Module>> {
+    Ok(pool.interact(move |conn| {
+        get_cached_modules_sync(conn, project_id)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    })
+    .await
+    .map_err(|e| anyhow!("pool.interact failed: {}", e))?)
 }
 
 #[cfg(test)]

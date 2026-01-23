@@ -2,7 +2,7 @@
 // Database operations for semantic diff analysis
 
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 use super::Database;
 
@@ -43,6 +43,75 @@ pub fn parse_diff_analysis_row(row: &rusqlite::Row) -> rusqlite::Result<DiffAnal
         status: row.get(12)?,
         created_at: row.get(13)?,
     })
+}
+
+// ============================================================================
+// Sync functions for pool.interact() usage
+// ============================================================================
+
+/// Store a new diff analysis (sync version for pool.interact())
+pub fn store_diff_analysis_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    from_commit: &str,
+    to_commit: &str,
+    analysis_type: &str,
+    changes_json: Option<&str>,
+    impact_json: Option<&str>,
+    risk_json: Option<&str>,
+    summary: Option<&str>,
+    files_changed: Option<i64>,
+    lines_added: Option<i64>,
+    lines_removed: Option<i64>,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO diff_analyses (
+            project_id, from_commit, to_commit, analysis_type,
+            changes_json, impact_json, risk_json, summary,
+            files_changed, lines_added, lines_removed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            project_id,
+            from_commit,
+            to_commit,
+            analysis_type,
+            changes_json,
+            impact_json,
+            risk_json,
+            summary,
+            files_changed,
+            lines_added,
+            lines_removed
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Get a cached diff analysis if it exists (sync version for pool.interact())
+pub fn get_cached_diff_analysis_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    from_commit: &str,
+    to_commit: &str,
+) -> rusqlite::Result<Option<DiffAnalysis>> {
+    let sql = "SELECT id, project_id, from_commit, to_commit, analysis_type,
+                      changes_json, impact_json, risk_json, summary,
+                      files_changed, lines_added, lines_removed, status, created_at
+               FROM diff_analyses
+               WHERE (project_id = ? OR (project_id IS NULL AND ? IS NULL))
+                     AND from_commit = ? AND to_commit = ?
+               ORDER BY created_at DESC
+               LIMIT 1";
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query_map(
+        params![project_id, project_id, from_commit, to_commit],
+        parse_diff_analysis_row,
+    )?;
+    match rows.next() {
+        Some(Ok(analysis)) => Ok(Some(analysis)),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
+    }
 }
 
 impl Database {

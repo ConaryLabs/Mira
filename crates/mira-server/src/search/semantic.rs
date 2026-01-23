@@ -4,7 +4,8 @@
 use super::context::expand_context;
 use super::keyword::keyword_search;
 use super::utils::{distance_to_score, embedding_to_bytes};
-use crate::db::{semantic_code_search_sync, Database};
+use crate::db::pool::DatabasePool;
+use crate::db::semantic_code_search_sync;
 use crate::embeddings::EmbeddingClient;
 use crate::Result;
 use std::collections::HashMap;
@@ -44,7 +45,7 @@ pub struct HybridSearchResult {
 
 /// Semantic search using embeddings
 pub async fn semantic_search(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     embeddings: &Arc<EmbeddingClient>,
     query: &str,
     project_id: Option<i64>,
@@ -54,27 +55,24 @@ pub async fn semantic_search(
 
     let embedding_bytes = embedding_to_bytes(&query_embedding);
 
-    // Run vector search on blocking thread pool to avoid blocking tokio
-    let db_clone = db.clone();
-    tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        let db_results = semantic_code_search_sync(&conn, &embedding_bytes, project_id, limit)
-            .map_err(|e| e.to_string())?;
-
-        let results: Vec<SearchResult> = db_results
-            .into_iter()
-            .map(|r| SearchResult {
-                file_path: r.file_path,
-                content: r.chunk_content,
-                score: distance_to_score(r.distance),
-                start_line: r.start_line as u32,
-            })
-            .collect();
-
-        Ok(results)
+    // Run vector search on pool's blocking thread
+    let db_results = pool.interact(move |conn| {
+        semantic_code_search_sync(conn, &embedding_bytes, project_id, limit)
+            .map_err(|e| anyhow::anyhow!("{}", e))
     })
-    .await
-    .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {}", e))?
+    .await?;
+
+    let results: Vec<SearchResult> = db_results
+        .into_iter()
+        .map(|r| SearchResult {
+            file_path: r.file_path,
+            content: r.chunk_content,
+            score: distance_to_score(r.distance),
+            start_line: r.start_line as u32,
+        })
+        .collect();
+
+    Ok(results)
 }
 
 // ============================================================================
@@ -276,7 +274,7 @@ fn merge_results(
 /// Hybrid search: runs semantic and keyword searches in parallel, merges results
 /// Falls back to keyword-only if embeddings unavailable
 pub async fn hybrid_search(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     embeddings: Option<&Arc<EmbeddingClient>>,
     query: &str,
     project_id: Option<i64>,
@@ -287,32 +285,31 @@ pub async fn hybrid_search(
     let fetch_limit = limit * 2;
 
     // Prepare keyword search future (always runs)
-    let db_for_keyword = db.clone();
+    let pool_for_keyword = pool.clone();
     let query_for_keyword = query.to_string();
     let project_path_for_keyword = project_path.map(|s| s.to_string());
     let keyword_future = async move {
-        tokio::task::spawn_blocking(move || {
-            let conn = db_for_keyword.conn();
-            keyword_search(
-                &conn,
+        pool_for_keyword.interact(move |conn| {
+            Ok(keyword_search(
+                conn,
                 &query_for_keyword,
                 project_id,
                 project_path_for_keyword.as_deref(),
                 fetch_limit,
-            )
+            ))
         })
         .await
-        .expect("keyword search spawn_blocking panicked")
+        .expect("keyword search pool.interact failed")
     };
 
     // Run searches in parallel
     let (semantic_results, keyword_results) = if let Some(emb) = embeddings {
         let emb = emb.clone();
-        let db_for_semantic = db.clone();
+        let pool_for_semantic = pool.clone();
         let query_for_semantic = query.to_string();
 
         let semantic_future = async move {
-            semantic_search(&db_for_semantic, &emb, &query_for_semantic, project_id, fetch_limit).await
+            semantic_search(&pool_for_semantic, &emb, &query_for_semantic, project_id, fetch_limit).await
         };
 
         let (semantic_res, keyword_res) = tokio::join!(semantic_future, keyword_future);

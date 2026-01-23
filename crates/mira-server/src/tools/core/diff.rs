@@ -72,7 +72,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
 
     // Perform full analysis
     let result = analyze_diff(
-        ctx.db(),
+        ctx.pool(),
         deepseek,
         path,
         project_id,

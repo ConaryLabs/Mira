@@ -1,7 +1,7 @@
 // crates/mira-server/src/tools/core/documentation.rs
 // Simplified documentation tools - detect gaps, write docs directly
 
-use crate::background::documentation::clear_documentation_scan_marker;
+use crate::background::documentation::clear_documentation_scan_marker_sync;
 use crate::db::documentation::{
     get_doc_inventory, get_doc_task, mark_doc_task_applied, mark_doc_task_skipped, DocInventory,
     DocTask,
@@ -148,10 +148,14 @@ pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
     let project_id_opt = ctx.project_id().await;
     let project_id = project_id_opt.ok_or("No active project")?;
 
-    let db = ctx.db();
-
     // Clear the scan marker to force new scan
-    clear_documentation_scan_marker(db, project_id)?;
+    ctx.pool()
+        .interact(move |conn| -> Result<(), anyhow::Error> {
+            clear_documentation_scan_marker_sync(conn, project_id)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(
         "Documentation scan triggered. Check `list_doc_tasks()` for results after scan completes."

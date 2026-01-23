@@ -4,9 +4,11 @@
 use super::code_health;
 use crate::config::ignore;
 use crate::db::{
-    Database, SymbolInsert, ImportInsert,
+    SymbolInsert, ImportInsert,
     insert_symbol_sync, insert_import_sync, queue_pending_embedding_sync,
+    clear_file_index_sync,
 };
+use crate::db::pool::DatabasePool;
 use crate::indexer;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
@@ -23,7 +25,7 @@ const DEBOUNCE_MS: u64 = 500;
 
 /// File watcher manages watching multiple project directories
 pub struct FileWatcher {
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     /// Map of project_id -> project_path for active watches
     watched_projects: Arc<RwLock<HashMap<i64, PathBuf>>>,
     /// Pending file changes (debounced)
@@ -40,11 +42,11 @@ pub enum ChangeType {
 
 impl FileWatcher {
     pub fn new(
-        db: Arc<Database>,
+        pool: Arc<DatabasePool>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         Self {
-            db,
+            pool,
             watched_projects: Arc::new(RwLock::new(HashMap::new())),
             pending_changes: Arc::new(RwLock::new(HashMap::new())),
             shutdown,
@@ -261,31 +263,29 @@ impl FileWatcher {
         }
 
         // Mark project for health rescan (will run on next background cycle)
-        if let Err(e) = code_health::mark_health_scan_needed(&self.db, project_id) {
+        if let Err(e) = self.pool.interact(move |conn| {
+            code_health::mark_health_scan_needed_sync(conn, project_id)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        }).await {
             tracing::warn!("Failed to mark project for health scan: {}", e);
         }
 
         Ok(())
     }
 
-    /// Delete all data associated with a file (runs on blocking thread pool)
+    /// Delete all data associated with a file (runs on pool connection)
     async fn delete_file_data(&self, project_id: i64, file_path: &str) -> Result<(), String> {
-        use crate::db::clear_file_index_sync;
-
         let file_path = file_path.to_string();
-        let db_clone = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = db_clone.conn();
-            clear_file_index_sync(&conn, project_id, &file_path)?;
+        self.pool.interact(move |conn| -> Result<(), anyhow::Error> {
+            clear_file_index_sync(conn, project_id, &file_path)?;
             tracing::debug!("Deleted data for file {} in project {}", file_path, project_id);
-            Ok::<_, rusqlite::Error>(())
+            Ok(())
         })
         .await
-        .map_err(|e| format!("spawn_blocking panicked: {}", e))?
         .map_err(|e| e.to_string())
     }
 
-    /// Update a file (re-parse and queue embeddings) - runs DB ops on blocking thread pool
+    /// Update a file (re-parse and queue embeddings) - runs DB ops on pool connection
     async fn update_file(&self, project_id: i64, full_path: &Path, relative_path: &str) -> Result<(), String> {
         // First delete existing data for this file
         self.delete_file_data(project_id, relative_path).await?;
@@ -310,14 +310,12 @@ impl FileWatcher {
         let parse_result = indexer::parse_file(&content, language)
             .map_err(|e| format!("Parse error: {}", e))?;
 
-        // Run DB inserts on blocking thread pool with a transaction for speed
+        // Run DB inserts on pool connection with a transaction for speed
         let relative_path = relative_path.to_string();
         let relative_path_for_db = relative_path.clone();
         let symbol_count = parse_result.symbols.len();
         let chunk_count = parse_result.chunks.len();
-        let db_clone = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = db_clone.conn();
+        self.pool.interact(move |conn| -> Result<(), anyhow::Error> {
             let relative_path = relative_path_for_db;
             // Use a transaction for batch inserts (much faster)
             let tx = conn.unchecked_transaction()?;
@@ -355,8 +353,8 @@ impl FileWatcher {
             }
 
             tx.commit()?;
-            Ok::<_, rusqlite::Error>(())
-        }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?.map_err(|e| e.to_string())?;
+            Ok(())
+        }).await.map_err(|e| e.to_string())?;
 
         // Embeddings queued in pending_embeddings - background worker will process
 
@@ -394,7 +392,7 @@ impl WatcherHandle {
 
 /// Spawn the file watcher and return a handle for registering projects
 pub fn spawn(
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     shutdown: watch::Receiver<bool>,
 ) -> WatcherHandle {
     let watched_projects = Arc::new(RwLock::new(HashMap::new()));
@@ -403,7 +401,7 @@ pub fn spawn(
     };
 
     let watcher = FileWatcher {
-        db,
+        pool,
         watched_projects,
         pending_changes: Arc::new(RwLock::new(HashMap::new())),
         shutdown,

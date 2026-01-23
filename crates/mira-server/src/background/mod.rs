@@ -11,7 +11,6 @@ pub mod code_health;
 pub mod watcher;
 
 use crate::db::pool::DatabasePool;
-use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use std::sync::Arc;
@@ -20,7 +19,6 @@ use tokio::sync::watch;
 
 /// Background worker configuration
 pub struct BackgroundWorker {
-    db: Arc<Database>,
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
@@ -31,7 +29,6 @@ pub struct BackgroundWorker {
 
 impl BackgroundWorker {
     pub fn new(
-        db: Arc<Database>,
         pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         deepseek: Option<Arc<DeepSeekClient>>,
@@ -40,7 +37,7 @@ impl BackgroundWorker {
         // Create provider factory with all available LLM clients
         let llm_factory = Arc::new(ProviderFactory::new());
 
-        Self { db, pool, embeddings, deepseek, llm_factory, shutdown, cycle_count: 0 }
+        Self { pool, embeddings, deepseek, llm_factory, shutdown, cycle_count: 0 }
     }
 
     /// Start the background worker loop
@@ -155,7 +152,6 @@ impl BackgroundWorker {
     async fn process_capabilities(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
         capabilities::process_capabilities(
             &self.pool,
-            &self.db,
             client,
             self.embeddings.as_ref(),
         ).await
@@ -168,7 +164,7 @@ impl BackgroundWorker {
 
     /// Process documentation tasks (gap detection and draft generation)
     async fn process_documentation(&self, client: &Arc<ProviderFactory>) -> Result<usize, String> {
-        documentation::process_documentation(&self.db, client).await
+        documentation::process_documentation(&self.pool, client).await
     }
 
     /// Process pending embeddings from file watcher queue
@@ -179,14 +175,13 @@ impl BackgroundWorker {
 
 /// Spawn the background worker
 pub fn spawn(
-    db: Arc<Database>,
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
 ) -> watch::Sender<bool> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let worker = BackgroundWorker::new(db, pool, embeddings, deepseek, shutdown_rx);
+    let worker = BackgroundWorker::new(pool, embeddings, deepseek, shutdown_rx);
 
     tokio::spawn(async move {
         worker.run().await;

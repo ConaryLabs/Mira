@@ -1,9 +1,9 @@
 // crates/mira-server/src/background/documentation/inventory.rs
 // Documentation inventory scanning and tracking
 
-use crate::db::Database;
 use crate::db::documentation::upsert_doc_inventory;
 use crate::db::get_symbols_for_file_sync;
+use crate::db::pool::DatabasePool;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use super::{get_git_head, read_file_content};
 
 /// Scan existing documentation and update inventory
 pub async fn scan_existing_docs(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -42,7 +42,7 @@ pub async fn scan_existing_docs(
     // Process all files
     for file_path in doc_files {
         if inventory_file(
-            db,
+            pool,
             project_id,
             project_path,
             &file_path,
@@ -81,7 +81,7 @@ fn collect_markdown_files(dir: &Path) -> Vec<std::path::PathBuf> {
 
 /// Inventory a single documentation file
 async fn inventory_file(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     project_root: &Path,
     file_path: &Path,
@@ -107,23 +107,20 @@ async fn inventory_file(
 
     // Calculate source signature hash if we have a source file
     let source_signature_hash = if let Some(ref source) = source_file_path {
-        get_source_signature(db, project_id, source).await?
+        get_source_signature(pool, project_id, source).await?
     } else {
         None
     };
 
     let source_symbols = source_signature_hash.as_ref().map(|_| "from_source".to_string());
 
-    // Clone db for spawn_blocking (Arc clone is cheap)
-    let db_clone = db.clone();
     // Convert git_commit reference to owned String
     let git_commit_owned = git_commit.map(|s| s.to_string());
 
     // Upsert inventory
-    tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
+    pool.interact(move |conn| {
         upsert_doc_inventory(
-            &conn,
+            conn,
             project_id,
             &doc_path,
             &doc_type,
@@ -132,10 +129,10 @@ async fn inventory_file(
             source_signature_hash.as_deref(),
             source_symbols.as_deref(),
             git_commit_owned.as_deref(),
-        )
+        ).map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -219,22 +216,20 @@ fn find_source_for_doc(doc_path: &str) -> Option<String> {
 
 /// Get source signature hash for a source file
 async fn get_source_signature(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     project_id: i64,
     source_path: &str,
 ) -> Result<Option<String>, String> {
     use sha2::Digest;
 
-    let db_clone = db.clone();
     let source_path = source_path.to_string();
 
     // Get symbols from db - returns (id, name, symbol_type, start_line, end_line, signature)
-    let symbols = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_symbols_for_file_sync(&conn, project_id, &source_path)
+    let symbols = pool.interact(move |conn| {
+        get_symbols_for_file_sync(conn, project_id, &source_path)
+            .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
     .map_err(|e| e.to_string())?;
 
     if symbols.is_empty() {

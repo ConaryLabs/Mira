@@ -1,19 +1,19 @@
 // crates/mira-server/src/context/semantic.rs
 // Semantic context injection using embeddings search
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::search::hybrid_search;
 use std::sync::Arc;
 
 pub struct SemanticInjector {
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
 }
 
 impl SemanticInjector {
-    pub fn new(db: Arc<Database>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
-        Self { db, embeddings }
+    pub fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
+        Self { pool, embeddings }
     }
 
     /// Inject relevant context based on semantic similarity to user message
@@ -29,7 +29,7 @@ impl SemanticInjector {
 
         // Perform hybrid search (falls back to keyword search if embeddings is None)
         let result = hybrid_search(
-            &self.db,
+            &self.pool,
             self.embeddings.as_ref(),
             user_message,
             project_id,

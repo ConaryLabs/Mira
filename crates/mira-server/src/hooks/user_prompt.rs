@@ -43,8 +43,9 @@ pub async fn run() -> Result<()> {
     // Open database and create context injection manager
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
+    let pool = Arc::new(crate::db::pool::DatabasePool::open(std::path::Path::new(&db_path)).await?);
     let embeddings = get_embeddings();
-    let manager = crate::context::ContextInjectionManager::new(db, embeddings);
+    let manager = crate::context::ContextInjectionManager::new(db, pool, embeddings);
 
     // Get relevant context with metadata
     let result = manager.get_context_for_message(user_message, session_id).await;

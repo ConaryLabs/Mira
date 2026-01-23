@@ -4,7 +4,7 @@
 use crate::cartographer;
 use crate::db::{
     get_indexed_projects_sync, get_scan_info_sync, is_time_older_than_sync,
-    clear_old_capabilities_sync, Database,
+    clear_old_capabilities_sync,
 };
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
@@ -17,7 +17,6 @@ use std::sync::Arc;
 /// Check if capabilities inventory needs regeneration and process if so
 pub async fn process_capabilities(
     pool: &Arc<DatabasePool>,
-    db: &Arc<Database>,
     deepseek: &Arc<DeepSeekClient>,
     embeddings: Option<&Arc<EmbeddingClient>>,
 ) -> Result<usize, String> {
@@ -39,7 +38,7 @@ pub async fn process_capabilities(
         }
 
         // Generate capabilities inventory
-        match generate_capabilities_inventory(pool, db, deepseek, embeddings, project_id, &project_path).await {
+        match generate_capabilities_inventory(pool, deepseek, embeddings, project_id, &project_path).await {
             Ok(count) => {
                 tracing::info!(
                     "Generated {} capabilities for project {} ({})",
@@ -177,14 +176,13 @@ const MAX_TOTAL_CONTEXT_BYTES: usize = 200_000;
 /// Generate the full capabilities inventory for a project
 async fn generate_capabilities_inventory(
     pool: &Arc<DatabasePool>,
-    db: &Arc<Database>,
     deepseek: &Arc<DeepSeekClient>,
     embeddings: Option<&Arc<EmbeddingClient>>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
     // Get the codebase map with module info
-    let modules = cartographer::get_modules_with_purposes_async(db.clone(), project_id)
+    let modules = cartographer::get_modules_with_purposes_pool(pool, project_id)
         .await
         .map_err(|e| e.to_string())?;
 
