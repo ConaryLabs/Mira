@@ -834,3 +834,350 @@ pub async fn index_project(
     }
     Ok(stats)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // Constants tests
+    // ============================================================================
+
+    #[test]
+    fn test_flush_thresholds() {
+        assert_eq!(SYMBOL_FLUSH_THRESHOLD, 1000);
+        assert_eq!(FILE_FLUSH_THRESHOLD, 100);
+        assert_eq!(CHUNK_FLUSH_THRESHOLD, 1000);
+    }
+
+    // ============================================================================
+    // create_parser tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_parser_rust() {
+        let parser = create_parser("rs");
+        assert!(parser.is_some());
+    }
+
+    #[test]
+    fn test_create_parser_python() {
+        let parser = create_parser("py");
+        assert!(parser.is_some());
+    }
+
+    #[test]
+    fn test_create_parser_typescript() {
+        let parser_ts = create_parser("ts");
+        let parser_tsx = create_parser("tsx");
+        let parser_js = create_parser("js");
+        let parser_jsx = create_parser("jsx");
+        assert!(parser_ts.is_some());
+        assert!(parser_tsx.is_some());
+        assert!(parser_js.is_some());
+        assert!(parser_jsx.is_some());
+    }
+
+    #[test]
+    fn test_create_parser_go() {
+        let parser = create_parser("go");
+        assert!(parser.is_some());
+    }
+
+    #[test]
+    fn test_create_parser_unsupported() {
+        let parser = create_parser("unknown");
+        assert!(parser.is_none());
+    }
+
+    // ============================================================================
+    // split_large_chunk tests
+    // ============================================================================
+
+    #[test]
+    fn test_split_large_chunk_small_input() {
+        let chunk = "fn foo() {}".to_string();
+        let result = split_large_chunk(chunk.clone(), 1, "function", "foo");
+        assert_eq!(result.len(), 1);
+        assert!(result[0].content.contains("fn foo()"));
+    }
+
+    #[test]
+    fn test_split_large_chunk_splits_at_boundary() {
+        // Create a chunk larger than 1000 chars
+        let mut chunk = String::new();
+        for i in 0..50 {
+            chunk.push_str(&format!("let line{} = \"some content here\";\n", i));
+        }
+        let result = split_large_chunk(chunk, 1, "function", "large_fn");
+        assert!(result.len() > 1);
+        // Continuation markers should be present in subsequent chunks
+        if result.len() > 1 {
+            assert!(result[1].content.contains("(continued)"));
+        }
+    }
+
+    #[test]
+    fn test_split_large_chunk_preserves_start_line() {
+        let chunk = "line1\nline2\nline3".to_string();
+        let result = split_large_chunk(chunk, 42, "function", "test");
+        assert_eq!(result[0].start_line, 42);
+    }
+
+    // ============================================================================
+    // create_chunks_for_symbol tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_chunks_for_symbol_basic() {
+        let sym = ParsedSymbol {
+            name: "test_func".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            end_line: 3,
+            signature: Some("fn test_func()".to_string()),
+        };
+        let lines = vec!["fn test_func() {", "    println!(\"hello\");", "}"];
+        let chunks = create_chunks_for_symbol(&sym, &lines);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content.contains("test_func"));
+    }
+
+    #[test]
+    fn test_create_chunks_for_symbol_with_signature() {
+        let sym = ParsedSymbol {
+            name: "add".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            end_line: 1,
+            signature: Some("fn add(a: i32, b: i32) -> i32".to_string()),
+        };
+        let lines = vec!["fn add(a: i32, b: i32) -> i32 { a + b }"];
+        let chunks = create_chunks_for_symbol(&sym, &lines);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content.contains("function add:"));
+    }
+
+    #[test]
+    fn test_create_chunks_for_symbol_out_of_bounds() {
+        let sym = ParsedSymbol {
+            name: "missing".to_string(),
+            kind: "function".to_string(),
+            start_line: 100,
+            end_line: 110,
+            signature: None,
+        };
+        let lines = vec!["line1", "line2"];
+        let chunks = create_chunks_for_symbol(&sym, &lines);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_create_chunks_for_symbol_no_signature() {
+        let sym = ParsedSymbol {
+            name: "MyStruct".to_string(),
+            kind: "struct".to_string(),
+            start_line: 1,
+            end_line: 1,
+            signature: None,
+        };
+        let lines = vec!["struct MyStruct;"];
+        let chunks = create_chunks_for_symbol(&sym, &lines);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content.contains("// struct MyStruct"));
+    }
+
+    // ============================================================================
+    // create_chunks_for_orphan_code tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_chunks_for_orphan_code_none() {
+        let lines = vec!["fn test() {}", "    code", "}"];
+        let mut covered = std::collections::HashSet::new();
+        covered.insert(1);
+        covered.insert(2);
+        covered.insert(3);
+        let chunks = create_chunks_for_orphan_code(&lines, &covered);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_create_chunks_for_orphan_code_whitespace_only() {
+        let lines = vec!["", "   ", "\t"];
+        let covered = std::collections::HashSet::new();
+        let chunks = create_chunks_for_orphan_code(&lines, &covered);
+        // Whitespace-only regions should be skipped
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_create_chunks_for_orphan_code_short_lines() {
+        let lines = vec!["x = 1", "y = 2"];  // Less than 10 chars
+        let covered = std::collections::HashSet::new();
+        let chunks = create_chunks_for_orphan_code(&lines, &covered);
+        // Lines shorter than 10 chars are not substantial
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_create_chunks_for_orphan_code_substantial() {
+        let lines = vec!["// This is a module-level comment with substantial content"];
+        let covered = std::collections::HashSet::new();
+        let chunks = create_chunks_for_orphan_code(&lines, &covered);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content.contains("module-level"));
+    }
+
+    // ============================================================================
+    // create_semantic_chunks tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_semantic_chunks_empty() {
+        let content = "";
+        let symbols: Vec<ParsedSymbol> = vec![];
+        let chunks = create_semantic_chunks(content, &symbols);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_create_semantic_chunks_single_symbol() {
+        let content = "fn hello() {\n    println!(\"Hello\");\n}";
+        let symbols = vec![ParsedSymbol {
+            name: "hello".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            end_line: 3,
+            signature: Some("fn hello()".to_string()),
+        }];
+        let chunks = create_semantic_chunks(content, &symbols);
+        assert!(!chunks.is_empty());
+        assert!(chunks[0].content.contains("hello"));
+    }
+
+    #[test]
+    fn test_create_semantic_chunks_multiple_symbols() {
+        let content = "fn a() {}\nfn b() {}";
+        let symbols = vec![
+            ParsedSymbol {
+                name: "a".to_string(),
+                kind: "function".to_string(),
+                start_line: 1,
+                end_line: 1,
+                signature: None,
+            },
+            ParsedSymbol {
+                name: "b".to_string(),
+                kind: "function".to_string(),
+                start_line: 2,
+                end_line: 2,
+                signature: None,
+            },
+        ];
+        let chunks = create_semantic_chunks(content, &symbols);
+        assert_eq!(chunks.len(), 2);
+    }
+
+    // ============================================================================
+    // parse_file tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_file_rust() {
+        let content = "fn main() { println!(\"Hello\"); }";
+        let result = parse_file(content, "rust");
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(!parsed.symbols.is_empty());
+    }
+
+    #[test]
+    fn test_parse_file_python() {
+        let content = "def hello():\n    print('hello')";
+        let result = parse_file(content, "python");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_file_typescript() {
+        let content = "function greet() { console.log('hi'); }";
+        let result = parse_file(content, "typescript");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_file_go() {
+        let content = "package main\nfunc main() {}";
+        let result = parse_file(content, "go");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_file_unsupported() {
+        let content = "some content";
+        let result = parse_file(content, "cobol");
+        assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // IndexStats tests
+    // ============================================================================
+
+    #[test]
+    fn test_index_stats_default() {
+        let stats = IndexStats {
+            files: 0,
+            symbols: 0,
+            chunks: 0,
+            errors: 0,
+        };
+        assert_eq!(stats.files, 0);
+        assert_eq!(stats.errors, 0);
+    }
+
+    // ============================================================================
+    // CodeChunk tests
+    // ============================================================================
+
+    #[test]
+    fn test_code_chunk_creation() {
+        let chunk = CodeChunk {
+            content: "fn test() {}".to_string(),
+            start_line: 42,
+        };
+        assert_eq!(chunk.start_line, 42);
+        assert!(chunk.content.contains("test"));
+    }
+
+    // ============================================================================
+    // ParsedSymbol tests
+    // ============================================================================
+
+    #[test]
+    fn test_parsed_symbol_creation() {
+        let sym = ParsedSymbol {
+            name: "foo".to_string(),
+            kind: "function".to_string(),
+            start_line: 1,
+            end_line: 10,
+            signature: Some("fn foo() -> i32".to_string()),
+        };
+        assert_eq!(sym.name, "foo");
+        assert_eq!(sym.kind, "function");
+    }
+
+    // ============================================================================
+    // ParsedImport tests
+    // ============================================================================
+
+    #[test]
+    fn test_parsed_import_creation() {
+        let import = ParsedImport {
+            path: "std::collections::HashMap".to_string(),
+            is_external: false,
+        };
+        assert!(import.path.contains("HashMap"));
+        assert!(!import.is_external);
+    }
+}

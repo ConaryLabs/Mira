@@ -66,3 +66,47 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     }
     pattern == text
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // glob_match tests
+    // ============================================================================
+
+    #[test]
+    fn test_glob_match_wildcard_only() {
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("*", ""));
+        assert!(glob_match("*", "some/path/here"));
+    }
+
+    #[test]
+    fn test_glob_match_prefix_wildcard() {
+        assert!(glob_match("prefix*", "prefix_something"));
+        assert!(glob_match("prefix*", "prefix"));
+        assert!(glob_match("/home/*", "/home/user"));
+        assert!(!glob_match("prefix*", "other"));
+    }
+
+    #[test]
+    fn test_glob_match_exact() {
+        assert!(glob_match("exact", "exact"));
+        assert!(!glob_match("exact", "exact_more"));
+        assert!(!glob_match("exact", "other"));
+    }
+
+    #[test]
+    fn test_glob_match_empty_pattern() {
+        assert!(glob_match("", "")); // Exact match of empty strings
+        assert!(!glob_match("", "something"));
+    }
+
+    #[test]
+    fn test_glob_match_command_patterns() {
+        assert!(glob_match("git*", "git status"));
+        assert!(glob_match("npm*", "npm install"));
+        assert!(glob_match("cargo*", "cargo build --release"));
+    }
+}
