@@ -50,16 +50,23 @@ pub async fn list_doc_tasks(
             "{} **[{}]** `{} -> {}` ({})\n",
             status_icon, task.priority, task.doc_category, task.target_doc_path, task.status
         ));
+        output.push_str(&format!("   ID: {}\n", task.id));
 
         if let Some(reason) = &task.reason {
             output.push_str(&format!("   Reason: {}\n", reason));
         }
 
-        if task.status == "draft_ready" {
-            if let Some(preview) = &task.draft_preview {
-                output.push_str(&format!("   Preview: {}\n", preview));
+        match task.status.as_str() {
+            "pending" => {
+                output.push_str(&format!("   Generate with: `generate_doc_with_expert({})`\n", task.id));
             }
-            output.push_str(&format!("   Review with: `review_doc_draft({})`\n", task.id));
+            "draft_ready" => {
+                if let Some(preview) = &task.draft_preview {
+                    output.push_str(&format!("   Preview: {}\n", preview));
+                }
+                output.push_str(&format!("   Review with: `review_doc_draft({})`\n", task.id));
+            }
+            _ => {}
         }
 
         output.push('\n');
@@ -339,6 +346,203 @@ pub async fn approve_doc_draft(
         "✅ Task {} approved. Use `apply_doc_draft({}, force=false)` to apply.",
         task_id, task_id
     ))
+}
+
+/// Generate documentation using the expert agent
+/// This produces higher quality docs than the background service by exploring the codebase
+pub async fn generate_doc_with_expert<C: ToolContext>(
+    ctx: &C,
+    task_id: i64,
+) -> Result<String, String> {
+    use crate::db::documentation::store_doc_draft;
+    use crate::tools::core::experts::{consult_expert, ExpertRole};
+
+    // Get task details
+    let task = {
+        let db = ctx.db();
+        let conn = db.conn();
+        get_doc_task(&conn, task_id)?
+            .ok_or(format!("Task {} not found", task_id))?
+    };
+
+    // Only allow generating for pending or draft_ready tasks
+    if !["pending", "draft_ready"].contains(&task.status.as_str()) {
+        return Err(format!(
+            "Task {} cannot be regenerated (status: {}). Only pending or draft_ready tasks can be generated.",
+            task_id, task.status
+        ));
+    }
+
+    // Derive source identifier from target path or source file
+    let source_identifier = task.source_file_path.as_deref()
+        .unwrap_or(&task.target_doc_path);
+
+    // Build context based on doc type
+    let context = build_expert_context(ctx, &task).await?;
+
+    // Build the question/instruction
+    let question = format!(
+        "Generate comprehensive markdown documentation for `{}`. \
+         The documentation will be written to `{}`. \
+         Explore the codebase to understand the actual behavior, not just the signatures.",
+        source_identifier, task.target_doc_path
+    );
+
+    // Call the documentation expert
+    let draft = consult_expert(ctx, ExpertRole::DocumentationWriter, context, Some(question)).await?;
+
+    // Extract just the markdown content (expert may include analysis around it)
+    let markdown_content = extract_markdown_from_response(&draft);
+
+    // Calculate checksum of target file if it exists
+    let project_path = {
+        let db = ctx.db();
+        let conn = db.conn();
+        let project_id = task.project_id.ok_or("No project_id on task")?;
+        conn.query_row(
+            "SELECT path FROM projects WHERE id = ?",
+            [project_id],
+            |row| row.get::<_, String>(0),
+        ).map_err(|e| e.to_string())?
+    };
+
+    let target_path = Path::new(&project_path).join(&task.target_doc_path);
+    let checksum = if target_path.exists() {
+        file_checksum(&target_path).unwrap_or_else(|| "none".to_string())
+    } else {
+        "none".to_string()
+    };
+
+    // Store the draft
+    {
+        let db = ctx.db();
+        let conn = db.conn();
+        store_doc_draft(&conn, task_id, &markdown_content, &checksum)?;
+    }
+
+    Ok(format!(
+        "✅ **Expert Draft Generated**\n\n\
+        Documentation generated for: `{}`\n\
+        Target: `{}`\n\n\
+        Review with: `review_doc_draft({})`\n\
+        Apply with: `apply_doc_draft({})`",
+        source_identifier, task.target_doc_path, task_id, task_id
+    ))
+}
+
+/// Build context for the expert based on the documentation task type
+async fn build_expert_context<C: ToolContext>(
+    ctx: &C,
+    task: &DocTask,
+) -> Result<String, String> {
+    let mut context = String::new();
+
+    // Derive source identifier from source path or target path
+    let source_identifier = task.source_file_path.as_deref()
+        .unwrap_or(&task.target_doc_path);
+
+    context.push_str("# Documentation Task\n\n");
+    context.push_str(&format!("**Type:** {} / {}\n", task.doc_type, task.doc_category));
+    context.push_str(&format!("**Target:** {}\n", source_identifier));
+    context.push_str(&format!("**Output Path:** {}\n\n", task.target_doc_path));
+
+    if let Some(reason) = &task.reason {
+        context.push_str(&format!("**Reason:** {}\n\n", reason));
+    }
+
+    // Add source file info if available
+    if let Some(source_path) = &task.source_file_path {
+        context.push_str("## Source File\n\n");
+        context.push_str(&format!("Path: `{}`\n\n", source_path));
+
+        // Try to read the source content
+        let project_path = {
+            let db = ctx.db();
+            let conn = db.conn();
+            if let Some(project_id) = task.project_id {
+                conn.query_row(
+                    "SELECT path FROM projects WHERE id = ?",
+                    [project_id],
+                    |row| row.get::<_, String>(0),
+                ).ok()
+            } else {
+                None
+            }
+        };
+
+        if let Some(proj_path) = project_path {
+            let full_path = Path::new(&proj_path).join(source_path);
+            if let Ok(content) = tokio::fs::read_to_string(&full_path).await {
+                // Detect language for code block
+                let lang = if source_path.ends_with(".rs") { "rust" }
+                    else if source_path.ends_with(".py") { "python" }
+                    else if source_path.ends_with(".ts") { "typescript" }
+                    else if source_path.ends_with(".js") { "javascript" }
+                    else { "" };
+
+                context.push_str(&format!("```{}\n{}\n```\n\n", lang, content));
+            }
+        }
+    }
+
+    // Add guidance based on doc type
+    match task.doc_category.as_str() {
+        "mcp_tool" => {
+            context.push_str("## Documentation Guidelines for MCP Tools\n\n");
+            context.push_str("Include these sections:\n");
+            context.push_str("1. **Purpose** - What problem does this tool solve?\n");
+            context.push_str("2. **Parameters** - All inputs with types, defaults, constraints\n");
+            context.push_str("3. **Return Value** - What the tool returns on success\n");
+            context.push_str("4. **Examples** - 2-3 realistic JSON usage examples\n");
+            context.push_str("5. **Errors** - What can fail and common error messages\n");
+            context.push_str("6. **Related** - Links to related tools\n\n");
+            context.push_str("Explore the implementation to understand actual behavior!\n");
+        }
+        "module" => {
+            context.push_str("## Documentation Guidelines for Modules\n\n");
+            context.push_str("Include these sections:\n");
+            context.push_str("1. **Overview** - What this module does and its purpose\n");
+            context.push_str("2. **Key Components** - Main structs, functions, traits\n");
+            context.push_str("3. **Usage** - How other parts of the codebase use this module\n");
+            context.push_str("4. **Architecture** - How it fits into the larger system\n");
+            context.push_str("5. **Examples** - Code examples if applicable\n");
+        }
+        _ => {
+            context.push_str("## Documentation Guidelines\n\n");
+            context.push_str("Write clear, comprehensive documentation that helps developers understand and use this code.\n");
+        }
+    }
+
+    Ok(context)
+}
+
+/// Extract markdown content from expert response
+/// The expert may include analysis text around the markdown, so we try to extract just the doc
+fn extract_markdown_from_response(response: &str) -> String {
+    // If response contains a code block with markdown, extract it
+    if let Some(start) = response.find("```md") {
+        if let Some(end) = response[start + 5..].find("```") {
+            return response[start + 5..start + 5 + end].trim().to_string();
+        }
+    }
+
+    if let Some(start) = response.find("```markdown") {
+        if let Some(end) = response[start + 11..].find("```") {
+            return response[start + 11..start + 11 + end].trim().to_string();
+        }
+    }
+
+    // Otherwise, look for the first heading and take everything from there
+    if let Some(heading_pos) = response.find("\n# ") {
+        return response[heading_pos + 1..].trim().to_string();
+    }
+
+    if response.starts_with("# ") {
+        return response.to_string();
+    }
+
+    // Fallback: return the whole response
+    response.to_string()
 }
 
 /// Calculate SHA256 checksum of a file

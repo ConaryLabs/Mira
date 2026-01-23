@@ -34,6 +34,7 @@ pub enum ExpertRole {
     ScopeAnalyst,
     CodeReviewer,
     Security,
+    DocumentationWriter,
 }
 
 impl ExpertRole {
@@ -54,6 +55,7 @@ impl ExpertRole {
                 ExpertRole::ScopeAnalyst => SCOPE_ANALYST_PROMPT,
                 ExpertRole::CodeReviewer => CODE_REVIEWER_PROMPT,
                 ExpertRole::Security => SECURITY_PROMPT,
+                ExpertRole::DocumentationWriter => DOCUMENTATION_WRITER_PROMPT,
             }.to_string()
         };
 
@@ -71,6 +73,7 @@ impl ExpertRole {
             ExpertRole::ScopeAnalyst => "scope_analyst",
             ExpertRole::CodeReviewer => "code_reviewer",
             ExpertRole::Security => "security",
+            ExpertRole::DocumentationWriter => "documentation_writer",
         }
     }
 
@@ -82,6 +85,7 @@ impl ExpertRole {
             ExpertRole::ScopeAnalyst => "Scope Analyst",
             ExpertRole::CodeReviewer => "Code Reviewer",
             ExpertRole::Security => "Security Analyst",
+            ExpertRole::DocumentationWriter => "Documentation Writer",
         }
     }
 
@@ -93,6 +97,7 @@ impl ExpertRole {
             "scope_analyst" => Some(ExpertRole::ScopeAnalyst),
             "code_reviewer" => Some(ExpertRole::CodeReviewer),
             "security" => Some(ExpertRole::Security),
+            "documentation_writer" => Some(ExpertRole::DocumentationWriter),
             _ => None,
         }
     }
@@ -105,6 +110,7 @@ impl ExpertRole {
             ExpertRole::ScopeAnalyst,
             ExpertRole::CodeReviewer,
             ExpertRole::Security,
+            ExpertRole::DocumentationWriter,
         ]
     }
 }
@@ -202,6 +208,36 @@ When responding:
 4. Suggest additional security measures if needed
 
 Focus on actionable findings."#;
+
+const DOCUMENTATION_WRITER_PROMPT: &str = r#"You are a technical documentation writer creating clear, comprehensive documentation.
+
+Your role:
+- Write documentation that helps developers understand and use code
+- Explore the codebase to understand actual behavior, not just signatures
+- Document edge cases, limitations, and gotchas
+- Provide realistic, useful examples
+
+Process:
+1. EXPLORE: Read the implementation to understand how it actually works
+2. TRACE: Find related code, callers, and dependencies
+3. DOCUMENT: Write clear markdown with all necessary details
+
+Documentation structure:
+- Purpose: What problem does this solve? When to use it?
+- Parameters: All inputs with types, defaults, constraints, validation
+- Behavior: How it works, including edge cases and side effects
+- Examples: 2-3 realistic usage scenarios with expected output
+- Errors: What can fail and why
+- Related: Links to related tools, functions, or concepts
+
+Quality standards:
+- Be specific and concrete, never vague
+- Explain the "why", not just the "what"
+- Include gotchas and limitations users should know
+- NEVER say "not documented" - explore the code to find out
+- Use code blocks with language hints for examples
+
+Output: Return well-formatted markdown suitable for a docs/ file."#;
 
 
 /// Define the tools available to experts

@@ -444,6 +444,12 @@ pub struct ApproveDocDraftRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GenerateDocWithExpertRequest {
+    #[schemars(description = "Task ID from list_doc_tasks to generate documentation for")]
+    pub task_id: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TeamRequest {
     #[schemars(description = "Action: create/invite/remove/list/members")]
     pub action: String,
@@ -819,6 +825,14 @@ impl MiraServer {
         Parameters(req): Parameters<ApproveDocDraftRequest>,
     ) -> Result<String, String> {
         tools::approve_doc_draft(self, req.task_id).await
+    }
+
+    #[tool(description = "Generate high-quality documentation using an expert agent. Use list_doc_tasks() to find task IDs.")]
+    async fn generate_doc_with_expert(
+        &self,
+        Parameters(req): Parameters<GenerateDocWithExpertRequest>,
+    ) -> Result<String, String> {
+        tools::generate_doc_with_expert(self, req.task_id).await
     }
 
     #[tool(description = "Manage teams for shared memory (create, invite, remove, list, members).")]
