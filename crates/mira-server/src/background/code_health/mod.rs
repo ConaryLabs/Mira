@@ -8,8 +8,9 @@ mod detection;
 use crate::db::{
     get_indexed_projects_sync, get_scan_info_sync, is_time_older_than_sync,
     memory_key_exists_sync, mark_health_scanned_sync, clear_old_health_issues_sync,
-    Database,
+    store_memory_sync, StoreMemoryParams,
 };
+use crate::db::pool::DatabasePool;
 use crate::llm::DeepSeekClient;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,16 +18,14 @@ use std::sync::Arc;
 
 /// Check code health for all indexed projects
 pub async fn process_code_health(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     deepseek: Option<&Arc<DeepSeekClient>>,
 ) -> Result<usize, String> {
     tracing::debug!("Code health: checking for projects needing scan");
-    // Run on blocking thread to avoid blocking tokio
-    let db_clone = db.clone();
-    let projects = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_projects_needing_health_check(&conn)
-    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    let projects = pool.interact(move |conn| {
+        get_projects_needing_health_check(conn)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }).await.map_err(|e| e.to_string())?;
     if !projects.is_empty() {
         tracing::info!("Code health: found {} projects needing scan", projects.len());
     }
@@ -37,7 +36,7 @@ pub async fn process_code_health(
             continue;
         }
 
-        match scan_project_health(db, deepseek, project_id, &project_path).await {
+        match scan_project_health(pool, deepseek, project_id, &project_path).await {
             Ok(count) => {
                 tracing::info!(
                     "Found {} health issues for project {} ({})",
@@ -46,12 +45,10 @@ pub async fn process_code_health(
                     project_path
                 );
                 processed += count;
-                // Run on blocking thread
-                let db_clone = db.clone();
-                tokio::task::spawn_blocking(move || {
-                    let conn = db_clone.conn();
-                    mark_health_scanned(&conn, project_id)
-                }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+                pool.interact(move |conn| {
+                    mark_health_scanned(conn, project_id)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                }).await.map_err(|e| e.to_string())?;
             }
             Err(e) => {
                 tracing::warn!("Failed to scan health for {}: {}", project_path, e);
@@ -108,95 +105,109 @@ fn mark_health_scanned(conn: &rusqlite::Connection, project_id: i64) -> Result<(
 }
 
 /// Mark project as needing a health scan (called by file watcher)
-pub fn mark_health_scan_needed(db: &Database, project_id: i64) -> Result<(), String> {
-    db.store_memory(
-        Some(project_id),
-        Some("health_scan_needed"),
-        "pending",
-        "system",
-        Some("health"),
-        1.0,
-    )
-    .map_err(|e| e.to_string())?;
+/// Sync version for pool.interact()
+pub fn mark_health_scan_needed_sync(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
+    store_memory_sync(conn, StoreMemoryParams {
+        project_id: Some(project_id),
+        key: Some("health_scan_needed"),
+        content: "pending",
+        fact_type: "system",
+        category: Some("health"),
+        confidence: 1.0,
+        session_id: None,
+        user_id: None,
+        scope: "project",
+    }).map_err(|e| e.to_string())?;
     tracing::debug!("Marked project {} for health rescan", project_id);
     Ok(())
 }
 
+/// Mark project as needing a health scan (called by file watcher)
+/// Convenience wrapper for callers that still use Database
+pub fn mark_health_scan_needed(db: &crate::db::Database, project_id: i64) -> Result<(), String> {
+    let conn = db.conn();
+    mark_health_scan_needed_sync(&conn, project_id)
+}
+
 /// Scan a project for health issues
 async fn scan_project_health(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     deepseek: Option<&Arc<DeepSeekClient>>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
     tracing::info!("Code health: scanning project {}", project_path);
 
-    // Clear old health issues (run on blocking thread)
-    let db_clone = db.clone();
-    tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        clear_old_health_issues(&conn, project_id)
-    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    // Clear old health issues
+    pool.interact(move |conn| {
+        clear_old_health_issues(conn, project_id)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }).await.map_err(|e| e.to_string())?;
 
     let mut total = 0;
 
-    // Run all sync detection operations on blocking thread pool
-    let db_clone = db.clone();
+    // Run all sync detection operations using pool.interact()
     let project_path_owned = project_path.to_string();
-    let detection_results = tokio::task::spawn_blocking(move || -> Result<(usize, usize, usize, usize, usize, usize), String> {
+    let detection_results = pool.interact(move |conn| -> Result<(usize, usize, usize, usize, usize, usize), anyhow::Error> {
         // 1. Cargo check warnings (most important)
         tracing::debug!("Code health: running cargo check for {}", project_path_owned);
-        let warnings = cargo::scan_cargo_warnings(&db_clone, project_id, &project_path_owned)?;
+        let warnings = cargo::scan_cargo_warnings(conn, project_id, &project_path_owned)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         if warnings > 0 {
             tracing::info!("Code health: found {} cargo warnings", warnings);
         }
 
         // 2. TODO/FIXME comments
-        let todos = detection::scan_todo_comments(&db_clone, project_id, &project_path_owned)?;
+        let todos = detection::scan_todo_comments(conn, project_id, &project_path_owned)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         if todos > 0 {
             tracing::info!("Code health: found {} TODOs", todos);
         }
 
         // 3. Unimplemented macros
-        let unimpl = detection::scan_unimplemented(&db_clone, project_id, &project_path_owned)?;
+        let unimpl = detection::scan_unimplemented(conn, project_id, &project_path_owned)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         if unimpl > 0 {
             tracing::info!("Code health: found {} unimplemented! macros", unimpl);
         }
 
         // 4. Unused functions (from call graph)
-        let unused = detection::scan_unused_functions(&db_clone, project_id)?;
+        let unused = detection::scan_unused_functions(conn, project_id)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         if unused > 0 {
             tracing::info!("Code health: found {} potentially unused functions", unused);
         }
 
         // 5. Unwrap/expect audit (panic risks)
-        let unwraps = detection::scan_unwrap_usage(&db_clone, project_id, &project_path_owned)?;
+        let unwraps = detection::scan_unwrap_usage(conn, project_id, &project_path_owned)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         if unwraps > 0 {
             tracing::info!("Code health: found {} unwrap/expect calls in non-test code", unwraps);
         }
 
         // 7. Error handling quality (pattern-based)
-        let error_handling = detection::scan_error_handling(&db_clone, project_id, &project_path_owned)?;
+        let error_handling = detection::scan_error_handling(conn, project_id, &project_path_owned)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         if error_handling > 0 {
             tracing::info!("Code health: found {} error handling issues", error_handling);
         }
 
         Ok((warnings, todos, unimpl, unused, unwraps, error_handling))
-    }).await.map_err(|e| format!("Code health detection spawn_blocking panicked: {}", e))??;
+    }).await.map_err(|e| e.to_string())?;
 
     let (warnings, todos, unimpl, unused, unwraps, error_handling) = detection_results;
     total += warnings + todos + unimpl + unused + unwraps + error_handling;
 
     // 6. LLM complexity analysis (for large functions) - async
     if let Some(ds) = deepseek {
-        let complexity = analysis::scan_complexity(db, ds, project_id, project_path).await?;
+        let complexity = analysis::scan_complexity(pool, ds, project_id, project_path).await?;
         if complexity > 0 {
             tracing::info!("Code health: found {} complexity issues via LLM", complexity);
         }
         total += complexity;
 
         // 8. LLM error handling analysis (for functions with many ? operators) - async
-        let error_quality = analysis::scan_error_quality(db, ds, project_id, project_path).await?;
+        let error_quality = analysis::scan_error_quality(pool, ds, project_id, project_path).await?;
         if error_quality > 0 {
             tracing::info!("Code health: found {} error quality issues via LLM", error_quality);
         }

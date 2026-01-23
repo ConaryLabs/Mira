@@ -6,6 +6,7 @@ use crate::db::{
     get_indexed_projects_sync, get_scan_info_sync, is_time_older_than_sync,
     clear_old_capabilities_sync, Database,
 };
+use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use crate::search::embedding_to_bytes;
@@ -15,16 +16,16 @@ use std::sync::Arc;
 
 /// Check if capabilities inventory needs regeneration and process if so
 pub async fn process_capabilities(
+    pool: &Arc<DatabasePool>,
     db: &Arc<Database>,
     deepseek: &Arc<DeepSeekClient>,
     embeddings: Option<&Arc<EmbeddingClient>>,
 ) -> Result<usize, String> {
-    // Get projects that need capability scanning (run on blocking thread)
-    let db_clone = db.clone();
-    let projects = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_projects_needing_scan(&conn)
-    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    // Get projects that need capability scanning
+    let projects = pool.interact(move |conn| {
+        get_projects_needing_scan(conn)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }).await.map_err(|e| e.to_string())?;
     if !projects.is_empty() {
         tracing::info!("Capabilities: found {} projects needing scan", projects.len());
     }
@@ -38,7 +39,7 @@ pub async fn process_capabilities(
         }
 
         // Generate capabilities inventory
-        match generate_capabilities_inventory(db, deepseek, embeddings, project_id, &project_path).await {
+        match generate_capabilities_inventory(pool, db, deepseek, embeddings, project_id, &project_path).await {
             Ok(count) => {
                 tracing::info!(
                     "Generated {} capabilities for project {} ({})",
@@ -49,7 +50,7 @@ pub async fn process_capabilities(
                 processed += count;
 
                 // Update last scan timestamp with git commit
-                mark_capabilities_scanned(db, project_id, &project_path)?;
+                mark_capabilities_scanned(pool, project_id, &project_path).await?;
             }
             Err(e) => {
                 tracing::warn!("Failed to generate capabilities for {}: {}", project_path, e);
@@ -145,19 +146,25 @@ fn get_git_head(project_path: &str) -> Option<String> {
 }
 
 /// Mark that we've scanned a project's capabilities (stores git commit)
-fn mark_capabilities_scanned(db: &Database, project_id: i64, project_path: &str) -> Result<(), String> {
+async fn mark_capabilities_scanned(pool: &Arc<DatabasePool>, project_id: i64, project_path: &str) -> Result<(), String> {
+    use crate::db::{store_memory_sync, StoreMemoryParams};
+
     // Store the current git commit as the scan marker
     let commit = get_git_head(project_path).unwrap_or_else(|| "unknown".to_string());
 
-    db.store_memory(
-        Some(project_id),
-        Some("capabilities_scan_time"),
-        &commit,
-        "system",
-        Some("capabilities"),
-        1.0,
-    )
-    .map_err(|e| e.to_string())?;
+    pool.interact(move |conn| {
+        store_memory_sync(conn, StoreMemoryParams {
+            project_id: Some(project_id),
+            key: Some("capabilities_scan_time"),
+            content: &commit,
+            fact_type: "system",
+            category: Some("capabilities"),
+            confidence: 1.0,
+            session_id: None,
+            user_id: None,
+            scope: "project",
+        }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
+    }).await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -169,6 +176,7 @@ const MAX_TOTAL_CONTEXT_BYTES: usize = 200_000;
 
 /// Generate the full capabilities inventory for a project
 async fn generate_capabilities_inventory(
+    pool: &Arc<DatabasePool>,
     db: &Arc<Database>,
     deepseek: &Arc<DeepSeekClient>,
     embeddings: Option<&Arc<EmbeddingClient>>,
@@ -273,27 +281,30 @@ Only list working, implemented capabilities. Do NOT list problems, issues, or in
         .ok_or("No content in DeepSeek response")?;
 
     // Parse and store capabilities only
-    let stored = parse_and_store_capabilities(db, embeddings, project_id, &content).await?;
+    let stored = parse_and_store_capabilities(pool, embeddings, project_id, &content).await?;
 
     Ok(stored)
 }
 
 /// Parse the Reasoner response and store capabilities as memories with embeddings
 async fn parse_and_store_capabilities(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     embeddings: Option<&Arc<EmbeddingClient>>,
     project_id: i64,
     response: &str,
 ) -> Result<usize, String> {
+    use crate::db::{store_memory_sync, StoreMemoryParams};
+
     let mut stored = 0;
 
-    // Clear old capabilities for this project (run on blocking thread)
-    let db_clone = db.clone();
-    tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        clear_old_capabilities(&conn, project_id)
-    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    // Clear old capabilities for this project
+    pool.interact(move |conn| {
+        clear_old_capabilities(conn, project_id)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }).await.map_err(|e| e.to_string())?;
 
+    // First pass: collect capabilities from response
+    let mut capabilities: Vec<(String, String)> = Vec::new(); // (key, content)
     let mut in_capabilities = false;
     let mut capability_index = 0;
 
@@ -317,33 +328,42 @@ async fn parse_and_store_capabilities(
                 continue;
             }
 
-            // Store as capability with embedding
             let key = format!("capability:{}", capability_index);
-            let id = db.store_memory(
-                Some(project_id),
-                Some(&key),
-                content,
-                "capability",
-                Some("codebase"),
-                1.0,
-            )
-            .map_err(|e| e.to_string())?;
-
-            // Generate and store embedding (run on blocking thread)
-            if let Some(emb_client) = embeddings {
-                if let Ok(embedding) = emb_client.embed(content).await {
-                    let db_clone = db.clone();
-                    let content_owned = content.to_string();
-                    tokio::task::spawn_blocking(move || {
-                        let conn = db_clone.conn();
-                        store_embedding(&conn, id, &content_owned, &embedding)
-                    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
-                }
-            }
-
+            capabilities.push((key, content.to_string()));
             capability_index += 1;
-            stored += 1;
         }
+    }
+
+    // Second pass: store capabilities using pool
+    for (key, content) in capabilities {
+        let key_clone = key.clone();
+        let content_clone = content.clone();
+        let id = pool.interact(move |conn| {
+            store_memory_sync(conn, StoreMemoryParams {
+                project_id: Some(project_id),
+                key: Some(&key_clone),
+                content: &content_clone,
+                fact_type: "capability",
+                category: Some("codebase"),
+                confidence: 1.0,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+            }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
+        }).await.map_err(|e| e.to_string())?;
+
+        // Generate and store embedding
+        if let Some(emb_client) = embeddings {
+            if let Ok(embedding) = emb_client.embed(&content).await {
+                let pool_clone = pool.clone();
+                pool_clone.interact(move |conn| {
+                    store_embedding(conn, id, &content, &embedding)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                }).await.map_err(|e| e.to_string())?;
+            }
+        }
+
+        stored += 1;
     }
 
     Ok(stored)

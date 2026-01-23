@@ -1,7 +1,8 @@
 // crates/mira-server/src/background/briefings.rs
 // Background worker for generating "What's New" project briefings
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
+use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use std::path::Path;
 use std::process::Command;
@@ -9,12 +10,13 @@ use std::sync::Arc;
 
 /// Check all projects for git changes and generate briefings
 pub async fn process_briefings(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     deepseek: &Arc<DeepSeekClient>,
 ) -> Result<usize, String> {
-    let projects = db
-        .get_projects_for_briefing_check()
-        .map_err(|e| e.to_string())?;
+    let projects = pool.interact(move |conn| {
+        get_projects_for_briefing_check_sync(conn)
+            .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
+    }).await.map_err(|e| e.to_string())?;
 
     let mut processed = 0;
 
@@ -52,8 +54,12 @@ pub async fn process_briefings(
         // Only update commit marker if briefing was successfully generated
         // This ensures failed briefings will be retried on next run
         if let Some(ref text) = briefing {
-            db.update_project_briefing(project_id, &current_commit, Some(text))
-                .map_err(|e| e.to_string())?;
+            let commit = current_commit.clone();
+            let text_clone = text.clone();
+            pool.interact(move |conn| {
+                update_project_briefing_sync(conn, project_id, &commit, Some(&text_clone))
+                    .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
+            }).await.map_err(|e| e.to_string())?;
             tracing::info!(
                 "Generated briefing for project {} ({})",
                 project_id,

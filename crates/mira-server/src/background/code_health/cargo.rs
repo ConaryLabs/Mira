@@ -1,7 +1,8 @@
 // crates/mira-server/src/background/code_health/cargo.rs
 // Cargo check integration for detecting compiler warnings
 
-use crate::db::Database;
+use crate::db::{store_memory_sync, StoreMemoryParams};
+use rusqlite::Connection;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::Path;
@@ -30,7 +31,7 @@ pub(super) struct Span {
 }
 
 /// Run cargo check and parse warnings
-pub fn scan_cargo_warnings(db: &Database, project_id: i64, project_path: &str) -> Result<usize, String> {
+pub fn scan_cargo_warnings(conn: &Connection, project_id: i64, project_path: &str) -> Result<usize, String> {
     // Check if it's a Rust project
     let cargo_toml = Path::new(project_path).join("Cargo.toml");
     if !cargo_toml.exists() {
@@ -72,15 +73,17 @@ pub fn scan_cargo_warnings(db: &Database, project_id: i64, project_path: &str) -
                         };
 
                         let key = format!("health:warning:{}:{}", location, stored);
-                        db.store_memory(
-                            Some(project_id),
-                            Some(&key),
-                            &content,
-                            "health",
-                            Some("warning"),
-                            0.9,
-                        )
-                        .map_err(|e| e.to_string())?;
+                        store_memory_sync(conn, StoreMemoryParams {
+                            project_id: Some(project_id),
+                            key: Some(&key),
+                            content: &content,
+                            fact_type: "health",
+                            category: Some("warning"),
+                            confidence: 0.9,
+                            session_id: None,
+                            user_id: None,
+                            scope: "project",
+                        }).map_err(|e| e.to_string())?;
 
                         stored += 1;
                     }

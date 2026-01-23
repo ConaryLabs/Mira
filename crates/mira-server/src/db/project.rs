@@ -155,6 +155,42 @@ pub fn get_health_alerts_sync(
     Ok(rows)
 }
 
+/// Get projects that need briefing checks - sync version for pool.interact()
+pub fn get_projects_for_briefing_check_sync(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<(i64, String, Option<String>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT p.id, p.path, pb.last_known_commit
+         FROM projects p
+         LEFT JOIN project_briefings pb ON p.id = pb.project_id
+         WHERE p.path IS NOT NULL
+         ORDER BY p.id"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    rows.collect()
+}
+
+/// Update project briefing with new git state and summary - sync version for pool.interact()
+pub fn update_project_briefing_sync(
+    conn: &Connection,
+    project_id: i64,
+    last_known_commit: &str,
+    briefing_text: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO project_briefings (project_id, last_known_commit, briefing_text, generated_at)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(project_id) DO UPDATE SET
+            last_known_commit = excluded.last_known_commit,
+            briefing_text = excluded.briefing_text,
+            generated_at = CURRENT_TIMESTAMP",
+        params![project_id, last_known_commit, briefing_text],
+    )?;
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Database impl methods
 // ═══════════════════════════════════════════════════════════════════════════════

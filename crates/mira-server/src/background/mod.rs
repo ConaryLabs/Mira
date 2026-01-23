@@ -143,17 +143,18 @@ impl BackgroundWorker {
 
     /// Process summaries with rate limiting
     async fn process_summary_queue(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
-        summaries::process_queue(&self.db, client).await
+        summaries::process_queue(&self.pool, client).await
     }
 
     /// Process project briefings (What's New since last session)
     async fn process_briefings(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
-        briefings::process_briefings(&self.db, client).await
+        briefings::process_briefings(&self.pool, client).await
     }
 
     /// Process capabilities inventory (periodic codebase scan)
     async fn process_capabilities(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
         capabilities::process_capabilities(
+            &self.pool,
             &self.db,
             client,
             self.embeddings.as_ref(),
@@ -162,7 +163,7 @@ impl BackgroundWorker {
 
     /// Process code health (compiler warnings, TODOs, unused code, complexity)
     async fn process_code_health(&self) -> Result<usize, String> {
-        code_health::process_code_health(&self.db, self.deepseek.as_ref()).await
+        code_health::process_code_health(&self.pool, self.deepseek.as_ref()).await
     }
 
     /// Process documentation tasks (gap detection and draft generation)

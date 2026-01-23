@@ -2,7 +2,8 @@
 // Rate-limited DeepSeek summary generation
 
 use crate::cartographer;
-use crate::db::{Database, get_projects_with_pending_summaries_sync};
+use crate::db::pool::DatabasePool;
+use crate::db::{get_projects_with_pending_summaries_sync, get_modules_needing_summaries_sync, update_module_purposes_sync};
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use std::path::Path;
 use std::sync::Arc;
@@ -15,13 +16,13 @@ const BATCH_SIZE: usize = 5;
 const RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
 
 /// Process pending summaries with rate limiting
-pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -> Result<usize, String> {
-    // Get all projects with pending summaries (run on blocking thread)
-    let db_clone = db.clone();
-    let projects = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        get_projects_with_pending_summaries_sync(&conn).map_err(|e| e.to_string())
-    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+pub async fn process_queue(pool: &Arc<DatabasePool>, deepseek: &Arc<DeepSeekClient>) -> Result<usize, String> {
+    // Get all projects with pending summaries
+    let projects = pool.interact(move |conn| {
+        get_projects_with_pending_summaries_sync(conn)
+            .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
+    }).await.map_err(|e| e.to_string())?;
+
     if projects.is_empty() {
         return Ok(0);
     }
@@ -30,13 +31,10 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
 
     for (project_id, project_path) in projects {
         // Get modules needing summaries for this project
-        let db_clone = db.clone();
-        let mut modules = tokio::task::spawn_blocking(move || {
-            let conn = db_clone.conn();
-            cartographer::get_modules_needing_summaries(&conn, project_id)
-                .map_err(|e| e.to_string())
-        })
-        .await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+        let mut modules = pool.interact(move |conn| {
+            get_modules_needing_summaries_sync(conn, project_id)
+                .map_err(|e| anyhow::anyhow!("Failed to get modules: {}", e))
+        }).await.map_err(|e| e.to_string())?;
 
         if modules.is_empty() {
             continue;
@@ -64,13 +62,10 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
                 if let Some(content) = result.content {
                     let summaries = cartographer::parse_summary_response(&content);
                     if !summaries.is_empty() {
-                        let db_clone = db.clone();
-                        match tokio::task::spawn_blocking(move || {
-                            let conn = db_clone.conn();
-                            cartographer::update_module_purposes(&conn, project_id, &summaries)
-                                .map_err(|e| e.to_string())
-                        })
-                        .await.map_err(|e| format!("spawn_blocking panicked: {}", e))?
+                        match pool.interact(move |conn| {
+                            update_module_purposes_sync(conn, project_id, &summaries)
+                                .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
+                        }).await
                         {
                             Ok(count) => {
                                 tracing::info!(

@@ -94,6 +94,8 @@ pub use project::{
     search_memories_text_sync,
     get_preferences_sync,
     get_health_alerts_sync,
+    get_projects_for_briefing_check_sync,
+    update_project_briefing_sync,
 };
 pub use background::{
     get_scan_info_sync,

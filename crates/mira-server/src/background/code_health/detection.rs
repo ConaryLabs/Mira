@@ -2,9 +2,10 @@
 // Pattern-based detection for code health issues
 // Uses pure Rust implementation (no shell commands) for cross-platform support
 
-use crate::db::{Database, get_unused_functions_sync};
+use crate::db::{get_unused_functions_sync, store_memory_sync, StoreMemoryParams};
 use crate::project_files::walker;
 use regex::Regex;
+use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
 
@@ -57,7 +58,7 @@ fn walk_rust_files(project_path: &str) -> Result<Vec<String>, String> {
 
 /// Scan for TODO/FIXME/HACK comments
 pub fn scan_todo_comments(
-    db: &Database,
+    conn: &Connection,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -81,15 +82,17 @@ pub fn scan_todo_comments(
                 let content = format!("[todo] {}:{} - {}", file, line_num, comment);
                 let key = format!("health:todo:{}:{}", file, line_num);
 
-                db.store_memory(
-                    Some(project_id),
-                    Some(&key),
-                    &content,
-                    "health",
-                    Some("todo"),
-                    0.7, // Lower confidence - TODOs are informational
-                )
-                .map_err(|e| e.to_string())?;
+                store_memory_sync(conn, StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some(&key),
+                    content: &content,
+                    fact_type: "health",
+                    category: Some("todo"),
+                    confidence: 0.7,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                }).map_err(|e| e.to_string())?;
 
                 stored += 1;
 
@@ -106,7 +109,7 @@ pub fn scan_todo_comments(
 
 /// Scan for unimplemented!() and todo!() macros
 pub fn scan_unimplemented(
-    db: &Database,
+    conn: &Connection,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -135,15 +138,17 @@ pub fn scan_unimplemented(
                 let content = format!("[unimplemented] {}:{} - {}", file, line_num, code);
                 let key = format!("health:unimplemented:{}:{}", file, line_num);
 
-                db.store_memory(
-                    Some(project_id),
-                    Some(&key),
-                    &content,
-                    "health",
-                    Some("unimplemented"),
-                    0.8,
-                )
-                .map_err(|e| e.to_string())?;
+                store_memory_sync(conn, StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some(&key),
+                    content: &content,
+                    fact_type: "health",
+                    category: Some("unimplemented"),
+                    confidence: 0.8,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                }).map_err(|e| e.to_string())?;
 
                 stored += 1;
 
@@ -159,12 +164,8 @@ pub fn scan_unimplemented(
 
 /// Find functions that are never called (using indexed call graph)
 /// Note: This is heuristic-based since the call graph doesn't capture self.method() calls
-pub fn scan_unused_functions(db: &Database, project_id: i64) -> Result<usize, String> {
-    // Query unused functions (release connection before storing)
-    let unused: Vec<(String, String, i64)> = {
-        let conn = db.conn();
-        get_unused_functions_sync(&conn, project_id).map_err(|e| e.to_string())?
-    }; // conn dropped here
+pub fn scan_unused_functions(conn: &Connection, project_id: i64) -> Result<usize, String> {
+    let unused = get_unused_functions_sync(conn, project_id).map_err(|e| e.to_string())?;
 
     let mut stored = 0;
 
@@ -175,15 +176,17 @@ pub fn scan_unused_functions(db: &Database, project_id: i64) -> Result<usize, St
         );
         let key = format!("health:unused:{}:{}", file_path, name);
 
-        db.store_memory(
-            Some(project_id),
-            Some(&key),
-            &content,
-            "health",
-            Some("unused"),
-            0.5, // Low confidence - call graph doesn't capture self.method() calls
-        )
-        .map_err(|e| e.to_string())?;
+        store_memory_sync(conn, StoreMemoryParams {
+            project_id: Some(project_id),
+            key: Some(&key),
+            content: &content,
+            fact_type: "health",
+            category: Some("unused"),
+            confidence: 0.5,
+            session_id: None,
+            user_id: None,
+            scope: "project",
+        }).map_err(|e| e.to_string())?;
 
         stored += 1;
     }
@@ -194,7 +197,7 @@ pub fn scan_unused_functions(db: &Database, project_id: i64) -> Result<usize, St
 /// Scan for .unwrap() and .expect() calls in non-test code
 /// These are potential panic points that should use proper error handling
 pub fn scan_unwrap_usage(
-    db: &Database,
+    conn: &Connection,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -276,15 +279,17 @@ pub fn scan_unwrap_usage(
                 );
                 let key = format!("health:unwrap:{}:{}", file, line_num);
 
-                db.store_memory(
-                    Some(project_id),
-                    Some(&key),
-                    &content_str,
-                    "health",
-                    Some("unwrap"),
-                    if severity == "high" { 0.85 } else { 0.7 },
-                )
-                .map_err(|e| e.to_string())?;
+                store_memory_sync(conn, StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some(&key),
+                    content: &content_str,
+                    fact_type: "health",
+                    category: Some("unwrap"),
+                    confidence: if severity == "high" { 0.85 } else { 0.7 },
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                }).map_err(|e| e.to_string())?;
 
                 stored += 1;
 
@@ -346,7 +351,7 @@ fn is_safe_unwrap(line: &str) -> bool {
 
 /// Pattern-based scan for error handling issues
 pub fn scan_error_handling(
-    db: &Database,
+    conn: &Connection,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -410,15 +415,17 @@ pub fn scan_error_handling(
                 );
                 let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
 
-                db.store_memory(
-                    Some(project_id),
-                    Some(&key),
-                    &content_str,
-                    "health",
-                    Some("error_handling"),
-                    if severity == "high" { 0.8 } else { 0.6 },
-                )
-                .map_err(|e| e.to_string())?;
+                store_memory_sync(conn, StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some(&key),
+                    content: &content_str,
+                    fact_type: "health",
+                    category: Some("error_handling"),
+                    confidence: if severity == "high" { 0.8 } else { 0.6 },
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                }).map_err(|e| e.to_string())?;
 
                 stored += 1;
 

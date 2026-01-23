@@ -1,7 +1,8 @@
 // crates/mira-server/src/background/code_health/analysis.rs
 // LLM-powered code health analysis for complexity and error handling quality
 
-use crate::db::{Database, get_large_functions_sync, get_error_heavy_functions_sync};
+use crate::db::{get_large_functions_sync, get_error_heavy_functions_sync, store_memory_sync, StoreMemoryParams};
+use crate::db::pool::DatabasePool;
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use std::path::Path;
 use std::sync::Arc;
@@ -58,7 +59,7 @@ fn extract_function_code(
 
 /// Generic LLM analysis function that abstracts the common pattern
 async fn analyze_functions<F, P>(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     deepseek: &Arc<DeepSeekClient>,
     project_id: i64,
     project_path: &str,
@@ -74,12 +75,11 @@ where
     P: Fn(&str, &str, i64, i64, &str) -> String + Send + Sync + 'static,
 {
     // Query database for functions to analyze
-    let db_clone = db.clone();
     let project_path_owned = project_path.to_string();
-    let functions = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        query_fn(&conn, project_id, &project_path_owned)
-    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    let functions = pool.interact(move |conn| {
+        query_fn(conn, project_id, &project_path_owned)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }).await.map_err(|e| e.to_string())?;
 
     if functions.is_empty() {
         return Ok(0);
@@ -139,18 +139,19 @@ where
                     );
                     let key = format!("{}:{}:{}", key_prefix, file_path, name);
 
-                    let db_clone = db.clone();
-                    tokio::task::spawn_blocking(move || {
-                        db_clone.store_memory(
-                            Some(project_id),
-                            Some(&key),
-                            &issue_content,
-                            "health",
-                            Some(category),
-                            0.75,
-                        )
-                    }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?
-                    .map_err(|e| e.to_string())?;
+                    pool.interact(move |conn| {
+                        store_memory_sync(conn, StoreMemoryParams {
+                            project_id: Some(project_id),
+                            key: Some(&key),
+                            content: &issue_content,
+                            fact_type: "health",
+                            category: Some(category),
+                            confidence: 0.75,
+                            session_id: None,
+                            user_id: None,
+                            scope: "project",
+                        }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
+                    }).await.map_err(|e| e.to_string())?;
 
                     tracing::info!("Code health: {} issue found in {}", category, name);
                     stored += 1;
@@ -170,13 +171,13 @@ where
 
 /// Use DeepSeek Reasoner to analyze large/complex functions
 pub async fn scan_complexity(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     deepseek: &Arc<DeepSeekClient>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
     analyze_functions(
-        db,
+        pool,
         deepseek,
         project_id,
         project_path,
@@ -223,7 +224,7 @@ fn get_large_functions(
 
 /// LLM-powered analysis of error handling quality in complex functions
 pub async fn scan_error_quality(
-    db: &Arc<Database>,
+    pool: &Arc<DatabasePool>,
     deepseek: &Arc<DeepSeekClient>,
     project_id: i64,
     project_path: &str,
@@ -243,7 +244,7 @@ pub async fn scan_error_quality(
     };
 
     analyze_functions(
-        db,
+        pool,
         deepseek,
         project_id,
         project_path,
