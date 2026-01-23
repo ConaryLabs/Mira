@@ -1,255 +1,159 @@
 # Mira
 
-**Memory and Code Intelligence Layer for Claude Code**
+**A second brain for Claude Code**
 
-Mira provides persistent semantic memory and code intelligence for Claude Code via MCP (Model Context Protocol). All data is stored locally in SQLite with sqlite-vec for vector embeddings.
+Mira transforms Claude Code from a stateless assistant into one that truly knows your project. It remembers your decisions, understands your codebase architecture, and continuously builds intelligence about your code - all persisted locally across sessions.
+
+Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
+
+## The Problem
+
+Every Claude Code session starts fresh. You explain your architecture, your preferences, your decisions - again and again. Claude can't remember that you prefer tabs over spaces, that you chose Redux over Zustand last week, or why the auth module is structured that way. And it doesn't really *understand* your codebase - it just reads files when asked.
+
+## The Solution
+
+Mira runs as an MCP server alongside Claude Code, providing:
+
+- **Persistent Memory** - Decisions, preferences, and context survive across sessions
+- **Code Intelligence** - Semantic search, call graphs, and symbol navigation
+- **Background Intelligence** - Continuously analyzes your codebase, generates summaries, detects capabilities
+- **Expert Consultation** - Second opinions from specialized AI reviewers with codebase access
+- **Automatic Documentation** - Detects gaps, flags stale docs, generates updates
+- **LLM Proxy** - Route requests to multiple backends with usage tracking
+- **Task Tracking** - Goals and tasks that persist across conversations
 
 ## Quick Start
 
 ```bash
-# Build
+# Build from source
 cargo build --release
 
 # Add to your project's .mcp.json
 {
   "mcpServers": {
     "mira": {
-      "command": "/path/to/mira",
+      "command": "/path/to/target/release/mira",
       "args": ["serve"]
     }
   }
 }
 ```
 
-Set `OPENAI_API_KEY` for semantic search (embeddings).
+Set `DEEPSEEK_API_KEY` for intelligence features. Optionally set `GEMINI_API_KEY` for embeddings.
+
+Add to your `CLAUDE.md`:
+```markdown
+## Session Start
+session_start(project_path="/path/to/your/project")
+Then recall("preferences") before writing code.
+```
 
 ## Features
 
-### Memory (Evidence-Based)
-- **remember** - Store facts, decisions, preferences (with session tracking)
-- **recall** - Semantic search through memories (records access for evidence tracking)
-- **forget** - Delete memories by ID
+### Memory System
 
-Memories use an evidence-based system:
-- New memories start as "candidate" with lower confidence (0.5)
-- Each session that uses/recalls a memory increments its session count
-- After appearing in 3+ sessions, memories are promoted to "confirmed" status
-- Confidence increases automatically based on cross-session usage
+```
+"Remember that we use the builder pattern for all config structs"
+"What did we decide about error handling?"
+"Forget memory 42"
+```
+
+Memories are evidence-based: new facts start as candidates, gain confidence through repeated use across sessions, and get promoted to confirmed status automatically.
 
 ### Code Intelligence
-- **get_symbols** - Extract functions, structs, classes from files
-- **semantic_code_search** - Find code by meaning (hybrid semantic + keyword search)
-- **find_callers** - Find all functions that call a given function (uses call graph)
-- **find_callees** - Find all functions called by a given function
-- **check_capability** - Check if a feature exists in codebase (searches cached capabilities, falls back to live code search)
-- **index** - Index project code for search
-- **summarize_codebase** - Generate LLM-powered module descriptions
 
-### Project Management
-- **task** - Create/list/update/complete tasks (supports bulk_create)
-- **goal** - Track goals with milestones (supports bulk_create)
+| Capability | What it does |
+|------------|--------------|
+| `semantic_code_search` | Find code by meaning, not just text |
+| `find_callers` / `find_callees` | Trace call relationships |
+| `get_symbols` | Extract functions, structs, classes |
+| `check_capability` | "Does this codebase have caching?" |
 
-### Session
-- **session_start** - Initialize session with project context
-- **set_project** / **get_project** - Manage active project
-- **get_session_recap** - Get session recap (pending tasks, active goals, recent sessions)
-- **session_history** - Query session and tool call history
+Supports Rust, Python, TypeScript, JavaScript, and Go via tree-sitter parsing.
 
-### Expert Consultation
-- **consult_architect** - System design, patterns, tradeoffs (uses DeepSeek Reasoner)
-- **consult_code_reviewer** - Find bugs, quality issues, improvements
-- **consult_security** - Identify vulnerabilities and attack vectors
-- **consult_scope_analyst** - Find missing requirements and edge cases
-- **consult_plan_reviewer** - Validate implementation plans
+### Intelligence Engine (DeepSeek-Powered)
 
-## Architecture
+DeepSeek Reasoner runs continuously in the background, building understanding of your codebase:
+
+**Background Tasks (automatic):**
+| Task | What it does |
+|------|--------------|
+| Module summaries | Generates human-readable descriptions of code modules |
+| Capability detection | Discovers what features exist ("Does this have auth?") |
+| Git briefings | Summarizes changes since your last session |
+| Code health analysis | Flags complexity issues, poor error handling |
+| Tool extraction | Extracts insights from tool results into memories |
+
+**Expert Consultation (on-demand):**
+| Expert | Use case |
+|--------|----------|
+| `consult_architect` | System design, patterns, tradeoffs |
+| `consult_code_reviewer` | Bugs, quality issues, improvements |
+| `consult_security` | Vulnerabilities, attack vectors |
+| `consult_scope_analyst` | Missing requirements, edge cases |
+| `consult_plan_reviewer` | Validate implementation plans |
+
+Experts have tool access - they can search code, trace call graphs, and explore the codebase to give informed answers. (Configurable LLM backends planned.)
+
+### Automatic Documentation
+
+Mira tracks your codebase and flags documentation that needs attention:
+
+- **Gap detection** - Finds undocumented MCP tools, public APIs, and modules
+- **Staleness tracking** - Flags docs when source code changes
+- **Expert generation** - `write_documentation(task_id)` calls the documentation expert to generate and write docs directly
 
 ```
-┌─────────────────────────────────────────┐
-│              Claude Code                │
-│                   │                     │
-│                   ▼                     │
-│       MCP Protocol (stdio transport)    │
-└─────────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│           Mira (mira serve)             │
-│                                         │
-│   ┌─────────────────────────────────┐  │
-│   │  MCP Server (rmcp)              │  │
-│   │   session_start, remember,      │  │
-│   │   recall, get_symbols, etc.     │  │
-│   └──────────────┬──────────────────┘  │
-│                  │                      │
-│   ┌──────────────┴──────────────────┐  │
-│   │        Background Worker        │  │
-│   │   embeddings, summaries,        │  │
-│   │   capabilities scan             │  │
-│   └─────────────────────────────────┘  │
-│                    │                    │
-│   ┌────────────────┴────────────────┐  │
-│   ▼                                 ▼  │
-│ SQLite                         sqlite-vec
-│ (rusqlite)                    (embeddings)
-│                                         │
-│   ~/.mira/mira.db                      │
-└─────────────────────────────────────────┘
+list_doc_tasks()        # See what needs documentation
+write_documentation(42) # Expert generates and writes the doc
+skip_doc_task(42)       # Skip if not needed
 ```
 
-## Commands
+The documentation expert analyzes the actual code behavior, not just signatures, to produce comprehensive docs.
 
-| Command | Description |
-|---------|-------------|
-| `mira serve` | Run as MCP server (default, for Claude Code) |
-| `mira index --path /project` | Index a project's code |
-| `mira hook session-start` | SessionStart hook - captures Claude's session ID |
-| `mira hook pre-compact` | PreCompact hook - preserves context before summarization |
-| `mira hook permission` | PermissionRequest hook for Claude Code |
-| `mira debug-carto` | Debug cartographer module detection |
-| `mira debug-session` | Debug session_start output |
+### LLM Proxy (Experimental)
 
-## Configuration
+Route LLM requests through Mira for multi-backend support and usage tracking:
 
-### Environment Variables
+- **Multi-backend routing** - Anthropic (default), DeepSeek, GLM, or any Anthropic-compatible API
+- **Dynamic switching** - Change providers at runtime
+- **Usage tracking** - Token counts and cost estimation per request
+- **Model mapping** - Map model names between proxy and backends
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | OpenAI API key for embeddings |
-| `DEEPSEEK_API_KEY` | For experts | DeepSeek API key for expert consultation |
+Configure backends with pricing info to track costs across providers.
 
-### Data Storage
+### Task & Goal Tracking
 
-All data stored in `~/.mira/mira.db`:
-- Memory facts with semantic embeddings
-- Code symbols (functions, structs, classes)
-- Tasks and goals
-- Session history
-
-### Claude Code Hooks
-
-Add to `~/.claude/settings.json` for automatic context preservation:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "/path/to/mira hook session-start",
-        "timeout": 3000
-      }]
-    }],
-    "PreCompact": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "/path/to/mira hook pre-compact",
-        "timeout": 5000
-      }]
-    }]
-  }
-}
+```
+task(action="create", title="Implement auth middleware", priority="high")
+goal(action="create", title="v2.0 Release", description="Ship new features")
 ```
 
-- **SessionStart** - Captures Claude's session ID for cross-tool tracking
-- **PreCompact** - Fires before context summarization, extracts and saves important decisions, TODOs, and issues from the transcript
+Tasks and goals persist across sessions - pick up where you left off.
 
-## Supported Languages
+## How It Works
 
-Code indexing via tree-sitter:
-- **Rust** - functions, structs, enums, traits, impl blocks
-- **Python** - functions, classes
-- **TypeScript/TSX** - functions, classes, interfaces
-- **JavaScript/JSX** - functions, classes
-- **Go** - functions, methods, structs, interfaces
-
-## Usage
-
-Add to your project's `CLAUDE.md`:
-
-```markdown
-## Session Start
-
-Call once at the start of every session:
 ```
-session_start(project_path="/path/to/project")
-```
+Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
+                                  |
+                                  +--->  Google (embeddings)
+                                  +--->  DeepSeek (intelligence)
 ```
 
-Then use naturally:
-- "Remember that we use snake_case for variables"
-- "What did we decide about the auth flow?"
-- "Find functions that handle user authentication"
-
-## Database Schema
-
-Simplified schema with 19 tables + 2 vector tables:
-
-### Core Tables
-- `projects` - Project paths and names
-- `memory_facts` - Semantic memories with evidence-based tracking (session_count, status: candidate/confirmed)
-- `corrections` - Style/approach corrections
-- `code_symbols` - Indexed code symbols
-- `call_graph` - Function call relationships
-- `imports` - Import/dependency tracking
-- `codebase_modules` - Module structure with LLM summaries
-- `sessions` - Session history
-- `tool_history` - MCP tool call history
-- `goals` - High-level goals
-- `milestones` - Goal milestones
-- `tasks` - Task tracking
-- `pending_embeddings` - Queue for batch embedding
-- `background_batches` - Track active batch jobs
-
-### Vector Tables (sqlite-vec)
-- `vec_memory` - Memory embeddings (1536 dimensions)
-- `vec_code` - Code chunk embeddings
-
-## Testing
-
-Mira includes comprehensive test coverage with both unit and integration tests.
-
-### Unit Tests
-- **37 unit tests** across core modules (database, indexer, search, etc.)
-- Run with `cargo test` (excludes integration tests)
-
-### Integration Tests
-- **24 integration tests** covering all MCP tool categories
-- Uses `TestContext` with in-memory SQLite database for isolation
-- Tests include:
-  - Project management (`session_start`, `set_project`, `get_project`)
-  - Memory operations (`remember`, `recall`, `forget`)
-  - Code intelligence (`search_code`, `find_callers`, `get_symbols`, `check_capability`, `index`, `summarize_codebase`)
-  - Session management (`ensure_session`, `session_history`)
-  - Task/goal tracking (`task`, `goal`)
-  - Expert configuration (`configure_expert`)
-  - Developer experience (`get_session_recap`)
-
-### Running Tests
-```bash
-# All tests (unit + integration)
-cargo test
-
-# Only integration tests
-cargo test --test integration
-
-# With verbose output
-cargo test -- --nocapture
-```
-
-### Test Architecture
-- **`TestContext`** - Implements `ToolContext` with mocked dependencies
-- **In-memory database** - Isolated SQLite instance per test
-- **No external API calls** - Embeddings and LLM clients are mocked
-- **Independent test execution** - Each test creates its own project context
+All data stored locally in `~/.mira/mira.db`. No cloud storage, no external databases.
 
 ## Requirements
 
-- Rust toolchain (for building)
-- OpenAI API key for embeddings (text-embedding-3-small)
-- DeepSeek API key for expert consultation (optional)
+- Rust toolchain (build from source)
+- `DEEPSEEK_API_KEY` - Required for most features: background intelligence, experts, documentation, summaries, capability detection, code health analysis
+- `GEMINI_API_KEY` - Optional, enables semantic search embeddings (Google text-embedding-004)
+
+## Documentation
+
+- [Design Philosophy](docs/DESIGN.md) - Architecture decisions and tradeoffs
+- [Core Concepts](docs/CONCEPTS.md) - Memory, intelligence, experts explained
+- [Configuration](docs/CONFIGURATION.md) - All options and hooks
+- [Database Schema](docs/DATABASE.md) - Tables and relationships
 
 ## License
 

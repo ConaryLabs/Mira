@@ -614,7 +614,7 @@ pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
         -- Uniqueness constraint to prevent duplicate tasks for same target
         CREATE UNIQUE INDEX IF NOT EXISTS idx_doc_tasks_unique
             ON documentation_tasks(project_id, target_doc_path, doc_type, doc_category)
-            WHERE status IN ('pending', 'draft_ready');
+            WHERE status = 'pending';
 
         CREATE TABLE IF NOT EXISTS documentation_inventory (
             id INTEGER PRIMARY KEY,

@@ -515,17 +515,17 @@ pub async fn session_start<C: ToolContext>(
         }
     }
 
-    // Show documentation task notifications
-    let draft_ready_count = doc_task_counts
+    // Show documentation task notifications (pending tasks that need docs written)
+    let pending_doc_count = doc_task_counts
         .iter()
-        .find(|(status, _)| status == "draft_ready")
+        .find(|(status, _)| status == "pending")
         .map(|(_, count)| *count)
         .unwrap_or(0);
 
-    if draft_ready_count > 0 {
+    if pending_doc_count > 0 {
         response.push_str(&format!(
-            "\nDocumentation: {} drafts ready for review\n  Use list_doc_tasks() to see them, review_doc_draft(id) to review\n",
-            draft_ready_count
+            "\nDocumentation: {} items need docs\n  Use list_doc_tasks() to see them, write_documentation(task_id) to generate\n",
+            pending_doc_count
         ));
     }
 
