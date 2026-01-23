@@ -190,3 +190,212 @@ Risk flags to consider: breaking_api, security_change, removes_feature, complex_
         Self::new(instructions)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // PromptBuilder construction tests
+    // ============================================================================
+
+    #[test]
+    fn test_prompt_builder_new() {
+        let builder = PromptBuilder::new("Test instructions");
+        assert_eq!(builder.role_instructions, "Test instructions");
+        assert!(!builder.include_tool_guidance);
+    }
+
+    #[test]
+    fn test_prompt_builder_with_tool_guidance() {
+        let builder = PromptBuilder::new("Test").with_tool_guidance();
+        assert!(builder.include_tool_guidance);
+    }
+
+    #[test]
+    fn test_prompt_builder_clone() {
+        let builder = PromptBuilder::new("Test").with_tool_guidance();
+        let cloned = builder.clone();
+        assert_eq!(builder.role_instructions, cloned.role_instructions);
+        assert_eq!(builder.include_tool_guidance, cloned.include_tool_guidance);
+    }
+
+    // ============================================================================
+    // build_system_prompt tests
+    // ============================================================================
+
+    #[test]
+    fn test_build_system_prompt_includes_static_prefix() {
+        let builder = PromptBuilder::new("Custom instructions");
+        let prompt = builder.build_system_prompt();
+        assert!(prompt.contains("You are Mira"));
+        assert!(prompt.contains("Core principles"));
+        assert!(prompt.contains("Safety guidelines"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_includes_role_instructions() {
+        let builder = PromptBuilder::new("My custom role instructions here");
+        let prompt = builder.build_system_prompt();
+        assert!(prompt.contains("My custom role instructions here"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_without_tool_guidance() {
+        let builder = PromptBuilder::new("Test");
+        let prompt = builder.build_system_prompt();
+        assert!(!prompt.contains("search_code"));
+        assert!(!prompt.contains("get_symbols"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_tool_guidance() {
+        let builder = PromptBuilder::new("Test").with_tool_guidance();
+        let prompt = builder.build_system_prompt();
+        assert!(prompt.contains("search_code"));
+        assert!(prompt.contains("get_symbols"));
+        assert!(prompt.contains("find_callers"));
+        assert!(prompt.contains("recall"));
+    }
+
+    // ============================================================================
+    // build_messages tests
+    // ============================================================================
+
+    #[test]
+    fn test_build_messages_structure() {
+        let builder = PromptBuilder::new("Role instructions");
+        let messages = builder.build_messages("User content here");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "system");
+        assert_eq!(messages[1].role, "user");
+    }
+
+    #[test]
+    fn test_build_messages_content() {
+        let builder = PromptBuilder::new("Role instructions");
+        let messages = builder.build_messages("User content here");
+
+        assert!(messages[0].content.as_ref().unwrap().contains("Role instructions"));
+        assert_eq!(messages[1].content.as_ref().unwrap(), "User content here");
+    }
+
+    // ============================================================================
+    // Factory method tests
+    // ============================================================================
+
+    #[test]
+    fn test_for_expert() {
+        let builder = PromptBuilder::for_expert("Security Expert", "Analyze code for vulnerabilities");
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("Security Expert"));
+        assert!(prompt.contains("Analyze code for vulnerabilities"));
+        assert!(prompt.contains("advisory")); // Expert role mentions being advisory
+        assert!(builder.include_tool_guidance);
+    }
+
+    #[test]
+    fn test_for_code_health_complexity() {
+        let builder = PromptBuilder::for_code_health_complexity();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("complexity"));
+        assert!(prompt.contains("maintainability"));
+        assert!(!builder.include_tool_guidance);
+    }
+
+    #[test]
+    fn test_for_code_health_error_quality() {
+        let builder = PromptBuilder::for_code_health_error_quality();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("error handling"));
+        assert!(prompt.contains("debuggability"));
+    }
+
+    #[test]
+    fn test_for_capabilities() {
+        let builder = PromptBuilder::for_capabilities();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("capabilities"));
+        assert!(prompt.contains("working features"));
+    }
+
+    #[test]
+    fn test_for_summaries() {
+        let builder = PromptBuilder::for_summaries();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("technical writer"));
+        assert!(prompt.contains("summaries"));
+    }
+
+    #[test]
+    fn test_for_tool_extraction() {
+        let builder = PromptBuilder::for_tool_extraction();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("protocol analyzer"));
+        assert!(prompt.contains("MCP"));
+    }
+
+    #[test]
+    fn test_for_briefings() {
+        let builder = PromptBuilder::for_briefings();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("project analyst"));
+        assert!(prompt.contains("briefings"));
+    }
+
+    #[test]
+    fn test_for_documentation() {
+        let builder = PromptBuilder::for_documentation();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("technical writer"));
+        assert!(prompt.contains("documentation"));
+        assert!(prompt.contains("NEVER invent"));
+        assert!(prompt.contains("hallucinate"));
+    }
+
+    #[test]
+    fn test_for_diff_analysis() {
+        let builder = PromptBuilder::for_diff_analysis();
+        let prompt = builder.build_system_prompt();
+
+        assert!(prompt.contains("git diffs"));
+        assert!(prompt.contains("CHANGE TYPES"));
+        assert!(prompt.contains("NewFunction"));
+        assert!(prompt.contains("ModifiedFunction"));
+        assert!(prompt.contains("breaking"));
+        assert!(prompt.contains("security-relevant"));
+    }
+
+    // ============================================================================
+    // Static content tests
+    // ============================================================================
+
+    #[test]
+    fn test_static_prefix_content() {
+        // Verify STATIC_PREFIX contains expected content
+        assert!(STATIC_PREFIX.contains("Mira"));
+        assert!(STATIC_PREFIX.contains("Core principles"));
+        assert!(STATIC_PREFIX.contains("accurate"));
+        assert!(STATIC_PREFIX.contains("security"));
+    }
+
+    #[test]
+    fn test_tool_guidance_content() {
+        // Verify TOOL_GUIDANCE contains expected tools
+        assert!(TOOL_GUIDANCE.contains("search_code"));
+        assert!(TOOL_GUIDANCE.contains("get_symbols"));
+        assert!(TOOL_GUIDANCE.contains("read_file"));
+        assert!(TOOL_GUIDANCE.contains("find_callers"));
+        assert!(TOOL_GUIDANCE.contains("find_callees"));
+        assert!(TOOL_GUIDANCE.contains("recall"));
+    }
+}
