@@ -2,7 +2,6 @@
 // Background worker for documentation tracking and generation
 
 mod detection;
-mod generation;
 mod inventory;
 
 use crate::db::Database;
@@ -11,7 +10,6 @@ use std::process::Command;
 use std::sync::Arc;
 
 pub use detection::*;
-pub use generation::*;
 
 /// Local struct for code symbol data (used in signature hash calculation)
 #[derive(Debug, Clone)]
@@ -68,26 +66,20 @@ pub fn calculate_source_signature_hash(
     Some(format!("{:x}", hasher.finalize()))
 }
 
-/// Process documentation tasks for a single cycle
+/// Process documentation detection for a single cycle
 /// Called from BackgroundWorker::process_batch()
+/// Only detects gaps - Claude decides when to write docs via write_documentation()
 pub async fn process_documentation(
     db: &Arc<Database>,
-    llm_factory: &Arc<crate::llm::ProviderFactory>,
+    _llm_factory: &Arc<crate::llm::ProviderFactory>,
 ) -> Result<usize, String> {
-    // Step 1: Scan for missing and stale documentation
+    // Scan for missing and stale documentation (detection only)
     let scan_count = scan_documentation_gaps(db).await?;
     if scan_count > 0 {
         tracing::info!("Documentation scan found {} gaps", scan_count);
     }
 
-    // Step 2: Generate drafts for pending tasks (rate limited)
-    let draft_count = generate_pending_drafts(db, llm_factory).await?;
-    if draft_count > 0 {
-        tracing::info!("Documentation generated {} drafts", draft_count);
-    }
-
-    let processed = scan_count + draft_count;
-    Ok(processed)
+    Ok(scan_count)
 }
 
 /// Get the current git HEAD commit hash

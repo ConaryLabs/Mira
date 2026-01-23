@@ -416,20 +416,6 @@ pub struct ListDocTasksRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ReviewDocDraftRequest {
-    #[schemars(description = "Task ID to review")]
-    pub task_id: i64,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ApplyDocDraftRequest {
-    #[schemars(description = "Task ID to apply")]
-    pub task_id: i64,
-    #[schemars(description = "Force apply even if target file changed")]
-    pub force: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SkipDocTaskRequest {
     #[schemars(description = "Task ID to skip")]
     pub task_id: i64,
@@ -438,14 +424,8 @@ pub struct SkipDocTaskRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ApproveDocDraftRequest {
-    #[schemars(description = "Task ID to approve")]
-    pub task_id: i64,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GenerateDocWithExpertRequest {
-    #[schemars(description = "Task ID from list_doc_tasks to generate documentation for")]
+pub struct WriteDocumentationRequest {
+    #[schemars(description = "Task ID from list_doc_tasks. Expert will generate and write the documentation directly.")]
     pub task_id: i64,
 }
 
@@ -777,7 +757,7 @@ impl MiraServer {
 
     // Documentation tools
 
-    #[tool(description = "List pending documentation tasks with optional filters.")]
+    #[tool(description = "List documentation that needs to be written or updated.")]
     async fn list_doc_tasks(
         &self,
         Parameters(req): Parameters<ListDocTasksRequest>,
@@ -785,23 +765,7 @@ impl MiraServer {
         tools::list_doc_tasks(self, req.status, req.doc_type, req.priority).await
     }
 
-    #[tool(description = "Review a generated documentation draft.")]
-    async fn review_doc_draft(
-        &self,
-        Parameters(req): Parameters<ReviewDocDraftRequest>,
-    ) -> Result<String, String> {
-        tools::review_doc_draft(self, req.task_id).await
-    }
-
-    #[tool(description = "Apply an approved documentation draft.")]
-    async fn apply_doc_draft(
-        &self,
-        Parameters(req): Parameters<ApplyDocDraftRequest>,
-    ) -> Result<String, String> {
-        tools::apply_doc_draft(self, req.task_id, req.force.unwrap_or(false)).await
-    }
-
-    #[tool(description = "Skip a documentation task.")]
+    #[tool(description = "Skip a documentation task (mark as not needed).")]
     async fn skip_doc_task(
         &self,
         Parameters(req): Parameters<SkipDocTaskRequest>,
@@ -819,20 +783,12 @@ impl MiraServer {
         tools::scan_documentation(self).await
     }
 
-    #[tool(description = "Approve a documentation draft (marks it as ready to apply).")]
-    async fn approve_doc_draft(
+    #[tool(description = "Write documentation for a detected gap. Expert generates and writes directly to file.")]
+    async fn write_documentation(
         &self,
-        Parameters(req): Parameters<ApproveDocDraftRequest>,
+        Parameters(req): Parameters<WriteDocumentationRequest>,
     ) -> Result<String, String> {
-        tools::approve_doc_draft(self, req.task_id).await
-    }
-
-    #[tool(description = "Generate high-quality documentation using an expert agent. Use list_doc_tasks() to find task IDs.")]
-    async fn generate_doc_with_expert(
-        &self,
-        Parameters(req): Parameters<GenerateDocWithExpertRequest>,
-    ) -> Result<String, String> {
-        tools::generate_doc_with_expert(self, req.task_id).await
+        tools::write_documentation(self, req.task_id).await
     }
 
     #[tool(description = "Manage teams for shared memory (create, invite, remove, list, members).")]

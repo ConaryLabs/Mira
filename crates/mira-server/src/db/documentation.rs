@@ -197,50 +197,11 @@ pub fn get_doc_task(conn: &rusqlite::Connection, task_id: i64) -> Result<Option<
     .map_err(|e| e.to_string())
 }
 
-/// Store a generated draft for a task
-pub fn store_doc_draft(
-    conn: &rusqlite::Connection,
-    task_id: i64,
-    draft_content: &str,
-    target_doc_checksum: &str,
-) -> Result<(), String> {
-    let preview = if draft_content.len() > 200 {
-        format!("{}...", &draft_content[..200])
-    } else {
-        draft_content.to_string()
-    };
-
-    let sha256 = sha256::digest(draft_content);
-
-    conn.execute(
-        "UPDATE documentation_tasks
-         SET draft_content = ?1, draft_preview = ?2, draft_sha256 = ?3,
-             target_doc_checksum_at_generation = ?4, draft_generated_at = CURRENT_TIMESTAMP,
-             status = 'draft_ready', updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?5",
-        params![draft_content, preview, sha256, target_doc_checksum, task_id],
-    )
-    .map(|_| ())
-    .map_err(|e| e.to_string())
-}
-
 /// Mark a task as applied (documentation written)
 pub fn mark_doc_task_applied(conn: &rusqlite::Connection, task_id: i64) -> Result<(), String> {
     conn.execute(
         "UPDATE documentation_tasks
          SET status = 'applied', applied_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?",
-        [task_id],
-    )
-    .map(|_| ())
-    .map_err(|e| e.to_string())
-}
-
-/// Mark a task as approved (ready to apply)
-pub fn mark_doc_task_approved(conn: &rusqlite::Connection, task_id: i64) -> Result<(), String> {
-    conn.execute(
-        "UPDATE documentation_tasks
-         SET status = 'approved', reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?",
         [task_id],
     )
@@ -259,22 +220,6 @@ pub fn mark_doc_task_skipped(
          SET status = 'skipped', reason = ?1, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?2",
         params![reason, task_id],
-    )
-    .map(|_| ())
-    .map_err(|e| e.to_string())
-}
-
-/// Update task error and increment retry count
-pub fn mark_doc_task_error(
-    conn: &rusqlite::Connection,
-    task_id: i64,
-    error: &str,
-) -> Result<(), String> {
-    conn.execute(
-        "UPDATE documentation_tasks
-         SET last_error = ?1, retry_count = retry_count + 1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
-        params![error, task_id],
     )
     .map(|_| ())
     .map_err(|e| e.to_string())
@@ -457,16 +402,4 @@ pub fn count_doc_tasks_by_status(
         }
     };
     sql
-}
-
-/// Simple sha256 wrapper for the module
-mod sha256 {
-    use sha2::Digest;
-    use sha2::Sha256;
-
-    pub fn digest(input: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(input.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
 }
