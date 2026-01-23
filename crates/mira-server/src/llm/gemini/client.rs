@@ -628,3 +628,491 @@ impl LlmClient for GeminiClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // Constants tests
+    // ============================================================================
+
+    #[test]
+    fn test_default_model() {
+        assert_eq!(DEFAULT_MODEL, "gemini-3-pro-preview");
+    }
+
+    #[test]
+    fn test_api_base() {
+        assert!(GEMINI_API_BASE.contains("googleapis.com"));
+    }
+
+    #[test]
+    fn test_timeouts() {
+        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(300));
+        assert_eq!(CONNECT_TIMEOUT, Duration::from_secs(30));
+    }
+
+    // ============================================================================
+    // GeminiPart serialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_gemini_part_text_serialize() {
+        let part = GeminiPart::Text {
+            text: "Hello".to_string(),
+            thought: false,
+        };
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("\"text\":\"Hello\""));
+    }
+
+    #[test]
+    fn test_gemini_part_text_thought_serialize() {
+        let part = GeminiPart::Text {
+            text: "Thinking...".to_string(),
+            thought: true,
+        };
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("\"thought\":true"));
+    }
+
+    #[test]
+    fn test_gemini_part_function_call_serialize() {
+        let part = GeminiPart::FunctionCall {
+            function_call: GeminiFunctionCall {
+                name: "search".to_string(),
+                args: serde_json::json!({"query": "test"}),
+            },
+            thought_signature: None,
+        };
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("functionCall"));
+        assert!(json.contains("search"));
+    }
+
+    #[test]
+    fn test_gemini_part_function_response_serialize() {
+        let part = GeminiPart::FunctionResponse {
+            function_response: GeminiFunctionResponse {
+                name: "search".to_string(),
+                response: serde_json::json!({"result": "found"}),
+            },
+        };
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("functionResponse"));
+    }
+
+    // ============================================================================
+    // GeminiContent tests
+    // ============================================================================
+
+    #[test]
+    fn test_gemini_content_user() {
+        let content = GeminiContent {
+            role: "user".to_string(),
+            parts: vec![GeminiPart::Text {
+                text: "Hello".to_string(),
+                thought: false,
+            }],
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"role\":\"user\""));
+    }
+
+    #[test]
+    fn test_gemini_content_model() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![GeminiPart::Text {
+                text: "Hi there".to_string(),
+                thought: false,
+            }],
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"role\":\"model\""));
+    }
+
+    // ============================================================================
+    // extract_content tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_content_single_text() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![GeminiPart::Text {
+                text: "Hello world".to_string(),
+                thought: false,
+            }],
+        };
+        assert_eq!(
+            GeminiClient::extract_content(&content),
+            Some("Hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_content_multiple_texts() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![
+                GeminiPart::Text {
+                    text: "Hello ".to_string(),
+                    thought: false,
+                },
+                GeminiPart::Text {
+                    text: "world".to_string(),
+                    thought: false,
+                },
+            ],
+        };
+        assert_eq!(
+            GeminiClient::extract_content(&content),
+            Some("Hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_content_skips_thoughts() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![
+                GeminiPart::Text {
+                    text: "I'm thinking...".to_string(),
+                    thought: true,
+                },
+                GeminiPart::Text {
+                    text: "Here's the answer".to_string(),
+                    thought: false,
+                },
+            ],
+        };
+        assert_eq!(
+            GeminiClient::extract_content(&content),
+            Some("Here's the answer".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_content_only_thoughts_returns_none() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![GeminiPart::Text {
+                text: "Thinking...".to_string(),
+                thought: true,
+            }],
+        };
+        assert_eq!(GeminiClient::extract_content(&content), None);
+    }
+
+    #[test]
+    fn test_extract_content_empty_parts() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![],
+        };
+        assert_eq!(GeminiClient::extract_content(&content), None);
+    }
+
+    #[test]
+    fn test_extract_content_skips_function_calls() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![
+                GeminiPart::Text {
+                    text: "Let me search".to_string(),
+                    thought: false,
+                },
+                GeminiPart::FunctionCall {
+                    function_call: GeminiFunctionCall {
+                        name: "search".to_string(),
+                        args: serde_json::json!({}),
+                    },
+                    thought_signature: None,
+                },
+            ],
+        };
+        assert_eq!(
+            GeminiClient::extract_content(&content),
+            Some("Let me search".to_string())
+        );
+    }
+
+    // ============================================================================
+    // extract_thoughts tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_thoughts_single() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![GeminiPart::Text {
+                text: "Analyzing the problem...".to_string(),
+                thought: true,
+            }],
+        };
+        assert_eq!(
+            GeminiClient::extract_thoughts(&content),
+            Some("Analyzing the problem...".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_thoughts_multiple() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![
+                GeminiPart::Text {
+                    text: "First thought".to_string(),
+                    thought: true,
+                },
+                GeminiPart::Text {
+                    text: "Second thought".to_string(),
+                    thought: true,
+                },
+            ],
+        };
+        let thoughts = GeminiClient::extract_thoughts(&content).unwrap();
+        assert!(thoughts.contains("First thought"));
+        assert!(thoughts.contains("Second thought"));
+    }
+
+    #[test]
+    fn test_extract_thoughts_skips_non_thoughts() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![
+                GeminiPart::Text {
+                    text: "Thinking...".to_string(),
+                    thought: true,
+                },
+                GeminiPart::Text {
+                    text: "Final answer".to_string(),
+                    thought: false,
+                },
+            ],
+        };
+        assert_eq!(
+            GeminiClient::extract_thoughts(&content),
+            Some("Thinking...".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_thoughts_no_thoughts_returns_none() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![GeminiPart::Text {
+                text: "Just an answer".to_string(),
+                thought: false,
+            }],
+        };
+        assert_eq!(GeminiClient::extract_thoughts(&content), None);
+    }
+
+    // ============================================================================
+    // extract_tool_calls tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_tool_calls_single() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![GeminiPart::FunctionCall {
+                function_call: GeminiFunctionCall {
+                    name: "search".to_string(),
+                    args: serde_json::json!({"query": "test"}),
+                },
+                thought_signature: None,
+            }],
+        };
+        let calls = GeminiClient::extract_tool_calls(&content).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search");
+    }
+
+    #[test]
+    fn test_extract_tool_calls_multiple() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![
+                GeminiPart::FunctionCall {
+                    function_call: GeminiFunctionCall {
+                        name: "search".to_string(),
+                        args: serde_json::json!({"q": "1"}),
+                    },
+                    thought_signature: None,
+                },
+                GeminiPart::FunctionCall {
+                    function_call: GeminiFunctionCall {
+                        name: "read".to_string(),
+                        args: serde_json::json!({"path": "/tmp"}),
+                    },
+                    thought_signature: Some("sig123".to_string()),
+                },
+            ],
+        };
+        let calls = GeminiClient::extract_tool_calls(&content).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function.name, "search");
+        assert_eq!(calls[1].function.name, "read");
+        assert_eq!(calls[1].thought_signature, Some("sig123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_tool_calls_none_when_no_calls() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![GeminiPart::Text {
+                text: "Just text".to_string(),
+                thought: false,
+            }],
+        };
+        assert_eq!(GeminiClient::extract_tool_calls(&content), None);
+    }
+
+    #[test]
+    fn test_extract_tool_calls_generates_ids() {
+        let content = GeminiContent {
+            role: "model".to_string(),
+            parts: vec![
+                GeminiPart::FunctionCall {
+                    function_call: GeminiFunctionCall {
+                        name: "func1".to_string(),
+                        args: serde_json::json!({}),
+                    },
+                    thought_signature: None,
+                },
+                GeminiPart::FunctionCall {
+                    function_call: GeminiFunctionCall {
+                        name: "func2".to_string(),
+                        args: serde_json::json!({}),
+                    },
+                    thought_signature: None,
+                },
+            ],
+        };
+        let calls = GeminiClient::extract_tool_calls(&content).unwrap();
+        assert_eq!(calls[0].id, "call_0");
+        assert_eq!(calls[1].id, "call_1");
+    }
+
+    // ============================================================================
+    // convert_tools tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_tools_single() {
+        let tools = vec![Tool {
+            tool_type: "function".to_string(),
+            function: crate::llm::deepseek::FunctionDef {
+                name: "search".to_string(),
+                description: "Search for things".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+        }];
+        let result = GeminiClient::convert_tools(&tools);
+        match result {
+            GeminiTool::Functions(funcs) => {
+                assert_eq!(funcs.function_declarations.len(), 1);
+                assert_eq!(funcs.function_declarations[0].name, "search");
+            }
+            _ => panic!("Expected Functions tool"),
+        }
+    }
+
+    #[test]
+    fn test_convert_tools_multiple() {
+        let tools = vec![
+            Tool {
+                tool_type: "function".to_string(),
+                function: crate::llm::deepseek::FunctionDef {
+                    name: "search".to_string(),
+                    description: "Search".to_string(),
+                    parameters: serde_json::json!({}),
+                },
+            },
+            Tool {
+                tool_type: "function".to_string(),
+                function: crate::llm::deepseek::FunctionDef {
+                    name: "read".to_string(),
+                    description: "Read".to_string(),
+                    parameters: serde_json::json!({}),
+                },
+            },
+        ];
+        let result = GeminiClient::convert_tools(&tools);
+        match result {
+            GeminiTool::Functions(funcs) => {
+                assert_eq!(funcs.function_declarations.len(), 2);
+            }
+            _ => panic!("Expected Functions tool"),
+        }
+    }
+
+    // ============================================================================
+    // google_search_tool tests
+    // ============================================================================
+
+    #[test]
+    fn test_google_search_tool_creation() {
+        let tool = GeminiClient::google_search_tool();
+        match tool {
+            GeminiTool::GoogleSearch(_) => {} // Expected
+            _ => panic!("Expected GoogleSearch tool"),
+        }
+    }
+
+    // ============================================================================
+    // GeminiClient creation tests
+    // ============================================================================
+
+    #[test]
+    fn test_client_new() {
+        let client = GeminiClient::new("test-key".to_string());
+        assert_eq!(client.model, DEFAULT_MODEL);
+        assert_eq!(client.thinking_level, "high");
+        assert!(client.enable_search);
+    }
+
+    #[test]
+    fn test_client_with_model() {
+        let client = GeminiClient::with_model("test-key".to_string(), "custom-model".to_string());
+        assert_eq!(client.model, "custom-model");
+    }
+
+    // ============================================================================
+    // ThinkingConfig tests
+    // ============================================================================
+
+    #[test]
+    fn test_thinking_config_serialize() {
+        let config = ThinkingConfig {
+            thinking_level: "high".to_string(),
+            include_thoughts: Some(true),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("thinkingLevel"));
+        assert!(json.contains("includeThoughts"));
+    }
+
+    // ============================================================================
+    // GenerationConfig tests
+    // ============================================================================
+
+    #[test]
+    fn test_generation_config_serialize() {
+        let config = GenerationConfig {
+            max_output_tokens: 8192,
+            temperature: Some(1.0),
+            thinking_config: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("maxOutputTokens"));
+        assert!(json.contains("8192"));
+    }
+}

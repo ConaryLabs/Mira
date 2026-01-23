@@ -61,7 +61,7 @@ impl Message {
 }
 
 /// Tool call from the model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     /// Optional item ID (used by OpenAI Responses API which has separate id and call_id)
@@ -76,7 +76,7 @@ pub struct ToolCall {
 }
 
 /// Function call details
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
     pub arguments: String, // JSON string

@@ -744,3 +744,504 @@ impl LlmClient for OpenAiClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // Constants tests
+    // ============================================================================
+
+    #[test]
+    fn test_default_model() {
+        assert_eq!(DEFAULT_MODEL, "gpt-5.2");
+    }
+
+    #[test]
+    fn test_responses_url() {
+        assert_eq!(OPENAI_RESPONSES_URL, "https://api.openai.com/v1/responses");
+    }
+
+    #[test]
+    fn test_timeouts() {
+        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(300));
+        assert_eq!(CONNECT_TIMEOUT, Duration::from_secs(30));
+    }
+
+    // ============================================================================
+    // InputItem serialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_input_message_serialize() {
+        let item = InputItem::Message(InputMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+        });
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("\"role\":\"user\""));
+        assert!(json.contains("\"content\":\"Hello\""));
+    }
+
+    #[test]
+    fn test_function_call_input_serialize() {
+        let item = InputItem::FunctionCall(FunctionCallInput {
+            item_type: "function_call".to_string(),
+            id: "fc_123".to_string(),
+            call_id: "call_123".to_string(),
+            name: "search".to_string(),
+            arguments: r#"{"query":"test"}"#.to_string(),
+        });
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("function_call"));
+        assert!(json.contains("search"));
+    }
+
+    #[test]
+    fn test_tool_result_input_serialize() {
+        let item = InputItem::ToolResult(ToolResultInput {
+            item_type: "function_call_output".to_string(),
+            call_id: "call_123".to_string(),
+            output: "Found 5 results".to_string(),
+        });
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("function_call_output"));
+        assert!(json.contains("call_123"));
+    }
+
+    // ============================================================================
+    // ResponsesTool serialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_function_tool_serialize() {
+        let tool = ResponsesTool::Function(FunctionTool {
+            tool_type: "function".to_string(),
+            name: "search".to_string(),
+            description: "Search for things".to_string(),
+            parameters: serde_json::json!({"type": "object"}),
+        });
+        let json = serde_json::to_string(&tool).unwrap();
+        assert!(json.contains("\"type\":\"function\""));
+        assert!(json.contains("search"));
+    }
+
+    #[test]
+    fn test_builtin_tool_serialize() {
+        let tool = ResponsesTool::BuiltIn(BuiltInTool {
+            tool_type: "web_search".to_string(),
+        });
+        let json = serde_json::to_string(&tool).unwrap();
+        assert!(json.contains("web_search"));
+    }
+
+    // ============================================================================
+    // Config serialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_reasoning_config_serialize() {
+        let config = ReasoningConfig {
+            effort: "high".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"effort\":\"high\""));
+    }
+
+    #[test]
+    fn test_text_config_serialize() {
+        let config = TextConfig {
+            verbosity: "medium".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"verbosity\":\"medium\""));
+    }
+
+    // ============================================================================
+    // OutputItem deserialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_message_output_deserialize() {
+        let json = r#"{"type": "message", "content": [{"type": "text", "text": "Hello"}]}"#;
+        let item: OutputItem = serde_json::from_str(json).unwrap();
+        match item {
+            OutputItem::Message(msg) => {
+                assert_eq!(msg.content.len(), 1);
+                assert_eq!(msg.content[0].text, Some("Hello".to_string()));
+            }
+            _ => panic!("Expected Message"),
+        }
+    }
+
+    #[test]
+    fn test_reasoning_output_deserialize() {
+        let json = r#"{"type": "reasoning", "summary": [{"type": "text", "text": "Thinking..."}]}"#;
+        let item: OutputItem = serde_json::from_str(json).unwrap();
+        match item {
+            OutputItem::Reasoning(r) => {
+                assert!(r.summary.is_some());
+            }
+            _ => panic!("Expected Reasoning"),
+        }
+    }
+
+    #[test]
+    fn test_function_call_output_deserialize() {
+        let json = r#"{"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "search", "arguments": "{}"}"#;
+        let item: OutputItem = serde_json::from_str(json).unwrap();
+        match item {
+            OutputItem::FunctionCall(fc) => {
+                assert_eq!(fc.name, "search");
+                assert_eq!(fc.call_id, "call_1");
+            }
+            _ => panic!("Expected FunctionCall"),
+        }
+    }
+
+    // ============================================================================
+    // extract_content tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_content_single_message() {
+        let output = vec![OutputItem::Message(MessageOutput {
+            content: vec![ContentPart {
+                part_type: "text".to_string(),
+                text: Some("Hello world".to_string()),
+            }],
+        })];
+        assert_eq!(
+            OpenAiClient::extract_content(&output),
+            Some("Hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_content_output_text_type() {
+        let output = vec![OutputItem::Message(MessageOutput {
+            content: vec![ContentPart {
+                part_type: "output_text".to_string(),
+                text: Some("Output text".to_string()),
+            }],
+        })];
+        assert_eq!(
+            OpenAiClient::extract_content(&output),
+            Some("Output text".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_content_multiple_parts() {
+        let output = vec![OutputItem::Message(MessageOutput {
+            content: vec![
+                ContentPart {
+                    part_type: "text".to_string(),
+                    text: Some("Hello ".to_string()),
+                },
+                ContentPart {
+                    part_type: "text".to_string(),
+                    text: Some("world".to_string()),
+                },
+            ],
+        })];
+        assert_eq!(
+            OpenAiClient::extract_content(&output),
+            Some("Hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_content_empty_output() {
+        let output: Vec<OutputItem> = vec![];
+        assert_eq!(OpenAiClient::extract_content(&output), None);
+    }
+
+    #[test]
+    fn test_extract_content_no_text() {
+        let output = vec![OutputItem::Message(MessageOutput {
+            content: vec![ContentPart {
+                part_type: "image".to_string(),
+                text: None,
+            }],
+        })];
+        assert_eq!(OpenAiClient::extract_content(&output), None);
+    }
+
+    // ============================================================================
+    // extract_reasoning tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_reasoning_with_summary() {
+        let output = vec![OutputItem::Reasoning(ReasoningOutput {
+            summary: Some(vec![ContentPart {
+                part_type: "text".to_string(),
+                text: Some("Thinking about the problem...".to_string()),
+            }]),
+        })];
+        assert_eq!(
+            OpenAiClient::extract_reasoning(&output),
+            Some("Thinking about the problem...".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_reasoning_no_summary() {
+        let output = vec![OutputItem::Reasoning(ReasoningOutput { summary: None })];
+        assert_eq!(OpenAiClient::extract_reasoning(&output), None);
+    }
+
+    #[test]
+    fn test_extract_reasoning_empty_summary() {
+        let output = vec![OutputItem::Reasoning(ReasoningOutput {
+            summary: Some(vec![]),
+        })];
+        assert_eq!(OpenAiClient::extract_reasoning(&output), None);
+    }
+
+    #[test]
+    fn test_extract_reasoning_multiple_parts() {
+        let output = vec![OutputItem::Reasoning(ReasoningOutput {
+            summary: Some(vec![
+                ContentPart {
+                    part_type: "text".to_string(),
+                    text: Some("First ".to_string()),
+                },
+                ContentPart {
+                    part_type: "text".to_string(),
+                    text: Some("second".to_string()),
+                },
+            ]),
+        })];
+        assert_eq!(
+            OpenAiClient::extract_reasoning(&output),
+            Some("First second".to_string())
+        );
+    }
+
+    // ============================================================================
+    // extract_tool_calls tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_tool_calls_single() {
+        let output = vec![OutputItem::FunctionCall(FunctionCallOutput {
+            id: "fc_123".to_string(),
+            call_id: "call_123".to_string(),
+            name: "search".to_string(),
+            arguments: r#"{"query":"test"}"#.to_string(),
+        })];
+        let calls = OpenAiClient::extract_tool_calls(&output).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search");
+        assert_eq!(calls[0].id, "call_123");
+        assert_eq!(calls[0].item_id, Some("fc_123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_tool_calls_multiple() {
+        let output = vec![
+            OutputItem::FunctionCall(FunctionCallOutput {
+                id: "fc_1".to_string(),
+                call_id: "call_1".to_string(),
+                name: "search".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            OutputItem::FunctionCall(FunctionCallOutput {
+                id: "fc_2".to_string(),
+                call_id: "call_2".to_string(),
+                name: "read".to_string(),
+                arguments: "{}".to_string(),
+            }),
+        ];
+        let calls = OpenAiClient::extract_tool_calls(&output).unwrap();
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_tool_calls_none_when_no_calls() {
+        let output = vec![OutputItem::Message(MessageOutput {
+            content: vec![ContentPart {
+                part_type: "text".to_string(),
+                text: Some("Just text".to_string()),
+            }],
+        })];
+        assert_eq!(OpenAiClient::extract_tool_calls(&output), None);
+    }
+
+    // ============================================================================
+    // convert_message tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_message_user() {
+        let msg = Message {
+            role: "user".to_string(),
+            content: Some("Hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let items = OpenAiClient::convert_message(&msg);
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_convert_message_system() {
+        let msg = Message {
+            role: "system".to_string(),
+            content: Some("You are helpful".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let items = OpenAiClient::convert_message(&msg);
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_convert_message_assistant_no_tools() {
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: Some("I'll help you".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let items = OpenAiClient::convert_message(&msg);
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_convert_message_assistant_with_tools() {
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: None,
+            reasoning_content: None,
+            tool_calls: Some(vec![
+                ToolCall {
+                    id: "call_1".to_string(),
+                    item_id: Some("fc_1".to_string()),
+                    call_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: "search".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                    thought_signature: None,
+                },
+                ToolCall {
+                    id: "call_2".to_string(),
+                    item_id: None,
+                    call_type: "function".to_string(),
+                    function: FunctionCall {
+                        name: "read".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                    thought_signature: None,
+                },
+            ]),
+            tool_call_id: None,
+        };
+        let items = OpenAiClient::convert_message(&msg);
+        assert_eq!(items.len(), 2); // One per tool call
+    }
+
+    #[test]
+    fn test_convert_message_tool() {
+        let msg = Message {
+            role: "tool".to_string(),
+            content: Some("Search results here".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: Some("call_123".to_string()),
+        };
+        let items = OpenAiClient::convert_message(&msg);
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_convert_message_unknown_role() {
+        let msg = Message {
+            role: "unknown".to_string(),
+            content: Some("Content".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let items = OpenAiClient::convert_message(&msg);
+        assert!(items.is_empty());
+    }
+
+    // ============================================================================
+    // convert_tool tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_tool() {
+        let tool = Tool {
+            tool_type: "function".to_string(),
+            function: crate::llm::deepseek::FunctionDef {
+                name: "search".to_string(),
+                description: "Search for things".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        };
+        let result = OpenAiClient::convert_tool(&tool);
+        match result {
+            ResponsesTool::Function(f) => {
+                assert_eq!(f.name, "search");
+                assert_eq!(f.tool_type, "function");
+            }
+            _ => panic!("Expected Function tool"),
+        }
+    }
+
+    // ============================================================================
+    // Client creation tests
+    // ============================================================================
+
+    #[test]
+    fn test_client_new() {
+        let client = OpenAiClient::new("test-key".to_string());
+        assert_eq!(client.model, DEFAULT_MODEL);
+        assert_eq!(client.reasoning_effort, "medium");
+        assert!(client.enable_web_search);
+    }
+
+    #[test]
+    fn test_client_with_model() {
+        let client = OpenAiClient::with_model("test-key".to_string(), "gpt-5".to_string());
+        assert_eq!(client.model, "gpt-5");
+    }
+
+    #[test]
+    fn test_set_web_search() {
+        let mut client = OpenAiClient::new("test-key".to_string());
+        assert!(client.enable_web_search);
+        client.set_web_search(false);
+        assert!(!client.enable_web_search);
+    }
+
+    // ============================================================================
+    // ResponsesUsage deserialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_responses_usage_deserialize() {
+        let json = r#"{"input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 25}"#;
+        let usage: ResponsesUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.reasoning_tokens, Some(25));
+    }
+
+    #[test]
+    fn test_responses_usage_deserialize_no_reasoning() {
+        let json = r#"{"input_tokens": 100, "output_tokens": 50}"#;
+        let usage: ResponsesUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.reasoning_tokens, None);
+    }
+}

@@ -427,3 +427,175 @@ pub fn spawn(
 
     handle
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // SUPPORTED_EXTENSIONS tests
+    // ============================================================================
+
+    #[test]
+    fn test_supported_extensions_contains_rust() {
+        assert!(SUPPORTED_EXTENSIONS.contains(&"rs"));
+    }
+
+    #[test]
+    fn test_supported_extensions_contains_python() {
+        assert!(SUPPORTED_EXTENSIONS.contains(&"py"));
+    }
+
+    #[test]
+    fn test_supported_extensions_contains_typescript() {
+        assert!(SUPPORTED_EXTENSIONS.contains(&"ts"));
+        assert!(SUPPORTED_EXTENSIONS.contains(&"tsx"));
+    }
+
+    #[test]
+    fn test_supported_extensions_contains_javascript() {
+        assert!(SUPPORTED_EXTENSIONS.contains(&"js"));
+        assert!(SUPPORTED_EXTENSIONS.contains(&"jsx"));
+    }
+
+    #[test]
+    fn test_supported_extensions_contains_go() {
+        assert!(SUPPORTED_EXTENSIONS.contains(&"go"));
+    }
+
+    #[test]
+    fn test_supported_extensions_excludes_others() {
+        assert!(!SUPPORTED_EXTENSIONS.contains(&"md"));
+        assert!(!SUPPORTED_EXTENSIONS.contains(&"txt"));
+        assert!(!SUPPORTED_EXTENSIONS.contains(&"json"));
+        assert!(!SUPPORTED_EXTENSIONS.contains(&"toml"));
+    }
+
+    // ============================================================================
+    // ChangeType tests
+    // ============================================================================
+
+    #[test]
+    fn test_change_type_equality() {
+        assert_eq!(ChangeType::Modified, ChangeType::Modified);
+        assert_eq!(ChangeType::Created, ChangeType::Created);
+        assert_eq!(ChangeType::Deleted, ChangeType::Deleted);
+        assert_ne!(ChangeType::Modified, ChangeType::Created);
+        assert_ne!(ChangeType::Created, ChangeType::Deleted);
+    }
+
+    #[test]
+    fn test_change_type_copy() {
+        let ct = ChangeType::Modified;
+        let copied = ct;
+        assert_eq!(ct, copied);
+    }
+
+    #[test]
+    fn test_change_type_clone() {
+        let ct = ChangeType::Created;
+        let cloned = ct.clone();
+        assert_eq!(ct, cloned);
+    }
+
+    // ============================================================================
+    // should_process_path tests
+    // ============================================================================
+
+    #[test]
+    fn test_should_process_path_rust_file() {
+        let path = Path::new("/project/src/main.rs");
+        assert!(FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_python_file() {
+        let path = Path::new("/project/src/app.py");
+        assert!(FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_typescript_files() {
+        let path_ts = Path::new("/project/src/index.ts");
+        let path_tsx = Path::new("/project/src/Component.tsx");
+        assert!(FileWatcher::should_process_path(path_ts));
+        assert!(FileWatcher::should_process_path(path_tsx));
+    }
+
+    #[test]
+    fn test_should_process_path_javascript_files() {
+        let path_js = Path::new("/project/src/index.js");
+        let path_jsx = Path::new("/project/src/Component.jsx");
+        assert!(FileWatcher::should_process_path(path_js));
+        assert!(FileWatcher::should_process_path(path_jsx));
+    }
+
+    #[test]
+    fn test_should_process_path_go_file() {
+        let path = Path::new("/project/cmd/main.go");
+        assert!(FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_unsupported_extension() {
+        let path = Path::new("/project/README.md");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_no_extension() {
+        let path = Path::new("/project/Makefile");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_skip_node_modules() {
+        let path = Path::new("/project/node_modules/package/index.js");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_skip_target() {
+        let path = Path::new("/project/target/debug/main.rs");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_skip_git() {
+        let path = Path::new("/project/.git/hooks/pre-commit.py");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_skip_hidden() {
+        let path = Path::new("/project/.hidden/script.py");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_skip_dist() {
+        let path = Path::new("/project/dist/bundle.js");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_skip_build() {
+        let path = Path::new("/project/build/output.js");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    #[test]
+    fn test_should_process_path_skip_pycache() {
+        let path = Path::new("/project/__pycache__/module.py");
+        assert!(!FileWatcher::should_process_path(path));
+    }
+
+    // ============================================================================
+    // DEBOUNCE_MS tests
+    // ============================================================================
+
+    #[test]
+    fn test_debounce_value() {
+        assert_eq!(DEBOUNCE_MS, 500);
+    }
+}
