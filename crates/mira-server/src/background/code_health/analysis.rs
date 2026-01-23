@@ -1,9 +1,8 @@
 // crates/mira-server/src/background/code_health/analysis.rs
 // LLM-powered code health analysis for complexity and error handling quality
 
-use crate::db::Database;
+use crate::db::{Database, get_large_functions_sync, get_error_heavy_functions_sync};
 use crate::llm::{DeepSeekClient, PromptBuilder};
-use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -218,31 +217,8 @@ fn get_large_functions(
     project_id: i64,
     min_lines: i64,
 ) -> Result<Vec<(String, String, i64, i64)>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT name, file_path, start_line, end_line
-             FROM code_symbols
-             WHERE project_id = ?
-               AND symbol_type = 'function'
-               AND end_line IS NOT NULL
-               AND (end_line - start_line) >= ?
-               AND file_path NOT LIKE '%/tests/%'
-               AND file_path NOT LIKE '%_test.rs'
-               AND name NOT LIKE 'test_%'
-             ORDER BY (end_line - start_line) DESC
-             LIMIT 10",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let results = stmt
-        .query_map(params![project_id, min_lines], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(results)
+    get_large_functions_sync(conn, project_id, min_lines)
+        .map_err(|e| e.to_string())
 }
 
 /// LLM-powered analysis of error handling quality in complex functions
@@ -312,29 +288,9 @@ fn get_error_heavy_functions(
 ) -> Result<Vec<(String, String, i64, i64, usize)>, String> {
     use std::fs;
 
-    // Get functions from symbols
-    let mut stmt = conn
-        .prepare(
-            "SELECT name, file_path, start_line, end_line
-             FROM code_symbols
-             WHERE project_id = ?
-               AND symbol_type = 'function'
-               AND end_line IS NOT NULL
-               AND (end_line - start_line) >= 20
-               AND file_path NOT LIKE '%/tests/%'
-               AND name NOT LIKE 'test_%'
-             ORDER BY (end_line - start_line) DESC
-             LIMIT 50",
-        )
+    // Get functions from symbols (uses db function)
+    let functions = get_error_heavy_functions_sync(conn, project_id)
         .map_err(|e| e.to_string())?;
-
-    let functions: Vec<(String, String, i64, i64)> = stmt
-        .query_map(params![project_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
 
     // Count ? operators in each function
     let mut results = Vec::new();

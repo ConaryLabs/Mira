@@ -240,6 +240,68 @@ pub fn delete_pending_embedding_sync(conn: &Connection, id: i64) -> rusqlite::Re
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Code health analysis
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get large functions for complexity analysis
+pub fn get_large_functions_sync(
+    conn: &Connection,
+    project_id: i64,
+    min_lines: i64,
+) -> rusqlite::Result<Vec<(String, String, i64, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT name, file_path, start_line, end_line
+         FROM code_symbols
+         WHERE project_id = ?
+           AND symbol_type = 'function'
+           AND end_line IS NOT NULL
+           AND (end_line - start_line) >= ?
+           AND file_path NOT LIKE '%/tests/%'
+           AND file_path NOT LIKE '%_test.rs'
+           AND name NOT LIKE 'test_%'
+         ORDER BY (end_line - start_line) DESC
+         LIMIT 10",
+    )?;
+
+    let results = stmt
+        .query_map(params![project_id, min_lines], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(results)
+}
+
+/// Get functions with error handling for quality analysis
+pub fn get_error_heavy_functions_sync(
+    conn: &Connection,
+    project_id: i64,
+) -> rusqlite::Result<Vec<(String, String, i64, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT name, file_path, start_line, end_line
+         FROM code_symbols
+         WHERE project_id = ?
+           AND symbol_type = 'function'
+           AND end_line IS NOT NULL
+           AND (end_line - start_line) >= 20
+           AND file_path NOT LIKE '%/tests/%'
+           AND name NOT LIKE 'test_%'
+         ORDER BY (end_line - start_line) DESC
+         LIMIT 50",
+    )?;
+
+    let results = stmt
+        .query_map(params![project_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

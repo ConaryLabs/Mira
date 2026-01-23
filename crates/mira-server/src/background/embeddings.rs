@@ -1,10 +1,9 @@
 // crates/mira-server/src/background/embeddings.rs
 // Background processing of pending embeddings queue
 
-use crate::db::Database;
+use crate::db::{Database, insert_chunk_embedding_sync, delete_pending_embedding_sync};
 use crate::embeddings::EmbeddingClient;
 use crate::search::embedding_to_bytes;
-use rusqlite::params;
 use std::sync::Arc;
 
 /// Maximum embeddings to process per batch
@@ -49,23 +48,17 @@ pub async fn process_pending_embeddings(
             let embedding_bytes = embedding_to_bytes(embedding);
 
             // Insert into vec_code
-            tx.execute(
-                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
-                 VALUES (?, ?, ?, ?, ?)",
-                params![
-                    embedding_bytes,
-                    chunk.file_path,
-                    chunk.chunk_content,
-                    chunk.project_id,
-                    chunk.start_line
-                ],
+            insert_chunk_embedding_sync(
+                &tx,
+                &embedding_bytes,
+                &chunk.file_path,
+                &chunk.chunk_content,
+                chunk.project_id,
+                chunk.start_line as usize,
             )?;
 
             // Remove from pending queue
-            tx.execute(
-                "DELETE FROM pending_embeddings WHERE id = ?",
-                params![chunk.id],
-            )?;
+            delete_pending_embedding_sync(&tx, chunk.id)?;
 
             stored += 1;
         }

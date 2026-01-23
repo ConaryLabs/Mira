@@ -47,6 +47,10 @@ pub use index::{
     count_symbols_sync,
     count_embedded_chunks_sync,
     clear_modules_without_purpose_sync,
+    // Batch insert operations
+    SymbolInsert, ImportInsert, CallInsert,
+    insert_symbol_sync, insert_import_sync, insert_call_sync,
+    insert_chunk_embedding_sync, queue_pending_embedding_sync,
 };
 pub use search::{
     CrossRefResult,
@@ -102,6 +106,9 @@ pub use background::{
     get_symbols_for_file_sync,
     store_code_embedding_sync,
     delete_pending_embedding_sync,
+    // Code health analysis
+    get_large_functions_sync,
+    get_error_heavy_functions_sync,
 };
 
 use anyhow::{Context, Result};

@@ -3,12 +3,14 @@
 
 pub mod parsers;
 
-use crate::db::Database;
+use crate::db::{
+    Database, SymbolInsert, ImportInsert,
+    insert_symbol_sync, insert_import_sync, insert_call_sync, insert_chunk_embedding_sync,
+};
 use crate::embeddings::EmbeddingClient;
 use crate::project_files::walker::FileWalker;
 use crate::search::embedding_to_bytes;
 use anyhow::{Context, Result};
-use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
 use tree_sitter::Parser;
@@ -85,10 +87,13 @@ async fn store_chunk_embeddings(
         let mut errors = 0usize;
 
         for (file_path, content, start_line, embedding_bytes) in &chunk_data {
-            if let Err(e) = tx.execute(
-                "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
-                 VALUES (?, ?, ?, ?, ?)",
-                params![embedding_bytes, file_path, content, project_id, start_line],
+            if let Err(e) = insert_chunk_embedding_sync(
+                &tx,
+                embedding_bytes,
+                file_path,
+                content,
+                project_id,
+                *start_line,
             ) {
                 tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
                 errors += 1;
@@ -156,25 +161,23 @@ fn store_symbols_and_capture_ids(
     let mut errors = 0usize;
 
     for sym in symbols {
-        if let Err(e) = tx.execute(
-            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![
-                project_id,
-                file_path,
-                sym.name,
-                sym.symbol_type,
-                sym.start_line,
-                sym.end_line,
-                sym.signature
-            ],
-        ) {
-            tracing::warn!("Failed to store symbol {} ({}): {}", sym.name, file_path, e);
-            errors += 1;
-            continue;
+        let sym_insert = SymbolInsert {
+            name: &sym.name,
+            symbol_type: &sym.symbol_type,
+            start_line: sym.start_line,
+            end_line: sym.end_line,
+            signature: sym.signature.as_deref(),
+        };
+
+        match insert_symbol_sync(tx, project_id, file_path, &sym_insert) {
+            Ok(id) => {
+                symbol_ranges.push((sym.name.clone(), sym.start_line, sym.end_line, id));
+            }
+            Err(e) => {
+                tracing::warn!("Failed to store symbol {} ({}): {}", sym.name, file_path, e);
+                errors += 1;
+            }
         }
-        let id = tx.last_insert_rowid();
-        symbol_ranges.push((sym.name.clone(), sym.start_line, sym.end_line, id));
     }
 
     Ok((symbol_ranges, errors))
@@ -190,16 +193,12 @@ fn store_imports(
     let mut errors = 0usize;
 
     for import in imports {
-        if let Err(e) = tx.execute(
-            "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
-             VALUES (?, ?, ?, ?)",
-            params![
-                project_id,
-                file_path,
-                import.import_path,
-                import.is_external as i32
-            ],
-        ) {
+        let import_insert = ImportInsert {
+            import_path: &import.import_path,
+            is_external: import.is_external,
+        };
+
+        if let Err(e) = insert_import_sync(tx, project_id, file_path, &import_insert) {
             tracing::warn!("Failed to store import {} ({}): {}", import.import_path, file_path, e);
             errors += 1;
         }
@@ -231,11 +230,7 @@ fn store_function_calls(
                 .find(|(name, _, _, _)| name == &call.callee_name)
                 .map(|(_, _, _, id)| *id);
 
-            if let Err(e) = tx.execute(
-                "INSERT INTO call_graph (caller_id, callee_name, callee_id)
-                 VALUES (?, ?, ?)",
-                params![cid, call.callee_name, callee_id],
-            ) {
+            if let Err(e) = insert_call_sync(tx, cid, &call.callee_name, callee_id) {
                 tracing::warn!("Failed to store call {} -> {} ({}): {}", call.caller_name, call.callee_name, file_path, e);
                 errors += 1;
             }

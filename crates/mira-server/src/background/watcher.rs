@@ -3,7 +3,10 @@
 
 use super::code_health;
 use crate::config::ignore;
-use crate::db::Database;
+use crate::db::{
+    Database, SymbolInsert, ImportInsert,
+    insert_symbol_sync, insert_import_sync, queue_pending_embedding_sync,
+};
 use crate::indexer;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
@@ -321,36 +324,33 @@ impl FileWatcher {
 
             // Insert symbols
             for symbol in &parse_result.symbols {
-                tx.execute(
-                    "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    rusqlite::params![
-                        project_id,
-                        &relative_path,
-                        symbol.name,
-                        symbol.kind,
-                        symbol.start_line,
-                        symbol.end_line,
-                        symbol.signature
-                    ],
-                )?;
+                let sym_insert = SymbolInsert {
+                    name: &symbol.name,
+                    symbol_type: &symbol.kind,
+                    start_line: symbol.start_line,
+                    end_line: symbol.end_line,
+                    signature: symbol.signature.as_deref(),
+                };
+                insert_symbol_sync(&tx, Some(project_id), &relative_path, &sym_insert)?;
             }
 
             // Insert imports
             for import in &parse_result.imports {
-                tx.execute(
-                    "INSERT OR IGNORE INTO imports (project_id, file_path, import_path, is_external)
-                     VALUES (?, ?, ?, ?)",
-                    rusqlite::params![project_id, &relative_path, import.path, import.is_external],
-                )?;
+                let import_insert = ImportInsert {
+                    import_path: &import.path,
+                    is_external: import.is_external,
+                };
+                insert_import_sync(&tx, Some(project_id), &relative_path, &import_insert)?;
             }
 
             // Queue chunks for background embedding
             for chunk in &parse_result.chunks {
-                tx.execute(
-                    "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line, status)
-                     VALUES (?, ?, ?, ?, 'pending')",
-                    rusqlite::params![project_id, &relative_path, chunk.content, chunk.start_line],
+                queue_pending_embedding_sync(
+                    &tx,
+                    Some(project_id),
+                    &relative_path,
+                    &chunk.content,
+                    chunk.start_line,
                 )?;
             }
 
