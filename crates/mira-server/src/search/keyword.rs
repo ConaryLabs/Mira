@@ -1,7 +1,8 @@
 // crates/mira-server/src/search/keyword.rs
 // FTS5-powered keyword search for code
 
-use rusqlite::{params, Connection};
+use crate::db::{fts_search_sync, chunk_like_search_sync, symbol_like_search_sync};
+use rusqlite::Connection;
 use std::path::Path;
 
 /// Result from keyword search: (file_path, content, score, start_line)
@@ -88,60 +89,15 @@ fn fts5_search(
     project_id: Option<i64>,
     limit: usize,
 ) -> Vec<KeywordResult> {
-    let mut results = Vec::new();
-
-    let sql = if project_id.is_some() {
-        // With project filter
-        "SELECT file_path, chunk_content, bm25(code_fts, 1.0, 2.0), start_line
-         FROM code_fts
-         WHERE code_fts MATCH ?1 AND project_id = ?2
-         ORDER BY bm25(code_fts, 1.0, 2.0)
-         LIMIT ?3"
-    } else {
-        // All projects
-        "SELECT file_path, chunk_content, bm25(code_fts, 1.0, 2.0), start_line
-         FROM code_fts
-         WHERE code_fts MATCH ?1
-         ORDER BY bm25(code_fts, 1.0, 2.0)
-         LIMIT ?2"
-    };
-
-    let query_result = if let Some(pid) = project_id {
-        conn.prepare(sql).and_then(|mut stmt| {
-            stmt.query_map(params![fts_query, pid, limit as i64], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, f64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            })
-            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
-        })
-    } else {
-        conn.prepare(sql).and_then(|mut stmt| {
-            stmt.query_map(params![fts_query, limit as i64], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, f64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            })
-            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
-        })
-    };
-
-    if let Ok(rows) = query_result {
-        for (file_path, content, bm25_score, start_line) in rows {
+    fts_search_sync(conn, fts_query, project_id, limit)
+        .into_iter()
+        .map(|r| {
             // Convert BM25 score to 0-1 range (BM25 is negative, lower is better)
             // Typical range is -20 to 0, so we normalize
-            let score = ((-bm25_score + 20.0) / 20.0).clamp(0.0, 1.0) as f32;
-            results.push((file_path, content, score, start_line));
-        }
-    }
-
-    results
+            let score = ((-r.score + 20.0) / 20.0).clamp(0.0, 1.0) as f32;
+            (r.file_path, r.chunk_content, score, r.start_line.unwrap_or(0))
+        })
+        .collect()
 }
 
 /// Fallback LIKE-based search (when FTS5 fails or for edge cases)
@@ -168,29 +124,15 @@ fn like_search(
 
     // Search vec_code chunk_content
     if let Some(pid) = project_id {
-        for pattern in &like_patterns {
-            let sql = "SELECT file_path, chunk_content, start_line FROM vec_code
-                       WHERE project_id = ? AND LOWER(chunk_content) LIKE ?
-                       LIMIT ?";
-            if let Ok(mut stmt) = conn.prepare(sql) {
-                if let Ok(rows) = stmt.query_map(params![pid, pattern, limit as i64], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<i64>>(2)?,
-                    ))
-                }) {
-                    for row in rows.flatten() {
-                        let start_line = row.2.unwrap_or(0);
-                        // Avoid duplicates
-                        if !results
-                            .iter()
-                            .any(|(f, c, _, _)| f == &row.0 && c == &row.1)
-                        {
-                            results.push((row.0, row.1, 0.5, start_line));
-                        }
-                    }
-                }
+        let chunk_results = chunk_like_search_sync(conn, &like_patterns, pid, limit);
+        for chunk in chunk_results {
+            let start_line = chunk.start_line.unwrap_or(0);
+            // Avoid duplicates
+            if !results
+                .iter()
+                .any(|(f, c, _, _)| f == &chunk.file_path && c == &chunk.chunk_content)
+            {
+                results.push((chunk.file_path, chunk.chunk_content, 0.5, start_line));
             }
             if results.len() >= limit {
                 break;
@@ -200,56 +142,33 @@ fn like_search(
 
     // Also search symbol names for direct matches
     if let Some(pid) = project_id {
-        for pattern in &like_patterns {
-            let sql = "SELECT file_path, name, signature, start_line, end_line
-                       FROM code_symbols
-                       WHERE project_id = ? AND LOWER(name) LIKE ?
-                       LIMIT ?";
-            if let Ok(mut stmt) = conn.prepare(sql) {
-                if let Ok(rows) = stmt.query_map(params![pid, pattern, limit as i64], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                        row.get::<_, Option<i64>>(3)?,
-                        row.get::<_, Option<i64>>(4)?,
-                    ))
-                }) {
-                    for row in rows.flatten() {
-                        let (file_path, name, signature, start_line, end_line) = row;
-
-                        // Try to read the actual code from file
-                        let content = if let (Some(proj_path), Some(start), Some(end)) =
-                            (project_path, start_line, end_line)
-                        {
-                            let full_path = Path::new(proj_path).join(&file_path);
-                            if let Ok(file_content) = std::fs::read_to_string(&full_path) {
-                                let lines: Vec<&str> = file_content.lines().collect();
-                                let start_idx = (start as usize).saturating_sub(1).min(lines.len());
-                                let end_idx = (end as usize).min(lines.len());
-                                if start_idx < end_idx {
-                                    lines[start_idx..end_idx].join("\n")
-                                } else {
-                                    signature.clone().unwrap_or_else(|| name.clone())
-                                }
-                            } else {
-                                signature.unwrap_or_else(|| name.clone())
-                            }
-                        } else {
-                            signature.unwrap_or_else(|| name.clone())
-                        };
-
-                        let line = start_line.unwrap_or(0);
-
-                        // Avoid duplicates
-                        if !results
-                            .iter()
-                            .any(|(f, _, _, _)| f == &file_path && content.contains(&name))
-                        {
-                            results.push((file_path, content, 0.6, line));
-                        }
+        let symbol_results = symbol_like_search_sync(conn, &like_patterns, pid, limit);
+        for sym in symbol_results {
+            // Try to read the actual code from file
+            let content = if let Some(proj_path) = project_path {
+                let full_path = Path::new(proj_path).join(&sym.file_path);
+                if let Ok(file_content) = std::fs::read_to_string(&full_path) {
+                    let lines: Vec<&str> = file_content.lines().collect();
+                    let start_idx = (sym.start_line as usize).saturating_sub(1).min(lines.len());
+                    let end_idx = (sym.end_line as usize).min(lines.len());
+                    if start_idx < end_idx {
+                        lines[start_idx..end_idx].join("\n")
+                    } else {
+                        sym.signature.clone().unwrap_or_else(|| sym.name.clone())
                     }
+                } else {
+                    sym.signature.clone().unwrap_or_else(|| sym.name.clone())
                 }
+            } else {
+                sym.signature.clone().unwrap_or_else(|| sym.name.clone())
+            };
+
+            // Avoid duplicates
+            if !results
+                .iter()
+                .any(|(f, _, _, _)| f == &sym.file_path && content.contains(&sym.name))
+            {
+                results.push((sym.file_path, content, 0.6, sym.start_line));
             }
             if results.len() >= limit {
                 break;

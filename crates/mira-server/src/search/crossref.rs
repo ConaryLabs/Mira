@@ -1,7 +1,8 @@
 // crates/mira-server/src/search/crossref.rs
 // Cross-reference search (call graph) functionality
 
-use rusqlite::{params, Connection};
+use crate::db::{find_callers_sync, find_callees_sync};
+use rusqlite::Connection;
 
 /// Result from cross-reference search
 #[derive(Debug, Clone)]
@@ -83,55 +84,15 @@ pub fn find_callers(
     target_name: &str,
     limit: usize,
 ) -> Vec<CrossRefResult> {
-    // Find all call_graph entries where callee_name matches target
-    // Join with code_symbols to get caller details
-    let query = if project_id.is_some() {
-        "SELECT cs.name, cs.file_path, cg.call_count
-         FROM call_graph cg
-         JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cg.callee_name = ?1 AND cs.project_id = ?2
-         ORDER BY cg.call_count DESC
-         LIMIT ?3"
-    } else {
-        "SELECT cs.name, cs.file_path, cg.call_count
-         FROM call_graph cg
-         JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cg.callee_name = ?1
-         ORDER BY cg.call_count DESC
-         LIMIT ?2"
-    };
-
-    let results: Vec<CrossRefResult> = if let Some(pid) = project_id {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![target_name, pid, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        ref_type: CrossRefType::Caller,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    } else {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![target_name, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        ref_type: CrossRefType::Caller,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    };
-
-    results
+    find_callers_sync(conn, target_name, project_id, limit)
+        .into_iter()
+        .map(|r| CrossRefResult {
+            symbol_name: r.symbol_name,
+            file_path: r.file_path,
+            ref_type: CrossRefType::Caller,
+            call_count: r.call_count,
+        })
+        .collect()
 }
 
 /// Check if a function name is a stdlib/utility call that should be filtered
@@ -200,58 +161,15 @@ pub fn find_callees(
     caller_name: &str,
     limit: usize,
 ) -> Vec<CrossRefResult> {
-    // Find the caller symbol(s), then get all their callees
-    let query = if project_id.is_some() {
-        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
-         FROM call_graph cg
-         JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cs.name = ?1 AND cs.project_id = ?2
-         GROUP BY cg.callee_name
-         ORDER BY cnt DESC
-         LIMIT ?3"
-    } else {
-        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
-         FROM call_graph cg
-         JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cs.name = ?1
-         GROUP BY cg.callee_name
-         ORDER BY cnt DESC
-         LIMIT ?2"
-    };
-
-    let results: Vec<CrossRefResult> = if let Some(pid) = project_id {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![caller_name, pid, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        ref_type: CrossRefType::Callee,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    } else {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![caller_name, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        ref_type: CrossRefType::Callee,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    };
-
-    // Filter out stdlib/utility calls
-    results
+    find_callees_sync(conn, caller_name, project_id, limit)
         .into_iter()
+        .map(|r| CrossRefResult {
+            symbol_name: r.symbol_name,
+            file_path: r.file_path,
+            ref_type: CrossRefType::Callee,
+            call_count: r.call_count,
+        })
+        // Filter out stdlib/utility calls
         .filter(|r| !is_stdlib_call(&r.symbol_name))
         .collect()
 }

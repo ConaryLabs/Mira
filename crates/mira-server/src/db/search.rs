@@ -13,11 +13,10 @@ use rusqlite::{params, Connection};
 pub struct CrossRefResult {
     pub symbol_name: String,
     pub file_path: String,
-    pub line_number: i64,
-    pub call_count: i64,
+    pub call_count: i32,
 }
 
-/// Find functions that call the given function
+/// Find functions that call the given function (by callee_name in call_graph)
 pub fn find_callers_sync(
     conn: &Connection,
     target_name: &str,
@@ -25,19 +24,17 @@ pub fn find_callers_sync(
     limit: usize,
 ) -> Vec<CrossRefResult> {
     let query = if project_id.is_some() {
-        "SELECT cs.name, cs.file_path, cs.start_line, cg.call_count
+        "SELECT cs.name, cs.file_path, cg.call_count
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
-         JOIN code_symbols callee ON cg.callee_id = callee.id
-         WHERE callee.name = ?1 AND cs.project_id = ?2
+         WHERE cg.callee_name = ?1 AND cs.project_id = ?2
          ORDER BY cg.call_count DESC
          LIMIT ?3"
     } else {
-        "SELECT cs.name, cs.file_path, cs.start_line, cg.call_count
+        "SELECT cs.name, cs.file_path, cg.call_count
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
-         JOIN code_symbols callee ON cg.callee_id = callee.id
-         WHERE callee.name = ?1
+         WHERE cg.callee_name = ?1
          ORDER BY cg.call_count DESC
          LIMIT ?2"
     };
@@ -49,8 +46,7 @@ pub fn find_callers_sync(
                     Ok(CrossRefResult {
                         symbol_name: row.get(0)?,
                         file_path: row.get(1)?,
-                        line_number: row.get(2)?,
-                        call_count: row.get(3)?,
+                        call_count: row.get::<_, i32>(2).unwrap_or(1),
                     })
                 })
                 .map(|rows| rows.filter_map(|r| r.ok()).collect())
@@ -63,8 +59,7 @@ pub fn find_callers_sync(
                     Ok(CrossRefResult {
                         symbol_name: row.get(0)?,
                         file_path: row.get(1)?,
-                        line_number: row.get(2)?,
-                        call_count: row.get(3)?,
+                        call_count: row.get::<_, i32>(2).unwrap_or(1),
                     })
                 })
                 .map(|rows| rows.filter_map(|r| r.ok()).collect())
@@ -81,21 +76,19 @@ pub fn find_callees_sync(
     limit: usize,
 ) -> Vec<CrossRefResult> {
     let query = if project_id.is_some() {
-        "SELECT callee.name, callee.file_path, callee.start_line, COUNT(*) as cnt
+        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
          FROM call_graph cg
-         JOIN code_symbols caller ON cg.caller_id = caller.id
-         JOIN code_symbols callee ON cg.callee_id = callee.id
-         WHERE caller.name = ?1 AND caller.project_id = ?2
-         GROUP BY callee.name, callee.file_path, callee.start_line
+         JOIN code_symbols cs ON cg.caller_id = cs.id
+         WHERE cs.name = ?1 AND cs.project_id = ?2
+         GROUP BY cg.callee_name
          ORDER BY cnt DESC
          LIMIT ?3"
     } else {
-        "SELECT callee.name, callee.file_path, callee.start_line, COUNT(*) as cnt
+        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
          FROM call_graph cg
-         JOIN code_symbols caller ON cg.caller_id = caller.id
-         JOIN code_symbols callee ON cg.callee_id = callee.id
-         WHERE caller.name = ?1
-         GROUP BY callee.name, callee.file_path, callee.start_line
+         JOIN code_symbols cs ON cg.caller_id = cs.id
+         WHERE cs.name = ?1
+         GROUP BY cg.callee_name
          ORDER BY cnt DESC
          LIMIT ?2"
     };
@@ -107,8 +100,7 @@ pub fn find_callees_sync(
                     Ok(CrossRefResult {
                         symbol_name: row.get(0)?,
                         file_path: row.get(1)?,
-                        line_number: row.get(2)?,
-                        call_count: row.get(3)?,
+                        call_count: row.get::<_, i32>(2).unwrap_or(1),
                     })
                 })
                 .map(|rows| rows.filter_map(|r| r.ok()).collect())
@@ -121,8 +113,7 @@ pub fn find_callees_sync(
                     Ok(CrossRefResult {
                         symbol_name: row.get(0)?,
                         file_path: row.get(1)?,
-                        line_number: row.get(2)?,
-                        call_count: row.get(3)?,
+                        call_count: row.get::<_, i32>(2).unwrap_or(1),
                     })
                 })
                 .map(|rows| rows.filter_map(|r| r.ok()).collect())
