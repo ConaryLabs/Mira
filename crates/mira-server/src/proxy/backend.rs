@@ -38,6 +38,10 @@ pub struct BackendConfig {
     /// Optional model mapping (proxy model name -> backend model name)
     #[serde(default)]
     pub model_map: HashMap<String, String>,
+    /// Claude Code environment variable overrides for this backend
+    /// (e.g., ANTHROPIC_MODEL, API_TIMEOUT_MS, etc.)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -181,6 +185,7 @@ mod tests {
             enabled: true,
             api_type: ApiType::Anthropic,
             model_map: HashMap::new(),
+            env: HashMap::new(),
         };
 
         // Env var takes precedence when set

@@ -170,6 +170,12 @@ enum BackendAction {
         /// Backend name to test
         name: String,
     },
+
+    /// Print environment variables for a backend (shell export format)
+    Env {
+        /// Backend name (uses default if not specified)
+        name: Option<String>,
+    },
 }
 
 fn get_db_path() -> PathBuf {
@@ -542,6 +548,9 @@ async fn main() -> Result<()> {
             BackendAction::Test { name } => {
                 run_backend_test(&name).await?;
             }
+            BackendAction::Env { name } => {
+                run_backend_env(name.as_deref())?;
+            }
         }
     }
 
@@ -868,6 +877,9 @@ fn run_backend_list() -> Result<()> {
         if let Some(env_var) = &backend.api_key_env {
             println!("    Key: ${}", env_var);
         }
+        if !backend.env.is_empty() {
+            println!("    Model: {}", backend.env.get("ANTHROPIC_MODEL").unwrap_or(&"-".to_string()));
+        }
         println!();
     }
 
@@ -1012,6 +1024,59 @@ async fn run_backend_test(name: &str) -> Result<()> {
             eprintln!("  Error: {}", e);
         }
     }
+
+    Ok(())
+}
+
+/// Print environment variables for a backend in shell export format
+fn run_backend_env(name: Option<&str>) -> Result<()> {
+    use mira::proxy::ProxyConfig;
+
+    let config = ProxyConfig::load()?;
+
+    // Get backend name (use default if not specified)
+    let backend_name = match name {
+        Some(n) => n.to_string(),
+        None => match &config.default_backend {
+            Some(d) => d.clone(),
+            None => {
+                eprintln!("No backend specified and no default set.");
+                eprintln!("Usage: mira backend env <name>");
+                return Ok(());
+            }
+        }
+    };
+
+    // Get backend config
+    let backend = match config.backends.get(&backend_name) {
+        Some(b) => b,
+        None => {
+            eprintln!("Backend '{}' not found.", backend_name);
+            eprintln!("\nAvailable backends:");
+            for name in config.backends.keys() {
+                eprintln!("  {}", name);
+            }
+            return Ok(());
+        }
+    };
+
+    // Print base URL and auth token
+    println!("export ANTHROPIC_BASE_URL=\"{}\"", backend.base_url);
+
+    // Print API key (from env var or inline)
+    if let Some(env_var) = &backend.api_key_env {
+        // Reference the env var
+        println!("export ANTHROPIC_AUTH_TOKEN=\"${}\"", env_var);
+    } else if let Some(key) = &backend.api_key {
+        println!("export ANTHROPIC_AUTH_TOKEN=\"{}\"", key);
+    }
+
+    // Print all env overrides
+    for (key, value) in &backend.env {
+        println!("export {}=\"{}\"", key, value);
+    }
+
+    eprintln!("\n# Usage: eval \"$(mira backend env {})\"", backend_name);
 
     Ok(())
 }
