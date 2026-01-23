@@ -709,7 +709,8 @@ mod tests {
             )
             .unwrap();
 
-        let embedding = vec![0.1_f32, 0.2, 0.3, 0.4];
+        // Create a 1536-dimensional embedding (matching text-embedding-3-small)
+        let embedding: Vec<f32> = (0..1536).map(|i| (i as f32) * 0.001).collect();
         db.store_fact_embedding(id, "content to embed", &embedding)
             .unwrap();
 
@@ -771,18 +772,19 @@ mod tests {
         db.store_memory(
             None,
             Some("parse-test"),
-            "test content",
+            "test content for parsing",
             "general",
             Some("category"),
             0.75,
         )
         .unwrap();
 
-        let results = db.search_memories(None, "parse-test", 1).unwrap();
+        // search_memories searches content field, not key
+        let results = db.search_memories(None, "test content for parsing", 1).unwrap();
         assert_eq!(results.len(), 1);
 
         let fact = &results[0];
-        assert_eq!(fact.content, "test content");
+        assert_eq!(fact.content, "test content for parsing");
         assert_eq!(fact.key, Some("parse-test".to_string()));
         assert_eq!(fact.fact_type, "general");
         assert_eq!(fact.category, Some("category".to_string()));

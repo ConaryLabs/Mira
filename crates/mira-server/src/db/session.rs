@@ -57,7 +57,7 @@ impl Database {
             "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at
              FROM tool_history
              WHERE session_id = ?
-             ORDER BY created_at DESC
+             ORDER BY created_at DESC, id DESC
              LIMIT ?",
         )?;
         let rows = stmt.query_map(params![session_id, limit as i64], |row| {
@@ -105,7 +105,7 @@ impl Database {
             "SELECT id, project_id, status, summary, started_at, last_activity
              FROM sessions
              WHERE project_id = ?
-             ORDER BY last_activity DESC
+             ORDER BY last_activity DESC, rowid DESC
              LIMIT ?",
         )?;
         let rows = stmt.query_map(params![project_id, limit as i64], |row| {
@@ -233,11 +233,7 @@ impl Database {
             }
         }
 
-        // If we have any recap content, format it nicely
-        if recap_parts.len() > 1 {
-            recap_parts.join("\n\n")
-        } else {
-            String::new()
-        }
+        // Return formatted recap content
+        recap_parts.join("\n\n")
     }
 }

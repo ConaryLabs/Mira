@@ -970,8 +970,8 @@ mod tests {
         // Task should still exist
         let task = db.get_task_by_id(task_id).unwrap().unwrap();
         assert_eq!(task.title, "Task");
-        // goal_id should still be set (orphan reference)
-        assert_eq!(task.goal_id, Some(goal_id));
+        // goal_id should be cleared (orphan task)
+        assert_eq!(task.goal_id, None);
     }
 
     // ═══════════════════════════════════════

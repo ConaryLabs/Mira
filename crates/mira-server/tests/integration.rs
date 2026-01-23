@@ -676,8 +676,12 @@ async fn test_get_session_recap() {
     // Should succeed, may return "No session recap available."
     assert!(result.is_ok(), "get_session_recap failed: {:?}", result.err());
     let output = result.unwrap();
-    // Either has recap or says no recap
-    assert!(output.contains("recap") || output.contains("No session recap"), "Output: {}", output);
+    // Should contain welcome message or say no recap available
+    assert!(
+        output.contains("Welcome back") || output.contains("No session recap"),
+        "Output: {}",
+        output
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

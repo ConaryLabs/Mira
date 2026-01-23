@@ -80,8 +80,8 @@ mod tests {
         let sessions = db.get_recent_sessions(project_id, 1).unwrap();
         let initial_activity = sessions[0].last_activity.clone();
 
-        // Wait and touch
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Wait 1 second to ensure timestamp changes (SQLite has second precision)
+        std::thread::sleep(std::time::Duration::from_secs(1));
         db.touch_session("touch-test").unwrap();
 
         // Verify last_activity updated
@@ -454,7 +454,7 @@ mod tests {
 
         let recap = db.build_session_recap(None);
         // Should have welcome banner at minimum
-        assert!(recap.contains("Welcome back"));
+        assert!(recap.contains("Welcome back"), "Recap was: {}", recap);
     }
 
     #[test]
@@ -513,12 +513,14 @@ mod tests {
         // Create an old session (not active)
         db.create_session("old-session", Some(project_id)).unwrap();
         // Update it to not be active
-        let conn = db.conn();
-        conn.execute(
-            "UPDATE sessions SET status = 'completed' WHERE id = ?",
-            ["old-session"],
-        )
-        .unwrap();
+        {
+            let conn = db.conn();
+            conn.execute(
+                "UPDATE sessions SET status = 'completed' WHERE id = ?",
+                ["old-session"],
+            )
+            .unwrap();
+        } // conn dropped here, lock released
 
         // Create current active session
         db.create_session("current-active", Some(project_id)).unwrap();

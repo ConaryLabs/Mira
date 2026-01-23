@@ -64,7 +64,7 @@ impl Database {
         let sql = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                    FROM tasks
                    WHERE (project_id = ? OR project_id IS NULL) AND status != 'completed'
-                   ORDER BY created_at DESC
+                   ORDER BY created_at DESC, id DESC
                    LIMIT ?";
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt.query_map(params![project_id, limit as i64], parse_task_row)?;
@@ -77,7 +77,7 @@ impl Database {
         let sql = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
                    FROM goals
                    WHERE (project_id = ? OR project_id IS NULL) AND status NOT IN ('completed', 'abandoned')
-                   ORDER BY created_at DESC
+                   ORDER BY created_at DESC, id DESC
                    LIMIT ?";
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt.query_map(params![project_id, limit as i64], parse_goal_row)?;
@@ -90,7 +90,7 @@ impl Database {
         let sql = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                    FROM tasks
                    WHERE project_id = ? OR project_id IS NULL
-                   ORDER BY created_at DESC
+                   ORDER BY created_at DESC, id DESC
                    LIMIT ?";
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt.query_map(params![project_id, limit as i64], parse_task_row)?;
@@ -135,17 +135,17 @@ impl Database {
             (Some(_), true) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                                FROM tasks
                                WHERE (project_id = ? OR project_id IS NULL) AND status != ?
-                               ORDER BY created_at DESC
+                               ORDER BY created_at DESC, id DESC
                                LIMIT 100",
             (Some(_), false) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                                 FROM tasks
                                 WHERE (project_id = ? OR project_id IS NULL) AND status = ?
-                                ORDER BY created_at DESC
+                                ORDER BY created_at DESC, id DESC
                                 LIMIT 100",
             (None, _) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                          FROM tasks
                          WHERE (project_id = ? OR project_id IS NULL)
-                         ORDER BY created_at DESC
+                         ORDER BY created_at DESC, id DESC
                          LIMIT 100",
         };
         let mut stmt = conn.prepare(sql)?;
@@ -230,17 +230,17 @@ impl Database {
             (Some(_), true) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
                                FROM goals
                                WHERE (project_id = ? OR project_id IS NULL) AND status != ?
-                               ORDER BY created_at DESC
+                               ORDER BY created_at DESC, id DESC
                                LIMIT 100",
             (Some(_), false) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
                                 FROM goals
                                 WHERE (project_id = ? OR project_id IS NULL) AND status = ?
-                                ORDER BY created_at DESC
+                                ORDER BY created_at DESC, id DESC
                                 LIMIT 100",
             (None, _) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
                          FROM goals
                          WHERE (project_id = ? OR project_id IS NULL)
-                         ORDER BY created_at DESC
+                         ORDER BY created_at DESC, id DESC
                          LIMIT 100",
         };
         let mut stmt = conn.prepare(sql)?;
@@ -286,6 +286,11 @@ impl Database {
     /// Delete a goal
     pub fn delete_goal(&self, id: i64) -> Result<()> {
         let conn = self.conn();
+        // First, orphan any tasks referencing this goal
+        conn.execute("UPDATE tasks SET goal_id = NULL WHERE goal_id = ?", [id])?;
+        // Also orphan any milestones
+        conn.execute("UPDATE milestones SET goal_id = NULL WHERE goal_id = ?", [id])?;
+        // Now delete the goal
         conn.execute("DELETE FROM goals WHERE id = ?", [id])?;
         Ok(())
     }

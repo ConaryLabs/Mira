@@ -56,72 +56,113 @@ impl Database {
         confidence: f64,
         session_id: Option<&str>,
     ) -> Result<i64> {
-        let conn = self.conn();
+        // Do all DB operations in a block to release lock before promotion check
+        let (result_id, needs_promotion) = {
+            let conn = self.conn();
 
-        // Upsert by key if provided
-        if let Some(k) = key {
-            let existing: Option<(i64, Option<String>)> = conn
-                .query_row(
-                    "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
-                    params![k, project_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .ok();
+            // Upsert by key if provided
+            if let Some(k) = key {
+                let existing: Option<(i64, Option<String>)> = conn
+                    .query_row(
+                        "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
+                        params![k, project_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .ok();
 
-            if let Some((id, last_session)) = existing {
-                // Check if this is a new session
-                let is_new_session = session_id.map(|s| last_session.as_deref() != Some(s)).unwrap_or(false);
+                if let Some((id, last_session)) = existing {
+                    // Check if this is a new session
+                    let is_new_session =
+                        session_id.map(|s| last_session.as_deref() != Some(s)).unwrap_or(false);
 
-                if is_new_session {
-                    // Increment session count and update last_session_id
-                    conn.execute(
-                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
-                         session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        params![content, fact_type, category, confidence, session_id, id],
-                    )?;
-                    // Check for promotion
-                    self.maybe_promote_memory(id)?;
+                    if is_new_session {
+                        // Increment session count and update last_session_id
+                        conn.execute(
+                            "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+                             session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            params![content, fact_type, category, confidence, session_id, id],
+                        )?;
+                        (id, true)
+                    } else {
+                        conn.execute(
+                            "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            params![content, fact_type, category, confidence, id],
+                        )?;
+                        (id, false)
+                    }
                 } else {
+                    // Key provided but no existing record - insert new
+                    // New candidates start with capped confidence (max 0.5),
+                    // except for health alerts which use their original confidence
+                    let initial_confidence = if fact_type == "health" {
+                        confidence
+                    } else {
+                        confidence.min(0.5)
+                    };
                     conn.execute(
-                        "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        params![content, fact_type, category, confidence, id],
+                        "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
+                         session_count, first_session_id, last_session_id, status)
+                         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
+                        params![project_id, key, content, fact_type, category, initial_confidence, session_id, session_id],
                     )?;
+                    (conn.last_insert_rowid(), false)
                 }
-                return Ok(id);
+            } else {
+                // No key - always insert new
+                // New candidates start with capped confidence (max 0.5),
+                // except for health alerts which use their original confidence
+                let initial_confidence = if fact_type == "health" {
+                    confidence
+                } else {
+                    confidence.min(0.5)
+                };
+                conn.execute(
+                    "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
+                     session_count, first_session_id, last_session_id, status)
+                     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
+                    params![project_id, key, content, fact_type, category, initial_confidence, session_id, session_id],
+                )?;
+                (conn.last_insert_rowid(), false)
             }
+        };
+
+        // Check for promotion after lock is released
+        if needs_promotion {
+            self.maybe_promote_memory(result_id)?;
         }
 
-        // New memory - starts as candidate with low confidence
-        let initial_confidence = if confidence < 1.0 { confidence } else { 0.5 };
-        conn.execute(
-            "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-             session_count, first_session_id, last_session_id, status)
-             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate')",
-            params![project_id, key, content, fact_type, category, initial_confidence, session_id, session_id],
-        )?;
-        Ok(conn.last_insert_rowid())
+        Ok(result_id)
     }
 
     /// Record that a memory was accessed in a session (for recall tracking)
     pub fn record_memory_access(&self, memory_id: i64, session_id: &str) -> Result<()> {
-        let conn = self.conn();
+        let needs_promotion = {
+            let conn = self.conn();
 
-        // Get current session info
-        let current: Option<String> = conn
-            .query_row(
-                "SELECT last_session_id FROM memory_facts WHERE id = ?",
-                [memory_id],
-                |row| row.get(0),
-            )
-            .ok()
-            .flatten();
+            // Get current session info
+            let current: Option<String> = conn
+                .query_row(
+                    "SELECT last_session_id FROM memory_facts WHERE id = ?",
+                    [memory_id],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
 
-        // Only increment if this is a new session
-        if current.as_deref() != Some(session_id) {
-            conn.execute(
-                "UPDATE memory_facts SET session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                params![session_id, memory_id],
-            )?;
+            // Only increment if this is a new session
+            if current.as_deref() != Some(session_id) {
+                conn.execute(
+                    "UPDATE memory_facts SET session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    params![session_id, memory_id],
+                )?;
+                true
+            } else {
+                false
+            }
+        };
+
+        // Check for promotion after lock is released
+        if needs_promotion {
             self.maybe_promote_memory(memory_id)?;
         }
 
