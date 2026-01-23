@@ -1,6 +1,6 @@
 //! Test utilities for Mira integration tests
 
-use mira::{db::Database, db::pool::DatabasePool, llm::ProviderFactory, embeddings::Embeddings, llm::DeepSeekClient, background::watcher::WatcherHandle};
+use mira::{db::Database, db::pool::DatabasePool, llm::ProviderFactory, embeddings::EmbeddingClient, llm::DeepSeekClient, background::watcher::WatcherHandle};
 use mira_types::{ProjectContext, WsEvent};
 use std::sync::Arc;
 use tokio::sync::{RwLock, oneshot};
@@ -74,7 +74,7 @@ impl mira::tools::core::ToolContext for TestContext {
         &self.pool
     }
 
-    fn embeddings(&self) -> Option<&Arc<Embeddings>> {
+    fn embeddings(&self) -> Option<&Arc<EmbeddingClient>> {
         None // No embeddings client for tests
     }
 

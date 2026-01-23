@@ -4,7 +4,7 @@
 pub mod parsers;
 
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::project_files::walker::FileWalker;
 use crate::search::embedding_to_bytes;
 use anyhow::{Context, Result};
@@ -47,7 +47,7 @@ const CHUNK_FLUSH_THRESHOLD: usize = 1000;
 
 /// Helper to embed chunks and return vectors
 async fn embed_chunks(
-    embeddings: &Embeddings,
+    embeddings: &EmbeddingClient,
     pending_chunks: &[PendingChunk],
 ) -> Result<Vec<Vec<f32>>, String> {
     let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
@@ -104,7 +104,7 @@ async fn store_chunk_embeddings(
 async fn flush_chunks(
     mut pending_chunks: Vec<PendingChunk>,
     db: Arc<Database>,
-    embeddings: Option<Arc<Embeddings>>,
+    embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
     stats: &mut IndexStats,
 ) -> Result<()> {
@@ -640,7 +640,7 @@ async fn process_files_loop(
     pending_batches: &mut Vec<PendingFileBatch>,
     pending_chunks: &mut Vec<PendingChunk>,
     db: Arc<Database>,
-    embeddings: Option<Arc<Embeddings>>,
+    embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
     stats: &mut IndexStats,
 ) -> Result<()> {
@@ -732,7 +732,7 @@ async fn flush_remaining_data(
     pending_batches: &mut Vec<PendingFileBatch>,
     pending_chunks: Vec<PendingChunk>,
     db: Arc<Database>,
-    embeddings: Option<Arc<Embeddings>>,
+    embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
     stats: &mut IndexStats,
 ) -> Result<()> {
@@ -767,7 +767,7 @@ fn rebuild_fts_index_if_needed(db: Arc<Database>, project_id: Option<i64>) {
 pub async fn index_project(
     path: &Path,
     db: Arc<Database>,
-    embeddings: Option<Arc<Embeddings>>,
+    embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
 ) -> Result<IndexStats> {
     tracing::info!("Starting index_project for {:?}", path);

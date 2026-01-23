@@ -103,9 +103,6 @@ pub struct Embeddings {
     project_id: Arc<RwLock<Option<i64>>>,
 }
 
-/// Type alias for clarity
-pub type EmbeddingClient = Embeddings;
-
 impl Embeddings {
     /// Create new embeddings client with default model (text-embedding-3-small)
     pub fn new(api_key: String) -> Self {

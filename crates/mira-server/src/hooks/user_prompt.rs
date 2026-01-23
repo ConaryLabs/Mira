@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::hooks::{read_hook_input, write_hook_output};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,11 +15,8 @@ fn get_db_path() -> PathBuf {
 }
 
 /// Get embeddings client if available
-fn get_embeddings() -> Option<Arc<Embeddings>> {
-    std::env::var("OPENAI_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-        .map(|key| Arc::new(Embeddings::new(key)))
+fn get_embeddings() -> Option<Arc<EmbeddingClient>> {
+    EmbeddingClient::from_env(None).map(Arc::new)
 }
 
 /// Run UserPromptSubmit hook

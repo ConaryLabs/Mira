@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, PromptBuilder};
 
 /// Tools that produce outcomes worth remembering
@@ -22,7 +22,7 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
 /// Spawn background extraction for a tool call
 pub fn spawn_tool_extraction(
     db: Arc<Database>,
-    embeddings: Option<Arc<Embeddings>>,
+    embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
     project_id: Option<i64>,
     tool_name: String,
@@ -67,7 +67,7 @@ pub fn spawn_tool_extraction(
 /// Perform extraction and store results
 async fn extract_and_store(
     db: &Database,
-    embeddings: Option<&Arc<Embeddings>>,
+    embeddings: Option<&Arc<EmbeddingClient>>,
     deepseek: &DeepSeekClient,
     project_id: Option<i64>,
     tool_name: &str,

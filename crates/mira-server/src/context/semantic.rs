@@ -2,17 +2,17 @@
 // Semantic context injection using embeddings search
 
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::search::hybrid_search;
 use std::sync::Arc;
 
 pub struct SemanticInjector {
     db: Arc<Database>,
-    embeddings: Option<Arc<Embeddings>>,
+    embeddings: Option<Arc<EmbeddingClient>>,
 }
 
 impl SemanticInjector {
-    pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
+    pub fn new(db: Arc<Database>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
         Self { db, embeddings }
     }
 

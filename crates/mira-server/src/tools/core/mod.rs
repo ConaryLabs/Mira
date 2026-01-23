@@ -11,7 +11,7 @@ use tokio::sync::{oneshot, RwLock};
 
 use crate::db::pool::DatabasePool;
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use crate::background::watcher::WatcherHandle;
 
@@ -28,7 +28,7 @@ pub trait ToolContext: Send + Sync {
     fn pool(&self) -> &Arc<DatabasePool>;
 
     /// Embeddings client for semantic search (optional)
-    fn embeddings(&self) -> Option<&Arc<Embeddings>>;
+    fn embeddings(&self) -> Option<&Arc<EmbeddingClient>>;
 
     /// DeepSeek client for chat/completion (optional, deprecated - use llm_factory)
     fn deepseek(&self) -> Option<&Arc<DeepSeekClient>>;

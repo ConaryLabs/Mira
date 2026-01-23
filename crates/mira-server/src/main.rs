@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use mira::background;
 use mira::db::pool::DatabasePool;
 use mira::db::Database;
-use mira::embeddings::Embeddings;
+use mira::embeddings::EmbeddingClient;
 use mira::llm::DeepSeekClient;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::{
@@ -25,75 +25,34 @@ use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-/// Get embeddings client if API key is available (filters empty keys)
+/// Get embeddings client if API key is available
+/// Supports multiple providers via MIRA_EMBEDDING_PROVIDER env var (openai, google)
 #[allow(dead_code)]
-fn get_embeddings() -> Option<Arc<Embeddings>> {
+fn get_embeddings() -> Option<Arc<EmbeddingClient>> {
     get_embeddings_with_db(None)
 }
 
 /// Get embeddings client with database for usage tracking
-/// Checks for model compatibility and warns if mismatch detected
-fn get_embeddings_with_db(db: Option<Arc<Database>>) -> Option<Arc<Embeddings>> {
-    use mira::db::EmbeddingModelCheck;
-    use mira::embeddings::EmbeddingModel;
+///
+/// Environment variables:
+/// - MIRA_EMBEDDING_PROVIDER: "openai" (default) or "google"
+/// - MIRA_EMBEDDING_MODEL: Model name (e.g., "text-embedding-3-small", "gemini-embedding-001")
+/// - MIRA_EMBEDDING_DIMENSIONS: Output dimensions (Google only, default: 768)
+/// - MIRA_EMBEDDING_TASK_TYPE: Task type for Google (RETRIEVAL_DOCUMENT, SEMANTIC_SIMILARITY, etc.)
+/// - OPENAI_API_KEY: Required for OpenAI provider
+/// - GOOGLE_API_KEY: Required for Google provider
+fn get_embeddings_with_db(db: Option<Arc<Database>>) -> Option<Arc<EmbeddingClient>> {
+    let client = EmbeddingClient::from_env(db.clone())?;
 
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())?;
+    // Log the configured provider
+    info!(
+        "Embedding provider: {} (model: {}, {} dimensions)",
+        client.provider(),
+        client.model_name(),
+        client.dimensions()
+    );
 
-    // Default model - could be made configurable via env var
-    let model = std::env::var("MIRA_EMBEDDING_MODEL")
-        .ok()
-        .and_then(|m| EmbeddingModel::from_name(&m))
-        .unwrap_or_default();
-
-    // Check model compatibility if we have a database
-    if let Some(ref db) = db {
-        match db.check_embedding_model(model) {
-            Ok(EmbeddingModelCheck::FirstUse) => {
-                // First time - record the model choice
-                if let Err(e) = db.set_embedding_model(model) {
-                    tracing::warn!("Failed to save embedding model config: {}", e);
-                } else {
-                    info!("Embedding model configured: {} ({} dimensions, ${:.2}/1M tokens)",
-                        model.model_name(),
-                        model.dimensions(),
-                        model.cost_per_million()
-                    );
-                }
-            }
-            Ok(EmbeddingModelCheck::Matches) => {
-                // All good
-            }
-            Ok(EmbeddingModelCheck::Mismatch { stored, requested, has_vectors }) => {
-                if has_vectors {
-                    tracing::error!(
-                        "EMBEDDING MODEL MISMATCH: Database uses {} ({} dims) but {} ({} dims) requested.\n\
-                         Existing vectors would be incompatible. To switch models:\n\
-                         1. Export any data you need\n\
-                         2. Run: mira index --force (to re-index with new model)\n\
-                         Continuing with stored model: {}",
-                        stored.model_name(), stored.dimensions(),
-                        requested.model_name(), requested.dimensions(),
-                        stored.model_name()
-                    );
-                    // Use the stored model to maintain compatibility
-                    return Some(Arc::new(Embeddings::with_model(api_key, stored, Some(db.clone()))));
-                } else {
-                    // No vectors yet, safe to switch
-                    if let Err(e) = db.set_embedding_model(requested) {
-                        tracing::warn!("Failed to update embedding model config: {}", e);
-                    }
-                    info!("Embedding model updated to: {}", requested.model_name());
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to check embedding model compatibility: {}", e);
-            }
-        }
-    }
-
-    Some(Arc::new(Embeddings::with_model(api_key, model, db)))
+    Some(Arc::new(client))
 }
 
 /// Get DeepSeek client if API key is available

@@ -2,7 +2,7 @@
 // Background processing of pending embeddings queue
 
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::search::embedding_to_bytes;
 use rusqlite::params;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ const BATCH_SIZE: usize = 100;
 /// Process pending embeddings from the queue
 pub async fn process_pending_embeddings(
     db: &Arc<Database>,
-    embeddings: Option<&Arc<Embeddings>>,
+    embeddings: Option<&Arc<EmbeddingClient>>,
 ) -> Result<usize, String> {
     let emb = match embeddings {
         Some(e) => e,

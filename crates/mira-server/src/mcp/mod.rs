@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use crate::background::watcher::WatcherHandle;
 use crate::db::pool::DatabasePool;
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::hooks::session::read_claude_session_id;
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use mira_types::{AgentRole, ProjectContext, WsEvent};
@@ -37,7 +37,7 @@ pub struct MiraServer {
     pub db: Arc<Database>,
     /// Async connection pool (preferred for new code)
     pub pool: Arc<DatabasePool>,
-    pub embeddings: Option<Arc<Embeddings>>,
+    pub embeddings: Option<Arc<EmbeddingClient>>,
     pub deepseek: Option<Arc<DeepSeekClient>>,
     pub llm_factory: Arc<ProviderFactory>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
@@ -60,7 +60,7 @@ impl MiraServer {
             .map(|key| Arc::new(DeepSeekClient::new(key)))
     }
 
-    pub fn new(db: Arc<Database>, pool: Arc<DatabasePool>, embeddings: Option<Arc<Embeddings>>) -> Self {
+    pub fn new(db: Arc<Database>, pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
         // Try to create DeepSeek client from env (kept for backward compatibility)
         let deepseek = Self::create_deepseek_client();
 
@@ -86,7 +86,7 @@ impl MiraServer {
     pub fn with_watcher(
         db: Arc<Database>,
         pool: Arc<DatabasePool>,
-        embeddings: Option<Arc<Embeddings>>,
+        embeddings: Option<Arc<EmbeddingClient>>,
         watcher: WatcherHandle,
     ) -> Self {
         let deepseek = Self::create_deepseek_client();
@@ -113,7 +113,7 @@ impl MiraServer {
     pub fn with_broadcaster(
         db: Arc<Database>,
         pool: Arc<DatabasePool>,
-        embeddings: Option<Arc<Embeddings>>,
+        embeddings: Option<Arc<EmbeddingClient>>,
         deepseek: Option<Arc<DeepSeekClient>>,
         ws_tx: tokio::sync::broadcast::Sender<mira_types::WsEvent>,
         session_id: Arc<RwLock<Option<String>>>,

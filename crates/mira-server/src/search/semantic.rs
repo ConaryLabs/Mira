@@ -5,7 +5,7 @@ use super::context::expand_context;
 use super::keyword::keyword_search;
 use super::utils::{distance_to_score, embedding_to_bytes};
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 use crate::Result;
 use rusqlite::params;
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ pub struct HybridSearchResult {
 /// Semantic search using embeddings
 pub async fn semantic_search(
     db: &Arc<Database>,
-    embeddings: &Arc<Embeddings>,
+    embeddings: &Arc<EmbeddingClient>,
     query: &str,
     project_id: Option<i64>,
     limit: usize,
@@ -289,7 +289,7 @@ fn merge_results(
 /// Falls back to keyword-only if embeddings unavailable
 pub async fn hybrid_search(
     db: &Arc<Database>,
-    embeddings: Option<&Arc<Embeddings>>,
+    embeddings: Option<&Arc<EmbeddingClient>>,
     query: &str,
     project_id: Option<i64>,
     project_path: Option<&str>,

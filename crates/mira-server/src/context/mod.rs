@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 use crate::db::Database;
-use crate::embeddings::Embeddings;
+use crate::embeddings::EmbeddingClient;
 
 mod semantic;
 mod file_aware;
@@ -42,7 +42,7 @@ pub struct ContextInjectionManager {
 }
 
 impl ContextInjectionManager {
-    pub fn new(db: Arc<Database>, embeddings: Option<Arc<Embeddings>>) -> Self {
+    pub fn new(db: Arc<Database>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
         Self {
             db: db.clone(),
             semantic_injector: SemanticInjector::new(db.clone(), embeddings),

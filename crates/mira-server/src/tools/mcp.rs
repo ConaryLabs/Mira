@@ -21,7 +21,7 @@ impl ToolContext for MiraServer {
         &self.pool
     }
 
-    fn embeddings(&self) -> Option<&Arc<crate::embeddings::Embeddings>> {
+    fn embeddings(&self) -> Option<&Arc<crate::embeddings::EmbeddingClient>> {
         self.embeddings.as_ref()
     }
 
