@@ -1,10 +1,9 @@
 // crates/mira-server/src/background/diff_analysis.rs
 // Core logic for semantic diff analysis
 
-use crate::db::Database;
+use crate::db::{Database, map_files_to_symbols_sync};
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use crate::search::find_callers;
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -163,30 +162,7 @@ pub fn map_to_symbols(
     project_id: Option<i64>,
     changed_files: &[String],
 ) -> Vec<(String, String, String)> {
-    // (symbol_name, symbol_type, file_path)
-    let mut symbols = Vec::new();
-
-    for file in changed_files {
-        let mut stmt = match conn.prepare(
-            "SELECT name, symbol_type, file_path FROM code_symbols
-             WHERE (project_id = ? OR project_id IS NULL) AND file_path LIKE ?
-             ORDER BY start_line"
-        ) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        let file_pattern = format!("%{}", file);
-        if let Ok(rows) = stmt.query_map(params![project_id, file_pattern], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        }) {
-            for row in rows.flatten() {
-                symbols.push(row);
-            }
-        }
-    }
-
-    symbols
+    map_files_to_symbols_sync(conn, project_id, changed_files)
 }
 
 /// Build impact analysis by traversing call graph

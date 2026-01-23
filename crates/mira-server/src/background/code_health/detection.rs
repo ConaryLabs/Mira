@@ -2,10 +2,9 @@
 // Pattern-based detection for code health issues
 // Uses pure Rust implementation (no shell commands) for cross-platform support
 
-use crate::db::Database;
+use crate::db::{Database, get_unused_functions_sync};
 use crate::project_files::walker;
 use regex::Regex;
-use rusqlite::params;
 use std::fs;
 use std::path::Path;
 
@@ -164,102 +163,7 @@ pub fn scan_unused_functions(db: &Database, project_id: i64) -> Result<usize, St
     // Query unused functions (release connection before storing)
     let unused: Vec<(String, String, i64)> = {
         let conn = db.conn();
-
-        // Find functions that are defined but never appear as callees
-        // The call graph doesn't capture self.method() calls, so we use heuristics:
-        // - Exclude common method patterns (process_*, handle_*, get_*, etc.)
-        // - Exclude trait implementations and common entry points
-        // - Exclude test functions
-        let mut stmt = conn
-            .prepare(
-                "SELECT s.name, s.file_path, s.start_line
-                 FROM code_symbols s
-                 WHERE s.project_id = ?
-                   AND s.symbol_type = 'function'
-                   -- Not called anywhere in the call graph
-                   AND s.name NOT IN (SELECT DISTINCT callee_name FROM call_graph)
-                   -- Exclude test functions
-                   AND s.name NOT LIKE 'test_%'
-                   AND s.name NOT LIKE '%_test'
-                   AND s.name NOT LIKE '%_tests'
-                   AND s.file_path NOT LIKE '%/tests/%'
-                   AND s.file_path NOT LIKE '%_test.rs'
-                   -- Exclude common entry points and trait methods
-                   AND s.name NOT IN ('main', 'run', 'new', 'default', 'from', 'into', 'drop', 'clone', 'fmt', 'eq', 'hash', 'cmp', 'partial_cmp')
-                   -- Exclude common method patterns (likely called via self.*)
-                   AND s.name NOT LIKE 'process_%'
-                   AND s.name NOT LIKE 'handle_%'
-                   AND s.name NOT LIKE 'on_%'
-                   AND s.name NOT LIKE 'do_%'
-                   AND s.name NOT LIKE 'try_%'
-                   AND s.name NOT LIKE 'get_%'
-                   AND s.name NOT LIKE 'set_%'
-                   AND s.name NOT LIKE 'is_%'
-                   AND s.name NOT LIKE 'has_%'
-                   AND s.name NOT LIKE 'with_%'
-                   AND s.name NOT LIKE 'to_%'
-                   AND s.name NOT LIKE 'as_%'
-                   AND s.name NOT LIKE 'into_%'
-                   AND s.name NOT LIKE 'from_%'
-                   AND s.name NOT LIKE 'parse_%'
-                   AND s.name NOT LIKE 'build_%'
-                   AND s.name NOT LIKE 'create_%'
-                   AND s.name NOT LIKE 'make_%'
-                   AND s.name NOT LIKE 'init_%'
-                   AND s.name NOT LIKE 'setup_%'
-                   AND s.name NOT LIKE 'check_%'
-                   AND s.name NOT LIKE 'validate_%'
-                   AND s.name NOT LIKE 'clear_%'
-                   AND s.name NOT LIKE 'reset_%'
-                   AND s.name NOT LIKE 'update_%'
-                   AND s.name NOT LIKE 'delete_%'
-                   AND s.name NOT LIKE 'remove_%'
-                   AND s.name NOT LIKE 'add_%'
-                   AND s.name NOT LIKE 'insert_%'
-                   AND s.name NOT LIKE 'find_%'
-                   AND s.name NOT LIKE 'search_%'
-                   AND s.name NOT LIKE 'load_%'
-                   AND s.name NOT LIKE 'save_%'
-                   AND s.name NOT LIKE 'store_%'
-                   AND s.name NOT LIKE 'read_%'
-                   AND s.name NOT LIKE 'write_%'
-                   AND s.name NOT LIKE 'send_%'
-                   AND s.name NOT LIKE 'receive_%'
-                   AND s.name NOT LIKE 'start_%'
-                   AND s.name NOT LIKE 'stop_%'
-                   AND s.name NOT LIKE 'spawn_%'
-                   AND s.name NOT LIKE 'run_%'
-                   AND s.name NOT LIKE 'execute_%'
-                   AND s.name NOT LIKE 'render_%'
-                   AND s.name NOT LIKE 'format_%'
-                   AND s.name NOT LIKE 'generate_%'
-                   AND s.name NOT LIKE 'compute_%'
-                   AND s.name NOT LIKE 'calculate_%'
-                   AND s.name NOT LIKE 'mark_%'
-                   AND s.name NOT LIKE 'scan_%'
-                   AND s.name NOT LIKE 'index_%'
-                   AND s.name NOT LIKE 'register_%'
-                   AND s.name NOT LIKE 'unregister_%'
-                   AND s.name NOT LIKE 'connect_%'
-                   AND s.name NOT LIKE 'disconnect_%'
-                   AND s.name NOT LIKE 'open_%'
-                   AND s.name NOT LIKE 'close_%'
-                   AND s.name NOT LIKE 'lock_%'
-                   AND s.name NOT LIKE 'unlock_%'
-                   AND s.name NOT LIKE 'acquire_%'
-                   AND s.name NOT LIKE 'release_%'
-                   -- Exclude private helpers (underscore prefix)
-                   AND s.name NOT LIKE '_%'
-                 LIMIT 20",
-            )
-            .map_err(|e| e.to_string())?;
-
-        stmt.query_map(params![project_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect()
+        get_unused_functions_sync(&conn, project_id).map_err(|e| e.to_string())?
     }; // conn dropped here
 
     let mut stored = 0;

@@ -1,7 +1,7 @@
 // crates/mira-server/src/tools/core/claude_local.rs
 // CLAUDE.local.md integration - bidirectional sync with Mira memories
 
-use crate::db::pool::DatabasePool;
+use crate::db::{import_confirmed_memory_sync, pool::DatabasePool, search_memories_sync};
 use crate::tools::core::ToolContext;
 use std::collections::HashSet;
 use std::path::Path;
@@ -107,8 +107,6 @@ fn import_claude_local_md_sync(
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    use rusqlite::params;
-
     let claude_local_path = Path::new(project_path).join("CLAUDE.local.md");
 
     if !claude_local_path.exists() {
@@ -124,7 +122,8 @@ fn import_claude_local_md_sync(
     }
 
     // Get existing memories to check for duplicates
-    let existing = search_memories_sync(conn, Some(project_id), "", 1000)?;
+    let existing = search_memories_sync(conn, Some(project_id), "", None, 1000)
+        .map_err(|e| e.to_string())?;
     let existing_content: HashSet<_> = existing.iter().map(|m| m.content.as_str()).collect();
 
     let mut imported = 0;
@@ -146,72 +145,21 @@ fn import_claude_local_md_sync(
             _ => "general",
         };
 
-        // Store memory directly using connection
-        let initial_confidence = 0.9; // High confidence since user explicitly wrote it
-        conn.execute(
-            "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-             session_count, first_session_id, last_session_id, status)
-             VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, 'confirmed')",
-            params![Some(project_id), Some(&key), &entry_content, fact_type, category, initial_confidence],
+        // Store confirmed memory (high confidence since user explicitly wrote it)
+        import_confirmed_memory_sync(
+            conn,
+            project_id,
+            &key,
+            &entry_content,
+            fact_type,
+            category.as_deref(),
+            0.9,
         ).map_err(|e| e.to_string())?;
 
         imported += 1;
     }
 
     Ok(imported)
-}
-
-/// Sync helper: search memories by text (for use inside run_blocking)
-fn search_memories_sync(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<mira_types::MemoryFact>, String> {
-    use rusqlite::params;
-
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let pattern = format!("%{}%", escaped);
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status,
-                    user_id, scope, team_id
-             FROM memory_facts
-             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
-             ORDER BY updated_at DESC
-             LIMIT ?",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![project_id, pattern, limit as i64], |row| {
-            Ok(mira_types::MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-                session_count: row.get(8).unwrap_or(1),
-                first_session_id: row.get(9).ok(),
-                last_session_id: row.get(10).ok(),
-                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
-                user_id: row.get(12).ok(),
-                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
-                team_id: row.get(14).ok(),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
 }
 
 /// Export Mira memories to CLAUDE.local.md format (sync version for run_blocking)
@@ -221,7 +169,8 @@ fn export_to_claude_local_md_sync(
     project_id: i64,
 ) -> Result<String, String> {
     // Get all high-confidence memories for this project
-    let memories = search_memories_sync(conn, Some(project_id), "", 100)?;
+    let memories = search_memories_sync(conn, Some(project_id), "", None, 100)
+        .map_err(|e| e.to_string())?;
 
     if memories.is_empty() {
         return Ok(String::new());

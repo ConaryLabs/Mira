@@ -302,6 +302,194 @@ pub fn get_error_heavy_functions_sync(
     Ok(results)
 }
 
+/// Find functions that are never called (using indexed call graph)
+/// Note: This is heuristic-based since the call graph doesn't capture self.method() calls
+pub fn get_unused_functions_sync(
+    conn: &Connection,
+    project_id: i64,
+) -> rusqlite::Result<Vec<(String, String, i64)>> {
+    // Find functions that are defined but never appear as callees
+    // The call graph doesn't capture self.method() calls, so we use heuristics:
+    // - Exclude common method patterns (process_*, handle_*, get_*, etc.)
+    // - Exclude trait implementations and common entry points
+    // - Exclude test functions
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.file_path, s.start_line
+         FROM code_symbols s
+         WHERE s.project_id = ?
+           AND s.symbol_type = 'function'
+           -- Not called anywhere in the call graph
+           AND s.name NOT IN (SELECT DISTINCT callee_name FROM call_graph)
+           -- Exclude test functions
+           AND s.name NOT LIKE 'test_%'
+           AND s.name NOT LIKE '%_test'
+           AND s.name NOT LIKE '%_tests'
+           AND s.file_path NOT LIKE '%/tests/%'
+           AND s.file_path NOT LIKE '%_test.rs'
+           -- Exclude common entry points and trait methods
+           AND s.name NOT IN ('main', 'run', 'new', 'default', 'from', 'into', 'drop', 'clone', 'fmt', 'eq', 'hash', 'cmp', 'partial_cmp')
+           -- Exclude common method patterns (likely called via self.*)
+           AND s.name NOT LIKE 'process_%'
+           AND s.name NOT LIKE 'handle_%'
+           AND s.name NOT LIKE 'on_%'
+           AND s.name NOT LIKE 'do_%'
+           AND s.name NOT LIKE 'try_%'
+           AND s.name NOT LIKE 'get_%'
+           AND s.name NOT LIKE 'set_%'
+           AND s.name NOT LIKE 'is_%'
+           AND s.name NOT LIKE 'has_%'
+           AND s.name NOT LIKE 'with_%'
+           AND s.name NOT LIKE 'to_%'
+           AND s.name NOT LIKE 'as_%'
+           AND s.name NOT LIKE 'into_%'
+           AND s.name NOT LIKE 'from_%'
+           AND s.name NOT LIKE 'parse_%'
+           AND s.name NOT LIKE 'build_%'
+           AND s.name NOT LIKE 'create_%'
+           AND s.name NOT LIKE 'make_%'
+           AND s.name NOT LIKE 'init_%'
+           AND s.name NOT LIKE 'setup_%'
+           AND s.name NOT LIKE 'check_%'
+           AND s.name NOT LIKE 'validate_%'
+           AND s.name NOT LIKE 'clear_%'
+           AND s.name NOT LIKE 'reset_%'
+           AND s.name NOT LIKE 'update_%'
+           AND s.name NOT LIKE 'delete_%'
+           AND s.name NOT LIKE 'remove_%'
+           AND s.name NOT LIKE 'add_%'
+           AND s.name NOT LIKE 'insert_%'
+           AND s.name NOT LIKE 'find_%'
+           AND s.name NOT LIKE 'search_%'
+           AND s.name NOT LIKE 'load_%'
+           AND s.name NOT LIKE 'save_%'
+           AND s.name NOT LIKE 'store_%'
+           AND s.name NOT LIKE 'read_%'
+           AND s.name NOT LIKE 'write_%'
+           AND s.name NOT LIKE 'send_%'
+           AND s.name NOT LIKE 'receive_%'
+           AND s.name NOT LIKE 'start_%'
+           AND s.name NOT LIKE 'stop_%'
+           AND s.name NOT LIKE 'spawn_%'
+           AND s.name NOT LIKE 'run_%'
+           AND s.name NOT LIKE 'execute_%'
+           AND s.name NOT LIKE 'render_%'
+           AND s.name NOT LIKE 'format_%'
+           AND s.name NOT LIKE 'generate_%'
+           AND s.name NOT LIKE 'compute_%'
+           AND s.name NOT LIKE 'calculate_%'
+           AND s.name NOT LIKE 'mark_%'
+           AND s.name NOT LIKE 'scan_%'
+           AND s.name NOT LIKE 'index_%'
+           AND s.name NOT LIKE 'register_%'
+           AND s.name NOT LIKE 'unregister_%'
+           AND s.name NOT LIKE 'connect_%'
+           AND s.name NOT LIKE 'disconnect_%'
+           AND s.name NOT LIKE 'open_%'
+           AND s.name NOT LIKE 'close_%'
+           AND s.name NOT LIKE 'lock_%'
+           AND s.name NOT LIKE 'unlock_%'
+           AND s.name NOT LIKE 'acquire_%'
+           AND s.name NOT LIKE 'release_%'
+           -- Exclude private helpers (underscore prefix)
+           AND s.name NOT LIKE '_%'
+         LIMIT 20",
+    )?;
+
+    let results = stmt
+        .query_map(params![project_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(results)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Diff analysis
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Map changed files to affected symbols in the database
+/// Returns (symbol_name, symbol_type, file_path)
+pub fn map_files_to_symbols_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    changed_files: &[String],
+) -> Vec<(String, String, String)> {
+    let mut symbols = Vec::new();
+
+    for file in changed_files {
+        let mut stmt = match conn.prepare(
+            "SELECT name, symbol_type, file_path FROM code_symbols
+             WHERE (project_id = ? OR project_id IS NULL) AND file_path LIKE ?
+             ORDER BY start_line",
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let file_pattern = format!("%{}", file);
+        if let Ok(rows) = stmt.query_map(params![project_id, file_pattern], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }) {
+            for row in rows.flatten() {
+                symbols.push(row);
+            }
+        }
+    }
+
+    symbols
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Summaries processor
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get projects that have modules needing summaries
+pub fn get_projects_with_pending_summaries_sync(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT m.project_id, p.path
+         FROM codebase_modules m
+         JOIN projects p ON p.id = m.project_id
+         WHERE m.purpose IS NULL OR m.purpose = ''
+         LIMIT 10",
+    )?;
+
+    let results = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map(|r| r.filter_map(|row| row.ok()).collect())?;
+
+    Ok(results)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Permission hooks
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get permission rules for a tool
+pub fn get_permission_rules_sync(
+    conn: &Connection,
+    tool_name: &str,
+) -> Vec<(String, String)> {
+    let mut stmt = match conn.prepare(
+        "SELECT pattern, match_type FROM permission_rules WHERE tool_name = ?",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    stmt.query_map([tool_name], |row| Ok((row.get(0)?, row.get(1)?)))
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

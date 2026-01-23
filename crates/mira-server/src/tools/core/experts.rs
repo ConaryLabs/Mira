@@ -2,6 +2,7 @@
 // Agentic expert sub-agents powered by LLM providers with tool access
 
 use super::ToolContext;
+use crate::db::{recall_semantic_sync, search_memories_sync};
 use crate::indexer;
 use crate::llm::{LlmClient, Message, PromptBuilder, Tool, ToolCall};
 use crate::search::{embedding_to_bytes, find_callers, find_callees, hybrid_search};
@@ -591,27 +592,8 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
             let results: Result<Vec<(i64, String, f32)>, String> = ctx
                 .pool()
                 .interact(move |conn| {
-                    use rusqlite::params;
-                    let mut stmt = conn
-                        .prepare(
-                            "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
-                             FROM vec_memory v
-                             JOIN memory_facts f ON v.fact_id = f.id
-                             WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-                             ORDER BY distance
-                             LIMIT ?3",
-                        )
-                        .map_err(|e| anyhow::anyhow!(e))?;
-
-                    let results: Vec<(i64, String, f32)> = stmt
-                        .query_map(params![embedding_bytes, project_id, limit as i64], |row| {
-                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                        })
-                        .map_err(|e| anyhow::anyhow!(e))?
-                        .filter_map(|r| r.ok())
-                        .collect();
-
-                    Ok(results)
+                    recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit)
+                        .map_err(|e| anyhow::anyhow!(e))
                 })
                 .await
                 .map_err(|e| e.to_string());
@@ -639,7 +621,7 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
     let result = ctx
         .pool()
         .interact(move |conn| {
-            search_memories_sync(conn, project_id, &query_owned, limit)
+            search_memories_sync(conn, project_id, &query_owned, None, limit)
                 .map_err(|e| anyhow::anyhow!(e))
         })
         .await
@@ -664,59 +646,6 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
         }
         Err(e) => format!("Recall failed: {}", e),
     }
-}
-
-/// Sync helper: search memories by text (for use inside run_blocking)
-fn search_memories_sync(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<mira_types::MemoryFact>, String> {
-    use rusqlite::params;
-
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let pattern = format!("%{}%", escaped);
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status,
-                    user_id, scope, team_id
-             FROM memory_facts
-             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
-             ORDER BY updated_at DESC
-             LIMIT ?",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![project_id, pattern, limit as i64], |row| {
-            Ok(mira_types::MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-                session_count: row.get(8).unwrap_or(1),
-                first_session_id: row.get(9).ok(),
-                last_session_id: row.get(10).ok(),
-                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
-                user_id: row.get(12).ok(),
-                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
-                team_id: row.get(14).ok(),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
 }
 
 /// A parsed finding from expert response

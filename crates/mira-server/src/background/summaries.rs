@@ -2,9 +2,8 @@
 // Rate-limited DeepSeek summary generation
 
 use crate::cartographer;
-use crate::db::Database;
+use crate::db::{Database, get_projects_with_pending_summaries_sync};
 use crate::llm::{DeepSeekClient, PromptBuilder};
-use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +20,7 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
     let db_clone = db.clone();
     let projects = tokio::task::spawn_blocking(move || {
         let conn = db_clone.conn();
-        get_projects_with_pending_summaries(&conn)
+        get_projects_with_pending_summaries_sync(&conn).map_err(|e| e.to_string())
     }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
     if projects.is_empty() {
         return Ok(0);
@@ -98,25 +97,4 @@ pub async fn process_queue(db: &Arc<Database>, deepseek: &Arc<DeepSeekClient>) -
     }
 
     Ok(total_processed)
-}
-
-/// Get projects that have modules needing summaries
-fn get_projects_with_pending_summaries(conn: &rusqlite::Connection) -> Result<Vec<(i64, String)>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT m.project_id, p.path
-             FROM codebase_modules m
-             JOIN projects p ON p.id = m.project_id
-             WHERE m.purpose IS NULL OR m.purpose = ''
-             LIMIT 10",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let results: Vec<(i64, String)> = stmt
-        .query_map(params![], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(results)
 }

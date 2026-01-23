@@ -2,7 +2,7 @@
 // Permission hook for Claude Code auto-approval
 
 use anyhow::Result;
-use crate::db::Database;
+use crate::db::{Database, get_permission_rules_sync};
 use crate::hooks::{read_hook_input, write_hook_output};
 use std::path::PathBuf;
 
@@ -21,15 +21,7 @@ pub async fn run() -> Result<()> {
 
     // Check for matching permission rule
     let conn = db.conn();
-    let mut stmt = conn.prepare(
-        "SELECT pattern, match_type FROM permission_rules WHERE tool_name = ?"
-    )?;
-
-    let rules: Vec<(String, String)> = stmt
-        .query_map([tool_name], |row| Ok((row.get(0)?, row.get(1)?)))
-        .ok()
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        .unwrap_or_default();
+    let rules = get_permission_rules_sync(&conn, tool_name);
 
     // Check if any rule matches
     for (pattern, match_type) in rules {

@@ -4,10 +4,11 @@
 use std::path::Path;
 
 use crate::cartographer;
+use crate::db::search_capabilities_sync;
 use crate::indexer;
 use crate::llm::Message;
 use crate::search::{
-    crossref_search, expand_context_with_db, find_callers, find_callees,
+    crossref_search, embedding_to_bytes, expand_context_with_db, find_callers, find_callees,
     format_crossref_results, format_project_header, hybrid_search, CrossRefType,
 };
 use crate::tools::core::ToolContext;
@@ -178,9 +179,6 @@ pub async fn check_capability<C: ToolContext>(
     ctx: &C,
     description: String,
 ) -> Result<String, String> {
-    use crate::search::embedding_to_bytes;
-    use rusqlite::params;
-
     if description.is_empty() {
         return Err("description is required".to_string());
     }
@@ -199,24 +197,8 @@ pub async fn check_capability<C: ToolContext>(
             let capability_results: Result<Vec<(i64, String, String, f32)>, String> = ctx
                 .pool()
                 .interact(move |conn| {
-                    let mut stmt = conn.prepare(
-                        "SELECT f.id, f.content, f.fact_type, vec_distance_cosine(v.embedding, ?1) as distance
-                         FROM vec_memory v
-                         JOIN memory_facts f ON v.fact_id = f.id
-                         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-                           AND f.fact_type IN ('capability', 'issue')
-                         ORDER BY distance
-                         LIMIT 5",
-                    )?;
-
-                    let results: Vec<(i64, String, String, f32)> = stmt
-                        .query_map(params![embedding_bytes, project_id, 5i64], |row| {
-                            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                        })?
-                        .filter_map(|r| r.ok())
-                        .collect();
-
-                    Ok(results)
+                    search_capabilities_sync(conn, &embedding_bytes, project_id, 5)
+                        .map_err(|e| anyhow::anyhow!(e))
                 })
                 .await
                 .map_err(|e| e.to_string());

@@ -73,6 +73,8 @@ pub use memory::{
     // Sync functions for pool.interact() usage
     store_memory_sync, StoreMemoryParams,
     store_embedding_sync,
+    import_confirmed_memory_sync,
+    search_capabilities_sync,
     recall_semantic_sync,
     search_memories_sync,
     record_memory_access_sync,
@@ -109,6 +111,13 @@ pub use background::{
     // Code health analysis
     get_large_functions_sync,
     get_error_heavy_functions_sync,
+    get_unused_functions_sync,
+    // Diff analysis
+    map_files_to_symbols_sync,
+    // Summaries processor
+    get_projects_with_pending_summaries_sync,
+    // Permission hooks
+    get_permission_rules_sync,
 };
 
 use anyhow::{Context, Result};
