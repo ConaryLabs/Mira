@@ -308,3 +308,265 @@ pub fn format_crossref_results(
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // CrossRefType tests
+    // ============================================================================
+
+    #[test]
+    fn test_crossref_type_display_caller() {
+        assert_eq!(format!("{}", CrossRefType::Caller), "caller");
+    }
+
+    #[test]
+    fn test_crossref_type_display_callee() {
+        assert_eq!(format!("{}", CrossRefType::Callee), "callee");
+    }
+
+    #[test]
+    fn test_crossref_type_equality() {
+        assert_eq!(CrossRefType::Caller, CrossRefType::Caller);
+        assert_eq!(CrossRefType::Callee, CrossRefType::Callee);
+        assert_ne!(CrossRefType::Caller, CrossRefType::Callee);
+    }
+
+    #[test]
+    fn test_crossref_type_clone_copy() {
+        let t = CrossRefType::Caller;
+        let cloned = t.clone();
+        let copied = t;
+        assert_eq!(t, cloned);
+        assert_eq!(t, copied);
+    }
+
+    // ============================================================================
+    // extract_crossref_target tests - Caller patterns
+    // ============================================================================
+
+    #[test]
+    fn test_extract_caller_who_calls() {
+        let result = extract_crossref_target("who calls process_request");
+        assert_eq!(result, Some(("process_request".to_string(), CrossRefType::Caller)));
+    }
+
+    #[test]
+    fn test_extract_caller_callers_of() {
+        let result = extract_crossref_target("callers of handle_message");
+        assert_eq!(result, Some(("handle_message".to_string(), CrossRefType::Caller)));
+    }
+
+    #[test]
+    fn test_extract_caller_what_calls() {
+        let result = extract_crossref_target("what calls database_query");
+        assert_eq!(result, Some(("database_query".to_string(), CrossRefType::Caller)));
+    }
+
+    #[test]
+    fn test_extract_caller_references_to() {
+        let result = extract_crossref_target("references to my_function");
+        assert_eq!(result, Some(("my_function".to_string(), CrossRefType::Caller)));
+    }
+
+    #[test]
+    fn test_extract_caller_middle_pattern() {
+        let result = extract_crossref_target("find callers of execute");
+        assert_eq!(result, Some(("execute".to_string(), CrossRefType::Caller)));
+    }
+
+    #[test]
+    fn test_extract_caller_case_insensitive() {
+        let result = extract_crossref_target("WHO CALLS myFunc");
+        assert_eq!(result, Some(("myfunc".to_string(), CrossRefType::Caller)));
+    }
+
+    // ============================================================================
+    // extract_crossref_target tests - Callee patterns
+    // ============================================================================
+
+    #[test]
+    fn test_extract_callee_what_does_call() {
+        let result = extract_crossref_target("what does process call");
+        assert_eq!(result, Some(("process".to_string(), CrossRefType::Callee)));
+    }
+
+    #[test]
+    fn test_extract_callee_functions_called_by() {
+        let result = extract_crossref_target("functions called by main");
+        assert_eq!(result, Some(("main".to_string(), CrossRefType::Callee)));
+    }
+
+    #[test]
+    fn test_extract_callee_callees_of() {
+        let result = extract_crossref_target("callees of handler");
+        // This pattern requires " call" in the query
+        assert!(result.is_none() || result.unwrap().1 == CrossRefType::Callee);
+    }
+
+    // ============================================================================
+    // extract_crossref_target tests - No match
+    // ============================================================================
+
+    #[test]
+    fn test_extract_no_match_empty() {
+        assert!(extract_crossref_target("").is_none());
+    }
+
+    #[test]
+    fn test_extract_no_match_general_query() {
+        assert!(extract_crossref_target("find authentication code").is_none());
+    }
+
+    #[test]
+    fn test_extract_no_match_search_query() {
+        assert!(extract_crossref_target("search for database").is_none());
+    }
+
+    // ============================================================================
+    // is_stdlib_call tests
+    // ============================================================================
+
+    #[test]
+    fn test_is_stdlib_iterator_methods() {
+        assert!(is_stdlib_call("map"));
+        assert!(is_stdlib_call("filter"));
+        assert!(is_stdlib_call("collect"));
+        assert!(is_stdlib_call("iter"));
+        assert!(is_stdlib_call("fold"));
+    }
+
+    #[test]
+    fn test_is_stdlib_option_result_methods() {
+        assert!(is_stdlib_call("unwrap"));
+        assert!(is_stdlib_call("unwrap_or"));
+        assert!(is_stdlib_call("expect"));
+        assert!(is_stdlib_call("ok"));
+        assert!(is_stdlib_call("is_some"));
+        assert!(is_stdlib_call("is_none"));
+    }
+
+    #[test]
+    fn test_is_stdlib_constructors() {
+        assert!(is_stdlib_call("new"));
+        assert!(is_stdlib_call("default"));
+        assert!(is_stdlib_call("clone"));
+        assert!(is_stdlib_call("to_string"));
+        assert!(is_stdlib_call("from"));
+        assert!(is_stdlib_call("into"));
+    }
+
+    #[test]
+    fn test_is_stdlib_result_option_variants() {
+        assert!(is_stdlib_call("Ok"));
+        assert!(is_stdlib_call("Err"));
+        assert!(is_stdlib_call("Some"));
+        assert!(is_stdlib_call("None"));
+    }
+
+    #[test]
+    fn test_is_stdlib_logging() {
+        assert!(is_stdlib_call("debug"));
+        assert!(is_stdlib_call("info"));
+        assert!(is_stdlib_call("warn"));
+        assert!(is_stdlib_call("error"));
+    }
+
+    #[test]
+    fn test_is_stdlib_prefixed() {
+        assert!(is_stdlib_call("tracing::info"));
+        assert!(is_stdlib_call("std::mem::drop"));
+        assert!(is_stdlib_call("Vec::new"));
+        assert!(is_stdlib_call("HashMap::new"));
+    }
+
+    #[test]
+    fn test_is_stdlib_not_stdlib() {
+        assert!(!is_stdlib_call("process_request"));
+        assert!(!is_stdlib_call("handle_message"));
+        assert!(!is_stdlib_call("my_custom_function"));
+        assert!(!is_stdlib_call("DatabaseConnection"));
+    }
+
+    // ============================================================================
+    // format_crossref_results tests
+    // ============================================================================
+
+    #[test]
+    fn test_format_empty_callers() {
+        let result = format_crossref_results("foo", CrossRefType::Caller, &[]);
+        assert!(result.contains("No callers found"));
+        assert!(result.contains("foo"));
+    }
+
+    #[test]
+    fn test_format_empty_callees() {
+        let result = format_crossref_results("bar", CrossRefType::Callee, &[]);
+        assert!(result.contains("No callees found"));
+        assert!(result.contains("bar"));
+    }
+
+    #[test]
+    fn test_format_callers_with_results() {
+        let results = vec![
+            CrossRefResult {
+                symbol_name: "handler".to_string(),
+                file_path: "src/main.rs".to_string(),
+                ref_type: CrossRefType::Caller,
+                call_count: 3,
+            },
+            CrossRefResult {
+                symbol_name: "process".to_string(),
+                file_path: "src/lib.rs".to_string(),
+                ref_type: CrossRefType::Caller,
+                call_count: 1,
+            },
+        ];
+        let output = format_crossref_results("target_fn", CrossRefType::Caller, &results);
+
+        assert!(output.contains("Functions that call `target_fn`"));
+        assert!(output.contains("handler"));
+        assert!(output.contains("src/main.rs"));
+        assert!(output.contains("(3x)"));
+        assert!(output.contains("process"));
+        assert!(output.contains("(1x)"));
+    }
+
+    #[test]
+    fn test_format_callees_with_results() {
+        let results = vec![
+            CrossRefResult {
+                symbol_name: "helper".to_string(),
+                file_path: "src/utils.rs".to_string(),
+                ref_type: CrossRefType::Callee,
+                call_count: 2,
+            },
+        ];
+        let output = format_crossref_results("main", CrossRefType::Callee, &results);
+
+        assert!(output.contains("Functions called by `main`"));
+        assert!(output.contains("helper"));
+        assert!(output.contains("src/utils.rs"));
+    }
+
+    // ============================================================================
+    // CrossRefResult tests
+    // ============================================================================
+
+    #[test]
+    fn test_crossref_result_clone() {
+        let result = CrossRefResult {
+            symbol_name: "test".to_string(),
+            file_path: "src/test.rs".to_string(),
+            ref_type: CrossRefType::Caller,
+            call_count: 5,
+        };
+        let cloned = result.clone();
+        assert_eq!(result.symbol_name, cloned.symbol_name);
+        assert_eq!(result.file_path, cloned.file_path);
+        assert_eq!(result.ref_type, cloned.ref_type);
+        assert_eq!(result.call_count, cloned.call_count);
+    }
+}

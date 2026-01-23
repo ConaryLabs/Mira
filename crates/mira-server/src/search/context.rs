@@ -140,3 +140,111 @@ pub fn expand_context_with_db(
     // Final fallback: return chunk as-is
     Some((symbol_info, chunk_content.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // parse_symbol_header tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_symbol_header_function() {
+        let result = parse_symbol_header("// function foo\nfn foo() {}");
+        assert_eq!(result, Some(("function".to_string(), "foo".to_string())));
+    }
+
+    #[test]
+    fn test_parse_symbol_header_function_with_signature() {
+        let result = parse_symbol_header("// function foo: fn foo(x: i32) -> bool\nfn foo(x: i32) -> bool {}");
+        assert_eq!(result, Some(("function".to_string(), "foo".to_string())));
+    }
+
+    #[test]
+    fn test_parse_symbol_header_continued() {
+        let result = parse_symbol_header("// function bar (continued)\n    more code here");
+        assert_eq!(result, Some(("function".to_string(), "bar".to_string())));
+    }
+
+    #[test]
+    fn test_parse_symbol_header_struct() {
+        let result = parse_symbol_header("// struct MyStruct\npub struct MyStruct {}");
+        assert_eq!(result, Some(("struct".to_string(), "MyStruct".to_string())));
+    }
+
+    #[test]
+    fn test_parse_symbol_header_impl() {
+        let result = parse_symbol_header("// impl Database\nimpl Database {}");
+        assert_eq!(result, Some(("impl".to_string(), "Database".to_string())));
+    }
+
+    #[test]
+    fn test_parse_symbol_header_method() {
+        let result = parse_symbol_header("// method process: fn process(&self)\nfn process(&self) {}");
+        assert_eq!(result, Some(("method".to_string(), "process".to_string())));
+    }
+
+    #[test]
+    fn test_parse_symbol_header_no_comment_prefix() {
+        let result = parse_symbol_header("fn foo() {}");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_symbol_header_module_level() {
+        let result = parse_symbol_header("// module-level code\nuse std::io;");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_symbol_header_empty() {
+        let result = parse_symbol_header("");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_symbol_header_just_comment() {
+        // Just "// " with nothing after
+        let result = parse_symbol_header("// ");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_symbol_header_whitespace_in_name() {
+        let result = parse_symbol_header("// function my_func \nfn my_func() {}");
+        assert_eq!(result, Some(("function".to_string(), "my_func".to_string())));
+    }
+
+    // ============================================================================
+    // expand_context tests (basic cases without DB)
+    // ============================================================================
+
+    #[test]
+    fn test_expand_context_no_project_path() {
+        let result = expand_context("src/main.rs", "fn main() {}", None);
+        assert!(result.is_some());
+        let (symbol_info, content) = result.unwrap();
+        assert!(symbol_info.is_none());
+        assert_eq!(content, "fn main() {}");
+    }
+
+    #[test]
+    fn test_expand_context_with_header() {
+        let chunk = "// function foo\nfn foo() {}";
+        let result = expand_context("src/lib.rs", chunk, None);
+        assert!(result.is_some());
+        let (symbol_info, content) = result.unwrap();
+        assert_eq!(symbol_info, Some("// function foo".to_string()));
+        assert_eq!(content, chunk);
+    }
+
+    #[test]
+    fn test_expand_context_preserves_content() {
+        let chunk = "pub struct Test {\n    field: i32,\n}";
+        let result = expand_context("src/types.rs", chunk, None);
+        assert!(result.is_some());
+        let (_, content) = result.unwrap();
+        assert_eq!(content, chunk);
+    }
+}

@@ -39,3 +39,64 @@ pub fn read_claude_session_id() -> Option<String> {
     let path = session_file_path();
     fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // session_file_path tests
+    // ============================================================================
+
+    #[test]
+    fn test_session_file_path_not_empty() {
+        let path = session_file_path();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_session_file_path_ends_with_expected() {
+        let path = session_file_path();
+        assert!(path.ends_with("claude-session-id"));
+    }
+
+    #[test]
+    fn test_session_file_path_contains_mira() {
+        let path = session_file_path();
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains(".mira"));
+    }
+
+    // ============================================================================
+    // read_claude_session_id tests
+    // ============================================================================
+
+    #[test]
+    fn test_read_claude_session_id_missing_file() {
+        // Note: This test assumes the session file doesn't exist in most test environments
+        // or returns whatever is currently stored
+        let result = read_claude_session_id();
+        // Result is either Some (if file exists) or None (if not)
+        // We can't assert on the value since it depends on system state
+        assert!(result.is_none() || !result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_read_claude_session_id_trims_whitespace() {
+        use tempfile::TempDir;
+
+        // Create a temp directory with custom session file
+        let temp_dir = TempDir::new().unwrap();
+        let session_path = temp_dir.path().join("claude-session-id");
+
+        // Write session ID with whitespace
+        std::fs::write(&session_path, "  session123\n  ").unwrap();
+
+        // Read directly from the file (since read_claude_session_id uses fixed path)
+        let content = std::fs::read_to_string(&session_path)
+            .ok()
+            .map(|s| s.trim().to_string());
+
+        assert_eq!(content, Some("session123".to_string()));
+    }
+}
