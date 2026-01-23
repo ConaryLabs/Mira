@@ -145,3 +145,102 @@ struct ExtractedOutcome {
     category: String,
     key: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // EXTRACTABLE_TOOLS tests
+    // ============================================================================
+
+    #[test]
+    fn test_extractable_tools_contains_task() {
+        assert!(EXTRACTABLE_TOOLS.contains(&"task"));
+    }
+
+    #[test]
+    fn test_extractable_tools_contains_goal() {
+        assert!(EXTRACTABLE_TOOLS.contains(&"goal"));
+    }
+
+    #[test]
+    fn test_extractable_tools_contains_search() {
+        assert!(EXTRACTABLE_TOOLS.contains(&"semantic_code_search"));
+    }
+
+    #[test]
+    fn test_extractable_tools_contains_call_graph() {
+        assert!(EXTRACTABLE_TOOLS.contains(&"find_callers"));
+        assert!(EXTRACTABLE_TOOLS.contains(&"find_callees"));
+    }
+
+    #[test]
+    fn test_extractable_tools_contains_capability() {
+        assert!(EXTRACTABLE_TOOLS.contains(&"check_capability"));
+    }
+
+    #[test]
+    fn test_extractable_tools_excludes_common() {
+        // These tools should NOT be extractable
+        assert!(!EXTRACTABLE_TOOLS.contains(&"remember"));
+        assert!(!EXTRACTABLE_TOOLS.contains(&"recall"));
+        assert!(!EXTRACTABLE_TOOLS.contains(&"index"));
+        assert!(!EXTRACTABLE_TOOLS.contains(&"session_start"));
+    }
+
+    // ============================================================================
+    // ExtractedOutcome deserialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_extracted_outcome_deserialize_full() {
+        let json = r#"{"content": "Found auth module in src/auth", "category": "discovery", "key": "auth_location"}"#;
+        let outcome: ExtractedOutcome = serde_json::from_str(json).unwrap();
+        assert_eq!(outcome.content, "Found auth module in src/auth");
+        assert_eq!(outcome.category, "discovery");
+        assert_eq!(outcome.key, Some("auth_location".to_string()));
+    }
+
+    #[test]
+    fn test_extracted_outcome_deserialize_no_key() {
+        let json = r#"{"content": "Task completed successfully", "category": "progress"}"#;
+        let outcome: ExtractedOutcome = serde_json::from_str(json).unwrap();
+        assert_eq!(outcome.content, "Task completed successfully");
+        assert_eq!(outcome.category, "progress");
+        assert_eq!(outcome.key, None);
+    }
+
+    #[test]
+    fn test_extracted_outcome_deserialize_null_key() {
+        let json = r#"{"content": "Some insight", "category": "insight", "key": null}"#;
+        let outcome: ExtractedOutcome = serde_json::from_str(json).unwrap();
+        assert_eq!(outcome.key, None);
+    }
+
+    #[test]
+    fn test_extracted_outcome_array() {
+        let json = r#"[
+            {"content": "First outcome", "category": "discovery"},
+            {"content": "Second outcome", "category": "progress", "key": "task_123"}
+        ]"#;
+        let outcomes: Vec<ExtractedOutcome> = serde_json::from_str(json).unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].content, "First outcome");
+        assert_eq!(outcomes[1].key, Some("task_123".to_string()));
+    }
+
+    #[test]
+    fn test_extracted_outcome_empty_array() {
+        let json = "[]";
+        let outcomes: Vec<ExtractedOutcome> = serde_json::from_str(json).unwrap();
+        assert!(outcomes.is_empty());
+    }
+
+    #[test]
+    fn test_extracted_outcome_missing_required_field() {
+        let json = r#"{"content": "Only content"}"#;
+        let result: Result<ExtractedOutcome, _> = serde_json::from_str(json);
+        assert!(result.is_err()); // category is required
+    }
+}

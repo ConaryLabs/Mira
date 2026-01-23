@@ -192,3 +192,71 @@ impl Default for ProviderFactory {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create an empty factory for testing (no env vars)
+    fn empty_factory() -> ProviderFactory {
+        ProviderFactory {
+            clients: HashMap::new(),
+            default_provider: None,
+            fallback_order: vec![Provider::DeepSeek, Provider::OpenAi, Provider::Gemini],
+            deepseek_key: None,
+            openai_key: None,
+            gemini_key: None,
+        }
+    }
+
+    #[test]
+    fn test_empty_factory_has_no_providers() {
+        let factory = empty_factory();
+        assert!(!factory.has_providers());
+        assert!(factory.available_providers().is_empty());
+    }
+
+    #[test]
+    fn test_empty_factory_is_available_false() {
+        let factory = empty_factory();
+        assert!(!factory.is_available(Provider::DeepSeek));
+        assert!(!factory.is_available(Provider::OpenAi));
+        assert!(!factory.is_available(Provider::Gemini));
+    }
+
+    #[test]
+    fn test_empty_factory_get_provider_none() {
+        let factory = empty_factory();
+        assert!(factory.get_provider(Provider::DeepSeek).is_none());
+        assert!(factory.get_provider(Provider::OpenAi).is_none());
+        assert!(factory.get_provider(Provider::Gemini).is_none());
+    }
+
+    #[test]
+    fn test_empty_factory_default_provider_none() {
+        let factory = empty_factory();
+        assert!(factory.default_provider().is_none());
+    }
+
+    #[test]
+    fn test_factory_with_default_provider() {
+        let factory = ProviderFactory {
+            clients: HashMap::new(),
+            default_provider: Some(Provider::DeepSeek),
+            fallback_order: vec![Provider::DeepSeek, Provider::OpenAi, Provider::Gemini],
+            deepseek_key: None,
+            openai_key: None,
+            gemini_key: None,
+        };
+        assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
+    }
+
+    #[test]
+    fn test_fallback_order() {
+        let factory = empty_factory();
+        assert_eq!(factory.fallback_order.len(), 3);
+        assert_eq!(factory.fallback_order[0], Provider::DeepSeek);
+        assert_eq!(factory.fallback_order[1], Provider::OpenAi);
+        assert_eq!(factory.fallback_order[2], Provider::Gemini);
+    }
+}

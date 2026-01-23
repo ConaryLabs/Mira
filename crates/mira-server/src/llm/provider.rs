@@ -128,3 +128,169 @@ pub trait LlmClient: Send + Sync {
             .unwrap_or_default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // Provider::from_str tests
+    // ============================================================================
+
+    #[test]
+    fn test_provider_from_str_deepseek() {
+        assert_eq!(Provider::from_str("deepseek"), Some(Provider::DeepSeek));
+        assert_eq!(Provider::from_str("DeepSeek"), Some(Provider::DeepSeek));
+        assert_eq!(Provider::from_str("DEEPSEEK"), Some(Provider::DeepSeek));
+    }
+
+    #[test]
+    fn test_provider_from_str_openai() {
+        assert_eq!(Provider::from_str("openai"), Some(Provider::OpenAi));
+        assert_eq!(Provider::from_str("OpenAI"), Some(Provider::OpenAi));
+        assert_eq!(Provider::from_str("OPENAI"), Some(Provider::OpenAi));
+    }
+
+    #[test]
+    fn test_provider_from_str_gemini() {
+        assert_eq!(Provider::from_str("gemini"), Some(Provider::Gemini));
+        assert_eq!(Provider::from_str("Gemini"), Some(Provider::Gemini));
+        assert_eq!(Provider::from_str("GEMINI"), Some(Provider::Gemini));
+    }
+
+    #[test]
+    fn test_provider_from_str_ollama() {
+        assert_eq!(Provider::from_str("ollama"), Some(Provider::Ollama));
+        assert_eq!(Provider::from_str("Ollama"), Some(Provider::Ollama));
+    }
+
+    #[test]
+    fn test_provider_from_str_invalid() {
+        assert_eq!(Provider::from_str("invalid"), None);
+        assert_eq!(Provider::from_str("gpt"), None);
+        assert_eq!(Provider::from_str("claude"), None);
+        assert_eq!(Provider::from_str(""), None);
+    }
+
+    // ============================================================================
+    // Provider::api_key_env_var tests
+    // ============================================================================
+
+    #[test]
+    fn test_provider_api_key_env_var() {
+        assert_eq!(Provider::DeepSeek.api_key_env_var(), "DEEPSEEK_API_KEY");
+        assert_eq!(Provider::OpenAi.api_key_env_var(), "OPENAI_API_KEY");
+        assert_eq!(Provider::Gemini.api_key_env_var(), "GEMINI_API_KEY");
+        assert_eq!(Provider::Ollama.api_key_env_var(), "OLLAMA_HOST");
+    }
+
+    // ============================================================================
+    // Provider::default_model tests
+    // ============================================================================
+
+    #[test]
+    fn test_provider_default_model() {
+        assert_eq!(Provider::DeepSeek.default_model(), "deepseek-reasoner");
+        assert_eq!(Provider::OpenAi.default_model(), "gpt-5.2");
+        assert_eq!(Provider::Gemini.default_model(), "gemini-3-pro-preview");
+        assert_eq!(Provider::Ollama.default_model(), "llama3.3");
+    }
+
+    // ============================================================================
+    // Provider Display tests
+    // ============================================================================
+
+    #[test]
+    fn test_provider_display() {
+        assert_eq!(format!("{}", Provider::DeepSeek), "deepseek");
+        assert_eq!(format!("{}", Provider::OpenAi), "openai");
+        assert_eq!(format!("{}", Provider::Gemini), "gemini");
+        assert_eq!(format!("{}", Provider::Ollama), "ollama");
+    }
+
+    // ============================================================================
+    // Provider equality and hash tests
+    // ============================================================================
+
+    #[test]
+    fn test_provider_equality() {
+        assert_eq!(Provider::DeepSeek, Provider::DeepSeek);
+        assert_ne!(Provider::DeepSeek, Provider::OpenAi);
+        assert_ne!(Provider::OpenAi, Provider::Gemini);
+    }
+
+    #[test]
+    fn test_provider_clone_copy() {
+        let provider = Provider::DeepSeek;
+        let cloned = provider.clone();
+        let copied = provider;
+        assert_eq!(provider, cloned);
+        assert_eq!(provider, copied);
+    }
+
+    // ============================================================================
+    // Provider serialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_provider_serialize() {
+        let json = serde_json::to_string(&Provider::DeepSeek).unwrap();
+        assert_eq!(json, "\"deepseek\"");
+
+        let json = serde_json::to_string(&Provider::OpenAi).unwrap();
+        assert_eq!(json, "\"openai\"");
+    }
+
+    #[test]
+    fn test_provider_deserialize() {
+        let provider: Provider = serde_json::from_str("\"deepseek\"").unwrap();
+        assert_eq!(provider, Provider::DeepSeek);
+
+        let provider: Provider = serde_json::from_str("\"openai\"").unwrap();
+        assert_eq!(provider, Provider::OpenAi);
+
+        let provider: Provider = serde_json::from_str("\"gemini\"").unwrap();
+        assert_eq!(provider, Provider::Gemini);
+    }
+
+    // ============================================================================
+    // NormalizedUsage tests
+    // ============================================================================
+
+    #[test]
+    fn test_normalized_usage_new() {
+        let usage = NormalizedUsage::new(100, 50);
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 50);
+        assert_eq!(usage.total_tokens, 150);
+    }
+
+    #[test]
+    fn test_normalized_usage_default() {
+        let usage = NormalizedUsage::default();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_normalized_usage_zero() {
+        let usage = NormalizedUsage::new(0, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_normalized_usage_large() {
+        let usage = NormalizedUsage::new(100_000, 50_000);
+        assert_eq!(usage.total_tokens, 150_000);
+    }
+
+    #[test]
+    fn test_normalized_usage_clone() {
+        let usage = NormalizedUsage::new(100, 50);
+        let cloned = usage.clone();
+        assert_eq!(usage.prompt_tokens, cloned.prompt_tokens);
+        assert_eq!(usage.completion_tokens, cloned.completion_tokens);
+        assert_eq!(usage.total_tokens, cloned.total_tokens);
+    }
+}
