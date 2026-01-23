@@ -1,0 +1,407 @@
+// crates/mira-server/src/db/search.rs
+// Database operations for code search
+//
+// Consolidates search-related SQL from:
+// - search/crossref.rs (find_callers, find_callees)
+// - search/context.rs (symbol bounds lookup)
+// - search/keyword.rs (FTS and LIKE searches)
+
+use rusqlite::{params, Connection};
+
+/// Result from a cross-reference query (caller/callee lookup)
+#[derive(Debug, Clone)]
+pub struct CrossRefResult {
+    pub symbol_name: String,
+    pub file_path: String,
+    pub line_number: i64,
+    pub call_count: i64,
+}
+
+/// Find functions that call the given function
+pub fn find_callers_sync(
+    conn: &Connection,
+    target_name: &str,
+    project_id: Option<i64>,
+    limit: usize,
+) -> Vec<CrossRefResult> {
+    let query = if project_id.is_some() {
+        "SELECT cs.name, cs.file_path, cs.start_line, cg.call_count
+         FROM call_graph cg
+         JOIN code_symbols cs ON cg.caller_id = cs.id
+         JOIN code_symbols callee ON cg.callee_id = callee.id
+         WHERE callee.name = ?1 AND cs.project_id = ?2
+         ORDER BY cg.call_count DESC
+         LIMIT ?3"
+    } else {
+        "SELECT cs.name, cs.file_path, cs.start_line, cg.call_count
+         FROM call_graph cg
+         JOIN code_symbols cs ON cg.caller_id = cs.id
+         JOIN code_symbols callee ON cg.callee_id = callee.id
+         WHERE callee.name = ?1
+         ORDER BY cg.call_count DESC
+         LIMIT ?2"
+    };
+
+    if let Some(pid) = project_id {
+        conn.prepare(query)
+            .and_then(|mut stmt| {
+                stmt.query_map(params![target_name, pid, limit as i64], |row| {
+                    Ok(CrossRefResult {
+                        symbol_name: row.get(0)?,
+                        file_path: row.get(1)?,
+                        line_number: row.get(2)?,
+                        call_count: row.get(3)?,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    } else {
+        conn.prepare(query)
+            .and_then(|mut stmt| {
+                stmt.query_map(params![target_name, limit as i64], |row| {
+                    Ok(CrossRefResult {
+                        symbol_name: row.get(0)?,
+                        file_path: row.get(1)?,
+                        line_number: row.get(2)?,
+                        call_count: row.get(3)?,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// Find functions that are called by the given function
+pub fn find_callees_sync(
+    conn: &Connection,
+    caller_name: &str,
+    project_id: Option<i64>,
+    limit: usize,
+) -> Vec<CrossRefResult> {
+    let query = if project_id.is_some() {
+        "SELECT callee.name, callee.file_path, callee.start_line, COUNT(*) as cnt
+         FROM call_graph cg
+         JOIN code_symbols caller ON cg.caller_id = caller.id
+         JOIN code_symbols callee ON cg.callee_id = callee.id
+         WHERE caller.name = ?1 AND caller.project_id = ?2
+         GROUP BY callee.name, callee.file_path, callee.start_line
+         ORDER BY cnt DESC
+         LIMIT ?3"
+    } else {
+        "SELECT callee.name, callee.file_path, callee.start_line, COUNT(*) as cnt
+         FROM call_graph cg
+         JOIN code_symbols caller ON cg.caller_id = caller.id
+         JOIN code_symbols callee ON cg.callee_id = callee.id
+         WHERE caller.name = ?1
+         GROUP BY callee.name, callee.file_path, callee.start_line
+         ORDER BY cnt DESC
+         LIMIT ?2"
+    };
+
+    if let Some(pid) = project_id {
+        conn.prepare(query)
+            .and_then(|mut stmt| {
+                stmt.query_map(params![caller_name, pid, limit as i64], |row| {
+                    Ok(CrossRefResult {
+                        symbol_name: row.get(0)?,
+                        file_path: row.get(1)?,
+                        line_number: row.get(2)?,
+                        call_count: row.get(3)?,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    } else {
+        conn.prepare(query)
+            .and_then(|mut stmt| {
+                stmt.query_map(params![caller_name, limit as i64], |row| {
+                    Ok(CrossRefResult {
+                        symbol_name: row.get(0)?,
+                        file_path: row.get(1)?,
+                        line_number: row.get(2)?,
+                        call_count: row.get(3)?,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// Get the start and end line of a symbol
+pub fn get_symbol_bounds_sync(
+    conn: &Connection,
+    file_path: &str,
+    symbol_name: &str,
+    project_id: Option<i64>,
+) -> Option<(u32, u32)> {
+    let query = if project_id.is_some() {
+        "SELECT start_line, end_line FROM code_symbols
+         WHERE project_id = ?1 AND file_path = ?2 AND name = ?3
+         LIMIT 1"
+    } else {
+        "SELECT start_line, end_line FROM code_symbols
+         WHERE file_path = ?1 AND name = ?2
+         LIMIT 1"
+    };
+
+    if let Some(pid) = project_id {
+        conn.query_row(query, params![pid, file_path, symbol_name], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .ok()
+    } else {
+        conn.query_row(query, params![file_path, symbol_name], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .ok()
+    }
+}
+
+/// Result from FTS search
+#[derive(Debug, Clone)]
+pub struct FtsSearchResult {
+    pub file_path: String,
+    pub chunk_content: String,
+    pub score: f64,
+    pub start_line: Option<i64>,
+}
+
+/// Full-text search using FTS5
+pub fn fts_search_sync(
+    conn: &Connection,
+    query: &str,
+    project_id: Option<i64>,
+    limit: usize,
+) -> Vec<FtsSearchResult> {
+    // Prepare query for FTS (quote special chars)
+    let fts_query = query
+        .split_whitespace()
+        .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let sql = if project_id.is_some() {
+        "SELECT f.file_path, f.chunk_content, bm25(code_fts, 1.0, 2.0) as score, v.start_line
+         FROM code_fts f
+         JOIN vec_code v ON f.file_path = v.file_path AND f.chunk_content = v.chunk_content
+         WHERE code_fts MATCH ?1 AND v.project_id = ?2
+         ORDER BY bm25(code_fts, 1.0, 2.0)
+         LIMIT ?3"
+    } else {
+        "SELECT f.file_path, f.chunk_content, bm25(code_fts, 1.0, 2.0) as score, v.start_line
+         FROM code_fts f
+         JOIN vec_code v ON f.file_path = v.file_path AND f.chunk_content = v.chunk_content
+         WHERE code_fts MATCH ?1
+         ORDER BY bm25(code_fts, 1.0, 2.0)
+         LIMIT ?2"
+    };
+
+    if let Some(pid) = project_id {
+        conn.prepare(sql)
+            .and_then(|mut stmt| {
+                stmt.query_map(params![fts_query, pid, limit as i64], |row| {
+                    Ok(FtsSearchResult {
+                        file_path: row.get(0)?,
+                        chunk_content: row.get(1)?,
+                        score: row.get(2)?,
+                        start_line: row.get(3)?,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    } else {
+        conn.prepare(sql)
+            .and_then(|mut stmt| {
+                stmt.query_map(params![fts_query, limit as i64], |row| {
+                    Ok(FtsSearchResult {
+                        file_path: row.get(0)?,
+                        chunk_content: row.get(1)?,
+                        score: row.get(2)?,
+                        start_line: row.get(3)?,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// Result from chunk LIKE search
+#[derive(Debug, Clone)]
+pub struct ChunkSearchResult {
+    pub file_path: String,
+    pub chunk_content: String,
+    pub start_line: Option<i64>,
+}
+
+/// Search code chunks using LIKE patterns
+pub fn chunk_like_search_sync(
+    conn: &Connection,
+    patterns: &[String],
+    project_id: i64,
+    limit: usize,
+) -> Vec<ChunkSearchResult> {
+    let mut results = Vec::new();
+    let sql = "SELECT file_path, chunk_content, start_line FROM vec_code
+               WHERE project_id = ? AND LOWER(chunk_content) LIKE ?
+               LIMIT ?";
+
+    for pattern in patterns {
+        if let Ok(mut stmt) = conn.prepare(sql) {
+            if let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], |row| {
+                Ok(ChunkSearchResult {
+                    file_path: row.get(0)?,
+                    chunk_content: row.get(1)?,
+                    start_line: row.get(2)?,
+                })
+            }) {
+                for row in rows.filter_map(|r| r.ok()) {
+                    if results.len() >= limit {
+                        break;
+                    }
+                    results.push(row);
+                }
+            }
+        }
+        if results.len() >= limit {
+            break;
+        }
+    }
+
+    results
+}
+
+/// Result from symbol LIKE search
+#[derive(Debug, Clone)]
+pub struct SymbolSearchResult {
+    pub file_path: String,
+    pub name: String,
+    pub signature: Option<String>,
+    pub start_line: i64,
+    pub end_line: i64,
+}
+
+/// Search symbols using LIKE patterns
+pub fn symbol_like_search_sync(
+    conn: &Connection,
+    patterns: &[String],
+    project_id: i64,
+    limit: usize,
+) -> Vec<SymbolSearchResult> {
+    let mut results = Vec::new();
+    let sql = "SELECT file_path, name, signature, start_line, end_line
+               FROM code_symbols
+               WHERE project_id = ? AND LOWER(name) LIKE ?
+               LIMIT ?";
+
+    for pattern in patterns {
+        if let Ok(mut stmt) = conn.prepare(sql) {
+            if let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], |row| {
+                Ok(SymbolSearchResult {
+                    file_path: row.get(0)?,
+                    name: row.get(1)?,
+                    signature: row.get(2)?,
+                    start_line: row.get(3)?,
+                    end_line: row.get(4)?,
+                })
+            }) {
+                for row in rows.filter_map(|r| r.ok()) {
+                    if results.len() >= limit {
+                        break;
+                    }
+                    results.push(row);
+                }
+            }
+        }
+        if results.len() >= limit {
+            break;
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+
+    #[test]
+    fn test_find_callers_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let results = find_callers_sync(&conn, "foo", None, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_find_callers_with_project() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let results = find_callers_sync(&conn, "foo", Some(1), 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_find_callees_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let results = find_callees_sync(&conn, "foo", None, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_find_callees_with_project() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let results = find_callees_sync(&conn, "foo", Some(1), 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_get_symbol_bounds_not_found() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let result = get_symbol_bounds_sync(&conn, "src/main.rs", "main", None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_symbol_bounds_with_project() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let result = get_symbol_bounds_sync(&conn, "src/main.rs", "main", Some(1));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fts_search_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let results = fts_search_sync(&conn, "test", None, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_like_search_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let patterns = vec!["%test%".to_string()];
+        let results = chunk_like_search_sync(&conn, &patterns, 1, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_symbol_like_search_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let patterns = vec!["%test%".to_string()];
+        let results = symbol_like_search_sync(&conn, &patterns, 1, 10);
+        assert!(results.is_empty());
+    }
+}

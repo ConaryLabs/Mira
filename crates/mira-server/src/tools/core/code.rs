@@ -395,38 +395,17 @@ pub async fn index<C: ToolContext>(
             Ok(response)
         }
         "status" => {
+            use crate::db::{count_symbols_sync, count_embedded_chunks_sync};
+
             let project = ctx.get_project().await;
             let project_id = project.as_ref().map(|p| p.id);
 
-            let (symbols, embedded) = ctx.pool()
+            let (symbols, embedded) = ctx
+                .pool()
                 .interact(move |conn| {
-                    // Count symbols for current project (or all if no project)
-                    let symbols: i64 = if let Some(pid) = project_id {
-                        conn.query_row(
-                            "SELECT COUNT(*) FROM code_symbols WHERE project_id = ?",
-                            [pid],
-                            |r| r.get(0),
-                        )
-                        .unwrap_or(0)
-                    } else {
-                        conn.query_row("SELECT COUNT(*) FROM code_symbols", [], |r| r.get(0))
-                            .unwrap_or(0)
-                    };
-
-                    // Count embedded chunks for current project
-                    let embedded: i64 = if let Some(pid) = project_id {
-                        conn.query_row(
-                            "SELECT COUNT(*) FROM vec_code WHERE project_id = ?",
-                            [pid],
-                            |r| r.get(0),
-                        )
-                        .unwrap_or(0)
-                    } else {
-                        conn.query_row("SELECT COUNT(*) FROM vec_code", [], |r| r.get(0))
-                            .unwrap_or(0)
-                    };
-
-                    Ok((symbols, embedded))
+                    let symbols = count_symbols_sync(conn, project_id);
+                    let embedded = count_embedded_chunks_sync(conn, project_id);
+                    Ok::<_, anyhow::Error>((symbols, embedded))
                 })
                 .await
                 .map_err(|e| e.to_string())?;
@@ -547,6 +526,8 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
     }
 
     // Update database and clear cached modules
+    use crate::db::clear_modules_without_purpose_sync;
+
     let summaries_clone = summaries.clone();
     let updated = ctx
         .pool()
@@ -555,10 +536,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
                 .map_err(|e| anyhow::anyhow!(e))?;
 
             // Clear cached modules to force regeneration
-            conn.execute(
-                "DELETE FROM codebase_modules WHERE project_id = ? AND purpose IS NULL",
-                rusqlite::params![project_id],
-            )?;
+            clear_modules_without_purpose_sync(conn, project_id)?;
 
             Ok(count)
         })

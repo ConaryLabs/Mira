@@ -483,3 +483,216 @@ impl Database {
         Ok(())
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SYNC FUNCTIONS FOR POOL.INTERACT() USAGE
+// These take &Connection directly for use with DatabasePool::interact()
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Parameters for storing a memory with full scope support
+pub struct StoreMemoryParams<'a> {
+    pub project_id: Option<i64>,
+    pub key: Option<&'a str>,
+    pub content: &'a str,
+    pub fact_type: &'a str,
+    pub category: Option<&'a str>,
+    pub confidence: f64,
+    pub session_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub scope: &'a str,
+}
+
+/// Store a memory with full scope/user support (sync version for pool.interact())
+/// Returns the memory ID
+pub fn store_memory_sync(conn: &rusqlite::Connection, params: StoreMemoryParams) -> rusqlite::Result<i64> {
+    // Upsert by key if provided
+    if let Some(key) = params.key {
+        let existing: Option<(i64, Option<String>)> = conn
+            .query_row(
+                "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
+                rusqlite::params![key, params.project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        if let Some((id, last_session)) = existing {
+            let is_new_session = params
+                .session_id
+                .map(|s| last_session.as_deref() != Some(s))
+                .unwrap_or(false);
+
+            if is_new_session {
+                conn.execute(
+                    "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+                     session_count = session_count + 1, last_session_id = ?, user_id = COALESCE(user_id, ?),
+                     scope = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    rusqlite::params![
+                        params.content, params.fact_type, params.category, params.confidence,
+                        params.session_id, params.user_id, params.scope, id
+                    ],
+                )?;
+                // Check for promotion
+                conn.execute(
+                    "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
+                     WHERE id = ? AND status = 'candidate' AND session_count >= 3",
+                    [id],
+                )?;
+            } else {
+                conn.execute(
+                    "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+                     user_id = COALESCE(user_id, ?), scope = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    rusqlite::params![
+                        params.content, params.fact_type, params.category, params.confidence,
+                        params.user_id, params.scope, id
+                    ],
+                )?;
+            }
+            return Ok(id);
+        }
+    }
+
+    // New memory - starts as candidate with capped confidence
+    let initial_confidence = if params.confidence < 1.0 { params.confidence } else { 0.5 };
+    conn.execute(
+        "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
+         session_count, first_session_id, last_session_id, status, user_id, scope)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?)",
+        rusqlite::params![
+            params.project_id, params.key, params.content, params.fact_type, params.category,
+            initial_confidence, params.session_id, params.session_id, params.user_id, params.scope
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Store embedding for a memory (sync version for pool.interact())
+pub fn store_embedding_sync(
+    conn: &rusqlite::Connection,
+    fact_id: i64,
+    content: &str,
+    embedding_bytes: &[u8],
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
+        rusqlite::params![fact_id, embedding_bytes, fact_id, content],
+    )?;
+    Ok(())
+}
+
+/// Semantic search for memories with scope filtering (sync version for pool.interact())
+/// Returns (fact_id, content, distance) tuples
+pub fn recall_semantic_sync(
+    conn: &rusqlite::Connection,
+    embedding_bytes: &[u8],
+    project_id: Option<i64>,
+    user_id: Option<&str>,
+    limit: usize,
+) -> rusqlite::Result<Vec<(i64, String, f32)>> {
+    let mut stmt = conn.prepare(
+        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
+         FROM vec_memory v
+         JOIN memory_facts f ON v.fact_id = f.id
+         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+           AND (
+             f.scope = 'project'
+             OR f.scope IS NULL
+             OR (f.scope = 'personal' AND f.user_id = ?4)
+             OR f.user_id IS NULL
+           )
+         ORDER BY distance
+         LIMIT ?3",
+    )?;
+
+    let results = stmt
+        .query_map(rusqlite::params![embedding_bytes, project_id, limit as i64, user_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(results)
+}
+
+/// Search memories by text with scope filtering (sync version for pool.interact())
+pub fn search_memories_sync(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+    query: &str,
+    user_id: Option<&str>,
+    limit: usize,
+) -> rusqlite::Result<Vec<MemoryFact>> {
+    // Escape SQL LIKE wildcards to prevent injection
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                session_count, first_session_id, last_session_id, status,
+                user_id, scope, team_id
+         FROM memory_facts
+         WHERE (project_id = ? OR project_id IS NULL)
+           AND content LIKE ? ESCAPE '\\'
+           AND (
+             scope = 'project'
+             OR scope IS NULL
+             OR (scope = 'personal' AND user_id = ?)
+             OR user_id IS NULL
+           )
+         ORDER BY updated_at DESC
+         LIMIT ?",
+    )?;
+
+    let rows = stmt.query_map(
+        rusqlite::params![project_id, pattern, user_id, limit as i64],
+        parse_memory_fact_row,
+    )?;
+
+    rows.collect()
+}
+
+/// Record that a memory was accessed in a session (sync version for pool.interact())
+/// Handles session count increment and automatic promotion
+pub fn record_memory_access_sync(
+    conn: &rusqlite::Connection,
+    memory_id: i64,
+    session_id: &str,
+) -> rusqlite::Result<()> {
+    // Get current session info
+    let current: Option<String> = conn
+        .query_row(
+            "SELECT last_session_id FROM memory_facts WHERE id = ?",
+            [memory_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+
+    // Only increment if this is a new session
+    if current.as_deref() != Some(session_id) {
+        conn.execute(
+            "UPDATE memory_facts SET session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            rusqlite::params![session_id, memory_id],
+        )?;
+
+        // Check for promotion
+        conn.execute(
+            "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
+             WHERE id = ? AND status = 'candidate' AND session_count >= 3",
+            [memory_id],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Delete a memory and its embedding (sync version for pool.interact())
+pub fn delete_memory_sync(conn: &rusqlite::Connection, id: i64) -> rusqlite::Result<bool> {
+    // Delete from vector table first
+    conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", rusqlite::params![id])?;
+    // Delete from facts table
+    let deleted = conn.execute("DELETE FROM memory_facts WHERE id = ?", rusqlite::params![id])? > 0;
+    Ok(deleted)
+}

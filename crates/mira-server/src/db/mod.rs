@@ -1,12 +1,15 @@
 // db/mod.rs
 // Unified database layer with rusqlite + sqlite-vec
 
+mod cartographer;
 mod chat;
 mod config;
 mod diff_analysis;
 pub mod documentation;
 mod embeddings;
+mod index;
 mod memory;
+mod search;
 #[cfg(test)]
 mod memory_tests;
 pub mod pool;
@@ -25,12 +28,51 @@ mod teams;
 mod types;
 mod proxy;
 
+pub use cartographer::{
+    count_cached_modules_sync,
+    get_cached_modules_sync,
+    get_module_exports_sync,
+    count_symbols_in_path_sync,
+    get_module_dependencies_sync,
+    upsert_module_sync,
+    get_external_deps_sync,
+    get_modules_needing_summaries_sync,
+    update_module_purposes_sync,
+};
 pub use config::{EmbeddingModelCheck, ExpertConfig};
+pub use index::{
+    clear_project_index_sync,
+    clear_file_index_sync,
+    count_symbols_sync,
+    count_embedded_chunks_sync,
+    clear_modules_without_purpose_sync,
+};
+pub use search::{
+    CrossRefResult,
+    find_callers_sync,
+    find_callees_sync,
+    get_symbol_bounds_sync,
+    FtsSearchResult,
+    fts_search_sync,
+    ChunkSearchResult,
+    chunk_like_search_sync,
+    SymbolSearchResult,
+    symbol_like_search_sync,
+};
 pub use diff_analysis::DiffAnalysis;
 pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals};
 pub use documentation::{DocGap, DocInventory, DocTask};
 pub use embeddings::PendingEmbedding;
-pub use memory::parse_memory_fact_row;
+pub use memory::{
+    parse_memory_fact_row,
+    // Sync functions for pool.interact() usage
+    store_memory_sync, StoreMemoryParams,
+    store_embedding_sync,
+    recall_semantic_sync,
+    search_memories_sync,
+    record_memory_access_sync,
+    delete_memory_sync,
+};
 pub use reviews::{Correction, ReviewFinding};
 pub use teams::{Team, TeamMember};
 pub use types::*;

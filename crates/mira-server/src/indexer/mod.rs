@@ -604,32 +604,17 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
 
 /// Clear existing data for a project from all relevant tables
 async fn clear_existing_project_data(db: Arc<Database>, project_id: Option<i64>) -> Result<()> {
+    use crate::db::clear_project_index_sync;
+
     tracing::info!("Clearing existing data...");
-    tokio::task::spawn_blocking(move || {
-        let conn = db.conn();
-        // Delete call_graph first (references code_symbols)
-        conn.execute(
-            "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
-            params![project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM code_symbols WHERE project_id = ?",
-            params![project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM vec_code WHERE project_id = ?",
-            params![project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM imports WHERE project_id = ?",
-            params![project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM codebase_modules WHERE project_id = ?",
-            params![project_id],
-        )?;
-        Ok::<_, rusqlite::Error>(())
-    }).await.expect("clear_existing_project_data spawn_blocking panicked")?;
+    if let Some(pid) = project_id {
+        tokio::task::spawn_blocking(move || {
+            let conn = db.conn();
+            clear_project_index_sync(&conn, pid)
+        })
+        .await
+        .expect("clear_existing_project_data spawn_blocking panicked")?;
+    }
     Ok(())
 }
 

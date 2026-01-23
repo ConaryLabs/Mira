@@ -3,9 +3,10 @@
 
 use super::types::ModuleSummaryContext;
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::Path;
+use crate::db::{get_modules_needing_summaries_sync, update_module_purposes_sync};
 use crate::project_files::walker::FileWalker;
 
 /// Get modules that need LLM summaries (no purpose or heuristic-only)
@@ -13,31 +14,7 @@ pub fn get_modules_needing_summaries(
     conn: &Connection,
     project_id: i64,
 ) -> Result<Vec<ModuleSummaryContext>> {
-    // Get modules without purposes or with generic heuristic purposes
-    let mut stmt = conn.prepare(
-        "SELECT module_id, name, path, exports, line_count
-         FROM codebase_modules
-         WHERE project_id = ? AND (purpose IS NULL OR purpose = '')",
-    )?;
-
-    let modules: Vec<ModuleSummaryContext> = stmt
-        .query_map(params![project_id], |row| {
-            let exports_json: Option<String> = row.get(3)?;
-            Ok(ModuleSummaryContext {
-                module_id: row.get(0)?,
-                name: row.get(1)?,
-                path: row.get(2)?,
-                exports: exports_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                code_preview: String::new(), // Filled in below
-                line_count: row.get(4)?,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(modules)
+    Ok(get_modules_needing_summaries_sync(conn, project_id)?)
 }
 
 /// Read code preview for a module (first ~50 lines of key files)
@@ -220,16 +197,5 @@ pub fn update_module_purposes(
     project_id: i64,
     summaries: &HashMap<String, String>,
 ) -> Result<usize> {
-    let mut updated = 0;
-
-    for (module_id, purpose) in summaries {
-        let rows = conn.execute(
-            "UPDATE codebase_modules SET purpose = ?, updated_at = datetime('now')
-             WHERE project_id = ? AND module_id = ?",
-            params![purpose, project_id, module_id],
-        )?;
-        updated += rows;
-    }
-
-    Ok(updated)
+    Ok(update_module_purposes_sync(conn, project_id, summaries)?)
 }

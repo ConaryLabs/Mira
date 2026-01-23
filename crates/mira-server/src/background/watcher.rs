@@ -267,31 +267,19 @@ impl FileWatcher {
 
     /// Delete all data associated with a file (runs on blocking thread pool)
     async fn delete_file_data(&self, project_id: i64, file_path: &str) -> Result<(), String> {
+        use crate::db::clear_file_index_sync;
+
         let file_path = file_path.to_string();
         let db_clone = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let conn = db_clone.conn();
-            // Delete symbols
-            conn.execute(
-                "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
-                rusqlite::params![project_id, &file_path],
-            )?;
-
-            // Delete embeddings
-            conn.execute(
-                "DELETE FROM vec_code WHERE project_id = ? AND file_path = ?",
-                rusqlite::params![project_id, &file_path],
-            )?;
-
-            // Delete imports
-            conn.execute(
-                "DELETE FROM imports WHERE project_id = ? AND file_path = ?",
-                rusqlite::params![project_id, &file_path],
-            )?;
-
+            clear_file_index_sync(&conn, project_id, &file_path)?;
             tracing::debug!("Deleted data for file {} in project {}", file_path, project_id);
             Ok::<_, rusqlite::Error>(())
-        }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))?.map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking panicked: {}", e))?
+        .map_err(|e| e.to_string())
     }
 
     /// Update a file (re-parse and queue embeddings) - runs DB ops on blocking thread pool

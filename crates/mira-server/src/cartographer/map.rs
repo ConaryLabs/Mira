@@ -3,9 +3,12 @@
 
 use super::detection::{count_lines_in_module, detect_modules, find_entry_points, resolve_import_to_module};
 use super::types::{CodebaseMap, Module};
-use crate::db::Database;
+use crate::db::{
+    count_cached_modules_sync, get_cached_modules_sync, get_module_exports_sync,
+    count_symbols_in_path_sync, get_module_dependencies_sync, upsert_module_sync,
+    get_external_deps_sync, Database,
+};
 use anyhow::{Result, anyhow};
-use rusqlite::params;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -28,12 +31,8 @@ pub fn get_or_generate_map(
     // Check if we have cached modules
     let cached_count: i64 = {
         let conn = db.conn();
-        conn.query_row(
-            "SELECT COUNT(*) FROM codebase_modules WHERE project_id = ?",
-            params![project_id],
-            |row| row.get(0),
-        )?
-    }; // conn dropped here
+        count_cached_modules_sync(&conn, project_id)?
+    };
 
     tracing::info!("Cached modules: {}", cached_count);
 
@@ -58,33 +57,8 @@ pub fn get_or_generate_map(
     // Load from cache
     let modules: Vec<Module> = {
         let conn = db.conn();
-        let mut stmt = conn.prepare(
-            "SELECT module_id, name, path, purpose, exports, depends_on, symbol_count, line_count
-             FROM codebase_modules WHERE project_id = ? ORDER BY module_id",
-        )?;
-
-        stmt.query_map(params![project_id], |row| {
-            let exports_json: Option<String> = row.get(4)?;
-            let depends_json: Option<String> = row.get(5)?;
-
-            Ok(Module {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                path: row.get(2)?,
-                purpose: row.get(3)?,
-                exports: exports_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                depends_on: depends_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                symbol_count: row.get(6)?,
-                line_count: row.get(7)?,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect()
-    }; // conn dropped here
+        get_cached_modules_sync(&conn, project_id)?
+    };
 
     Ok(CodebaseMap {
         name: project_name.to_string(),
@@ -124,36 +98,15 @@ fn enrich_and_store_modules(
 
         // Get exports (pub symbols in this module's path)
         let pattern = format!("{}%", module.path);
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT name FROM code_symbols
-             WHERE project_id = ? AND file_path LIKE ?
-             ORDER BY name LIMIT 20",
-        )?;
-
-        module.exports = stmt
-            .query_map(params![project_id, pattern], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
+        module.exports = get_module_exports_sync(&conn, project_id, &pattern, 20)?;
         tracing::debug!("  found {} exports", module.exports.len());
 
         // Get symbol count
-        module.symbol_count = conn.query_row(
-            "SELECT COUNT(*) FROM code_symbols WHERE project_id = ? AND file_path LIKE ?",
-            params![project_id, pattern],
-            |row| row.get(0),
-        )?;
+        module.symbol_count = count_symbols_in_path_sync(&conn, project_id, &pattern)?;
         tracing::debug!("  symbol_count: {}", module.symbol_count);
 
         // Get dependencies from imports
-        let mut deps_stmt = conn.prepare(
-            "SELECT DISTINCT import_path FROM imports
-             WHERE project_id = ? AND file_path LIKE ? AND is_external = 0",
-        )?;
-
-        let raw_deps: Vec<String> = deps_stmt
-            .query_map(params![project_id, pattern], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
+        let raw_deps = get_module_dependencies_sync(&conn, project_id, &pattern)?;
         tracing::debug!("  found {} deps", raw_deps.len());
         raw_deps_per_module.push(raw_deps);
 
@@ -185,25 +138,7 @@ fn enrich_and_store_modules(
             .collect();
 
         // Store in database
-        let exports_json = serde_json::to_string(&module.exports)?;
-        let depends_json = serde_json::to_string(&module.depends_on)?;
-
-        conn.execute(
-            "INSERT OR REPLACE INTO codebase_modules
-             (project_id, module_id, name, path, purpose, exports, depends_on, symbol_count, line_count, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
-            params![
-                project_id,
-                module.id,
-                module.name,
-                module.path,
-                module.purpose,
-                exports_json,
-                depends_json,
-                module.symbol_count,
-                module.line_count
-            ],
-        )?;
+        upsert_module_sync(&conn, project_id, module)?;
     }
 
     Ok(modules)
@@ -252,52 +187,13 @@ fn generate_purpose_heuristic(name: &str, exports: &[String]) -> Option<String> 
 
 fn get_external_deps(db: &Database, project_id: i64) -> Result<Vec<String>> {
     let conn = db.conn();
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT import_path FROM imports
-         WHERE project_id = ? AND is_external = 1
-         ORDER BY import_path LIMIT 30",
-    )?;
-
-    let deps: Vec<String> = stmt
-        .query_map(params![project_id], |row| row.get(0))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(deps)
+    Ok(get_external_deps_sync(&conn, project_id)?)
 }
 
 /// Get all modules with their purposes for capabilities scanning
 pub fn get_modules_with_purposes(db: &Database, project_id: i64) -> Result<Vec<Module>> {
     let conn = db.conn();
-    let mut stmt = conn.prepare(
-        "SELECT module_id, name, path, purpose, exports, depends_on, symbol_count, line_count
-         FROM codebase_modules WHERE project_id = ? ORDER BY module_id",
-    )?;
-
-    let modules = stmt
-        .query_map(params![project_id], |row| {
-            let exports_json: Option<String> = row.get(4)?;
-            let depends_json: Option<String> = row.get(5)?;
-
-            Ok(Module {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                path: row.get(2)?,
-                purpose: row.get(3)?,
-                exports: exports_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                depends_on: depends_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                symbol_count: row.get(6)?,
-                line_count: row.get(7)?,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(modules)
+    Ok(get_cached_modules_sync(&conn, project_id)?)
 }
 
 /// Async version of get_or_generate_map that runs on a blocking thread

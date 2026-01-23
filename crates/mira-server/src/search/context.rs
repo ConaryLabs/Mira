@@ -1,7 +1,7 @@
 // crates/mira-server/src/search/context.rs
 // Context expansion for search results
 
-use crate::db::Database;
+use crate::db::{get_symbol_bounds_sync, Database};
 use std::path::Path;
 
 /// Parse symbol name and kind from chunk header
@@ -42,29 +42,7 @@ fn lookup_symbol_bounds(
     symbol_name: &str,
 ) -> Option<(u32, u32)> {
     let conn = db.conn();
-    let query = if project_id.is_some() {
-        "SELECT start_line, end_line FROM code_symbols
-         WHERE project_id = ?1 AND file_path = ?2 AND name = ?3
-         LIMIT 1"
-    } else {
-        "SELECT start_line, end_line FROM code_symbols
-         WHERE file_path = ?1 AND name = ?2
-         LIMIT 1"
-    };
-
-    let result: Option<(u32, u32)> = if let Some(pid) = project_id {
-        conn.query_row(query, rusqlite::params![pid, file_path, symbol_name], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .ok()
-    } else {
-        conn.query_row(query, rusqlite::params![file_path, symbol_name], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .ok()
-    };
-
-    result
+    get_symbol_bounds_sync(&conn, file_path, symbol_name, project_id)
 }
 
 /// Expand search result to full symbol using code_symbols table

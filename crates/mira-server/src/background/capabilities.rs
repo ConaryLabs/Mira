@@ -6,7 +6,6 @@ use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use crate::search::embedding_to_bytes;
-use rusqlite::params;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -384,15 +383,9 @@ async fn parse_and_store_capabilities(
 
 /// Store embedding for a memory fact
 fn store_embedding(conn: &rusqlite::Connection, fact_id: i64, content: &str, embedding: &[f32]) -> Result<(), String> {
+    use crate::db::store_embedding_sync;
     let embedding_bytes = embedding_to_bytes(embedding);
-
-    conn.execute(
-        "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
-        params![fact_id, embedding_bytes, fact_id, content],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
+    store_embedding_sync(conn, fact_id, content, &embedding_bytes).map_err(|e| e.to_string())
 }
 
 /// Clear old capabilities before refresh (issues are handled by code_health scanner)
