@@ -35,6 +35,7 @@ pub struct InjectionResult {
 }
 
 impl InjectionResult {
+    #[cfg(test)]
     fn empty() -> Self {
         Self {
             context: String::new(),

@@ -222,6 +222,71 @@ fn parse_numstat_output(stdout: &str) -> Result<DiffStats, String> {
     Ok(stats)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_numstat_output_empty() {
+        let result = parse_numstat_output("").unwrap();
+        assert_eq!(result.files_changed, 0);
+        assert_eq!(result.lines_added, 0);
+        assert_eq!(result.lines_removed, 0);
+        assert!(result.files.is_empty());
+    }
+
+    #[test]
+    fn test_parse_numstat_output_single_file() {
+        let output = "10\t5\tsrc/main.rs";
+        let result = parse_numstat_output(output).unwrap();
+        assert_eq!(result.files_changed, 1);
+        assert_eq!(result.lines_added, 10);
+        assert_eq!(result.lines_removed, 5);
+        assert_eq!(result.files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn test_parse_numstat_output_multiple_files() {
+        let output = "10\t5\tsrc/main.rs\n20\t3\tsrc/lib.rs\n5\t0\tREADME.md";
+        let result = parse_numstat_output(output).unwrap();
+        assert_eq!(result.files_changed, 3);
+        assert_eq!(result.lines_added, 35); // 10 + 20 + 5
+        assert_eq!(result.lines_removed, 8); // 5 + 3 + 0
+        assert_eq!(result.files.len(), 3);
+        assert!(result.files.contains(&"src/main.rs".to_string()));
+        assert!(result.files.contains(&"src/lib.rs".to_string()));
+        assert!(result.files.contains(&"README.md".to_string()));
+    }
+
+    #[test]
+    fn test_parse_numstat_output_binary_files() {
+        // Binary files show as - for lines
+        let output = "-\t-\timage.png\n10\t5\tsrc/main.rs";
+        let result = parse_numstat_output(output).unwrap();
+        // Binary file is skipped (parse fails), only the text file counts
+        assert_eq!(result.files_changed, 1);
+        assert_eq!(result.lines_added, 10);
+        assert_eq!(result.lines_removed, 5);
+    }
+
+    #[test]
+    fn test_parse_numstat_output_file_with_spaces() {
+        let output = "10\t5\tpath/to/file with spaces.rs";
+        let result = parse_numstat_output(output).unwrap();
+        assert_eq!(result.files_changed, 1);
+        assert_eq!(result.files[0], "path/to/file with spaces.rs");
+    }
+
+    #[test]
+    fn test_parse_numstat_output_malformed_line() {
+        // Lines with wrong format are skipped
+        let output = "malformed line\n10\t5\tvalid.rs";
+        let result = parse_numstat_output(output).unwrap();
+        assert_eq!(result.files_changed, 1);
+        assert_eq!(result.files[0], "valid.rs");
+    }
+}
+
 /// List recent diff analyses for the project
 pub async fn list_diff_analyses<C: ToolContext>(
     ctx: &C,

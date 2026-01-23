@@ -241,3 +241,276 @@ pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
     }
     count
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    // ============================================================================
+    // parse_crate_name tests
+    // ============================================================================
+
+    fn create_cargo_toml(dir: &Path, content: &str) -> std::path::PathBuf {
+        let cargo_path = dir.join("Cargo.toml");
+        let mut file = std::fs::File::create(&cargo_path).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        cargo_path
+    }
+
+    #[test]
+    fn test_parse_crate_name_simple() {
+        let dir = TempDir::new().unwrap();
+        let cargo = create_cargo_toml(
+            dir.path(),
+            r#"
+[package]
+name = "my-crate"
+version = "0.1.0"
+"#,
+        );
+        assert_eq!(parse_crate_name(&cargo), Some("my-crate".to_string()));
+    }
+
+    #[test]
+    fn test_parse_crate_name_single_quotes() {
+        let dir = TempDir::new().unwrap();
+        let cargo = create_cargo_toml(
+            dir.path(),
+            r#"
+[package]
+name = 'single-quoted'
+"#,
+        );
+        assert_eq!(parse_crate_name(&cargo), Some("single-quoted".to_string()));
+    }
+
+    #[test]
+    fn test_parse_crate_name_with_other_sections() {
+        let dir = TempDir::new().unwrap();
+        let cargo = create_cargo_toml(
+            dir.path(),
+            r#"
+[workspace]
+members = ["crate-a", "crate-b"]
+
+[package]
+name = "workspace-root"
+version = "0.1.0"
+
+[dependencies]
+serde = "1.0"
+"#,
+        );
+        assert_eq!(
+            parse_crate_name(&cargo),
+            Some("workspace-root".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_crate_name_no_package_section() {
+        let dir = TempDir::new().unwrap();
+        let cargo = create_cargo_toml(
+            dir.path(),
+            r#"
+[workspace]
+members = ["a", "b"]
+"#,
+        );
+        assert_eq!(parse_crate_name(&cargo), None);
+    }
+
+    #[test]
+    fn test_parse_crate_name_nonexistent_file() {
+        let path = Path::new("/nonexistent/Cargo.toml");
+        assert_eq!(parse_crate_name(path), None);
+    }
+
+    // ============================================================================
+    // is_workspace tests
+    // ============================================================================
+
+    #[test]
+    fn test_is_workspace_true() {
+        let dir = TempDir::new().unwrap();
+        let cargo = create_cargo_toml(
+            dir.path(),
+            r#"
+[workspace]
+members = ["crate-a", "crate-b"]
+"#,
+        );
+        assert!(is_workspace(&cargo));
+    }
+
+    #[test]
+    fn test_is_workspace_false() {
+        let dir = TempDir::new().unwrap();
+        let cargo = create_cargo_toml(
+            dir.path(),
+            r#"
+[package]
+name = "not-a-workspace"
+version = "0.1.0"
+"#,
+        );
+        assert!(!is_workspace(&cargo));
+    }
+
+    #[test]
+    fn test_is_workspace_nonexistent_file() {
+        let path = Path::new("/nonexistent/Cargo.toml");
+        assert!(!is_workspace(path));
+    }
+
+    // ============================================================================
+    // resolve_import_to_module tests
+    // ============================================================================
+
+    #[test]
+    fn test_resolve_import_crate_prefix() {
+        let modules = vec![
+            ("mira/search".to_string(), "search".to_string()),
+            ("mira/db".to_string(), "db".to_string()),
+        ];
+        let result = resolve_import_to_module("crate::search::semantic", &modules);
+        assert_eq!(result, Some("mira/search".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_super_prefix() {
+        let modules = vec![
+            ("mira/utils".to_string(), "utils".to_string()),
+        ];
+        let result = resolve_import_to_module("super::utils", &modules);
+        assert_eq!(result, Some("mira/utils".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_direct_match() {
+        let modules = vec![
+            ("mira/config".to_string(), "config".to_string()),
+        ];
+        let result = resolve_import_to_module("config::Settings", &modules);
+        assert_eq!(result, Some("mira/config".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_no_match() {
+        let modules = vec![
+            ("mira/search".to_string(), "search".to_string()),
+        ];
+        let result = resolve_import_to_module("unknown::module", &modules);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_resolve_import_empty_modules() {
+        let modules: Vec<(String, String)> = vec![];
+        let result = resolve_import_to_module("crate::foo", &modules);
+        assert_eq!(result, None);
+    }
+
+    // ============================================================================
+    // find_entry_points tests
+    // ============================================================================
+
+    #[test]
+    fn test_find_entry_points_lib_and_main() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("lib.rs"), "// lib").unwrap();
+        std::fs::write(src.join("main.rs"), "fn main() {}").unwrap();
+        std::fs::write(src.join("utils.rs"), "// utils").unwrap();
+
+        let entries = find_entry_points(dir.path());
+        assert!(entries.contains(&"src/lib.rs".to_string()));
+        assert!(entries.contains(&"src/main.rs".to_string()));
+        assert!(!entries.contains(&"src/utils.rs".to_string()));
+    }
+
+    #[test]
+    fn test_find_entry_points_nested_crates() {
+        let dir = TempDir::new().unwrap();
+        let crate_a = dir.path().join("crates/a/src");
+        let crate_b = dir.path().join("crates/b/src");
+        std::fs::create_dir_all(&crate_a).unwrap();
+        std::fs::create_dir_all(&crate_b).unwrap();
+        std::fs::write(crate_a.join("lib.rs"), "// a").unwrap();
+        std::fs::write(crate_b.join("main.rs"), "fn main() {}").unwrap();
+
+        let entries = find_entry_points(dir.path());
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|e| e.contains("crates/a/src/lib.rs")));
+        assert!(entries.iter().any(|e| e.contains("crates/b/src/main.rs")));
+    }
+
+    #[test]
+    fn test_find_entry_points_empty_project() {
+        let dir = TempDir::new().unwrap();
+        let entries = find_entry_points(dir.path());
+        assert!(entries.is_empty());
+    }
+
+    // ============================================================================
+    // detect tests with temporary directories
+    // ============================================================================
+
+    #[test]
+    fn test_detect_simple_crate() {
+        let dir = TempDir::new().unwrap();
+
+        // Create Cargo.toml
+        create_cargo_toml(
+            dir.path(),
+            r#"
+[package]
+name = "test-crate"
+version = "0.1.0"
+"#,
+        );
+
+        // Create src directory with lib.rs
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("lib.rs"), "pub mod utils;").unwrap();
+        std::fs::write(src.join("utils.rs"), "pub fn helper() {}").unwrap();
+
+        let modules = detect(dir.path());
+        assert!(!modules.is_empty());
+        assert!(modules.iter().any(|m| m.id == "test-crate"));
+    }
+
+    #[test]
+    fn test_detect_with_mod_rs() {
+        let dir = TempDir::new().unwrap();
+
+        create_cargo_toml(
+            dir.path(),
+            r#"
+[package]
+name = "modtest"
+version = "0.1.0"
+"#,
+        );
+
+        let src = dir.path().join("src");
+        let submod = src.join("submodule");
+        std::fs::create_dir_all(&submod).unwrap();
+        std::fs::write(src.join("lib.rs"), "mod submodule;").unwrap();
+        std::fs::write(submod.join("mod.rs"), "pub fn foo() {}").unwrap();
+
+        let modules = detect(dir.path());
+        assert!(modules.iter().any(|m| m.name == "submodule"));
+    }
+
+    #[test]
+    fn test_detect_empty_project() {
+        let dir = TempDir::new().unwrap();
+        let modules = detect(dir.path());
+        assert!(modules.is_empty());
+    }
+}

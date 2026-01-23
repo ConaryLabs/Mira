@@ -330,3 +330,207 @@ pub async fn get_modules_with_purposes_async(
     .await
     .map_err(|e| anyhow!("spawn_blocking panicked: {}", e))?
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // generate_purpose_heuristic tests
+    // ============================================================================
+
+    #[test]
+    fn test_purpose_heuristic_database() {
+        assert_eq!(
+            generate_purpose_heuristic("db", &[]),
+            Some("Database operations and queries".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("database", &[]),
+            Some("Database operations and queries".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_api_web() {
+        assert_eq!(
+            generate_purpose_heuristic("api", &[]),
+            Some("API endpoint handlers".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("web", &[]),
+            Some("HTTP server and routes".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_mcp() {
+        assert_eq!(
+            generate_purpose_heuristic("mcp", &[]),
+            Some("MCP protocol implementation".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_types() {
+        assert_eq!(
+            generate_purpose_heuristic("models", &[]),
+            Some("Data type definitions".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("types", &[]),
+            Some("Data type definitions".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_utils() {
+        assert_eq!(
+            generate_purpose_heuristic("utils", &[]),
+            Some("Utility functions".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("helpers", &[]),
+            Some("Utility functions".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_auth() {
+        assert_eq!(
+            generate_purpose_heuristic("auth", &[]),
+            Some("Authentication and authorization".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("authentication", &[]),
+            Some("Authentication and authorization".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_config() {
+        assert_eq!(
+            generate_purpose_heuristic("config", &[]),
+            Some("Configuration management".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_mira_modules() {
+        assert_eq!(
+            generate_purpose_heuristic("indexer", &[]),
+            Some("Code indexing and analysis".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("embeddings", &[]),
+            Some("Vector embeddings".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("cartographer", &[]),
+            Some("Codebase structure mapping".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("hooks", &[]),
+            Some("Event hooks and callbacks".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_test_modules() {
+        assert_eq!(
+            generate_purpose_heuristic("tests", &[]),
+            Some("Test suites".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("test", &[]),
+            Some("Test suites".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_from_exports_test() {
+        let exports = vec!["TestHelper".to_string(), "MockDb".to_string()];
+        assert_eq!(
+            generate_purpose_heuristic("unknown_module", &exports),
+            Some("Test utilities".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_from_exports_error() {
+        let exports = vec!["DatabaseError".to_string(), "NetworkError".to_string()];
+        assert_eq!(
+            generate_purpose_heuristic("errors", &exports),
+            Some("Error types and handling".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_from_exports_config() {
+        let exports = vec!["AppConfig".to_string(), "Settings".to_string()];
+        assert_eq!(
+            generate_purpose_heuristic("settings", &exports),
+            Some("Configuration".to_string())
+        );
+    }
+
+    #[test]
+    fn test_purpose_heuristic_unknown() {
+        let exports = vec!["SomeFunction".to_string(), "AnotherStruct".to_string()];
+        assert_eq!(generate_purpose_heuristic("random_module", &exports), None);
+    }
+
+    #[test]
+    fn test_purpose_heuristic_case_insensitive() {
+        assert_eq!(
+            generate_purpose_heuristic("DB", &[]),
+            Some("Database operations and queries".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("Api", &[]),
+            Some("API endpoint handlers".to_string())
+        );
+        assert_eq!(
+            generate_purpose_heuristic("CONFIG", &[]),
+            Some("Configuration management".to_string())
+        );
+    }
+
+    // ============================================================================
+    // Module type tests
+    // ============================================================================
+
+    #[test]
+    fn test_module_default_values() {
+        let module = Module {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            path: "src/test".to_string(),
+            purpose: None,
+            exports: vec![],
+            depends_on: vec![],
+            symbol_count: 0,
+            line_count: 0,
+        };
+        assert!(module.purpose.is_none());
+        assert!(module.exports.is_empty());
+        assert!(module.depends_on.is_empty());
+    }
+
+    #[test]
+    fn test_module_with_data() {
+        let module = Module {
+            id: "mira/db".to_string(),
+            name: "db".to_string(),
+            path: "crates/mira-server/src/db".to_string(),
+            purpose: Some("Database operations".to_string()),
+            exports: vec!["Database".to_string(), "Pool".to_string()],
+            depends_on: vec!["mira/config".to_string()],
+            symbol_count: 50,
+            line_count: 1000,
+        };
+        assert_eq!(module.id, "mira/db");
+        assert_eq!(module.exports.len(), 2);
+        assert_eq!(module.depends_on.len(), 1);
+    }
+}

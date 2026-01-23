@@ -435,3 +435,233 @@ pub fn format_results(
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // SearchType tests
+    // ============================================================================
+
+    #[test]
+    fn test_search_type_display() {
+        assert_eq!(format!("{}", SearchType::Semantic), "semantic");
+        assert_eq!(format!("{}", SearchType::Keyword), "keyword");
+    }
+
+    #[test]
+    fn test_search_type_equality() {
+        assert_eq!(SearchType::Semantic, SearchType::Semantic);
+        assert_eq!(SearchType::Keyword, SearchType::Keyword);
+        assert_ne!(SearchType::Semantic, SearchType::Keyword);
+    }
+
+    // ============================================================================
+    // QueryIntent detection tests
+    // ============================================================================
+
+    #[test]
+    fn test_detect_intent_documentation() {
+        assert_eq!(detect_query_intent("docs for Database"), QueryIntent::Documentation);
+        assert_eq!(detect_query_intent("documentation for API"), QueryIntent::Documentation);
+        assert_eq!(detect_query_intent("what is SearchResult"), QueryIntent::Documentation);
+        assert_eq!(detect_query_intent("explain the hybrid search"), QueryIntent::Documentation);
+    }
+
+    #[test]
+    fn test_detect_intent_examples() {
+        assert_eq!(detect_query_intent("example of using search"), QueryIntent::Examples);
+        assert_eq!(detect_query_intent("usage of Database"), QueryIntent::Examples);
+        assert_eq!(detect_query_intent("how to use embeddings"), QueryIntent::Examples);
+        assert_eq!(detect_query_intent("where is the config"), QueryIntent::Examples);
+        assert_eq!(detect_query_intent("who calls this function"), QueryIntent::Examples);
+        assert_eq!(detect_query_intent("callers of semantic_search"), QueryIntent::Examples);
+    }
+
+    #[test]
+    fn test_detect_intent_implementation() {
+        assert_eq!(detect_query_intent("how does search work"), QueryIntent::Implementation);
+        assert_eq!(detect_query_intent("implementation of caching"), QueryIntent::Implementation);
+        assert_eq!(detect_query_intent("how is the score calculated"), QueryIntent::Implementation);
+        assert_eq!(detect_query_intent("source of error handling"), QueryIntent::Implementation);
+        assert_eq!(detect_query_intent("definition of SearchResult"), QueryIntent::Implementation);
+    }
+
+    #[test]
+    fn test_detect_intent_general() {
+        assert_eq!(detect_query_intent("search code"), QueryIntent::General);
+        assert_eq!(detect_query_intent("Database struct"), QueryIntent::General);
+        assert_eq!(detect_query_intent("error handling"), QueryIntent::General);
+    }
+
+    // ============================================================================
+    // merge_results tests
+    // ============================================================================
+
+    #[test]
+    fn test_merge_results_empty() {
+        let (results, search_type) = merge_results(vec![], vec![]);
+        assert!(results.is_empty());
+        assert_eq!(search_type, SearchType::Keyword);
+    }
+
+    #[test]
+    fn test_merge_results_semantic_only() {
+        let semantic = vec![
+            SearchResult {
+                file_path: "src/main.rs".to_string(),
+                content: "fn main()".to_string(),
+                score: 0.9,
+                start_line: 1,
+            },
+        ];
+        let (results, search_type) = merge_results(semantic, vec![]);
+        assert_eq!(results.len(), 1);
+        assert_eq!(search_type, SearchType::Semantic);
+    }
+
+    #[test]
+    fn test_merge_results_keyword_only() {
+        let keyword = vec![
+            SearchResult {
+                file_path: "src/lib.rs".to_string(),
+                content: "pub fn search()".to_string(),
+                score: 0.8,
+                start_line: 10,
+            },
+        ];
+        let (results, search_type) = merge_results(vec![], keyword);
+        assert_eq!(results.len(), 1);
+        assert_eq!(search_type, SearchType::Keyword);
+    }
+
+    #[test]
+    fn test_merge_results_deduplication() {
+        let semantic = vec![
+            SearchResult {
+                file_path: "src/main.rs".to_string(),
+                content: "fn main()".to_string(),
+                score: 0.9,
+                start_line: 1,
+            },
+        ];
+        let keyword = vec![
+            SearchResult {
+                file_path: "src/main.rs".to_string(),
+                content: "fn main()".to_string(),
+                score: 0.7,
+                start_line: 1,
+            },
+        ];
+        let (results, _) = merge_results(semantic, keyword);
+        assert_eq!(results.len(), 1);
+        // Should keep higher score
+        assert_eq!(results[0].score, 0.9);
+    }
+
+    #[test]
+    fn test_merge_results_sorted_by_score() {
+        let semantic = vec![
+            SearchResult {
+                file_path: "src/low.rs".to_string(),
+                content: "low score".to_string(),
+                score: 0.5,
+                start_line: 1,
+            },
+        ];
+        let keyword = vec![
+            SearchResult {
+                file_path: "src/high.rs".to_string(),
+                content: "high score".to_string(),
+                score: 0.95,
+                start_line: 1,
+            },
+        ];
+        let (results, _) = merge_results(semantic, keyword);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].score > results[1].score);
+        assert_eq!(results[0].file_path, "src/high.rs");
+    }
+
+    // ============================================================================
+    // format_results tests
+    // ============================================================================
+
+    #[test]
+    fn test_format_results_empty() {
+        let output = format_results(&[], SearchType::Semantic, None, false);
+        assert!(output.contains("No code matches found"));
+        assert!(output.contains("index"));
+    }
+
+    #[test]
+    fn test_format_results_basic() {
+        let results = vec![
+            SearchResult {
+                file_path: "src/main.rs".to_string(),
+                content: "fn main() { }".to_string(),
+                score: 0.85,
+                start_line: 1,
+            },
+        ];
+        let output = format_results(&results, SearchType::Semantic, None, false);
+        assert!(output.contains("1 results (semantic search)"));
+        assert!(output.contains("src/main.rs:1"));
+        assert!(output.contains("score: 0.85"));
+        assert!(output.contains("fn main()"));
+    }
+
+    #[test]
+    fn test_format_results_no_line_number() {
+        let results = vec![
+            SearchResult {
+                file_path: "src/lib.rs".to_string(),
+                content: "pub mod search;".to_string(),
+                score: 0.75,
+                start_line: 0,
+            },
+        ];
+        let output = format_results(&results, SearchType::Keyword, None, false);
+        assert!(output.contains("keyword search"));
+        // Should not have line number when start_line is 0
+        assert!(output.contains("## src/lib.rs ("));
+        assert!(!output.contains("src/lib.rs:0"));
+    }
+
+    #[test]
+    fn test_format_results_truncates_long_content() {
+        let long_content = "x".repeat(600);
+        let results = vec![
+            SearchResult {
+                file_path: "src/big.rs".to_string(),
+                content: long_content,
+                score: 0.9,
+                start_line: 1,
+            },
+        ];
+        let output = format_results(&results, SearchType::Semantic, None, false);
+        assert!(output.contains("..."));
+        // Output should be truncated, not contain all 600 chars
+        assert!(output.len() < 700);
+    }
+
+    // ============================================================================
+    // SearchResult tests
+    // ============================================================================
+
+    #[test]
+    fn test_search_result_clone() {
+        let result = SearchResult {
+            file_path: "test.rs".to_string(),
+            content: "content".to_string(),
+            score: 0.5,
+            start_line: 10,
+        };
+        let cloned = result.clone();
+        assert_eq!(result.file_path, cloned.file_path);
+        assert_eq!(result.content, cloned.content);
+        assert_eq!(result.score, cloned.score);
+        assert_eq!(result.start_line, cloned.start_line);
+    }
+}

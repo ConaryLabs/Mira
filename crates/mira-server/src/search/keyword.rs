@@ -260,3 +260,106 @@ fn like_search(
     results.truncate(limit);
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // escape_fts_term tests
+    // ============================================================================
+
+    #[test]
+    fn test_escape_fts_term_alphanumeric() {
+        assert_eq!(escape_fts_term("hello"), "hello");
+        assert_eq!(escape_fts_term("hello123"), "hello123");
+        assert_eq!(escape_fts_term("test_name"), "test_name");
+    }
+
+    #[test]
+    fn test_escape_fts_term_special_chars() {
+        assert_eq!(escape_fts_term("hello*world"), "helloworld");
+        assert_eq!(escape_fts_term("test-case"), "testcase");
+        assert_eq!(escape_fts_term("fn()"), "fn");
+        assert_eq!(escape_fts_term("a^b"), "ab");
+        assert_eq!(escape_fts_term("\"quoted\""), "quoted");
+    }
+
+    #[test]
+    fn test_escape_fts_term_all_special() {
+        assert_eq!(escape_fts_term("*-()^\""), "");
+    }
+
+    #[test]
+    fn test_escape_fts_term_mixed() {
+        assert_eq!(escape_fts_term("fn main()"), "fnmain");
+        assert_eq!(escape_fts_term("user_id = 123"), "user_id123");
+    }
+
+    // ============================================================================
+    // build_fts_query tests
+    // ============================================================================
+
+    #[test]
+    fn test_build_fts_query_empty() {
+        assert_eq!(build_fts_query(""), "");
+        assert_eq!(build_fts_query("   "), "");
+    }
+
+    #[test]
+    fn test_build_fts_query_single_term() {
+        assert_eq!(build_fts_query("search"), "search*");
+        assert_eq!(build_fts_query("Database"), "Database*");
+    }
+
+    #[test]
+    fn test_build_fts_query_single_term_with_special() {
+        assert_eq!(build_fts_query("fn()"), "fn*");
+        assert_eq!(build_fts_query("*test*"), "test*");
+    }
+
+    #[test]
+    fn test_build_fts_query_multiple_terms() {
+        assert_eq!(build_fts_query("search code"), "search OR code*");
+        assert_eq!(build_fts_query("find user data"), "find OR user OR data*");
+    }
+
+    #[test]
+    fn test_build_fts_query_multiple_terms_with_special() {
+        // Special chars are stripped, but terms remain
+        assert_eq!(build_fts_query("fn() main()"), "fn OR main*");
+    }
+
+    #[test]
+    fn test_build_fts_query_all_special_terms() {
+        // If all terms become empty after escaping, return empty
+        assert_eq!(build_fts_query("() * -"), "");
+    }
+
+    #[test]
+    fn test_build_fts_query_partial_special_terms() {
+        // Mixed: some valid, some empty after escape
+        // "hello" stays, "()" becomes empty, "world" stays
+        let result = build_fts_query("hello () world");
+        assert!(result.contains("hello"));
+        assert!(result.contains("world*"));
+    }
+
+    // ============================================================================
+    // KeywordResult type tests
+    // ============================================================================
+
+    #[test]
+    fn test_keyword_result_type() {
+        let result: KeywordResult = (
+            "src/main.rs".to_string(),
+            "fn main()".to_string(),
+            0.85,
+            10,
+        );
+        assert_eq!(result.0, "src/main.rs");
+        assert_eq!(result.1, "fn main()");
+        assert!((result.2 - 0.85).abs() < 0.001);
+        assert_eq!(result.3, 10);
+    }
+}
