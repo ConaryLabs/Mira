@@ -22,5 +22,6 @@ pub mod mcp;
 pub mod search;
 pub mod context;
 pub mod tools;
+pub mod proxy;
 pub mod error;
 pub use error::{MiraError, Result};

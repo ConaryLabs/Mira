@@ -1,6 +1,6 @@
 [package]
 name = "mira-server"
-version = "2.0.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.92"
 description = "Memory and Intelligence Layer for Claude Code - Server"
@@ -18,24 +18,24 @@ path = "src/main.rs"
 mira-types = { path = "../mira-types" }
 
 # Async runtime
-tokio = { version = "1.38", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Database (rusqlite + sqlite-vec for embeddings)
-rusqlite = { version = "0.32", features = ["bundled"] }
-sqlite-vec = "0.1.6"
-zerocopy = "0.7"
-deadpool-sqlite = { version = "0.9", features = ["rt_tokio_1", "tracing"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+sqlite-vec = "0.1"
+zerocopy = "0.8"
+deadpool-sqlite = { version = "0.12", features = ["rt_tokio_1", "tracing"] }
 
 # MCP Server
 rmcp = { version = "0.12", features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }
 schemars = "1"
 
 # CLI
-clap = { version = "4.4", features = ["derive", "env"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 
 # Core utilities
 anyhow = "1.0"
@@ -45,9 +45,12 @@ uuid = { version = "1.8", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.9"
 
-# HTTP client (for Gemini embeddings API)
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "multipart"] }
+# HTTP client (for embeddings API, proxy)
+reqwest = { version = "0.13", features = ["json", "rustls", "stream", "multipart"] }
 mime_guess = "2.0"
+
+# HTTP server (for proxy)
+axum = "0.8"
 
 # Code parsing (tree-sitter for multi-language support)
 tree-sitter = "0.25"
