@@ -196,12 +196,17 @@ impl GeminiClient {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
+        Self::with_http_client(api_key, model, client)
+    }
+
+    /// Create a new Gemini client with a shared HTTP client
+    pub fn with_http_client(api_key: String, model: String, client: reqwest::Client) -> Self {
         Self {
             api_key,
             model,
             client,
-            enable_search: true, // Enable Google Search by default for experts
-            thinking_level: "high".to_string(), // Good default for expert tasks
+            enable_search: true,
+            thinking_level: "high".to_string(),
         }
     }
 

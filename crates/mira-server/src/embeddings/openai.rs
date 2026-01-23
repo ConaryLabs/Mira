@@ -121,6 +121,16 @@ impl Embeddings {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
+        Self::with_http_client(api_key, model, db, http_client)
+    }
+
+    /// Create embeddings client with a shared HTTP client
+    pub fn with_http_client(
+        api_key: String,
+        model: EmbeddingModel,
+        db: Option<Arc<Database>>,
+        http_client: reqwest::Client,
+    ) -> Self {
         Self {
             api_key,
             model,

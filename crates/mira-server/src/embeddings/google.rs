@@ -152,6 +152,18 @@ impl GoogleEmbeddings {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
+        Self::with_http_client(api_key, model, dimensions, task_type, db, http_client)
+    }
+
+    /// Create embeddings client with a shared HTTP client
+    pub fn with_http_client(
+        api_key: String,
+        model: GoogleEmbeddingModel,
+        dimensions: Option<usize>,
+        task_type: TaskType,
+        db: Option<Arc<Database>>,
+        http_client: reqwest::Client,
+    ) -> Self {
         let dimensions = dimensions.unwrap_or_else(|| model.default_dimensions());
 
         Self {

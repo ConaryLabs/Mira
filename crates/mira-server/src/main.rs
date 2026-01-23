@@ -4,6 +4,7 @@ use mira::background;
 use mira::db::pool::DatabasePool;
 use mira::db::Database;
 use mira::embeddings::EmbeddingClient;
+use mira::http::create_shared_client;
 use mira::llm::DeepSeekClient;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::{
@@ -28,8 +29,8 @@ use tracing_subscriber::FmtSubscriber;
 /// Get embeddings client if API key is available
 /// Supports multiple providers via MIRA_EMBEDDING_PROVIDER env var (openai, google)
 #[allow(dead_code)]
-fn get_embeddings() -> Option<Arc<EmbeddingClient>> {
-    get_embeddings_with_db(None)
+fn get_embeddings(http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
+    get_embeddings_with_db(None, http_client)
 }
 
 /// Get embeddings client with database for usage tracking
@@ -41,8 +42,8 @@ fn get_embeddings() -> Option<Arc<EmbeddingClient>> {
 /// - MIRA_EMBEDDING_TASK_TYPE: Task type for Google (RETRIEVAL_DOCUMENT, SEMANTIC_SIMILARITY, etc.)
 /// - OPENAI_API_KEY: Required for OpenAI provider
 /// - GOOGLE_API_KEY: Required for Google provider
-fn get_embeddings_with_db(db: Option<Arc<Database>>) -> Option<Arc<EmbeddingClient>> {
-    let client = EmbeddingClient::from_env(db.clone())?;
+fn get_embeddings_with_db(db: Option<Arc<Database>>, http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
+    let client = EmbeddingClient::from_env_with_http_client(db.clone(), http_client)?;
 
     // Log the configured provider
     info!(
@@ -56,11 +57,11 @@ fn get_embeddings_with_db(db: Option<Arc<Database>>) -> Option<Arc<EmbeddingClie
 }
 
 /// Get DeepSeek client if API key is available
-fn get_deepseek() -> Option<Arc<DeepSeekClient>> {
+fn get_deepseek(http_client: reqwest::Client) -> Option<Arc<DeepSeekClient>> {
     std::env::var("DEEPSEEK_API_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
-        .map(|key| Arc::new(DeepSeekClient::new(key)))
+        .map(|key| Arc::new(DeepSeekClient::with_http_client(key, "deepseek-reasoner".into(), http_client)))
 }
 
 #[derive(Parser)]
@@ -218,11 +219,14 @@ fn get_db_path() -> PathBuf {
 
 /// Setup server context with database, embeddings, and restored project/session state
 async fn setup_server_context() -> Result<MiraServer> {
+    // Create shared HTTP client for all network operations
+    let http_client = create_shared_client();
+
     // Open database (both legacy sync and new async pool)
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
-    let embeddings = get_embeddings_with_db(Some(db.clone()));
+    let embeddings = get_embeddings_with_db(Some(db.clone()), http_client.clone());
 
     // Create server context
     let server = MiraServer::new(db.clone(), pool, embeddings);
@@ -377,13 +381,16 @@ async fn run_tool(name: String, args: String) -> Result<()> {
 }
 
 async fn run_mcp_server() -> Result<()> {
+    // Create shared HTTP client for all network operations
+    let http_client = create_shared_client();
+
     // Open database (both legacy sync and new async pool)
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Initialize embeddings if API key available (with usage tracking)
-    let embeddings = get_embeddings_with_db(Some(db.clone()));
+    let embeddings = get_embeddings_with_db(Some(db.clone()), http_client.clone());
 
     if embeddings.is_some() {
         info!("Semantic search enabled (OpenAI embeddings)");
@@ -392,7 +399,7 @@ async fn run_mcp_server() -> Result<()> {
     }
 
     // Initialize DeepSeek client if API key available
-    let deepseek = get_deepseek();
+    let deepseek = get_deepseek(http_client.clone());
 
     if deepseek.is_some() {
         info!("DeepSeek enabled (for experts and module summaries)");
@@ -473,10 +480,13 @@ async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
 
     info!("Indexing project at {}", path.display());
 
+    // Create shared HTTP client
+    let http_client = create_shared_client();
+
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
 
-    let embeddings = if no_embed { None } else { get_embeddings_with_db(Some(db.clone())) };
+    let embeddings = if no_embed { None } else { get_embeddings_with_db(Some(db.clone()), http_client) };
 
     // Get or create project
     let (project_id, _project_name) = db.get_or_create_project(
@@ -1027,7 +1037,7 @@ async fn run_backend_test(name: &str) -> Result<()> {
     println!("  URL: {}", backend.base_url);
 
     // Send a minimal test request
-    let client = reqwest::Client::new();
+    let client = create_shared_client();
     let test_url = format!("{}/v1/messages", backend.base_url);
 
     let test_body = serde_json::json!({

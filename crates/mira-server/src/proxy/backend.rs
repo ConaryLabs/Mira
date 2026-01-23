@@ -116,6 +116,11 @@ impl Backend {
         let client = reqwest::Client::new();
         Self { config, client }
     }
+
+    /// Create a new backend with a shared HTTP client
+    pub fn with_http_client(config: BackendConfig, client: reqwest::Client) -> Self {
+        Self { config, client }
+    }
 }
 
 /// Top-level proxy configuration

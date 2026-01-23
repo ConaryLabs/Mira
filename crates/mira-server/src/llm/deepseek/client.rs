@@ -89,6 +89,11 @@ impl DeepSeekClient {
         Self { api_key, model, client }
     }
 
+    /// Create a new DeepSeek client with a shared HTTP client
+    pub fn with_http_client(api_key: String, model: String, client: reqwest::Client) -> Self {
+        Self { api_key, model, client }
+    }
+
     /// Calculate cache hit ratio from hit and miss token counts
     fn calculate_cache_hit_ratio(hit: Option<u32>, miss: Option<u32>) -> Option<f64> {
         match (hit, miss) {

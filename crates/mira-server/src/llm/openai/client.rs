@@ -218,12 +218,17 @@ impl OpenAiClient {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
+        Self::with_http_client(api_key, model, client)
+    }
+
+    /// Create a new OpenAI client with a shared HTTP client
+    pub fn with_http_client(api_key: String, model: String, client: reqwest::Client) -> Self {
         Self {
             api_key,
             model,
             client,
-            reasoning_effort: "medium".to_string(), // Good default for expert tasks
-            enable_web_search: true, // Enable by default for experts
+            reasoning_effort: "medium".to_string(),
+            enable_web_search: true,
         }
     }
 

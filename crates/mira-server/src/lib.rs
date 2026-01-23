@@ -23,5 +23,6 @@ pub mod search;
 pub mod context;
 pub mod tools;
 pub mod proxy;
+pub mod http;
 pub mod error;
 pub use error::{MiraError, Result};

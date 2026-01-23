@@ -76,6 +76,19 @@ impl EmbeddingClient {
         Self::new(provider, db)
     }
 
+    /// Create a new embedding client from environment configuration with a shared HTTP client
+    pub fn from_env_with_http_client(
+        db: Option<Arc<Database>>,
+        http_client: reqwest::Client,
+    ) -> Option<Self> {
+        let provider = std::env::var("MIRA_EMBEDDING_PROVIDER")
+            .ok()
+            .and_then(|s| EmbeddingProvider::from_str(&s))
+            .unwrap_or_default();
+
+        Self::new_with_http_client(provider, db, http_client)
+    }
+
     /// Create a new embedding client for the specified provider
     pub fn new(provider: EmbeddingProvider, db: Option<Arc<Database>>) -> Option<Self> {
         match provider {
@@ -126,6 +139,62 @@ impl EmbeddingClient {
                     dimensions,
                     task_type,
                     db,
+                )))
+            }
+        }
+    }
+
+    /// Create a new embedding client for the specified provider with a shared HTTP client
+    pub fn new_with_http_client(
+        provider: EmbeddingProvider,
+        db: Option<Arc<Database>>,
+        http_client: reqwest::Client,
+    ) -> Option<Self> {
+        match provider {
+            EmbeddingProvider::OpenAI => {
+                let api_key = std::env::var("OPENAI_API_KEY")
+                    .ok()
+                    .filter(|k| !k.trim().is_empty())?;
+
+                let model = std::env::var("MIRA_EMBEDDING_MODEL")
+                    .ok()
+                    .and_then(|m| EmbeddingModel::from_name(&m))
+                    .unwrap_or_default();
+
+                Some(Self::OpenAI(Embeddings::with_http_client(api_key, model, db, http_client)))
+            }
+            EmbeddingProvider::Google => {
+                let api_key = std::env::var("GEMINI_API_KEY")
+                    .ok()
+                    .filter(|k| !k.trim().is_empty())
+                    .or_else(|| std::env::var("GOOGLE_API_KEY").ok().filter(|k| !k.trim().is_empty()))?;
+
+                let dimensions = std::env::var("MIRA_EMBEDDING_DIMENSIONS")
+                    .ok()
+                    .and_then(|d| d.parse().ok());
+
+                let task_type = std::env::var("MIRA_EMBEDDING_TASK_TYPE")
+                    .ok()
+                    .and_then(|t| match t.to_uppercase().as_str() {
+                        "SEMANTIC_SIMILARITY" => Some(TaskType::SemanticSimilarity),
+                        "RETRIEVAL_DOCUMENT" => Some(TaskType::RetrievalDocument),
+                        "RETRIEVAL_QUERY" => Some(TaskType::RetrievalQuery),
+                        "CLASSIFICATION" => Some(TaskType::Classification),
+                        "CLUSTERING" => Some(TaskType::Clustering),
+                        "CODE_RETRIEVAL_QUERY" => Some(TaskType::CodeRetrievalQuery),
+                        "QUESTION_ANSWERING" => Some(TaskType::QuestionAnswering),
+                        "FACT_VERIFICATION" => Some(TaskType::FactVerification),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                Some(Self::Google(GoogleEmbeddings::with_http_client(
+                    api_key,
+                    GoogleEmbeddingModel::default(),
+                    dimensions,
+                    task_type,
+                    db,
+                    http_client,
                 )))
             }
         }
