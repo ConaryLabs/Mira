@@ -10,26 +10,87 @@ mod file_aware;
 mod task_aware;
 mod budget;
 mod cache;
+mod config;
+mod analytics;
 
 pub use semantic::SemanticInjector;
 pub use file_aware::FileAwareInjector;
 pub use task_aware::TaskAwareInjector;
 pub use budget::BudgetManager;
 pub use cache::InjectionCache;
+pub use config::InjectionConfig;
+pub use analytics::{InjectionAnalytics, InjectionEvent};
 
-// Context injector trait for proactive context injection (future expansion)
-// #[async_trait::async_trait]
-// pub trait ContextInjector {
-//     /// Inject relevant context based on user message
-//     /// Returns a string of context to be injected into the conversation
-//     async fn inject_context(&self, user_message: &str, session_id: &str) -> String;
-//
-//     /// Inject context related to specific file paths mentioned in the message
-//     async fn inject_file_context(&self, file_paths: Vec<&str>) -> String;
-//
-//     /// Inject context related to active tasks
-//     async fn inject_task_context(&self, task_ids: Vec<i64>) -> String;
-// }
+/// Result of context injection with metadata for MCP notification
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InjectionResult {
+    /// The injected context string (empty if nothing injected)
+    pub context: String,
+    /// Sources that contributed to the context
+    pub sources: Vec<InjectionSource>,
+    /// Whether injection was skipped and why
+    pub skip_reason: Option<String>,
+    /// Cache hit?
+    pub from_cache: bool,
+}
+
+impl InjectionResult {
+    fn empty() -> Self {
+        Self {
+            context: String::new(),
+            sources: Vec::new(),
+            skip_reason: None,
+            from_cache: false,
+        }
+    }
+
+    fn skipped(reason: &str) -> Self {
+        Self {
+            context: String::new(),
+            sources: Vec::new(),
+            skip_reason: Some(reason.to_string()),
+            from_cache: false,
+        }
+    }
+
+    /// Check if any context was injected
+    pub fn has_context(&self) -> bool {
+        !self.context.is_empty()
+    }
+
+    /// Format as a notification summary
+    pub fn summary(&self) -> String {
+        if self.context.is_empty() {
+            return String::new();
+        }
+
+        let sources: Vec<&str> = self.sources.iter().map(|s| s.name()).collect();
+        format!(
+            "Injected {} chars from: {}{}",
+            self.context.len(),
+            sources.join(", "),
+            if self.from_cache { " (cached)" } else { "" }
+        )
+    }
+}
+
+/// Source of injected context
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum InjectionSource {
+    Semantic,
+    FileAware,
+    TaskAware,
+}
+
+impl InjectionSource {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Semantic => "semantic",
+            Self::FileAware => "files",
+            Self::TaskAware => "tasks",
+        }
+    }
+}
 
 /// Main context injection manager
 pub struct ContextInjectionManager {
@@ -39,23 +100,43 @@ pub struct ContextInjectionManager {
     task_injector: TaskAwareInjector,
     budget_manager: BudgetManager,
     cache: InjectionCache,
+    analytics: InjectionAnalytics,
+    config: InjectionConfig,
 }
 
 impl ContextInjectionManager {
     pub fn new(db: Arc<Database>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
+        // Load config from database
+        let config = InjectionConfig::load(&db).unwrap_or_default();
+
         Self {
             db: db.clone(),
             semantic_injector: SemanticInjector::new(db.clone(), embeddings),
             file_injector: FileAwareInjector::new(db.clone()),
             task_injector: TaskAwareInjector::new(db.clone()),
-            budget_manager: BudgetManager::new(),
+            budget_manager: BudgetManager::with_limit(config.max_chars),
             cache: InjectionCache::new(),
+            analytics: InjectionAnalytics::new(db.clone()),
+            config,
         }
+    }
+
+    /// Get current configuration
+    pub fn config(&self) -> &InjectionConfig {
+        &self.config
+    }
+
+    /// Update configuration
+    pub fn set_config(&mut self, config: InjectionConfig) {
+        if let Err(e) = config.save(&self.db) {
+            tracing::warn!("Failed to save injection config: {}", e);
+        }
+        self.budget_manager = BudgetManager::with_limit(config.max_chars);
+        self.config = config;
     }
 
     /// Get project ID and path for the current session (if any)
     async fn get_project_info(&self) -> (Option<i64>, Option<String>) {
-        // Try to get last active project from database
         match self.db.get_last_active_project() {
             Ok(Some(path)) => {
                 match self.db.get_or_create_project(&path, None) {
@@ -112,28 +193,9 @@ impl ContextInjectionManager {
         false
     }
 
-
-    /// Main entry point for proactive context injection
-    pub async fn get_context_for_message(&self, user_message: &str, session_id: &str) -> String {
-        // Skip injection for simple commands to avoid token overflow
-        if self.is_simple_command(user_message) {
-            return String::new();
-        }
-
-        // Skip very short messages (< 30 chars) and very long messages (> 500 chars, likely code paste)
-        let msg_len = user_message.trim().len();
-        if msg_len < 30 || msg_len > 500 {
-            return String::new();
-        }
-
-        // Skip injection 50% of the time deterministically based on message hash
-        let hash = user_message.bytes().fold(0u32, |acc, b| acc.wrapping_add(b as u32));
-        if hash % 2 != 0 { // 50% chance to proceed
-            return String::new();
-        }
-
-        // Only inject for messages related to code or the project
-        let lower = user_message.to_lowercase();
+    /// Check if message is code-related
+    fn is_code_related(&self, message: &str) -> bool {
+        let lower = message.to_lowercase();
         let code_keywords = [
             // Code structure
             "function", "struct", "class", "module", "import", "export", "variable", "constant",
@@ -151,22 +213,60 @@ impl ContextInjectionManager {
             "schema", "migration", "config", "configuration", "setting", "environment",
         ];
 
-        // Check if message contains any code-related keyword
         let has_code_keyword = code_keywords.iter().any(|&kw| lower.contains(kw));
 
-        // Also check for file extensions or paths mentioned
         let has_file_mention = lower.contains(".rs") || lower.contains(".toml") ||
             lower.contains(".json") || lower.contains(".md") || lower.contains(".txt") ||
             lower.contains(".py") || lower.contains(".js") || lower.contains(".ts") ||
             (lower.contains('/') && (lower.contains("src/") || lower.contains("crates/")));
 
-        if !has_code_keyword && !has_file_mention {
-            return String::new();
+        has_code_keyword || has_file_mention
+    }
+
+    /// Main entry point for proactive context injection
+    /// Returns both the context string and metadata about what was injected
+    pub async fn get_context_for_message(&self, user_message: &str, session_id: &str) -> InjectionResult {
+        // Check if injection is enabled
+        if !self.config.enabled {
+            return InjectionResult::skipped("disabled");
+        }
+
+        // Skip injection for simple commands
+        if self.is_simple_command(user_message) {
+            return InjectionResult::skipped("simple_command");
+        }
+
+        // Skip very short or very long messages
+        let msg_len = user_message.trim().len();
+        if msg_len < self.config.min_message_len {
+            return InjectionResult::skipped("too_short");
+        }
+        if msg_len > self.config.max_message_len {
+            return InjectionResult::skipped("too_long");
+        }
+
+        // Probabilistic skip based on sample rate
+        if self.config.sample_rate < 1.0 {
+            let hash = user_message.bytes().fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+            let threshold = (self.config.sample_rate * 100.0) as u32;
+            if hash % 100 >= threshold {
+                return InjectionResult::skipped("sampled_out");
+            }
+        }
+
+        // Check if message is code-related
+        if !self.is_code_related(user_message) {
+            return InjectionResult::skipped("not_code_related");
         }
 
         // Check cache first
         if let Some(cached) = self.cache.get(user_message).await {
-            return cached;
+            return InjectionResult {
+                context: cached,
+                sources: vec![], // We don't track sources for cached results
+                skip_reason: None,
+                from_cache: true,
+            };
         }
 
         // Get project info for scoping search
@@ -174,33 +274,43 @@ impl ContextInjectionManager {
 
         // Collect context from different injectors
         let mut contexts = Vec::new();
+        let mut sources = Vec::new();
 
         // Semantic context
-        let semantic_context = self.semantic_injector.inject_context(
-            user_message,
-            session_id,
-            project_id,
-            project_path.as_deref(),
-        ).await;
-        if !semantic_context.is_empty() {
-            contexts.push(semantic_context);
-        }
-
-        // File mention context
-        let file_paths = self.file_injector.extract_file_mentions(user_message);
-        if !file_paths.is_empty() {
-            let file_context = self.file_injector.inject_file_context(file_paths).await;
-            if !file_context.is_empty() {
-                contexts.push(file_context);
+        if self.config.enable_semantic {
+            let semantic_context = self.semantic_injector.inject_context(
+                user_message,
+                session_id,
+                project_id,
+                project_path.as_deref(),
+            ).await;
+            if !semantic_context.is_empty() {
+                contexts.push(semantic_context);
+                sources.push(InjectionSource::Semantic);
             }
         }
 
-        // Task context (if any active tasks)
-        let task_ids = self.task_injector.get_active_task_ids().await;
-        if !task_ids.is_empty() {
-            let task_context = self.task_injector.inject_task_context(task_ids).await;
-            if !task_context.is_empty() {
-                contexts.push(task_context);
+        // File mention context
+        if self.config.enable_file_aware {
+            let file_paths = self.file_injector.extract_file_mentions(user_message);
+            if !file_paths.is_empty() {
+                let file_context = self.file_injector.inject_file_context(file_paths).await;
+                if !file_context.is_empty() {
+                    contexts.push(file_context);
+                    sources.push(InjectionSource::FileAware);
+                }
+            }
+        }
+
+        // Task context
+        if self.config.enable_task_aware {
+            let task_ids = self.task_injector.get_active_task_ids().await;
+            if !task_ids.is_empty() {
+                let task_context = self.task_injector.inject_task_context(task_ids).await;
+                if !task_context.is_empty() {
+                    contexts.push(task_context);
+                    sources.push(InjectionSource::TaskAware);
+                }
             }
         }
 
@@ -210,6 +320,66 @@ impl ContextInjectionManager {
         // Cache the result
         self.cache.put(user_message, final_context.clone()).await;
 
-        final_context
+        // Record analytics
+        if !final_context.is_empty() {
+            self.analytics.record(InjectionEvent {
+                session_id: session_id.to_string(),
+                project_id,
+                sources: sources.clone(),
+                context_len: final_context.len(),
+                message_preview: user_message.chars().take(50).collect(),
+            }).await;
+        }
+
+        InjectionResult {
+            context: final_context,
+            sources,
+            skip_reason: None,
+            from_cache: false,
+        }
+    }
+
+    /// Legacy method for backwards compatibility - returns just the context string
+    pub async fn get_context_string(&self, user_message: &str, session_id: &str) -> String {
+        self.get_context_for_message(user_message, session_id).await.context
+    }
+
+    /// Get injection analytics summary
+    pub async fn get_analytics_summary(&self, project_id: Option<i64>) -> String {
+        self.analytics.summary(project_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_injection_result_summary() {
+        let result = InjectionResult {
+            context: "Some context here".to_string(),
+            sources: vec![InjectionSource::Semantic, InjectionSource::TaskAware],
+            skip_reason: None,
+            from_cache: false,
+        };
+
+        let summary = result.summary();
+        assert!(summary.contains("17 chars"));
+        assert!(summary.contains("semantic"));
+        assert!(summary.contains("tasks"));
+    }
+
+    #[test]
+    fn test_injection_result_empty() {
+        let result = InjectionResult::empty();
+        assert!(!result.has_context());
+        assert!(result.summary().is_empty());
+    }
+
+    #[test]
+    fn test_injection_result_skipped() {
+        let result = InjectionResult::skipped("too_short");
+        assert!(!result.has_context());
+        assert_eq!(result.skip_reason, Some("too_short".to_string()));
     }
 }

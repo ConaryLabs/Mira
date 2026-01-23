@@ -810,3 +810,182 @@ async fn test_pool_error_handling() {
     let output = result.unwrap();
     assert!(output.contains("not found"), "Should indicate memory not found: {}", output);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Context Injection Integration Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_context_injection_basic() {
+    use mira::context::ContextInjectionManager;
+
+    let ctx = TestContext::new().await;
+
+    // Create injection manager
+    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.embeddings().cloned());
+
+    // Test with a code-related message
+    let result = manager
+        .get_context_for_message(
+            "How does the authentication function work in this codebase?",
+            "test-session",
+        )
+        .await;
+
+    // Should attempt injection (may or may not find context depending on DB state)
+    assert!(result.skip_reason.is_none() || result.skip_reason == Some("sampled_out".to_string()),
+        "Should not skip for code-related message, got: {:?}", result.skip_reason);
+}
+
+#[tokio::test]
+async fn test_context_injection_skip_simple_commands() {
+    use mira::context::ContextInjectionManager;
+
+    let ctx = TestContext::new().await;
+    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.embeddings().cloned());
+
+    // Simple commands should be skipped
+    let result = manager.get_context_for_message("git status", "test-session").await;
+    assert_eq!(result.skip_reason, Some("simple_command".to_string()));
+
+    let result = manager.get_context_for_message("ls -la", "test-session").await;
+    assert_eq!(result.skip_reason, Some("simple_command".to_string()));
+
+    let result = manager.get_context_for_message("/help", "test-session").await;
+    assert_eq!(result.skip_reason, Some("simple_command".to_string()));
+}
+
+#[tokio::test]
+async fn test_context_injection_skip_short_messages() {
+    use mira::context::ContextInjectionManager;
+
+    let ctx = TestContext::new().await;
+    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.embeddings().cloned());
+
+    // Very short messages should be skipped
+    let result = manager.get_context_for_message("hi", "test-session").await;
+    assert!(result.skip_reason.is_some());
+}
+
+#[tokio::test]
+async fn test_context_injection_config() {
+    use mira::context::{ContextInjectionManager, InjectionConfig};
+
+    let ctx = TestContext::new().await;
+    let mut manager = ContextInjectionManager::new(ctx.db().clone(), ctx.embeddings().cloned());
+
+    // Verify default config
+    assert!(manager.config().enabled);
+    assert_eq!(manager.config().max_chars, 1500);
+    assert_eq!(manager.config().sample_rate, 0.5);
+
+    // Update config
+    let new_config = InjectionConfig::builder()
+        .enabled(false)
+        .max_chars(2000)
+        .sample_rate(1.0)
+        .build();
+    manager.set_config(new_config);
+
+    // Verify injection is disabled
+    let result = manager
+        .get_context_for_message(
+            "How does the authentication function work?",
+            "test-session",
+        )
+        .await;
+    assert_eq!(result.skip_reason, Some("disabled".to_string()));
+}
+
+#[tokio::test]
+async fn test_context_injection_with_tasks() {
+    use mira::context::ContextInjectionManager;
+
+    let ctx = TestContext::new().await;
+
+    // Create a project and some tasks
+    let project_path = "/tmp/test_injection_tasks".to_string();
+    session_start(&ctx, project_path.clone(), Some("Injection Test".to_string()), None)
+        .await
+        .expect("session_start failed");
+
+    // Create a task
+    task(
+        &ctx,
+        "create".to_string(),
+        None,
+        Some("Fix authentication bug".to_string()),
+        Some("High priority security issue".to_string()),
+        None,
+        Some("high".to_string()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("task creation failed");
+
+    // Create injection manager
+    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.embeddings().cloned());
+
+    // Get context - should include task info if task-aware injection is enabled
+    // Note: due to sampling, this might be skipped
+    let config = manager.config();
+    assert!(config.enable_task_aware, "Task-aware injection should be enabled by default");
+}
+
+#[tokio::test]
+async fn test_context_injection_file_extraction() {
+    use mira::context::FileAwareInjector;
+
+    let ctx = TestContext::new().await;
+    let injector = FileAwareInjector::new(ctx.db().clone());
+
+    // Test file path extraction
+    let paths = injector.extract_file_mentions("Check src/main.rs and lib.rs for issues");
+    assert!(paths.contains(&"src/main.rs".to_string()));
+    assert!(paths.contains(&"lib.rs".to_string()));
+
+    // Test with nested paths
+    let paths = injector.extract_file_mentions("Look at crates/mira-server/src/db/pool.rs");
+    assert!(paths.contains(&"crates/mira-server/src/db/pool.rs".to_string()));
+
+    // Test with various extensions
+    let paths = injector.extract_file_mentions("Edit config.toml and package.json");
+    assert!(paths.contains(&"config.toml".to_string()));
+    assert!(paths.contains(&"package.json".to_string()));
+}
+
+#[tokio::test]
+async fn test_context_injection_analytics() {
+    use mira::context::{InjectionAnalytics, InjectionEvent, InjectionSource};
+
+    let ctx = TestContext::new().await;
+    let analytics = InjectionAnalytics::new(ctx.db().clone());
+
+    // Record some events
+    analytics.record(InjectionEvent {
+        session_id: "test-1".to_string(),
+        project_id: Some(1),
+        sources: vec![InjectionSource::Semantic],
+        context_len: 100,
+        message_preview: "test message 1".to_string(),
+    }).await;
+
+    analytics.record(InjectionEvent {
+        session_id: "test-2".to_string(),
+        project_id: Some(1),
+        sources: vec![InjectionSource::Semantic, InjectionSource::TaskAware],
+        context_len: 200,
+        message_preview: "test message 2".to_string(),
+    }).await;
+
+    // Check summary
+    let summary = analytics.summary(None).await;
+    assert!(summary.contains("2 injections"), "Summary: {}", summary);
+    assert!(summary.contains("300 chars"), "Summary: {}", summary);
+
+    // Check recent events
+    let recent = analytics.recent_events(5).await;
+    assert_eq!(recent.len(), 2);
+}

@@ -46,15 +46,22 @@ pub async fn run() -> Result<()> {
     let embeddings = get_embeddings();
     let manager = crate::context::ContextInjectionManager::new(db, embeddings);
 
-    // Get relevant context
-    let context = manager.get_context_for_message(user_message, session_id).await;
+    // Get relevant context with metadata
+    let result = manager.get_context_for_message(user_message, session_id).await;
 
-    if !context.is_empty() {
-        eprintln!("[mira] Injecting context ({} chars)", context.len());
+    if result.has_context() {
+        eprintln!("[mira] {}", result.summary());
         write_hook_output(&serde_json::json!({
-            "systemMessage": context
+            "systemMessage": result.context,
+            "metadata": {
+                "sources": result.sources,
+                "from_cache": result.from_cache
+            }
         }));
     } else {
+        if let Some(reason) = &result.skip_reason {
+            eprintln!("[mira] Context injection skipped: {}", reason);
+        }
         // No context to inject - output empty object
         write_hook_output(&serde_json::json!({}));
     }

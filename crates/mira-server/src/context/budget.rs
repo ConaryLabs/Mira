@@ -12,6 +12,11 @@ impl BudgetManager {
         }
     }
 
+    /// Create with custom character limit
+    pub fn with_limit(max_chars: usize) -> Self {
+        Self { max_chars }
+    }
+
     /// Apply token budget to collected contexts
     pub fn apply_budget(&self, contexts: Vec<String>) -> String {
         // Filter out empty contexts
