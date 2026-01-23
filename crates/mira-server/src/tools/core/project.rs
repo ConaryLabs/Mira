@@ -6,220 +6,24 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::cartographer;
-use crate::db::Database;
+use crate::db::{
+    get_or_create_project_sync, update_project_name_sync, upsert_session_sync,
+    search_memories_text_sync, get_preferences_sync, get_health_alerts_sync,
+    Database,
+};
 use crate::db::documentation::count_doc_tasks_by_status;
 use crate::tools::core::claude_local;
 use crate::tools::core::ToolContext;
 
-/// Sync helper: search memories by text (for use inside run_blocking)
-fn search_memories_sync(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<MemoryFact>, String> {
-    use rusqlite::params;
+// Helper functions moved to db/project.rs:
+// - search_memories_text_sync
+// - get_preferences_sync
+// - get_health_alerts_sync
 
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let pattern = format!("%{}%", escaped);
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status,
-                    user_id, scope, team_id
-             FROM memory_facts
-             WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
-             ORDER BY updated_at DESC
-             LIMIT ?",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![project_id, pattern, limit as i64], |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-                session_count: row.get(8).unwrap_or(1),
-                first_session_id: row.get(9).ok(),
-                last_session_id: row.get(10).ok(),
-                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
-                user_id: row.get(12).ok(),
-                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
-                team_id: row.get(14).ok(),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
-}
-
-/// Sync helper: get preferences (for use inside run_blocking)
-fn get_preferences_sync(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-) -> Result<Vec<MemoryFact>, String> {
-    use rusqlite::params;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status,
-                    user_id, scope, team_id
-             FROM memory_facts
-             WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
-             ORDER BY category, created_at DESC",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![project_id], |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-                session_count: row.get(8).unwrap_or(1),
-                first_session_id: row.get(9).ok(),
-                last_session_id: row.get(10).ok(),
-                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
-                user_id: row.get(12).ok(),
-                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
-                team_id: row.get(14).ok(),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
-}
-
-/// Sync helper: get health alerts (for use inside run_blocking)
-fn get_health_alerts_sync(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-    limit: usize,
-) -> Result<Vec<MemoryFact>, String> {
-    use rusqlite::params;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                    session_count, first_session_id, last_session_id, status,
-                    user_id, scope, team_id
-             FROM memory_facts
-             WHERE (project_id = ? OR project_id IS NULL)
-               AND fact_type = 'health'
-               AND confidence >= 0.7
-             ORDER BY confidence DESC, updated_at DESC
-             LIMIT ?",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![project_id, limit as i64], |row| {
-            Ok(MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-                session_count: row.get(8).unwrap_or(1),
-                first_session_id: row.get(9).ok(),
-                last_session_id: row.get(10).ok(),
-                status: row.get(11).unwrap_or_else(|_| "candidate".to_string()),
-                user_id: row.get(12).ok(),
-                scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
-                team_id: row.get(14).ok(),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
-}
-
-/// Sync helper: get documentation task counts by status (for use inside pool.interact)
-fn get_doc_task_counts_sync(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-) -> Result<Vec<(String, i64)>, String> {
-    count_doc_tasks_by_status(conn, project_id)
-}
-
-/// Sync helper: create or update session (for use inside pool.interact)
-fn create_session_sync(
-    conn: &rusqlite::Connection,
-    session_id: &str,
-    project_id: Option<i64>,
-) -> Result<(), String> {
-    use rusqlite::params;
-    conn.execute(
-        "INSERT INTO sessions (id, project_id, status, started_at, last_activity)
-         VALUES (?1, ?2, 'active', datetime('now'), datetime('now'))
-         ON CONFLICT(id) DO UPDATE SET last_activity = datetime('now')",
-        params![session_id, project_id],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Sync helper: get or create project (for use inside pool.interact)
-fn get_or_create_project_sync(
-    conn: &rusqlite::Connection,
-    path: &str,
-    name: Option<&str>,
-) -> Result<(i64, Option<String>), String> {
-    use rusqlite::params;
-
-    // UPSERT: insert or get existing.
-    let (id, stored_name): (i64, Option<String>) = conn
-        .query_row(
-            "INSERT INTO projects (path, name) VALUES (?, ?)
-             ON CONFLICT(path) DO UPDATE SET
-                 name = COALESCE(projects.name, excluded.name),
-                 created_at = projects.created_at
-             RETURNING id, name",
-            params![path, name],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
-
-    // If we have a name, return it
-    if stored_name.is_some() {
-        return Ok((id, stored_name));
-    }
-
-    // Auto-detect name from project files
-    let detected_name = detect_project_name(path);
-
-    if detected_name.is_some() {
-        conn.execute(
-            "UPDATE projects SET name = ? WHERE id = ?",
-            params![&detected_name, id],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    Ok((id, detected_name))
-}
+// Sync helpers moved to db modules:
+// - get_doc_task_counts_sync -> uses count_doc_tasks_by_status directly
+// - create_session_sync -> upsert_session_sync in db/project.rs
+// - get_or_create_project_sync -> db/project.rs
 
 /// Auto-detect project name from path (sync helper)
 fn detect_project_name(path: &str) -> Option<String> {
@@ -286,7 +90,7 @@ async fn init_project<C: ToolContext>(
     // Use pool for project creation (ensures same database as memory operations)
     let path_owned = project_path.to_string();
     let name_owned = name.map(|s| s.to_string());
-    let (project_id, project_name) = ctx
+    let (project_id, stored_name) = ctx
         .pool()
         .interact(move |conn| {
             get_or_create_project_sync(conn, &path_owned, name_owned.as_deref())
@@ -294,6 +98,25 @@ async fn init_project<C: ToolContext>(
         })
         .await
         .map_err(|e| e.to_string())?;
+
+    // If we have a stored name, use it; otherwise detect from files
+    let project_name = if stored_name.is_some() {
+        stored_name
+    } else {
+        let detected = detect_project_name(project_path);
+        if let Some(ref name) = detected {
+            // Update the project with the detected name
+            let name_clone = name.clone();
+            ctx.pool()
+                .interact(move |conn| {
+                    update_project_name_sync(conn, project_id, &name_clone)
+                        .map_err(|e| anyhow::anyhow!(e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        detected
+    };
 
     let project_ctx = ProjectContext {
         id: project_id,
@@ -364,7 +187,7 @@ pub async fn session_start<C: ToolContext>(
     let sid_clone = sid.clone();
     ctx.pool()
         .interact(move |conn| {
-            create_session_sync(conn, &sid_clone, Some(project_id)).map_err(|e| anyhow::anyhow!(e))
+            upsert_session_sync(conn, &sid_clone, Some(project_id)).map_err(|e| anyhow::anyhow!(e))
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -463,13 +286,13 @@ pub async fn session_start<C: ToolContext>(
             let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
 
             // Get recent memories
-            let memories = search_memories_sync(conn, Some(project_id), "", 10).unwrap_or_default();
+            let memories = search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
 
             // Get health alerts
             let health_alerts = get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
 
             // Get documentation task counts
-            let doc_task_counts = get_doc_task_counts_sync(conn, Some(project_id)).unwrap_or_default();
+            let doc_task_counts = count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
 
             Ok((preferences, memories, health_alerts, doc_task_counts))
         })

@@ -2,7 +2,10 @@
 // Background worker for generating codebase capabilities inventory
 
 use crate::cartographer;
-use crate::db::Database;
+use crate::db::{
+    get_indexed_projects_sync, get_scan_info_sync, is_time_older_than_sync,
+    clear_old_capabilities_sync, Database,
+};
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, PromptBuilder};
 use crate::search::embedding_to_bytes;
@@ -64,19 +67,7 @@ pub async fn process_capabilities(
 /// 3. Last scan > 7 days ago (periodic refresh)
 fn get_projects_needing_scan(conn: &rusqlite::Connection) -> Result<Vec<(i64, String)>, String> {
     // Get all indexed projects
-    let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT p.id, p.path
-             FROM projects p
-             JOIN codebase_modules m ON m.project_id = p.id",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let all_projects: Vec<(i64, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+    let all_projects = get_indexed_projects_sync(conn).map_err(|e| e.to_string())?;
 
     let mut needing_scan = Vec::new();
 
@@ -95,14 +86,7 @@ fn get_projects_needing_scan(conn: &rusqlite::Connection) -> Result<Vec<(i64, St
 /// Check if a specific project needs a capabilities scan
 fn needs_capabilities_scan(conn: &rusqlite::Connection, project_id: i64, project_path: &str) -> Result<bool, String> {
     // Get last scan info
-    let scan_info: Option<(String, String)> = conn
-        .query_row(
-            "SELECT content, updated_at FROM memory_facts
-             WHERE project_id = ? AND key = 'capabilities_scan_time'",
-            [project_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .ok();
+    let scan_info = get_scan_info_sync(conn, project_id, "capabilities_scan_time");
 
     let (last_commit, last_scan_time) = match scan_info {
         Some((commit, time)) => (Some(commit), Some(time)),
@@ -123,15 +107,7 @@ fn needs_capabilities_scan(conn: &rusqlite::Connection, project_id: i64, project
         if last != current {
             // Check rate limit - only rescan if last scan was > 1 day ago
             if let Some(ref scan_time) = last_scan_time {
-                let older_than_1_day: bool = conn
-                    .query_row(
-                        "SELECT datetime(?) < datetime('now', '-1 day')",
-                        [scan_time],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(false);
-
-                if older_than_1_day {
+                if is_time_older_than_sync(conn, scan_time, "-1 day") {
                     tracing::debug!(
                         "Project {} needs scan: git changed ({} -> {}) and rate limit passed",
                         project_id, &last[..8.min(last.len())], &current[..8.min(current.len())]
@@ -144,15 +120,7 @@ fn needs_capabilities_scan(conn: &rusqlite::Connection, project_id: i64, project
 
     // Case 3: Periodic refresh (> 7 days since last scan)
     if let Some(ref scan_time) = last_scan_time {
-        let older_than_7_days: bool = conn
-            .query_row(
-                "SELECT datetime(?) < datetime('now', '-7 days')",
-                [scan_time],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if older_than_7_days {
+        if is_time_older_than_sync(conn, scan_time, "-7 days") {
             tracing::debug!("Project {} needs scan: periodic refresh (> 7 days)", project_id);
             return Ok(true);
         }
@@ -390,19 +358,5 @@ fn store_embedding(conn: &rusqlite::Connection, fact_id: i64, content: &str, emb
 
 /// Clear old capabilities before refresh (issues are handled by code_health scanner)
 fn clear_old_capabilities(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
-    // Delete old capabilities only (issues managed by code_health scanner)
-    conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'capability' AND category = 'codebase'",
-        [project_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Clean up orphaned embeddings
-    conn.execute(
-        "DELETE FROM vec_memory WHERE fact_id NOT IN (SELECT id FROM memory_facts)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
+    clear_old_capabilities_sync(conn, project_id).map_err(|e| e.to_string())
 }

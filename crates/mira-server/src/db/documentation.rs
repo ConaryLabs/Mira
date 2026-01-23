@@ -303,6 +303,26 @@ pub fn get_doc_inventory(
         .map_err(|e| e.to_string())
 }
 
+/// Get inventory items eligible for staleness check
+/// Returns items with source_signature_hash that are not already marked stale
+pub fn get_inventory_for_stale_check(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+) -> Result<Vec<DocInventory>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT * FROM documentation_inventory
+             WHERE project_id = ? AND source_signature_hash IS NOT NULL
+             AND is_stale = 0",
+        )
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_map(params![project_id], parse_doc_inventory)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
 /// Get stale documentation for a project
 pub fn get_stale_docs(
     conn: &rusqlite::Connection,

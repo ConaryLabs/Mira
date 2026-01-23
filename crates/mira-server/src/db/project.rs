@@ -2,9 +2,162 @@
 // Project management operations
 
 use anyhow::Result;
-use rusqlite::params;
+use mira_types::MemoryFact;
+use rusqlite::{params, Connection};
 
-use super::Database;
+use super::{parse_memory_fact_row, Database};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sync functions for pool.interact() usage
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get or create a project, returning (id, name) - sync version for pool.interact()
+pub fn get_or_create_project_sync(
+    conn: &Connection,
+    path: &str,
+    name: Option<&str>,
+) -> rusqlite::Result<(i64, Option<String>)> {
+    conn.query_row(
+        "INSERT INTO projects (path, name) VALUES (?, ?)
+         ON CONFLICT(path) DO UPDATE SET
+             name = COALESCE(projects.name, excluded.name),
+             created_at = projects.created_at
+         RETURNING id, name",
+        params![path, name],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+}
+
+/// Update project name - sync version
+pub fn update_project_name_sync(
+    conn: &Connection,
+    project_id: i64,
+    name: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE projects SET name = ? WHERE id = ?",
+        params![name, project_id],
+    )?;
+    Ok(())
+}
+
+/// Create or update a session - sync version for pool.interact()
+pub fn upsert_session_sync(
+    conn: &Connection,
+    session_id: &str,
+    project_id: Option<i64>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO sessions (id, project_id, status, started_at, last_activity)
+         VALUES (?1, ?2, 'active', datetime('now'), datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET last_activity = datetime('now')",
+        params![session_id, project_id],
+    )?;
+    Ok(())
+}
+
+/// Get indexed projects (projects with codebase_modules) - sync version
+pub fn get_indexed_projects_sync(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT p.id, p.path
+         FROM projects p
+         JOIN codebase_modules m ON m.project_id = p.id",
+    )?;
+
+    let projects = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(projects)
+}
+
+/// Search memories by text pattern - sync version for pool.interact()
+pub fn search_memories_text_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    query: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<MemoryFact>> {
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                session_count, first_session_id, last_session_id, status,
+                user_id, scope, team_id
+         FROM memory_facts
+         WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
+         ORDER BY updated_at DESC
+         LIMIT ?",
+    )?;
+
+    let rows = stmt
+        .query_map(params![project_id, pattern, limit as i64], |row| {
+            parse_memory_fact_row(row)
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(rows)
+}
+
+/// Get preferences for a project - sync version for pool.interact()
+pub fn get_preferences_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+) -> rusqlite::Result<Vec<MemoryFact>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                session_count, first_session_id, last_session_id, status,
+                user_id, scope, team_id
+         FROM memory_facts
+         WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
+         ORDER BY category, created_at DESC",
+    )?;
+
+    let rows = stmt
+        .query_map(params![project_id], |row| parse_memory_fact_row(row))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(rows)
+}
+
+/// Get health alerts for a project - sync version for pool.interact()
+pub fn get_health_alerts_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    limit: usize,
+) -> rusqlite::Result<Vec<MemoryFact>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                session_count, first_session_id, last_session_id, status,
+                user_id, scope, team_id
+         FROM memory_facts
+         WHERE (project_id = ? OR project_id IS NULL)
+           AND fact_type = 'health'
+           AND confidence >= 0.7
+         ORDER BY confidence DESC, updated_at DESC
+         LIMIT ?",
+    )?;
+
+    let rows = stmt
+        .query_map(params![project_id, limit as i64], |row| {
+            parse_memory_fact_row(row)
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(rows)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Database impl methods
+// ═══════════════════════════════════════════════════════════════════════════════
 
 impl Database {
     /// Get or create project by path, returns (id, name)

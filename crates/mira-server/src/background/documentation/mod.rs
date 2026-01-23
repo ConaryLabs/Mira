@@ -4,8 +4,7 @@
 mod detection;
 mod inventory;
 
-use crate::db::Database;
-use rusqlite::params;
+use crate::db::{Database, get_scan_info_sync, is_time_older_than_sync, delete_memory_by_key_sync};
 use std::process::Command;
 use std::sync::Arc;
 
@@ -138,14 +137,7 @@ pub fn needs_documentation_scan(
     project_path: &str,
 ) -> Result<bool, String> {
     // Get last scan info from memory_facts
-    let scan_info: Option<(String, String)> = conn
-        .query_row(
-            "SELECT content, updated_at FROM memory_facts
-             WHERE project_id = ? AND key = ?",
-            params![project_id, DOC_SCAN_MARKER_KEY],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .ok();
+    let scan_info = get_scan_info_sync(conn, project_id, DOC_SCAN_MARKER_KEY);
 
     let (last_commit, last_scan_time) = match scan_info {
         Some((commit, time)) => (Some(commit), Some(time)),
@@ -165,15 +157,7 @@ pub fn needs_documentation_scan(
     if let (Some(last), Some(current)) = (&last_commit, &current_commit) {
         if last != current {
             if let Some(ref scan_time) = last_scan_time {
-                let older_than_1_hour: bool = conn
-                    .query_row(
-                        "SELECT datetime(?) < datetime('now', '-1 hour')",
-                        [scan_time],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(false);
-
-                if older_than_1_hour {
+                if is_time_older_than_sync(conn, scan_time, "-1 hour") {
                     tracing::debug!(
                         "Project {} needs doc scan: git changed ({} -> {}) and rate limit passed",
                         project_id,
@@ -188,15 +172,7 @@ pub fn needs_documentation_scan(
 
     // Case 3: Periodic refresh (> 24 hours since last scan)
     if let Some(ref scan_time) = last_scan_time {
-        let older_than_24_hours: bool = conn
-            .query_row(
-                "SELECT datetime(?) < datetime('now', '-24 hours')",
-                [scan_time],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if older_than_24_hours {
+        if is_time_older_than_sync(conn, scan_time, "-24 hours") {
             tracing::debug!("Project {} needs doc scan: periodic refresh", project_id);
             return Ok(true);
         }
@@ -230,11 +206,8 @@ pub fn clear_documentation_scan_marker(
     db: &Database,
     project_id: i64,
 ) -> Result<(), String> {
-    db.conn()
-        .execute(
-            "DELETE FROM memory_facts WHERE project_id = ? AND key = ?",
-            params![project_id, DOC_SCAN_MARKER_KEY],
-        )
+    let conn = db.conn();
+    delete_memory_by_key_sync(&conn, project_id, DOC_SCAN_MARKER_KEY)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

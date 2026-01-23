@@ -5,7 +5,11 @@ mod analysis;
 mod cargo;
 mod detection;
 
-use crate::db::Database;
+use crate::db::{
+    get_indexed_projects_sync, get_scan_info_sync, is_time_older_than_sync,
+    memory_key_exists_sync, mark_health_scanned_sync, clear_old_health_issues_sync,
+    Database,
+};
 use crate::llm::DeepSeekClient;
 use std::path::Path;
 use std::sync::Arc;
@@ -61,19 +65,7 @@ pub async fn process_code_health(
 /// Get projects that need health scanning (same rate limiting as capabilities)
 fn get_projects_needing_health_check(conn: &rusqlite::Connection) -> Result<Vec<(i64, String)>, String> {
     // Get all indexed projects
-    let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT p.id, p.path
-             FROM projects p
-             JOIN codebase_modules m ON m.project_id = p.id",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let all_projects: Vec<(i64, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+    let all_projects = get_indexed_projects_sync(conn).map_err(|e| e.to_string())?;
 
     let mut needing_scan = Vec::new();
 
@@ -94,63 +86,25 @@ fn get_projects_needing_health_check(conn: &rusqlite::Connection) -> Result<Vec<
 /// 3. Fallback: > 1 day since last scan
 fn needs_health_scan(conn: &rusqlite::Connection, project_id: i64) -> Result<bool, String> {
     // Check if the "needs scan" flag is set (triggered by file watcher)
-    let needs_scan: bool = conn
-        .query_row(
-            "SELECT 1 FROM memory_facts
-             WHERE project_id = ? AND key = 'health_scan_needed'",
-            [project_id],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if needs_scan {
+    if memory_key_exists_sync(conn, project_id, "health_scan_needed") {
         return Ok(true);
     }
 
     // Check last scan time for fallback
-    let last_scan: Option<String> = conn
-        .query_row(
-            "SELECT updated_at FROM memory_facts
-             WHERE project_id = ? AND key = 'health_scan_time'",
-            [project_id],
-            |row| row.get(0),
-        )
-        .ok();
+    let scan_info = get_scan_info_sync(conn, project_id, "health_scan_time");
 
-    match last_scan {
+    match scan_info {
         None => Ok(true), // Never scanned
-        Some(scan_time) => {
+        Some((_, scan_time)) => {
             // Fallback: rescan if > 1 day old
-            let older_than_1_day: bool = conn
-                .query_row(
-                    "SELECT datetime(?) < datetime('now', '-1 day')",
-                    [&scan_time],
-                    |row| row.get(0),
-                )
-                .unwrap_or(true);
-            Ok(older_than_1_day)
+            Ok(is_time_older_than_sync(conn, &scan_time, "-1 day"))
         }
     }
 }
 
 /// Mark project as health-scanned and clear the "needs scan" flag
 fn mark_health_scanned(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
-    // Clear the "needs scan" flag
-    conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_scan_needed'",
-        [project_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Update last scan time - insert directly to avoid needing Database reference
-    conn.execute(
-        "INSERT OR REPLACE INTO memory_facts (project_id, key, content, fact_type, category, confidence, created_at, updated_at)
-         VALUES (?, 'health_scan_time', 'scanned', 'system', 'health', 1.0, datetime('now'), datetime('now'))",
-        [project_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
+    mark_health_scanned_sync(conn, project_id).map_err(|e| e.to_string())
 }
 
 /// Mark project as needing a health scan (called by file watcher)
@@ -254,10 +208,5 @@ async fn scan_project_health(
 
 /// Clear old health issues before refresh
 fn clear_old_health_issues(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
-        [project_id],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    clear_old_health_issues_sync(conn, project_id).map_err(|e| e.to_string())
 }

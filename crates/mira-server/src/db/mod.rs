@@ -1,6 +1,7 @@
 // db/mod.rs
 // Unified database layer with rusqlite + sqlite-vec
 
+mod background;
 mod cartographer;
 mod chat;
 mod config;
@@ -61,7 +62,7 @@ pub use search::{
 };
 pub use diff_analysis::DiffAnalysis;
 pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals};
-pub use documentation::{DocGap, DocInventory, DocTask};
+pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::PendingEmbedding;
 pub use memory::{
     parse_memory_fact_row,
@@ -77,6 +78,31 @@ pub use reviews::{Correction, ReviewFinding};
 pub use teams::{Team, TeamMember};
 pub use types::*;
 pub use tasks::{parse_task_row, parse_goal_row};
+pub use project::{
+    get_or_create_project_sync,
+    update_project_name_sync,
+    upsert_session_sync,
+    get_indexed_projects_sync,
+    search_memories_text_sync,
+    get_preferences_sync,
+    get_health_alerts_sync,
+};
+pub use background::{
+    get_scan_info_sync,
+    is_time_older_than_sync,
+    memory_key_exists_sync,
+    delete_memory_by_key_sync,
+    insert_system_marker_sync,
+    clear_old_capabilities_sync,
+    mark_health_scanned_sync,
+    clear_old_health_issues_sync,
+    get_documented_by_category_sync,
+    get_lib_symbols_sync,
+    get_modules_for_doc_gaps_sync,
+    get_symbols_for_file_sync,
+    store_code_embedding_sync,
+    delete_pending_embedding_sync,
+};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;

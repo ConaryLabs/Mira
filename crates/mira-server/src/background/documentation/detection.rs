@@ -2,13 +2,16 @@
 // Documentation gap and staleness detection
 
 use crate::db::Database;
-use crate::db::documentation::{create_doc_task, mark_doc_stale, DocGap};
-use rusqlite::params;
+use crate::db::documentation::{create_doc_task, mark_doc_stale, DocGap, get_inventory_for_stale_check};
+use crate::db::{
+    get_indexed_projects_sync, get_documented_by_category_sync, get_lib_symbols_sync,
+    get_modules_for_doc_gaps_sync, get_symbols_for_file_sync,
+};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{calculate_source_signature_hash, get_git_head, is_ancestor, read_file_content};
+use super::{get_git_head, is_ancestor, read_file_content};
 
 /// Scan for documentation gaps and stale docs
 /// Returns number of new tasks created
@@ -18,16 +21,7 @@ pub async fn scan_documentation_gaps(db: &Arc<Database>) -> Result<usize, String
     // Get all indexed projects
     let projects = tokio::task::spawn_blocking(move || {
         let conn = db_clone.conn();
-        conn.prepare(
-            "SELECT DISTINCT p.id, p.path
-             FROM projects p
-             JOIN codebase_modules m ON m.project_id = p.id"
-        )
-        .map_err(|e| e.to_string())?
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        get_indexed_projects_sync(&conn).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
@@ -182,25 +176,17 @@ async fn detect_mcp_tool_gaps(
     }
 
     // Check which tools have documentation
-    let documented = tokio::task::spawn_blocking({
+    let documented: HashSet<String> = tokio::task::spawn_blocking({
         let db_clone = db.clone();
         move || {
             let conn = db_clone.conn();
-            let mut stmt = conn
-                .prepare(
-                    "SELECT doc_path FROM documentation_inventory
-                     WHERE project_id = ? AND doc_category = 'mcp_tool'"
-                )
-                .map_err(|e| e.to_string())?;
-
-            stmt.query_map(params![project_id], |row| row.get::<_, String>("doc_path"))
-                .map_err(|e| e.to_string())?
-                .collect::<Result<HashSet<_>, _>>()
-                .map_err(|e| e.to_string())
+            get_documented_by_category_sync(&conn, project_id, "mcp_tool")
+                .map(|v| v.into_iter().collect())
         }
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     // Create gaps for undocumented tools
     for tool_name in tool_names {
@@ -245,46 +231,24 @@ async fn detect_public_api_gaps(
     let db_clone = db.clone();
     let lib_symbols = tokio::task::spawn_blocking(move || {
         let conn = db_clone.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT DISTINCT name, signature
-                 FROM code_symbols
-                 WHERE project_id = ? AND file_path LIKE '%lib.rs'
-                 AND symbol_type IN ('function', 'struct', 'enum', 'type')
-                 ORDER BY name"
-            )
-            .map_err(|e| e.to_string())?;
-
-        stmt.query_map(params![project_id], |row| {
-            Ok((row.get::<_, String>("name")?, row.get::<_, Option<String>>("signature")?))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        get_lib_symbols_sync(&conn, project_id)
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     // Get documented public APIs
-    let documented = tokio::task::spawn_blocking({
+    let documented: HashSet<String> = tokio::task::spawn_blocking({
         let db_clone = db.clone();
         move || {
             let conn = db_clone.conn();
-            let mut stmt = conn
-                .prepare(
-                    "SELECT doc_path FROM documentation_inventory
-                     WHERE project_id = ? AND doc_category = 'public_api'"
-                )
-                .map_err(|e| e.to_string())?;
-
-            stmt.query_map(params![project_id], |row| row.get::<_, String>("doc_path"))
-                .map_err(|e| e.to_string())?
-                .collect::<Result<HashSet<_>, _>>()
-                .map_err(|e| e.to_string())
+            get_documented_by_category_sync(&conn, project_id, "public_api")
+                .map(|v| v.into_iter().collect())
         }
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     for (name, _signature) in lib_symbols {
         let doc_path = format!("docs/api/{}.md", name);
@@ -317,49 +281,24 @@ async fn detect_module_doc_gaps(
     let db_clone = db.clone();
     let modules = tokio::task::spawn_blocking(move || {
         let conn = db_clone.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT module_id, path, purpose
-                 FROM codebase_modules
-                 WHERE project_id = ?
-                 ORDER BY module_id"
-            )
-            .map_err(|e| e.to_string())?;
-
-        stmt.query_map(params![project_id], |row| {
-            Ok((
-                row.get::<_, String>("module_id")?,
-                row.get::<_, String>("path")?,
-                row.get::<_, Option<String>>("purpose")?,
-            ))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        get_modules_for_doc_gaps_sync(&conn, project_id)
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     // Get documented modules
-    let documented = tokio::task::spawn_blocking({
+    let documented: HashSet<String> = tokio::task::spawn_blocking({
         let db_clone = db.clone();
         move || {
             let conn = db_clone.conn();
-            let mut stmt = conn
-                .prepare(
-                    "SELECT doc_path FROM documentation_inventory
-                     WHERE project_id = ? AND doc_category = 'module'"
-                )
-                .map_err(|e| e.to_string())?;
-
-            stmt.query_map(params![project_id], |row| row.get::<_, String>("doc_path"))
-                .map_err(|e| e.to_string())?
-                .collect::<Result<HashSet<_>, _>>()
-                .map_err(|e| e.to_string())
+            get_documented_by_category_sync(&conn, project_id, "module")
+                .map(|v| v.into_iter().collect())
         }
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     for (module_id, path, purpose) in modules {
         let doc_path = format!("docs/modules/{}.md", module_id);
@@ -400,20 +339,7 @@ async fn detect_stale_docs_for_project(
     let db_clone = db.clone();
     let inventory = tokio::task::spawn_blocking(move || {
         let conn = db_clone.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT * FROM documentation_inventory
-                 WHERE project_id = ? AND source_signature_hash IS NOT NULL
-                 AND is_stale = 0"
-            )
-            .map_err(|e| e.to_string())?;
-
-        stmt.query_map(params![project_id], |row| {
-            Ok(crate::db::documentation::parse_doc_inventory(row)?)
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        get_inventory_for_stale_check(&conn, project_id)
     })
     .await
     .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
@@ -476,38 +402,36 @@ async fn check_source_signature_changed(
     project_id: i64,
     source_path: &str,
 ) -> Result<Option<String>, String> {
+    use sha2::Digest;
+
     let db_clone = db.clone();
     let source_path = source_path.to_string();
 
+    // Get symbols from db - returns (id, name, symbol_type, start_line, end_line, signature)
     let symbols = tokio::task::spawn_blocking(move || {
         let conn = db_clone.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT * FROM code_symbols
-                 WHERE project_id = ? AND file_path = ?
-                 ORDER BY name"
-            )
-            .map_err(|e| e.to_string())?;
-
-        stmt.query_map(params![project_id, source_path], |row| {
-            Ok(super::CodeSymbol {
-                id: row.get("id")?,
-                project_id: row.get("project_id")?,
-                file_path: row.get("file_path")?,
-                name: row.get("name")?,
-                symbol_type: row.get("symbol_type")?,
-                start_line: row.get("start_line")?,
-                end_line: row.get("end_line")?,
-                signature: row.get("signature")?,
-                indexed_at: row.get("indexed_at")?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        get_symbols_for_file_sync(&conn, project_id, &source_path)
     })
     .await
-    .map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
-    Ok(calculate_source_signature_hash(&symbols))
+    if symbols.is_empty() {
+        return Ok(None);
+    }
+
+    // Calculate hash from signatures (tuple index 5)
+    let normalized: Vec<String> = symbols
+        .iter()
+        .filter_map(|(_, _, _, _, _, sig)| sig.as_ref())
+        .map(|sig| sig.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    let combined = normalized.join("\n");
+    let hash = sha2::Sha256::digest(combined.as_bytes());
+    Ok(Some(format!("{:x}", hash)))
 }
