@@ -1,7 +1,8 @@
 // crates/mira-server/src/proxy/server.rs
 // Axum HTTP server for the proxy
 
-use crate::proxy::{Backend, BackendConfig, ProxyConfig};
+use crate::db::Database;
+use crate::proxy::{Backend, BackendConfig, ProxyConfig, UsageRecord};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,11 +16,18 @@ pub struct ProxyServer {
     pub backends: Arc<HashMap<String, Backend>>,
     /// Currently active backend name
     pub active_backend: Arc<RwLock<Option<String>>>,
+    /// Database for usage persistence (optional)
+    db: Option<Arc<Database>>,
 }
 
 impl ProxyServer {
     /// Create a new proxy server from config
     pub fn new(config: ProxyConfig) -> Self {
+        Self::with_db(config, None)
+    }
+
+    /// Create a new proxy server with database for usage tracking
+    pub fn with_db(config: ProxyConfig, db: Option<Arc<Database>>) -> Self {
         // Initialize backends from config
         let mut backends = HashMap::new();
         for (name, backend_config) in &config.backends {
@@ -35,6 +43,7 @@ impl ProxyServer {
             config,
             backends: Arc::new(backends),
             active_backend: Arc::new(RwLock::new(active_backend)),
+            db,
         }
     }
 
@@ -70,6 +79,24 @@ impl ProxyServer {
             .iter()
             .map(|(name, backend)| (name, &backend.config))
             .collect()
+    }
+
+    /// Record a usage entry (persisted to database if available)
+    pub async fn record_usage(&self, record: UsageRecord) {
+        if let Some(ref db) = self.db {
+            // Persist to database
+            if let Err(e) = db.insert_proxy_usage(&record) {
+                tracing::error!("Failed to record usage: {}", e);
+            }
+        } else {
+            // No database - just log
+            tracing::debug!(
+                backend = %record.backend_name,
+                input = record.input_tokens,
+                output = record.output_tokens,
+                "Usage recorded (no database)"
+            );
+        }
     }
 
     /// Start the proxy server

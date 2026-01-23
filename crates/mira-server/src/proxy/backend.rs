@@ -16,6 +16,40 @@ pub enum ApiType {
     Openai,
 }
 
+/// Pricing configuration for cost estimation
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PricingConfig {
+    /// Cost per million input tokens (USD)
+    #[serde(default)]
+    pub input_per_million: f64,
+    /// Cost per million output tokens (USD)
+    #[serde(default)]
+    pub output_per_million: f64,
+    /// Cost per million cache creation tokens (USD, optional)
+    #[serde(default)]
+    pub cache_creation_per_million: f64,
+    /// Cost per million cache read tokens (USD, optional)
+    #[serde(default)]
+    pub cache_read_per_million: f64,
+}
+
+impl PricingConfig {
+    /// Calculate cost for a request
+    pub fn calculate_cost(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_creation_tokens: u64,
+        cache_read_tokens: u64,
+    ) -> f64 {
+        let input_cost = (input_tokens as f64 / 1_000_000.0) * self.input_per_million;
+        let output_cost = (output_tokens as f64 / 1_000_000.0) * self.output_per_million;
+        let cache_creation_cost = (cache_creation_tokens as f64 / 1_000_000.0) * self.cache_creation_per_million;
+        let cache_read_cost = (cache_read_tokens as f64 / 1_000_000.0) * self.cache_read_per_million;
+        input_cost + output_cost + cache_creation_cost + cache_read_cost
+    }
+}
+
 /// Configuration for a single LLM backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendConfig {
@@ -42,6 +76,9 @@ pub struct BackendConfig {
     /// (e.g., ANTHROPIC_MODEL, API_TIMEOUT_MS, etc.)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env: HashMap<String, String>,
+    /// Pricing configuration for cost estimation
+    #[serde(default)]
+    pub pricing: PricingConfig,
 }
 
 fn default_true() -> bool {
@@ -186,6 +223,7 @@ mod tests {
             api_type: ApiType::Anthropic,
             model_map: HashMap::new(),
             env: HashMap::new(),
+            pricing: PricingConfig::default(),
         };
 
         // Env var takes precedence when set

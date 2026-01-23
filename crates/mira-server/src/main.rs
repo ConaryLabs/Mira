@@ -176,6 +176,17 @@ enum BackendAction {
         /// Backend name (uses default if not specified)
         name: Option<String>,
     },
+
+    /// Show usage statistics
+    Usage {
+        /// Filter by backend name
+        #[arg(short, long)]
+        backend: Option<String>,
+
+        /// Number of days to show (default: 7)
+        #[arg(short, long, default_value = "7")]
+        days: u32,
+    },
 }
 
 fn get_db_path() -> PathBuf {
@@ -551,6 +562,9 @@ async fn main() -> Result<()> {
             BackendAction::Env { name } => {
                 run_backend_env(name.as_deref())?;
             }
+            BackendAction::Usage { backend, days } => {
+                run_backend_usage(backend.as_deref(), days).await?;
+            }
         }
     }
 
@@ -763,7 +777,20 @@ api_key_env = "ANTHROPIC_API_KEY"
     info!("Starting Mira proxy on {}:{}", config.host, config.port);
     info!("Available backends: {:?}", usable.iter().map(|(n, _)| n).collect::<Vec<_>>());
 
-    let server = ProxyServer::new(config);
+    // Open database for usage tracking
+    let db_path = get_db_path();
+    let db = match Database::open(&db_path) {
+        Ok(db) => {
+            info!("Usage tracking enabled (database: {:?})", db_path);
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            tracing::warn!("Failed to open database for usage tracking: {}", e);
+            None
+        }
+    };
+
+    let server = ProxyServer::with_db(config, db);
 
     // Clean up PID file on exit
     let pid_path_clone = pid_path.clone();
@@ -1079,4 +1106,127 @@ fn run_backend_env(name: Option<&str>) -> Result<()> {
     eprintln!("\n# Usage: eval \"$(mira backend env {})\"", backend_name);
 
     Ok(())
+}
+
+/// Show usage statistics from the database
+async fn run_backend_usage(backend: Option<&str>, days: u32) -> Result<()> {
+    use mira::db::Database;
+
+    let db_path = get_db_path();
+    let db = Database::open(&db_path)?;
+
+    // Calculate date range
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+
+    // Query usage from database
+    let conn = db.conn();
+    let sql = if let Some(backend_name) = backend {
+        format!(
+            "SELECT backend_name, model,
+                    SUM(input_tokens) as total_input,
+                    SUM(output_tokens) as total_output,
+                    SUM(cache_creation_tokens) as total_cache_create,
+                    SUM(cache_read_tokens) as total_cache_read,
+                    SUM(cost_estimate) as total_cost,
+                    COUNT(*) as request_count
+             FROM proxy_usage
+             WHERE backend_name = '{}' AND created_at >= '{}'
+             GROUP BY backend_name, model
+             ORDER BY total_cost DESC",
+            backend_name, cutoff_str
+        )
+    } else {
+        format!(
+            "SELECT backend_name, model,
+                    SUM(input_tokens) as total_input,
+                    SUM(output_tokens) as total_output,
+                    SUM(cache_creation_tokens) as total_cache_create,
+                    SUM(cache_read_tokens) as total_cache_read,
+                    SUM(cost_estimate) as total_cost,
+                    COUNT(*) as request_count
+             FROM proxy_usage
+             WHERE created_at >= '{}'
+             GROUP BY backend_name, model
+             ORDER BY total_cost DESC",
+            cutoff_str
+        )
+    };
+
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => {
+            println!("No usage data available yet.");
+            println!("\nUsage tracking starts when requests go through the proxy.");
+            println!("Start the proxy with: mira proxy start -d");
+            return Ok(());
+        }
+    };
+
+    let rows: Vec<(String, Option<String>, i64, i64, i64, i64, f64, i64)> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get::<_, f64>(6).unwrap_or(0.0),
+                row.get(7)?,
+            ))
+        })?
+        .filter_map(Result::ok)
+        .collect();
+
+    if rows.is_empty() {
+        println!("No usage data in the last {} days.", days);
+        return Ok(());
+    }
+
+    println!("Usage Statistics (last {} days)\n", days);
+    println!("{:<12} {:<25} {:>10} {:>10} {:>10} {:>8}",
+        "Backend", "Model", "Input", "Output", "Requests", "Cost");
+    println!("{}", "-".repeat(80));
+
+    let mut total_cost = 0.0;
+    let mut total_requests = 0i64;
+
+    for (backend_name, model, input, output, _cache_create, _cache_read, cost, requests) in &rows {
+        let model_str = model.as_deref().unwrap_or("-");
+        let model_display = if model_str.len() > 24 {
+            format!("{}...", &model_str[..21])
+        } else {
+            model_str.to_string()
+        };
+
+        println!("{:<12} {:<25} {:>10} {:>10} {:>10} ${:>7.4}",
+            backend_name,
+            model_display,
+            format_tokens(*input),
+            format_tokens(*output),
+            requests,
+            cost
+        );
+
+        total_cost += cost;
+        total_requests += requests;
+    }
+
+    println!("{}", "-".repeat(80));
+    println!("{:<12} {:<25} {:>10} {:>10} {:>10} ${:>7.4}",
+        "TOTAL", "", "", "", total_requests, total_cost);
+
+    Ok(())
+}
+
+/// Format token count with K/M suffix
+fn format_tokens(tokens: i64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}K", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
 }

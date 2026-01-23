@@ -4,6 +4,8 @@
 mod backend;
 mod routes;
 mod server;
+mod usage;
 
-pub use backend::{ApiType, Backend, BackendConfig, ProxyConfig};
+pub use backend::{ApiType, Backend, BackendConfig, PricingConfig, ProxyConfig};
 pub use server::ProxyServer;
+pub use usage::{UsageData, UsageRecord, UsageSummary};

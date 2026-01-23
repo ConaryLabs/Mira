@@ -14,7 +14,7 @@ use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::proxy::ProxyServer;
+use crate::proxy::{ProxyServer, UsageData};
 
 /// Header name for backend override
 const X_BACKEND_HEADER: &str = "x-mira-backend";
@@ -83,6 +83,12 @@ async fn proxy_messages(
         .get(X_BACKEND_HEADER)
         .and_then(|v| v.to_str().ok());
 
+    // Get the backend name for usage tracking
+    let backend_name = backend_override
+        .map(|s| s.to_string())
+        .or_else(|| server.config.default_backend.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
     // Get the appropriate backend
     let backend = server
         .get_backend(backend_override)
@@ -95,11 +101,17 @@ async fn proxy_messages(
         .get_api_key()
         .ok_or(ProxyError::NoApiKey)?;
 
+    // Extract model from request for usage tracking
+    let model = body.get("model").and_then(|v| v.as_str()).map(String::from);
+
     // Check if streaming is requested
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
 
     // Build the target URL
     let target_url = format!("{}/v1/messages", backend.config.base_url);
+
+    // Clone pricing config for cost calculation
+    let pricing = backend.config.pricing.clone();
 
     // Forward the request
     let response = backend
@@ -116,7 +128,9 @@ async fn proxy_messages(
     let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::OK);
 
     if is_streaming {
-        // Stream the response body through
+        // For streaming, we need to intercept and parse usage from SSE events
+        // This is complex - for now, just pass through and log a note
+        // Full streaming usage tracking will buffer events and extract usage
         let stream = response.bytes_stream().map(|result| {
             result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
         });
@@ -131,11 +145,48 @@ async fn proxy_messages(
             .body(body)
             .unwrap())
     } else {
-        // Non-streaming: parse and return JSON
+        // Non-streaming: parse and track usage
         let response_body: Value = response
             .json()
             .await
             .map_err(|e| ProxyError::InvalidResponse(e.to_string()))?;
+
+        // Extract and log usage
+        if let Some(usage) = UsageData::from_anthropic_response(&response_body) {
+            let cost = pricing.calculate_cost(
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
+            );
+
+            // Store usage record asynchronously
+            let usage_record = crate::proxy::UsageRecord {
+                backend_name: backend_name.clone(),
+                model: model.clone(),
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_creation_tokens: usage.cache_creation_input_tokens,
+                cache_read_tokens: usage.cache_read_input_tokens,
+                cost_estimate: Some(cost),
+                request_id: response_body.get("id").and_then(|v| v.as_str()).map(String::from),
+                session_id: None, // Could extract from headers if passed
+                project_id: None,
+            };
+
+            // Log usage (database storage will be added when db is wired up)
+            tracing::debug!(
+                backend = %backend_name,
+                model = ?model,
+                input_tokens = usage.input_tokens,
+                output_tokens = usage.output_tokens,
+                cost = cost,
+                "Request completed"
+            );
+
+            // Store in server's usage buffer for later persistence
+            server.record_usage(usage_record).await;
+        }
 
         Ok((status, Json(response_body)).into_response())
     }

@@ -36,6 +36,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add learning columns to corrections table
     migrate_corrections_learning_columns(conn)?;
 
+    // Add proxy usage tracking table
+    migrate_proxy_usage_table(conn)?;
+
     Ok(())
 }
 
@@ -847,6 +850,48 @@ pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
              ALTER TABLE corrections ADD COLUMN acceptance_rate REAL DEFAULT 1.0;",
         )?;
     }
+
+    Ok(())
+}
+
+/// Migrate to add proxy_usage table for token tracking and cost estimation
+pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='proxy_usage'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if table_exists {
+        return Ok(());
+    }
+
+    tracing::info!("Creating proxy_usage table for token tracking and cost estimation");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS proxy_usage (
+            id INTEGER PRIMARY KEY,
+            backend_name TEXT NOT NULL,
+            model TEXT,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cost_estimate REAL,
+            request_id TEXT,
+            session_id TEXT,
+            project_id INTEGER REFERENCES projects(id),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_backend ON proxy_usage(backend_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_session ON proxy_usage(session_id);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_project ON proxy_usage(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_created ON proxy_usage(created_at DESC);
+        "#
+    )?;
 
     Ok(())
 }
