@@ -172,6 +172,10 @@ impl Database {
 mod tests {
     use super::*;
 
+    // ============================================================================
+    // store_diff_analysis tests
+    // ============================================================================
+
     #[test]
     fn test_store_and_retrieve_diff_analysis() {
         let db = Database::open_in_memory().unwrap();
@@ -198,6 +202,37 @@ mod tests {
         assert_eq!(analysis.to_commit, "def456");
         assert_eq!(analysis.files_changed, Some(2));
     }
+
+    #[test]
+    fn test_store_diff_analysis_minimal() {
+        let db = Database::open_in_memory().unwrap();
+
+        let id = db.store_diff_analysis(
+            None,
+            "commit1",
+            "commit2",
+            "simple",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        assert!(id > 0);
+
+        let analysis = db.get_diff_analysis(id).unwrap().unwrap();
+        assert_eq!(analysis.project_id, None);
+        assert_eq!(analysis.from_commit, "commit1");
+        assert_eq!(analysis.to_commit, "commit2");
+        assert_eq!(analysis.changes_json, None);
+    }
+
+    // ============================================================================
+    // get_cached_diff_analysis tests
+    // ============================================================================
 
     #[test]
     fn test_cached_diff_analysis() {
@@ -227,5 +262,140 @@ mod tests {
         let cached = db.get_cached_diff_analysis(Some(project_id), "abc123", "def456").unwrap();
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().summary, Some("Test summary".to_string()));
+    }
+
+    #[test]
+    fn test_cached_diff_wrong_commits() {
+        let db = Database::open_in_memory().unwrap();
+        let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
+
+        db.store_diff_analysis(
+            Some(project_id),
+            "abc123",
+            "def456",
+            "commit",
+            None, None, None, None, None, None, None,
+        ).unwrap();
+
+        // Wrong to_commit
+        let cached = db.get_cached_diff_analysis(Some(project_id), "abc123", "wrong").unwrap();
+        assert!(cached.is_none());
+
+        // Wrong from_commit
+        let cached = db.get_cached_diff_analysis(Some(project_id), "wrong", "def456").unwrap();
+        assert!(cached.is_none());
+    }
+
+    // ============================================================================
+    // get_recent_diff_analyses tests
+    // ============================================================================
+
+    #[test]
+    fn test_get_recent_diff_analyses_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
+
+        let analyses = db.get_recent_diff_analyses(Some(project_id), 10).unwrap();
+        assert!(analyses.is_empty());
+    }
+
+    #[test]
+    fn test_get_recent_diff_analyses_limit() {
+        let db = Database::open_in_memory().unwrap();
+        let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
+
+        // Store 5 analyses
+        for i in 0..5 {
+            db.store_diff_analysis(
+                Some(project_id),
+                &format!("from{}", i),
+                &format!("to{}", i),
+                "commit",
+                None, None, None, None, None, None, None,
+            ).unwrap();
+        }
+
+        // Request only 3
+        let analyses = db.get_recent_diff_analyses(Some(project_id), 3).unwrap();
+        assert_eq!(analyses.len(), 3);
+    }
+
+    // ============================================================================
+    // get_diff_analysis tests
+    // ============================================================================
+
+    #[test]
+    fn test_get_diff_analysis_not_found() {
+        let db = Database::open_in_memory().unwrap();
+        let result = db.get_diff_analysis(99999).unwrap();
+        assert!(result.is_none());
+    }
+
+    // ============================================================================
+    // cleanup_old_diff_analyses tests
+    // ============================================================================
+
+    #[test]
+    fn test_cleanup_old_diff_analyses() {
+        let db = Database::open_in_memory().unwrap();
+        let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
+
+        // Store 5 analyses
+        for i in 0..5 {
+            db.store_diff_analysis(
+                Some(project_id),
+                &format!("from{}", i),
+                &format!("to{}", i),
+                "commit",
+                None, None, None, None, None, None, None,
+            ).unwrap();
+        }
+
+        // Keep only 2
+        let deleted = db.cleanup_old_diff_analyses(Some(project_id), 2).unwrap();
+        assert_eq!(deleted, 3);
+
+        // Should have 2 remaining
+        let remaining = db.get_recent_diff_analyses(Some(project_id), 10).unwrap();
+        assert_eq!(remaining.len(), 2);
+    }
+
+    #[test]
+    fn test_cleanup_old_diff_analyses_none_to_delete() {
+        let db = Database::open_in_memory().unwrap();
+        let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
+
+        // Store 2 analyses
+        for i in 0..2 {
+            db.store_diff_analysis(
+                Some(project_id),
+                &format!("from{}", i),
+                &format!("to{}", i),
+                "commit",
+                None, None, None, None, None, None, None,
+            ).unwrap();
+        }
+
+        // Keep 5 (more than we have)
+        let deleted = db.cleanup_old_diff_analyses(Some(project_id), 5).unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    // ============================================================================
+    // DiffAnalysis struct tests
+    // ============================================================================
+
+    #[test]
+    fn test_diff_analysis_clone() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.store_diff_analysis(
+            None, "a", "b", "test", None, None, None, None, None, None, None,
+        ).unwrap();
+
+        let analysis = db.get_diff_analysis(id).unwrap().unwrap();
+        let cloned = analysis.clone();
+
+        assert_eq!(analysis.id, cloned.id);
+        assert_eq!(analysis.from_commit, cloned.from_commit);
     }
 }

@@ -317,6 +317,10 @@ fn write_claude_local_md_sync(
 mod tests {
     use super::*;
 
+    // ============================================================================
+    // parse_claude_local_md tests
+    // ============================================================================
+
     #[test]
     fn test_parse_claude_local_md() {
         let content = r#"# CLAUDE.local.md
@@ -357,5 +361,105 @@ mod tests {
         let content = "# Just a header\n\nSome text without bullets\n";
         let entries = parse_claude_local_md(content);
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_parse_asterisk_bullets() {
+        let content = "## Patterns\n\n* Pattern one\n* Pattern two\n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "Pattern one");
+        assert_eq!(entries[0].1, Some("pattern".to_string()));
+    }
+
+    #[test]
+    fn test_parse_triple_hash_headers() {
+        let content = "### Conventions\n\n- Follow naming conventions\n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, Some("convention".to_string()));
+    }
+
+    #[test]
+    fn test_parse_all_section_types() {
+        let content = r#"
+## User Preferences
+- Pref item
+
+## Architectural Decisions
+- Decision item
+
+## Code Patterns
+- Pattern item
+
+## Coding Conventions
+- Convention item
+
+## Common Mistakes
+- Mistake item
+
+## Workflows
+- Workflow item
+
+## Something Else
+- General item
+"#;
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 7);
+
+        assert_eq!(entries[0].1, Some("preference".to_string()));
+        assert_eq!(entries[1].1, Some("decision".to_string()));
+        assert_eq!(entries[2].1, Some("pattern".to_string()));
+        assert_eq!(entries[3].1, Some("convention".to_string()));
+        assert_eq!(entries[4].1, Some("mistake".to_string()));
+        assert_eq!(entries[5].1, Some("workflow".to_string()));
+        assert_eq!(entries[6].1, Some("general".to_string()));
+    }
+
+    #[test]
+    fn test_parse_empty_bullets_skipped() {
+        let content = "## General\n\n- Valid entry\n- \n- Another valid\n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_whitespace_in_bullets() {
+        let content = "## General\n\n-    Lots of leading spaces   \n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "Lots of leading spaces");
+    }
+
+    #[test]
+    fn test_parse_no_section() {
+        let content = "- Item without section\n- Another item\n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].1, None);
+    }
+
+    #[test]
+    fn test_parse_decisions_section() {
+        let content = "## Decisions\n\n- Use builder pattern\n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, Some("decision".to_string()));
+    }
+
+    #[test]
+    fn test_parse_avoid_section() {
+        let content = "## Avoid\n\n- Don't use var\n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, Some("mistake".to_string()));
+    }
+
+    #[test]
+    fn test_parse_workflow_singular() {
+        let content = "## Workflow\n\n- Run tests first\n";
+        let entries = parse_claude_local_md(content);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, Some("workflow".to_string()));
     }
 }
