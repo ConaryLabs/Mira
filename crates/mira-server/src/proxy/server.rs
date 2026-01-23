@@ -1,7 +1,8 @@
 // crates/mira-server/src/proxy/server.rs
 // Axum HTTP server for the proxy
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
+use crate::db::insert_proxy_usage_sync;
 use crate::proxy::{Backend, BackendConfig, ProxyConfig, UsageRecord};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,18 +17,18 @@ pub struct ProxyServer {
     pub backends: Arc<HashMap<String, Backend>>,
     /// Currently active backend name
     pub active_backend: Arc<RwLock<Option<String>>>,
-    /// Database for usage persistence (optional)
-    db: Option<Arc<Database>>,
+    /// Database pool for usage persistence (optional)
+    pool: Option<Arc<DatabasePool>>,
 }
 
 impl ProxyServer {
     /// Create a new proxy server from config
     pub fn new(config: ProxyConfig) -> Self {
-        Self::with_db(config, None)
+        Self::with_pool(config, None)
     }
 
-    /// Create a new proxy server with database for usage tracking
-    pub fn with_db(config: ProxyConfig, db: Option<Arc<Database>>) -> Self {
+    /// Create a new proxy server with database pool for usage tracking
+    pub fn with_pool(config: ProxyConfig, pool: Option<Arc<DatabasePool>>) -> Self {
         // Initialize backends from config
         let mut backends = HashMap::new();
         for (name, backend_config) in &config.backends {
@@ -43,7 +44,7 @@ impl ProxyServer {
             config,
             backends: Arc::new(backends),
             active_backend: Arc::new(RwLock::new(active_backend)),
-            db,
+            pool,
         }
     }
 
@@ -83,9 +84,12 @@ impl ProxyServer {
 
     /// Record a usage entry (persisted to database if available)
     pub async fn record_usage(&self, record: UsageRecord) {
-        if let Some(ref db) = self.db {
-            // Persist to database
-            if let Err(e) = db.insert_proxy_usage(&record) {
+        if let Some(ref pool) = self.pool {
+            // Persist to database via pool
+            if let Err(e) = pool.interact(move |conn| {
+                insert_proxy_usage_sync(conn, &record)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }).await {
                 tracing::error!("Failed to record usage: {}", e);
             }
         } else {

@@ -814,12 +814,12 @@ api_key_env = "ANTHROPIC_API_KEY"
     info!("Starting Mira proxy on {}:{}", config.host, config.port);
     info!("Available backends: {:?}", usable.iter().map(|(n, _)| n).collect::<Vec<_>>());
 
-    // Open database for usage tracking
+    // Open database pool for usage tracking
     let db_path = get_db_path();
-    let db = match Database::open(&db_path) {
-        Ok(db) => {
+    let pool = match DatabasePool::open(&db_path).await {
+        Ok(pool) => {
             info!("Usage tracking enabled (database: {:?})", db_path);
-            Some(Arc::new(db))
+            Some(Arc::new(pool))
         }
         Err(e) => {
             tracing::warn!("Failed to open database for usage tracking: {}", e);
@@ -827,7 +827,7 @@ api_key_env = "ANTHROPIC_API_KEY"
         }
     };
 
-    let server = ProxyServer::with_db(config, db);
+    let server = ProxyServer::with_pool(config, pool);
 
     // Clean up PID file on exit
     let pid_path_clone = pid_path.clone();
