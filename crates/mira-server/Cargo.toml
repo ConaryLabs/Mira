@@ -1,8 +1,9 @@
 [package]
 name = "mira-server"
 version = "0.2.0"
-edition = "2024"
-rust-version = "1.92"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Memory and Intelligence Layer for Claude Code - Server"
 
 [lib]

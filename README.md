@@ -157,4 +157,4 @@ All data stored locally in `~/.mira/mira.db`. No cloud storage, no external data
 
 ## License
 
-MIT
+Apache-2.0
