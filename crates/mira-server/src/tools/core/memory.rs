@@ -205,7 +205,7 @@ pub async fn recall<C: ToolContext>(
                         let sid_clone = sid.clone();
                         // Fire and forget - don't block on this
                         tokio::spawn(async move {
-                            let _ = pool_clone
+                            if let Err(e) = pool_clone
                                 .interact(move |conn| {
                                     for id in ids {
                                         if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
@@ -214,7 +214,10 @@ pub async fn recall<C: ToolContext>(
                                     }
                                     Ok::<_, anyhow::Error>(())
                                 })
-                                .await;
+                                .await
+                            {
+                                tracing::debug!("Failed to record memory access (pool error): {}", e);
+                            }
                         });
                     }
 
@@ -259,7 +262,7 @@ pub async fn recall<C: ToolContext>(
         let sid_clone = sid.clone();
         // Fire and forget - don't block on this
         tokio::spawn(async move {
-            let _ = pool_clone
+            if let Err(e) = pool_clone
                 .interact(move |conn| {
                     for id in ids {
                         if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
@@ -268,7 +271,10 @@ pub async fn recall<C: ToolContext>(
                     }
                     Ok::<_, anyhow::Error>(())
                 })
-                .await;
+                .await
+            {
+                tracing::debug!("Failed to record memory access (pool error): {}", e);
+            }
         });
     }
 

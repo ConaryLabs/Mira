@@ -119,7 +119,12 @@ impl DatabasePool {
                         if let Ok(metadata) = std::fs::metadata(&path_for_perms) {
                             let mut perms = metadata.permissions();
                             perms.set_mode(0o600); // rw-------
-                            let _ = std::fs::set_permissions(&path_for_perms, perms);
+                            if let Err(e) = std::fs::set_permissions(&path_for_perms, perms) {
+                                tracing::warn!(
+                                    "Failed to set database file permissions to 0600: {}",
+                                    e
+                                );
+                            }
                         }
 
                         Ok::<_, rusqlite::Error>(())
