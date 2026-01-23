@@ -326,6 +326,45 @@ pub fn symbol_like_search_sync(
     results
 }
 
+/// Result from semantic code search
+#[derive(Debug, Clone)]
+pub struct SemanticCodeResult {
+    pub file_path: String,
+    pub chunk_content: String,
+    pub distance: f32,
+    pub start_line: i64,
+}
+
+/// Semantic code search using vector similarity
+pub fn semantic_code_search_sync(
+    conn: &Connection,
+    embedding_bytes: &[u8],
+    project_id: Option<i64>,
+    limit: usize,
+) -> rusqlite::Result<Vec<SemanticCodeResult>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_path, chunk_content, vec_distance_cosine(embedding, ?2) as distance, start_line
+         FROM vec_code
+         WHERE project_id = ?1 OR ?1 IS NULL
+         ORDER BY distance
+         LIMIT ?3",
+    )?;
+
+    let results = stmt
+        .query_map(params![project_id, embedding_bytes, limit as i64], |row| {
+            Ok(SemanticCodeResult {
+                file_path: row.get(0)?,
+                chunk_content: row.get(1)?,
+                distance: row.get(2)?,
+                start_line: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

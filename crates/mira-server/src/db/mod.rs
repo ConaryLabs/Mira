@@ -63,6 +63,8 @@ pub use search::{
     chunk_like_search_sync,
     SymbolSearchResult,
     symbol_like_search_sync,
+    SemanticCodeResult,
+    semantic_code_search_sync,
 };
 pub use diff_analysis::DiffAnalysis;
 pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals};

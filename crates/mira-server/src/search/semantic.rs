@@ -4,10 +4,9 @@
 use super::context::expand_context;
 use super::keyword::keyword_search;
 use super::utils::{distance_to_score, embedding_to_bytes};
-use crate::db::Database;
+use crate::db::{semantic_code_search_sync, Database};
 use crate::embeddings::EmbeddingClient;
 use crate::Result;
-use rusqlite::params;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -59,28 +58,17 @@ pub async fn semantic_search(
     let db_clone = db.clone();
     tokio::task::spawn_blocking(move || {
         let conn = db_clone.conn();
-        let mut stmt = conn
-            .prepare(
-                "SELECT file_path, chunk_content, vec_distance_cosine(embedding, ?2) as distance, start_line
-                 FROM vec_code
-                 WHERE project_id = ?1 OR ?1 IS NULL
-                 ORDER BY distance
-                 LIMIT ?3",
-            )
-            ?;
+        let db_results = semantic_code_search_sync(&conn, &embedding_bytes, project_id, limit)
+            .map_err(|e| e.to_string())?;
 
-        let results: Vec<SearchResult> = stmt
-            .query_map(params![project_id, embedding_bytes, limit as i64], |row| {
-                let start_line: i64 = row.get::<_, Option<i64>>(3)?.unwrap_or(0);
-                Ok(SearchResult {
-                    file_path: row.get(0)?,
-                    content: row.get(1)?,
-                    score: distance_to_score(row.get(2)?),
-                    start_line: start_line as u32,
-                })
+        let results: Vec<SearchResult> = db_results
+            .into_iter()
+            .map(|r| SearchResult {
+                file_path: r.file_path,
+                content: r.chunk_content,
+                score: distance_to_score(r.distance),
+                start_line: r.start_line as u32,
             })
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
             .collect();
 
         Ok(results)
