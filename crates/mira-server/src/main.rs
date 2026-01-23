@@ -102,6 +102,12 @@ enum Commands {
         #[command(subcommand)]
         action: ProxyAction,
     },
+
+    /// Manage LLM backends
+    Backend {
+        #[command(subcommand)]
+        action: BackendAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -146,6 +152,24 @@ enum HookAction {
     Posttool,
     /// Legacy PreToolUse hook (no-op for compatibility)
     Pretool,
+}
+
+#[derive(Subcommand)]
+enum BackendAction {
+    /// List configured backends
+    List,
+
+    /// Set the default backend
+    Use {
+        /// Backend name to set as default
+        name: String,
+    },
+
+    /// Test connectivity to a backend
+    Test {
+        /// Backend name to test
+        name: String,
+    },
 }
 
 fn get_db_path() -> PathBuf {
@@ -454,6 +478,7 @@ async fn main() -> Result<()> {
         Some(Commands::DebugCarto { .. }) => Level::DEBUG,
         Some(Commands::DebugSession { .. }) => Level::DEBUG,
         Some(Commands::Proxy { .. }) => Level::INFO,
+        Some(Commands::Backend { .. }) => Level::INFO,
     };
 
     let subscriber = FmtSubscriber::builder()
@@ -505,6 +530,17 @@ async fn main() -> Result<()> {
             }
             ProxyAction::Status => {
                 run_proxy_status()?;
+            }
+        }
+        Some(Commands::Backend { action }) => match action {
+            BackendAction::List => {
+                run_backend_list()?;
+            }
+            BackendAction::Use { name } => {
+                run_backend_use(&name).await?;
+            }
+            BackendAction::Test { name } => {
+                run_backend_test(&name).await?;
             }
         }
     }
@@ -787,6 +823,193 @@ fn run_proxy_status() -> Result<()> {
         } else {
             println!("Proxy is not running (stale PID file for PID: {})", pid);
             std::fs::remove_file(&pid_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// List configured backends
+fn run_backend_list() -> Result<()> {
+    use mira::proxy::ProxyConfig;
+
+    let config = ProxyConfig::load()?;
+
+    if config.backends.is_empty() {
+        println!("No backends configured.");
+        println!("\nCreate a config file at: {:?}", ProxyConfig::default_config_path()?);
+        return Ok(());
+    }
+
+    println!("Configured backends:\n");
+
+    let default = config.default_backend.as_deref();
+
+    for (name, backend) in &config.backends {
+        let has_key = backend.get_api_key().is_some();
+        let status = if !backend.enabled {
+            "disabled"
+        } else if !has_key {
+            "no API key"
+        } else {
+            "ready"
+        };
+
+        let is_default = default == Some(name.as_str());
+        let marker = if is_default { " (default)" } else { "" };
+
+        println!(
+            "  {} [{}]{}",
+            name,
+            status,
+            marker
+        );
+        println!("    URL: {}", backend.base_url);
+        if let Some(env_var) = &backend.api_key_env {
+            println!("    Key: ${}", env_var);
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Set the default backend
+async fn run_backend_use(name: &str) -> Result<()> {
+    use mira::proxy::ProxyConfig;
+
+    let mut config = ProxyConfig::load()?;
+
+    // Verify backend exists
+    if !config.backends.contains_key(name) {
+        eprintln!("Backend '{}' not found.", name);
+        eprintln!("\nAvailable backends:");
+        for backend_name in config.backends.keys() {
+            eprintln!("  {}", backend_name);
+        }
+        return Ok(());
+    }
+
+    // Check if it's usable
+    let backend = config.backends.get(name).unwrap();
+    if !backend.enabled {
+        eprintln!("Backend '{}' is disabled in config.", name);
+        return Ok(());
+    }
+    if backend.get_api_key().is_none() {
+        eprintln!("Warning: Backend '{}' has no API key configured.", name);
+    }
+
+    // Update config
+    config.default_backend = Some(name.to_string());
+
+    // Write back to config file
+    let config_path = ProxyConfig::default_config_path()?;
+    let toml_str = toml::to_string_pretty(&config)?;
+    std::fs::write(&config_path, &toml_str)?;
+
+    println!("Default backend set to '{}'", name);
+    println!("Config updated: {:?}", config_path);
+
+    // If proxy is running, notify user to restart
+    let pid_path = get_proxy_pid_path();
+    if pid_path.exists() {
+        println!("\nNote: Restart the proxy for changes to take effect:");
+        println!("  mira proxy stop && mira proxy start -d");
+    }
+
+    Ok(())
+}
+
+/// Test connectivity to a backend
+async fn run_backend_test(name: &str) -> Result<()> {
+    use mira::proxy::ProxyConfig;
+
+    let config = ProxyConfig::load()?;
+
+    // Get backend config
+    let backend = match config.backends.get(name) {
+        Some(b) => b,
+        None => {
+            eprintln!("Backend '{}' not found.", name);
+            eprintln!("\nAvailable backends:");
+            for backend_name in config.backends.keys() {
+                eprintln!("  {}", backend_name);
+            }
+            return Ok(());
+        }
+    };
+
+    // Check prerequisites
+    if !backend.enabled {
+        eprintln!("Backend '{}' is disabled.", name);
+        return Ok(());
+    }
+
+    let api_key = match backend.get_api_key() {
+        Some(k) => k,
+        None => {
+            eprintln!("Backend '{}' has no API key configured.", name);
+            if let Some(env_var) = &backend.api_key_env {
+                eprintln!("Set the {} environment variable.", env_var);
+            }
+            return Ok(());
+        }
+    };
+
+    println!("Testing backend '{}'...", name);
+    println!("  URL: {}", backend.base_url);
+
+    // Send a minimal test request
+    let client = reqwest::Client::new();
+    let test_url = format!("{}/v1/messages", backend.base_url);
+
+    let test_body = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "Hi"}]
+    });
+
+    let start = std::time::Instant::now();
+    let response = client
+        .post(&test_url)
+        .header("content-type", "application/json")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&test_body)
+        .send()
+        .await;
+
+    let elapsed = start.elapsed();
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            if status.is_success() {
+                println!("\n✓ Connection successful!");
+                println!("  Status: {}", status);
+                println!("  Latency: {:?}", elapsed);
+            } else {
+                let body = resp.text().await.unwrap_or_default();
+                eprintln!("\n✗ Request failed");
+                eprintln!("  Status: {}", status);
+                if !body.is_empty() {
+                    // Try to extract error message
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                        if let Some(msg) = json.get("error").and_then(|e| e.get("message")) {
+                            eprintln!("  Error: {}", msg);
+                        } else {
+                            eprintln!("  Body: {}", body);
+                        }
+                    } else {
+                        eprintln!("  Body: {}", body);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("\n✗ Connection failed");
+            eprintln!("  Error: {}", e);
         }
     }
 

@@ -5,5 +5,5 @@ mod backend;
 mod routes;
 mod server;
 
-pub use backend::{Backend, BackendConfig, ProxyConfig};
+pub use backend::{ApiType, Backend, BackendConfig, ProxyConfig};
 pub use server::ProxyServer;

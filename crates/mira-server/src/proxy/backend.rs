@@ -5,6 +5,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// API type for backend routing
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiType {
+    /// Anthropic Messages API (/v1/messages)
+    #[default]
+    Anthropic,
+    /// OpenAI-compatible API (/v1/chat/completions)
+    Openai,
+}
+
 /// Configuration for a single LLM backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendConfig {
@@ -21,6 +32,9 @@ pub struct BackendConfig {
     /// Whether this backend is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// API type (anthropic or openai) - affects endpoint and request format
+    #[serde(default)]
+    pub api_type: ApiType,
     /// Optional model mapping (proxy model name -> backend model name)
     #[serde(default)]
     pub model_map: HashMap<String, String>,
@@ -165,6 +179,7 @@ mod tests {
             api_key: Some("inline-key".to_string()),
             api_key_env: Some("TEST_API_KEY".to_string()),
             enabled: true,
+            api_type: ApiType::Anthropic,
             model_map: HashMap::new(),
         };
 
