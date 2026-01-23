@@ -77,6 +77,7 @@ pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
 }
 
 /// Migrate vec_code to add start_line column (v2.1 schema)
+/// Also creates vec_code if it doesn't exist (for databases created before vec_code was added)
 pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
     // Check if vec_code exists
     let vec_code_exists: bool = conn
@@ -88,6 +89,18 @@ pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
         .unwrap_or(false);
 
     if !vec_code_exists {
+        // Create vec_code table (for databases created before this table was added to schema)
+        tracing::info!("Creating vec_code table for code embeddings");
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
+                embedding float[1536],
+                +file_path TEXT,
+                +chunk_content TEXT,
+                +project_id INTEGER,
+                +start_line INTEGER
+            )",
+            [],
+        )?;
         return Ok(());
     }
 
@@ -105,6 +118,17 @@ pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
         // Virtual tables can't be altered - must drop and recreate
         // Embeddings will be regenerated on next indexing
         conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
+        // Recreate with start_line column
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
+                embedding float[1536],
+                +file_path TEXT,
+                +chunk_content TEXT,
+                +project_id INTEGER,
+                +start_line INTEGER
+            )",
+            [],
+        )?;
     }
 
     Ok(())

@@ -424,6 +424,41 @@ pub fn parse_doc_inventory(row: &rusqlite::Row) -> Result<DocInventory, rusqlite
     })
 }
 
+/// Count documentation tasks by status for a project
+pub fn count_doc_tasks_by_status(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+) -> Result<Vec<(String, i64)>, String> {
+    let sql = match project_id {
+        Some(pid) => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT status, COUNT(*) as count FROM documentation_tasks
+                     WHERE project_id = ?
+                     GROUP BY status",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.query_map([pid], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())
+        }
+        None => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT status, COUNT(*) as count FROM documentation_tasks
+                     GROUP BY status",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())
+        }
+    };
+    sql
+}
+
 /// Simple sha256 wrapper for the module
 mod sha256 {
     use sha2::Digest;

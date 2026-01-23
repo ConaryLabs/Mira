@@ -7,6 +7,7 @@ use std::process::Command;
 
 use crate::cartographer;
 use crate::db::Database;
+use crate::db::documentation::count_doc_tasks_by_status;
 use crate::tools::core::claude_local;
 use crate::tools::core::ToolContext;
 
@@ -153,6 +154,14 @@ fn get_health_alerts_sync(
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
+}
+
+/// Sync helper: get documentation task counts by status (for use inside pool.interact)
+fn get_doc_task_counts_sync(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+) -> Result<Vec<(String, i64)>, String> {
+    count_doc_tasks_by_status(conn, project_id)
 }
 
 /// Sync helper: create or update session (for use inside pool.interact)
@@ -441,23 +450,31 @@ pub async fn session_start<C: ToolContext>(
         );
     }
 
-    // Load preferences, memories, and health alerts in a single pool call
-    let (preferences, memories, health_alerts): (Vec<MemoryFact>, Vec<MemoryFact>, Vec<MemoryFact>) =
-        ctx.pool()
-            .interact(move |conn| {
-                // Get preferences
-                let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
+    // Load preferences, memories, health alerts, and doc task counts in a single pool call
+    let (preferences, memories, health_alerts, doc_task_counts): (
+        Vec<MemoryFact>,
+        Vec<MemoryFact>,
+        Vec<MemoryFact>,
+        Vec<(String, i64)>,
+    ) = ctx
+        .pool()
+        .interact(move |conn| {
+            // Get preferences
+            let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
 
-                // Get recent memories
-                let memories = search_memories_sync(conn, Some(project_id), "", 10).unwrap_or_default();
+            // Get recent memories
+            let memories = search_memories_sync(conn, Some(project_id), "", 10).unwrap_or_default();
 
-                // Get health alerts
-                let health_alerts = get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
+            // Get health alerts
+            let health_alerts = get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
 
-                Ok((preferences, memories, health_alerts))
-            })
-            .await
-            .map_err(|e| e.to_string())?;
+            // Get documentation task counts
+            let doc_task_counts = get_doc_task_counts_sync(conn, Some(project_id)).unwrap_or_default();
+
+            Ok((preferences, memories, health_alerts, doc_task_counts))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if !preferences.is_empty() {
         response.push_str("\nPreferences:\n");
@@ -496,6 +513,20 @@ pub async fn session_start<C: ToolContext>(
             };
             response.push_str(&format!("  [{}] {}\n", category, preview));
         }
+    }
+
+    // Show documentation task notifications
+    let draft_ready_count = doc_task_counts
+        .iter()
+        .find(|(status, _)| status == "draft_ready")
+        .map(|(_, count)| *count)
+        .unwrap_or(0);
+
+    if draft_ready_count > 0 {
+        response.push_str(&format!(
+            "\nDocumentation: {} drafts ready for review\n  Use list_doc_tasks() to see them, review_doc_draft(id) to review\n",
+            draft_ready_count
+        ));
     }
 
     // Load codebase map (only for Rust projects for now)

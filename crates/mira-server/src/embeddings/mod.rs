@@ -45,7 +45,7 @@ impl EmbeddingProvider {
     pub fn api_key_env(&self) -> &'static str {
         match self {
             Self::OpenAI => "OPENAI_API_KEY",
-            Self::Google => "GOOGLE_API_KEY",
+            Self::Google => "GEMINI_API_KEY", // Uses Gemini/generativelanguage API
         }
     }
 }
@@ -93,9 +93,11 @@ impl EmbeddingClient {
                 Some(Self::OpenAI(Embeddings::with_model(api_key, model, db)))
             }
             EmbeddingProvider::Google => {
-                let api_key = std::env::var("GOOGLE_API_KEY")
+                // Try GEMINI_API_KEY first (Gemini/generativelanguage API), fall back to GOOGLE_API_KEY
+                let api_key = std::env::var("GEMINI_API_KEY")
                     .ok()
-                    .filter(|k| !k.trim().is_empty())?;
+                    .filter(|k| !k.trim().is_empty())
+                    .or_else(|| std::env::var("GOOGLE_API_KEY").ok().filter(|k| !k.trim().is_empty()))?;
 
                 // Check for dimension override (Google supports flexible dimensions)
                 let dimensions = std::env::var("MIRA_EMBEDDING_DIMENSIONS")

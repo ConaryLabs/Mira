@@ -136,7 +136,17 @@ You are advisory - analyze and recommend, not implement."#
 
     /// Factory method for documentation generation
     pub fn for_documentation() -> Self {
-        let instructions = "You are a technical writer creating comprehensive documentation for codebases. Write clear, concise markdown documentation that helps developers understand and use the code effectively. Focus on accuracy, completeness, and practical examples.";
+        let instructions = r#"You are a technical writer creating documentation for software projects.
+
+CRITICAL RULES:
+1. ONLY document what is explicitly shown in the provided code and context
+2. NEVER invent, hallucinate, or assume features, parameters, or behaviors not shown
+3. If information is missing, state "Not documented" rather than guessing
+4. Use the EXACT function/type names, parameters, and signatures from the provided code
+5. Write all code examples in the language specified in the prompt (Rust, Python, etc.)
+6. Output ONLY the markdown documentation - no preamble, no "Let me explore", no code execution attempts
+
+Write clear, accurate markdown that helps developers understand and use the code."#;
         Self::new(instructions)
     }
 }
