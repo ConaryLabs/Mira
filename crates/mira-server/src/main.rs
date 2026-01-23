@@ -409,9 +409,10 @@ async fn run_mcp_server() -> Result<()> {
 
     // Spawn background worker for batch processing
     let bg_db = db.clone();
+    let bg_pool = pool.clone();
     let bg_embeddings = embeddings.clone();
     let bg_deepseek = deepseek.clone();
-    let _shutdown_tx = background::spawn(bg_db, bg_embeddings, bg_deepseek);
+    let _shutdown_tx = background::spawn(bg_db, bg_pool, bg_embeddings, bg_deepseek);
     info!("Background worker started");
 
     // Spawn file watcher for incremental indexing

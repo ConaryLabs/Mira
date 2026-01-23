@@ -17,6 +17,32 @@ pub struct PendingEmbedding {
     pub start_line: i64,
 }
 
+/// Fetch pending embeddings from the queue (sync version for pool.interact)
+pub fn get_pending_embeddings_sync(
+    conn: &rusqlite::Connection,
+    limit: usize,
+) -> rusqlite::Result<Vec<PendingEmbedding>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, file_path, chunk_content, start_line
+         FROM pending_embeddings
+         WHERE status = 'pending'
+         ORDER BY created_at ASC
+         LIMIT ?",
+    )?;
+
+    let rows = stmt.query_map(params![limit as i64], |row| {
+        Ok(PendingEmbedding {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            file_path: row.get(2)?,
+            chunk_content: row.get(3)?,
+            start_line: row.get(4)?,
+        })
+    })?;
+
+    rows.collect()
+}
+
 impl Database {
     /// Fetch pending embeddings from the queue
     pub fn get_pending_embeddings(&self, limit: usize) -> Result<Vec<PendingEmbedding>> {

@@ -10,6 +10,7 @@ mod summaries;
 pub mod code_health;
 pub mod watcher;
 
+use crate::db::pool::DatabasePool;
 use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, ProviderFactory};
@@ -20,6 +21,7 @@ use tokio::sync::watch;
 /// Background worker configuration
 pub struct BackgroundWorker {
     db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
     llm_factory: Arc<ProviderFactory>,
@@ -30,6 +32,7 @@ pub struct BackgroundWorker {
 impl BackgroundWorker {
     pub fn new(
         db: Arc<Database>,
+        pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         deepseek: Option<Arc<DeepSeekClient>>,
         shutdown: watch::Receiver<bool>,
@@ -37,7 +40,7 @@ impl BackgroundWorker {
         // Create provider factory with all available LLM clients
         let llm_factory = Arc::new(ProviderFactory::new());
 
-        Self { db, embeddings, deepseek, llm_factory, shutdown, cycle_count: 0 }
+        Self { db, pool, embeddings, deepseek, llm_factory, shutdown, cycle_count: 0 }
     }
 
     /// Start the background worker loop
@@ -169,19 +172,20 @@ impl BackgroundWorker {
 
     /// Process pending embeddings from file watcher queue
     async fn process_pending_embeddings(&self, client: &Arc<EmbeddingClient>) -> Result<usize, String> {
-        embeddings::process_pending_embeddings(&self.db, Some(client)).await
+        embeddings::process_pending_embeddings(&self.pool, Some(client)).await
     }
 }
 
 /// Spawn the background worker
 pub fn spawn(
     db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
 ) -> watch::Sender<bool> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let worker = BackgroundWorker::new(db, embeddings, deepseek, shutdown_rx);
+    let worker = BackgroundWorker::new(db, pool, embeddings, deepseek, shutdown_rx);
 
     tokio::spawn(async move {
         worker.run().await;

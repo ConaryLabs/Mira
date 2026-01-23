@@ -69,7 +69,7 @@ pub use search::{
 pub use diff_analysis::DiffAnalysis;
 pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals};
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
-pub use embeddings::PendingEmbedding;
+pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
 pub use memory::{
     parse_memory_fact_row,
     // Sync functions for pool.interact() usage
