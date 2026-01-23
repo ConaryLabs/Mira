@@ -191,6 +191,32 @@ pub fn update_project_briefing_sync(
     Ok(())
 }
 
+/// Set a server state value (upsert) - sync version for pool.interact()
+pub fn set_server_state_sync(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO server_state (key, value, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = CURRENT_TIMESTAMP",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+/// Get a server state value by key - sync version for pool.interact()
+pub fn get_server_state_sync(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    match conn.query_row(
+        "SELECT value FROM server_state WHERE key = ?",
+        [key],
+        |row| row.get(0),
+    ) {
+        Ok(value) => Ok(Some(value)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Database impl methods
 // ═══════════════════════════════════════════════════════════════════════════════

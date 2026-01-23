@@ -113,12 +113,12 @@ impl ContextInjectionManager {
 
         Self {
             db: db.clone(),
-            semantic_injector: SemanticInjector::new(pool, embeddings),
-            file_injector: FileAwareInjector::new(db.clone()),
-            task_injector: TaskAwareInjector::new(db.clone()),
+            semantic_injector: SemanticInjector::new(pool.clone(), embeddings),
+            file_injector: FileAwareInjector::new(pool.clone()),
+            task_injector: TaskAwareInjector::new(pool.clone()),
             budget_manager: BudgetManager::with_limit(config.max_chars),
             cache: InjectionCache::new(),
-            analytics: InjectionAnalytics::new(db.clone()),
+            analytics: InjectionAnalytics::new(pool.clone()),
             config,
         }
     }

@@ -1,24 +1,25 @@
 // crates/mira-server/src/context/file_aware.rs
 // File mention detection and context injection
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
+use crate::db::search_memories_sync;
 use regex::Regex;
 use std::sync::Arc;
 
 pub struct FileAwareInjector {
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     file_pattern: Regex,
 }
 
 impl FileAwareInjector {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
         // Match file paths with common extensions
         // Handles: src/main.rs, ./config.toml, /absolute/path.json, crates/foo/bar.rs
         let file_pattern = Regex::new(
             r#"(?:^|[\s`'"(])(\.?/?(?:[\w-]+/)*[\w-]+\.(?:rs|toml|json|md|txt|py|js|ts|tsx|jsx|go|yaml|yml|sh|sql|html|css|scss|vue|svelte))\b"#
         ).expect("Invalid regex");
 
-        Self { db, file_pattern }
+        Self { pool, file_pattern }
     }
 
     /// Extract file paths from user message using regex
@@ -46,10 +47,14 @@ impl FileAwareInjector {
 
         for path in &file_paths {
             // Extract just the filename for broader matching
-            let filename = path.rsplit('/').next().unwrap_or(path);
+            let filename = path.rsplit('/').next().unwrap_or(path).to_string();
 
             // Search memories that mention this file
-            if let Ok(memories) = self.db.search_memories(None, filename, 3) {
+            let pool = self.pool.clone();
+            if let Ok(memories) = pool.interact(move |conn| {
+                search_memories_sync(conn, None, &filename, None, 3)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }).await {
                 for mem in memories {
                     // Skip if it's just a health alert or low confidence
                     if mem.fact_type == "health" || mem.confidence < 0.5 {
@@ -92,31 +97,31 @@ impl FileAwareInjector {
 mod tests {
     use super::*;
 
-    fn create_test_injector() -> FileAwareInjector {
-        let db = Arc::new(Database::open_in_memory().unwrap());
-        FileAwareInjector::new(db)
+    async fn create_test_injector() -> FileAwareInjector {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        FileAwareInjector::new(pool)
     }
 
-    #[test]
-    fn test_extract_rust_files() {
-        let injector = create_test_injector();
+    #[tokio::test]
+    async fn test_extract_rust_files() {
+        let injector = create_test_injector().await;
 
         let paths = injector.extract_file_mentions("Look at src/main.rs and lib.rs");
         assert!(paths.contains(&"src/main.rs".to_string()));
         assert!(paths.contains(&"lib.rs".to_string()));
     }
 
-    #[test]
-    fn test_extract_nested_paths() {
-        let injector = create_test_injector();
+    #[tokio::test]
+    async fn test_extract_nested_paths() {
+        let injector = create_test_injector().await;
 
         let paths = injector.extract_file_mentions("Check crates/mira-server/src/db/pool.rs");
         assert!(paths.contains(&"crates/mira-server/src/db/pool.rs".to_string()));
     }
 
-    #[test]
-    fn test_extract_various_extensions() {
-        let injector = create_test_injector();
+    #[tokio::test]
+    async fn test_extract_various_extensions() {
+        let injector = create_test_injector().await;
 
         let msg = "Edit config.toml, schema.json, and README.md";
         let paths = injector.extract_file_mentions(msg);
@@ -126,25 +131,25 @@ mod tests {
         assert!(paths.contains(&"README.md".to_string()));
     }
 
-    #[test]
-    fn test_extract_relative_paths() {
-        let injector = create_test_injector();
+    #[tokio::test]
+    async fn test_extract_relative_paths() {
+        let injector = create_test_injector().await;
 
         let paths = injector.extract_file_mentions("Run ./scripts/build.sh");
         assert!(paths.contains(&"./scripts/build.sh".to_string()));
     }
 
-    #[test]
-    fn test_no_duplicates() {
-        let injector = create_test_injector();
+    #[tokio::test]
+    async fn test_no_duplicates() {
+        let injector = create_test_injector().await;
 
         let paths = injector.extract_file_mentions("main.rs and main.rs again");
         assert_eq!(paths.len(), 1);
     }
 
-    #[test]
-    fn test_paths_in_backticks() {
-        let injector = create_test_injector();
+    #[tokio::test]
+    async fn test_paths_in_backticks() {
+        let injector = create_test_injector().await;
 
         let paths = injector.extract_file_mentions("Check `src/lib.rs` for the implementation");
         assert!(paths.contains(&"src/lib.rs".to_string()));

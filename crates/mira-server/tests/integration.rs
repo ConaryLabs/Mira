@@ -939,7 +939,7 @@ async fn test_context_injection_file_extraction() {
     use mira::context::FileAwareInjector;
 
     let ctx = TestContext::new().await;
-    let injector = FileAwareInjector::new(ctx.db().clone());
+    let injector = FileAwareInjector::new(ctx.pool().clone());
 
     // Test file path extraction
     let paths = injector.extract_file_mentions("Check src/main.rs and lib.rs for issues");
@@ -961,7 +961,7 @@ async fn test_context_injection_analytics() {
     use mira::context::{InjectionAnalytics, InjectionEvent, InjectionSource};
 
     let ctx = TestContext::new().await;
-    let analytics = InjectionAnalytics::new(ctx.db().clone());
+    let analytics = InjectionAnalytics::new(ctx.pool().clone());
 
     // Record some events
     analytics.record(InjectionEvent {

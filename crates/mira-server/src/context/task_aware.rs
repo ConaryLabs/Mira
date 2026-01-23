@@ -1,18 +1,19 @@
 // crates/mira-server/src/context/task_aware.rs
 // Task-aware context injection
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
+use crate::db::{get_pending_tasks_sync, get_task_by_id_sync, get_active_goals_sync};
 use std::sync::Arc;
 
 pub struct TaskAwareInjector {
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     project_id: Option<i64>,
 }
 
 impl TaskAwareInjector {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
         Self {
-            db,
+            pool,
             project_id: None,
         }
     }
@@ -25,7 +26,11 @@ impl TaskAwareInjector {
     /// Get active task IDs for the current project
     /// Returns tasks with status 'pending' or 'in_progress'
     pub async fn get_active_task_ids(&self) -> Vec<i64> {
-        match self.db.get_pending_tasks(self.project_id, 10) {
+        let project_id = self.project_id;
+        match self.pool.interact(move |conn| {
+            get_pending_tasks_sync(conn, project_id, 10)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        }).await {
             Ok(tasks) => tasks.into_iter().map(|t| t.id).collect(),
             Err(e) => {
                 tracing::debug!("Failed to get pending tasks: {}", e);
@@ -45,7 +50,11 @@ impl TaskAwareInjector {
         let mut tasks = Vec::new();
         for id in task_ids.iter().take(5) {
             // Limit to 5 tasks for context
-            if let Ok(Some(task)) = self.db.get_task_by_id(*id) {
+            let task_id = *id;
+            if let Ok(Some(task)) = self.pool.interact(move |conn| {
+                get_task_by_id_sync(conn, task_id)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }).await {
                 tasks.push(task);
             }
         }
@@ -55,10 +64,11 @@ impl TaskAwareInjector {
         }
 
         // Also get active goals for broader context
-        let goals = self
-            .db
-            .get_active_goals(self.project_id, 3)
-            .unwrap_or_default();
+        let project_id = self.project_id;
+        let goals = self.pool.interact(move |conn| {
+            get_active_goals_sync(conn, project_id, 3)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        }).await.unwrap_or_default();
 
         let mut context = String::new();
 
@@ -100,14 +110,14 @@ impl TaskAwareInjector {
 mod tests {
     use super::*;
 
-    fn create_test_injector() -> TaskAwareInjector {
-        let db = Arc::new(Database::open_in_memory().unwrap());
-        TaskAwareInjector::new(db)
+    async fn create_test_injector() -> TaskAwareInjector {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        TaskAwareInjector::new(pool)
     }
 
     #[tokio::test]
     async fn test_empty_tasks() {
-        let injector = create_test_injector();
+        let injector = create_test_injector().await;
 
         let ids = injector.get_active_task_ids().await;
         assert!(ids.is_empty());
@@ -118,36 +128,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_tasks() {
-        let db = Arc::new(Database::open_in_memory().unwrap());
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        // Create a project first
-        let project_id = db
-            .get_or_create_project("/test/project", Some("test"))
-            .unwrap()
-            .0;
+        // Create a project first (via pool)
+        let project_id = pool.interact(|conn| {
+            crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        }).await.unwrap().0;
 
-        // Create some tasks
-        db.create_task(
-            Some(project_id),
-            None,
-            "Fix the bug",
-            Some("There's a bug in the login flow"),
-            Some("pending"),
-            Some("high"),
-        )
-        .unwrap();
+        // Create some tasks (need sync function or use pool)
+        pool.interact(move |conn| {
+            conn.execute(
+                "INSERT INTO tasks (project_id, goal_id, title, description, status, priority) VALUES (?, ?, ?, ?, ?, ?)",
+                rusqlite::params![project_id, Option::<i64>::None, "Fix the bug", Some("There's a bug in the login flow"), "pending", "high"],
+            )?;
+            conn.execute(
+                "INSERT INTO tasks (project_id, goal_id, title, description, status, priority) VALUES (?, ?, ?, ?, ?, ?)",
+                rusqlite::params![project_id, Option::<i64>::None, "Add tests", Option::<String>::None, "pending", "medium"],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        }).await.unwrap();
 
-        db.create_task(
-            Some(project_id),
-            None,
-            "Add tests",
-            None,
-            Some("pending"),
-            Some("medium"),
-        )
-        .unwrap();
-
-        let mut injector = TaskAwareInjector::new(db);
+        let mut injector = TaskAwareInjector::new(pool);
         injector.set_project_id(Some(project_id));
 
         let ids = injector.get_active_task_ids().await;
@@ -161,37 +163,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_goals() {
-        let db = Arc::new(Database::open_in_memory().unwrap());
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let project_id = db
-            .get_or_create_project("/test/project", Some("test"))
-            .unwrap()
-            .0;
+        let project_id = pool.interact(|conn| {
+            crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        }).await.unwrap().0;
 
-        // Create a goal
-        db.create_goal(
-            Some(project_id),
-            "Launch v1.0",
-            Some("First stable release"),
-            Some("in_progress"),
-            Some("high"),
-            Some(50),
-        )
-        .unwrap();
+        // Create a goal and task via pool
+        let task_id = pool.interact(move |conn| {
+            conn.execute(
+                "INSERT INTO goals (project_id, title, description, status, priority, progress_percent) VALUES (?, ?, ?, ?, ?, ?)",
+                rusqlite::params![project_id, "Launch v1.0", Some("First stable release"), "in_progress", "high", 50],
+            )?;
+            conn.execute(
+                "INSERT INTO tasks (project_id, goal_id, title, description, status, priority) VALUES (?, ?, ?, ?, ?, ?)",
+                rusqlite::params![project_id, Option::<i64>::None, "Write docs", Option::<String>::None, "pending", "medium"],
+            )?;
+            Ok::<_, anyhow::Error>(conn.last_insert_rowid())
+        }).await.unwrap();
 
-        // Create a task
-        let task_id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Write docs",
-                None,
-                Some("pending"),
-                None,
-            )
-            .unwrap();
-
-        let mut injector = TaskAwareInjector::new(db);
+        let mut injector = TaskAwareInjector::new(pool);
         injector.set_project_id(Some(project_id));
 
         let context = injector.inject_task_context(vec![task_id]).await;

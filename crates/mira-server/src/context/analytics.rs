@@ -1,7 +1,8 @@
 // crates/mira-server/src/context/analytics.rs
 // Analytics and learning for context injection
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
+use crate::db::set_server_state_sync;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -20,16 +21,16 @@ pub struct InjectionEvent {
 /// In-memory analytics for injection events
 /// Persists summary stats to database periodically
 pub struct InjectionAnalytics {
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     events: Mutex<Vec<InjectionEvent>>,
     total_injections: Mutex<u64>,
     total_chars: Mutex<u64>,
 }
 
 impl InjectionAnalytics {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
         Self {
-            db,
+            pool,
             events: Mutex::new(Vec::new()),
             total_injections: Mutex::new(0),
             total_chars: Mutex::new(0),
@@ -71,11 +72,17 @@ impl InjectionAnalytics {
         let total = *self.total_injections.lock().await;
         let chars = *self.total_chars.lock().await;
 
-        if let Err(e) = self.db.set_server_state("injection_total_count", &total.to_string()) {
-            tracing::debug!("Failed to persist injection count: {}", e);
-        }
-        if let Err(e) = self.db.set_server_state("injection_total_chars", &chars.to_string()) {
-            tracing::debug!("Failed to persist injection chars: {}", e);
+        let total_str = total.to_string();
+        let chars_str = chars.to_string();
+
+        if let Err(e) = self.pool.interact(move |conn| {
+            set_server_state_sync(conn, "injection_total_count", &total_str)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, "injection_total_chars", &chars_str)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok::<_, anyhow::Error>(())
+        }).await {
+            tracing::debug!("Failed to persist injection stats: {}", e);
         }
     }
 
@@ -132,8 +139,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_analytics_record() {
-        let db = Arc::new(Database::open_in_memory().unwrap());
-        let analytics = InjectionAnalytics::new(db);
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let analytics = InjectionAnalytics::new(pool);
 
         analytics.record(InjectionEvent {
             session_id: "test-session".to_string(),
@@ -150,8 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_analytics_summary_empty() {
-        let db = Arc::new(Database::open_in_memory().unwrap());
-        let analytics = InjectionAnalytics::new(db);
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let analytics = InjectionAnalytics::new(pool);
 
         let summary = analytics.summary(None).await;
         assert!(summary.contains("No context injections"));
@@ -159,8 +166,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_recent_events() {
-        let db = Arc::new(Database::open_in_memory().unwrap());
-        let analytics = InjectionAnalytics::new(db);
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let analytics = InjectionAnalytics::new(pool);
 
         for i in 0..5 {
             analytics.record(InjectionEvent {

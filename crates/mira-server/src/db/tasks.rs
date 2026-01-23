@@ -4,6 +4,7 @@
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 
+use rusqlite::Connection;
 use super::types::{Task, Goal};
 use super::Database;
 
@@ -35,6 +36,41 @@ pub fn parse_goal_row(row: &rusqlite::Row) -> rusqlite::Result<Goal> {
         progress_percent: row.get(6)?,
         created_at: row.get(7)?,
     })
+}
+
+// Sync functions for pool.interact() usage
+
+/// Get pending tasks (sync version for pool.interact)
+pub fn get_pending_tasks_sync(conn: &Connection, project_id: Option<i64>, limit: usize) -> Result<Vec<Task>> {
+    let sql = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+               FROM tasks
+               WHERE (project_id = ? OR project_id IS NULL) AND status != 'completed'
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![project_id, limit as i64], parse_task_row)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Get a task by ID (sync version for pool.interact)
+pub fn get_task_by_id_sync(conn: &Connection, id: i64) -> Result<Option<Task>> {
+    let sql = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+               FROM tasks WHERE id = ?";
+    conn.query_row(sql, [id], parse_task_row)
+        .optional()
+        .map_err(Into::into)
+}
+
+/// Get active goals (sync version for pool.interact)
+pub fn get_active_goals_sync(conn: &Connection, project_id: Option<i64>, limit: usize) -> Result<Vec<Goal>> {
+    let sql = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+               FROM goals
+               WHERE (project_id = ? OR project_id IS NULL) AND status NOT IN ('completed', 'abandoned')
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![project_id, limit as i64], parse_goal_row)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 impl Database {

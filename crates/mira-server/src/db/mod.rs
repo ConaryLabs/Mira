@@ -85,7 +85,10 @@ pub use memory::{
 pub use reviews::{Correction, ReviewFinding};
 pub use teams::{Team, TeamMember};
 pub use types::*;
-pub use tasks::{parse_task_row, parse_goal_row};
+pub use tasks::{
+    parse_task_row, parse_goal_row,
+    get_pending_tasks_sync, get_task_by_id_sync, get_active_goals_sync,
+};
 pub use project::{
     get_or_create_project_sync,
     update_project_name_sync,
@@ -96,6 +99,8 @@ pub use project::{
     get_health_alerts_sync,
     get_projects_for_briefing_check_sync,
     update_project_briefing_sync,
+    set_server_state_sync,
+    get_server_state_sync,
 };
 pub use background::{
     get_scan_info_sync,
