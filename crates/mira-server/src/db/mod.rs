@@ -24,8 +24,8 @@ mod teams;
 mod types;
 mod proxy;
 
-pub use config::ExpertConfig;
-pub use proxy::{UsageSummaryRow, UsageTotals};
+pub use config::{EmbeddingModelCheck, ExpertConfig};
+pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals};
 pub use documentation::{DocGap, DocInventory, DocTask};
 pub use embeddings::PendingEmbedding;
 pub use memory::parse_memory_fact_row;

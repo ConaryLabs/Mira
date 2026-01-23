@@ -38,6 +38,10 @@ impl ToolContext for MiraServer {
     }
 
     async fn set_project(&self, project: mira_types::ProjectContext) {
+        // Update embeddings client with project ID for usage tracking
+        if let Some(ref emb) = self.embeddings {
+            emb.set_project_id(Some(project.id)).await;
+        }
         *self.project.write().await = Some(project);
     }
 

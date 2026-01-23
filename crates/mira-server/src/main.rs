@@ -26,11 +26,74 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// Get embeddings client if API key is available (filters empty keys)
+#[allow(dead_code)]
 fn get_embeddings() -> Option<Arc<Embeddings>> {
-    std::env::var("OPENAI_API_KEY")
+    get_embeddings_with_db(None)
+}
+
+/// Get embeddings client with database for usage tracking
+/// Checks for model compatibility and warns if mismatch detected
+fn get_embeddings_with_db(db: Option<Arc<Database>>) -> Option<Arc<Embeddings>> {
+    use mira::db::EmbeddingModelCheck;
+    use mira::embeddings::EmbeddingModel;
+
+    let api_key = std::env::var("OPENAI_API_KEY")
         .ok()
-        .filter(|k| !k.trim().is_empty())
-        .map(|key| Arc::new(Embeddings::new(key)))
+        .filter(|k| !k.trim().is_empty())?;
+
+    // Default model - could be made configurable via env var
+    let model = std::env::var("MIRA_EMBEDDING_MODEL")
+        .ok()
+        .and_then(|m| EmbeddingModel::from_name(&m))
+        .unwrap_or_default();
+
+    // Check model compatibility if we have a database
+    if let Some(ref db) = db {
+        match db.check_embedding_model(model) {
+            Ok(EmbeddingModelCheck::FirstUse) => {
+                // First time - record the model choice
+                if let Err(e) = db.set_embedding_model(model) {
+                    tracing::warn!("Failed to save embedding model config: {}", e);
+                } else {
+                    info!("Embedding model configured: {} ({} dimensions, ${:.2}/1M tokens)",
+                        model.model_name(),
+                        model.dimensions(),
+                        model.cost_per_million()
+                    );
+                }
+            }
+            Ok(EmbeddingModelCheck::Matches) => {
+                // All good
+            }
+            Ok(EmbeddingModelCheck::Mismatch { stored, requested, has_vectors }) => {
+                if has_vectors {
+                    tracing::error!(
+                        "EMBEDDING MODEL MISMATCH: Database uses {} ({} dims) but {} ({} dims) requested.\n\
+                         Existing vectors would be incompatible. To switch models:\n\
+                         1. Export any data you need\n\
+                         2. Run: mira index --force (to re-index with new model)\n\
+                         Continuing with stored model: {}",
+                        stored.model_name(), stored.dimensions(),
+                        requested.model_name(), requested.dimensions(),
+                        stored.model_name()
+                    );
+                    // Use the stored model to maintain compatibility
+                    return Some(Arc::new(Embeddings::with_model(api_key, stored, Some(db.clone()))));
+                } else {
+                    // No vectors yet, safe to switch
+                    if let Err(e) = db.set_embedding_model(requested) {
+                        tracing::warn!("Failed to update embedding model config: {}", e);
+                    }
+                    info!("Embedding model updated to: {}", requested.model_name());
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to check embedding model compatibility: {}", e);
+            }
+        }
+    }
+
+    Some(Arc::new(Embeddings::with_model(api_key, model, db)))
 }
 
 /// Get DeepSeek client if API key is available
@@ -200,7 +263,7 @@ async fn setup_server_context() -> Result<MiraServer> {
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
-    let embeddings = get_embeddings();
+    let embeddings = get_embeddings_with_db(Some(db.clone()));
 
     // Create server context
     let server = MiraServer::new(db.clone(), pool, embeddings);
@@ -360,8 +423,8 @@ async fn run_mcp_server() -> Result<()> {
     let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
-    // Initialize embeddings if API key available
-    let embeddings = get_embeddings();
+    // Initialize embeddings if API key available (with usage tracking)
+    let embeddings = get_embeddings_with_db(Some(db.clone()));
 
     if embeddings.is_some() {
         info!("Semantic search enabled (OpenAI embeddings)");
@@ -454,13 +517,18 @@ async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
 
-    let embeddings = if no_embed { None } else { get_embeddings() };
+    let embeddings = if no_embed { None } else { get_embeddings_with_db(Some(db.clone())) };
 
     // Get or create project
     let (project_id, _project_name) = db.get_or_create_project(
         path.to_string_lossy().as_ref(),
         path.file_name().and_then(|n| n.to_str()),
     )?;
+
+    // Set project ID for usage tracking
+    if let Some(ref emb) = embeddings {
+        emb.set_project_id(Some(project_id)).await;
+    }
 
     let stats = mira::indexer::index_project(&path, db, embeddings, Some(project_id)).await?;
 
@@ -1216,6 +1284,71 @@ async fn run_backend_usage(backend: Option<&str>, days: u32) -> Result<()> {
     println!("{}", "-".repeat(80));
     println!("{:<12} {:<25} {:>10} {:>10} {:>10} ${:>7.4}",
         "TOTAL", "", "", "", total_requests, total_cost);
+
+    // Also show embedding usage
+    drop(stmt);
+    let embed_sql = format!(
+        "SELECT provider, model,
+                SUM(tokens) as total_tokens,
+                SUM(text_count) as total_texts,
+                SUM(cost_estimate) as total_cost,
+                COUNT(*) as request_count
+         FROM embeddings_usage
+         WHERE created_at >= '{}'
+         GROUP BY provider, model
+         ORDER BY total_cost DESC",
+        cutoff_str
+    );
+
+    if let Ok(mut embed_stmt) = conn.prepare(&embed_sql) {
+        let embed_rows: Vec<(String, String, i64, i64, f64, i64)> = embed_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get::<_, f64>(4).unwrap_or(0.0),
+                    row.get(5)?,
+                ))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+
+        if !embed_rows.is_empty() {
+            println!("\n\nEmbedding Usage\n");
+            println!("{:<12} {:<25} {:>12} {:>10} {:>10} {:>8}",
+                "Provider", "Model", "Tokens", "Texts", "Requests", "Cost");
+            println!("{}", "-".repeat(80));
+
+            let mut embed_total_cost = 0.0;
+            let mut embed_total_requests = 0i64;
+
+            for (provider, model, tokens, texts, cost, requests) in &embed_rows {
+                let model_display = if model.len() > 24 {
+                    format!("{}...", &model[..21])
+                } else {
+                    model.clone()
+                };
+
+                println!("{:<12} {:<25} {:>12} {:>10} {:>10} ${:>7.4}",
+                    provider,
+                    model_display,
+                    format_tokens(*tokens),
+                    texts,
+                    requests,
+                    cost
+                );
+
+                embed_total_cost += cost;
+                embed_total_requests += requests;
+            }
+
+            println!("{}", "-".repeat(80));
+            println!("{:<12} {:<25} {:>12} {:>10} {:>10} ${:>7.4}",
+                "TOTAL", "", "", "", embed_total_requests, embed_total_cost);
+        }
+    }
 
     Ok(())
 }

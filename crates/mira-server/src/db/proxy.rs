@@ -149,3 +149,78 @@ pub struct UsageTotals {
     pub total_cost: f64,
     pub request_count: i64,
 }
+
+/// Embedding usage record
+#[derive(Debug, Clone)]
+pub struct EmbeddingUsageRecord {
+    pub provider: String,
+    pub model: String,
+    pub tokens: u64,
+    pub text_count: u64,
+    pub cost_estimate: Option<f64>,
+    pub project_id: Option<i64>,
+}
+
+impl Database {
+    /// Insert an embedding usage record
+    pub fn insert_embedding_usage(&self, record: &EmbeddingUsageRecord) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO embeddings_usage (
+                provider, model, tokens, text_count, cost_estimate, project_id
+            ) VALUES (?, ?, ?, ?, ?, ?)",
+            params![
+                record.provider,
+                record.model,
+                record.tokens as i64,
+                record.text_count as i64,
+                record.cost_estimate,
+                record.project_id,
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get embedding usage summary
+    pub fn get_embedding_usage_summary(&self, since: &str) -> Result<Vec<EmbeddingUsageSummary>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT provider, model,
+                    SUM(tokens) as total_tokens,
+                    SUM(text_count) as total_texts,
+                    SUM(cost_estimate) as total_cost,
+                    COUNT(*) as request_count
+             FROM embeddings_usage
+             WHERE created_at >= ?
+             GROUP BY provider, model
+             ORDER BY total_cost DESC"
+        )?;
+
+        let rows: Vec<EmbeddingUsageSummary> = stmt
+            .query_map(params![since], |row| {
+                Ok(EmbeddingUsageSummary {
+                    provider: row.get(0)?,
+                    model: row.get(1)?,
+                    total_tokens: row.get(2)?,
+                    total_texts: row.get(3)?,
+                    total_cost: row.get::<_, f64>(4).unwrap_or(0.0),
+                    request_count: row.get(5)?,
+                })
+            })?
+            .filter_map(Result::ok)
+            .collect();
+
+        Ok(rows)
+    }
+}
+
+/// Embedding usage summary
+#[derive(Debug)]
+pub struct EmbeddingUsageSummary {
+    pub provider: String,
+    pub model: String,
+    pub total_tokens: i64,
+    pub total_texts: i64,
+    pub total_cost: f64,
+    pub request_count: i64,
+}

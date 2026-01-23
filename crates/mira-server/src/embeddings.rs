@@ -1,18 +1,13 @@
 // crates/mira-server/src/embeddings.rs
 // OpenAI embeddings API client
 
+use crate::db::{Database, EmbeddingUsageRecord};
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tracing::debug;
-
-/// Embedding dimensions (OpenAI text-embedding-3-small)
-pub const EMBEDDING_DIM: usize = 1536;
-
-/// Model to use
-const MODEL: &str = "text-embedding-3-small";
-
-/// API endpoint
-const API_URL: &str = "https://api.openai.com/v1/embeddings";
 
 /// Max characters to embed (truncate longer text)
 const MAX_TEXT_CHARS: usize = 8000;
@@ -26,18 +21,104 @@ const TIMEOUT_SECS: u64 = 30;
 /// Retry attempts
 const RETRY_ATTEMPTS: usize = 2;
 
+/// API endpoint
+const API_URL: &str = "https://api.openai.com/v1/embeddings";
+
+/// Supported embedding models
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum EmbeddingModel {
+    /// text-embedding-3-small: 1536 dimensions, $0.02/1M tokens (recommended)
+    #[default]
+    TextEmbedding3Small,
+    /// text-embedding-3-large: 3072 dimensions, $0.13/1M tokens
+    TextEmbedding3Large,
+    /// text-embedding-ada-002: 1536 dimensions, $0.10/1M tokens (legacy)
+    TextEmbeddingAda002,
+}
+
+impl EmbeddingModel {
+    /// Get the model name for API calls
+    pub fn model_name(&self) -> &'static str {
+        match self {
+            Self::TextEmbedding3Small => "text-embedding-3-small",
+            Self::TextEmbedding3Large => "text-embedding-3-large",
+            Self::TextEmbeddingAda002 => "text-embedding-ada-002",
+        }
+    }
+
+    /// Get embedding dimensions for this model
+    pub fn dimensions(&self) -> usize {
+        match self {
+            Self::TextEmbedding3Small => 1536,
+            Self::TextEmbedding3Large => 3072,
+            Self::TextEmbeddingAda002 => 1536,
+        }
+    }
+
+    /// Get cost per million tokens
+    pub fn cost_per_million(&self) -> f64 {
+        match self {
+            Self::TextEmbedding3Small => 0.02,
+            Self::TextEmbedding3Large => 0.13,
+            Self::TextEmbeddingAda002 => 0.10,
+        }
+    }
+
+    /// Parse from model name string
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "text-embedding-3-small" => Some(Self::TextEmbedding3Small),
+            "text-embedding-3-large" => Some(Self::TextEmbedding3Large),
+            "text-embedding-ada-002" => Some(Self::TextEmbeddingAda002),
+            _ => None,
+        }
+    }
+
+    /// List all available models
+    pub fn all() -> &'static [EmbeddingModel] {
+        &[
+            Self::TextEmbedding3Small,
+            Self::TextEmbedding3Large,
+            Self::TextEmbeddingAda002,
+        ]
+    }
+}
+
+impl std::fmt::Display for EmbeddingModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.model_name())
+    }
+}
+
+/// Default embedding dimensions (for backwards compatibility with EMBEDDING_DIM constant)
+pub const EMBEDDING_DIM: usize = 1536;
+
 /// Embeddings client
 pub struct Embeddings {
     api_key: String,
+    model: EmbeddingModel,
     http_client: reqwest::Client,
+    db: Option<Arc<Database>>,
+    project_id: Arc<RwLock<Option<i64>>>,
 }
 
 /// Type alias for clarity
 pub type EmbeddingClient = Embeddings;
 
 impl Embeddings {
-    /// Create new embeddings client
+    /// Create new embeddings client with default model (text-embedding-3-small)
     pub fn new(api_key: String) -> Self {
+        Self::with_model(api_key, EmbeddingModel::default(), None)
+    }
+
+    /// Create embeddings client with database for usage tracking
+    pub fn with_db(api_key: String, db: Option<Arc<Database>>) -> Self {
+        Self::with_model(api_key, EmbeddingModel::default(), db)
+    }
+
+    /// Create embeddings client with specific model and optional database
+    pub fn with_model(api_key: String, model: EmbeddingModel, db: Option<Arc<Database>>) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(TIMEOUT_SECS))
             .build()
@@ -45,13 +126,53 @@ impl Embeddings {
 
         Self {
             api_key,
+            model,
             http_client,
+            db,
+            project_id: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set the current project ID for usage tracking
+    pub async fn set_project_id(&self, project_id: Option<i64>) {
+        let mut pid = self.project_id.write().await;
+        *pid = project_id;
     }
 
     /// Get the API key (for batch API)
     pub fn api_key(&self) -> &str {
         &self.api_key
+    }
+
+    /// Get the model being used
+    pub fn model(&self) -> EmbeddingModel {
+        self.model
+    }
+
+    /// Get embedding dimensions for current model
+    pub fn dimensions(&self) -> usize {
+        self.model.dimensions()
+    }
+
+    /// Record embedding usage
+    async fn record_usage(&self, tokens: u64, text_count: u64) {
+        if let Some(ref db) = self.db {
+            let project_id = *self.project_id.read().await;
+            let cost = (tokens as f64 / 1_000_000.0) * self.model.cost_per_million();
+
+            let record = EmbeddingUsageRecord {
+                provider: "openai".to_string(),
+                model: self.model.model_name().to_string(),
+                tokens,
+                text_count,
+                cost_estimate: Some(cost),
+                project_id,
+            };
+
+            if let Err(e) = db.insert_embedding_usage(&record) {
+                tracing::warn!("Failed to record embedding usage: {}", e);
+            }
+        }
     }
 
     /// Embed a single text
@@ -65,7 +186,7 @@ impl Embeddings {
         };
 
         let body = serde_json::json!({
-            "model": MODEL,
+            "model": self.model.model_name(),
             "input": text
         });
 
@@ -87,6 +208,14 @@ impl Embeddings {
                 Ok(response) => {
                     if response.status().is_success() {
                         let json: serde_json::Value = response.json().await?;
+
+                        // Track usage
+                        if let Some(usage) = json.get("usage") {
+                            if let Some(tokens) = usage.get("total_tokens").and_then(|v| v.as_u64()) {
+                                self.record_usage(tokens, 1).await;
+                            }
+                        }
+
                         if let Some(data) = json["data"].as_array() {
                             if let Some(first) = data.first() {
                                 if let Some(values) = first["embedding"].as_array() {
@@ -94,7 +223,7 @@ impl Embeddings {
                                         .iter()
                                         .filter_map(|v| v.as_f64().map(|f| f as f32))
                                         .collect();
-                                    if embedding.len() == EMBEDDING_DIM {
+                                    if embedding.len() == self.dimensions() {
                                         return Ok(embedding);
                                     }
                                 }
@@ -175,7 +304,7 @@ impl Embeddings {
             .collect();
 
         let body = serde_json::json!({
-            "model": MODEL,
+            "model": self.model.model_name(),
             "input": inputs
         });
 
@@ -195,6 +324,14 @@ impl Embeddings {
         }
 
         let json: serde_json::Value = response.json().await?;
+
+        // Track usage
+        if let Some(usage) = json.get("usage") {
+            if let Some(tokens) = usage.get("total_tokens").and_then(|v| v.as_u64()) {
+                self.record_usage(tokens, texts.len() as u64).await;
+            }
+        }
+
         let data = json["data"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Invalid batch response"))?;

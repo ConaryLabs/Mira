@@ -1,11 +1,15 @@
 // crates/mira-server/src/db/config.rs
 // Configuration storage (custom system prompts, LLM provider config, etc.)
 
+use crate::embeddings::EmbeddingModel;
 use crate::llm::Provider;
 use anyhow::Result;
 use rusqlite::params;
 
 use super::Database;
+
+/// Key for storing embedding model in server_state
+const EMBEDDING_MODEL_KEY: &str = "embedding_model";
 
 /// Expert configuration including prompt, provider, and model
 #[derive(Debug, Clone)]
@@ -180,4 +184,80 @@ impl Database {
 
         Ok(results)
     }
+
+    // =========================================================================
+    // Embedding Model Configuration
+    // =========================================================================
+
+    /// Get the configured embedding model
+    /// Returns None if no model has been configured yet
+    pub fn get_embedding_model(&self) -> Result<Option<EmbeddingModel>> {
+        match self.get_server_state(EMBEDDING_MODEL_KEY)? {
+            Some(name) => Ok(EmbeddingModel::from_name(&name)),
+            None => Ok(None),
+        }
+    }
+
+    /// Set the embedding model configuration
+    /// WARNING: Changing the model after vectors exist requires re-indexing
+    pub fn set_embedding_model(&self, model: EmbeddingModel) -> Result<()> {
+        self.set_server_state(EMBEDDING_MODEL_KEY, model.model_name())
+    }
+
+    /// Check if embedding model can be safely used
+    /// Returns Ok(()) if safe, Err with warning message if model mismatch detected
+    pub fn check_embedding_model(&self, model: EmbeddingModel) -> Result<EmbeddingModelCheck> {
+        let stored = self.get_embedding_model()?;
+
+        match stored {
+            None => {
+                // First time setup - check if vectors already exist
+                let has_vectors = self.has_existing_vectors()?;
+                if has_vectors {
+                    // Vectors exist but no model recorded - assume they match current model
+                    // This handles migration from before model tracking was added
+                    self.set_embedding_model(model)?;
+                }
+                Ok(EmbeddingModelCheck::FirstUse)
+            }
+            Some(stored_model) if stored_model == model => {
+                Ok(EmbeddingModelCheck::Matches)
+            }
+            Some(stored_model) => {
+                // Model mismatch!
+                let has_vectors = self.has_existing_vectors()?;
+                Ok(EmbeddingModelCheck::Mismatch {
+                    stored: stored_model,
+                    requested: model,
+                    has_vectors,
+                })
+            }
+        }
+    }
+
+    /// Check if any vectors exist in the database
+    fn has_existing_vectors(&self) -> Result<bool> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM vec_code LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        Ok(count > 0)
+    }
+}
+
+/// Result of embedding model compatibility check
+#[derive(Debug)]
+pub enum EmbeddingModelCheck {
+    /// First time using embeddings - no prior model configured
+    FirstUse,
+    /// Requested model matches stored model
+    Matches,
+    /// Model mismatch detected
+    Mismatch {
+        stored: EmbeddingModel,
+        requested: EmbeddingModel,
+        has_vectors: bool,
+    },
 }
