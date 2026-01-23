@@ -1,7 +1,7 @@
 // crates/mira-server/src/llm/factory.rs
 // Provider factory for managing multiple LLM clients
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::gemini::GeminiClient;
 use crate::llm::openai::OpenAiClient;
@@ -78,15 +78,15 @@ impl ProviderFactory {
         }
     }
 
-    /// Get a client for a specific expert role
+    /// Get a client for a specific expert role (async to avoid blocking on DB)
     /// Priority: role config -> global default -> fallback chain
-    pub fn client_for_role(
+    pub async fn client_for_role(
         &self,
         role: &str,
-        db: &Database,
+        pool: &Arc<DatabasePool>,
     ) -> Result<Arc<dyn LlmClient>, String> {
-        // 1. Check role-specific configuration in database
-        if let Ok(config) = db.get_expert_config(role) {
+        // 1. Check role-specific configuration in database (async!)
+        if let Ok(config) = pool.get_expert_config(role).await {
             // If a specific model is configured, try to create a client for it
             if let Some(model) = config.model {
                 let client_opt: Option<Arc<dyn LlmClient>> = match config.provider {

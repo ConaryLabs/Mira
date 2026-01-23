@@ -2,7 +2,6 @@
 // Agentic expert sub-agents powered by LLM providers with tool access
 
 use super::ToolContext;
-use crate::db::Database;
 use crate::indexer;
 use crate::llm::{LlmClient, Message, PromptBuilder, Tool, ToolCall};
 use crate::search::{embedding_to_bytes, find_callers, find_callees, hybrid_search};
@@ -38,14 +37,16 @@ pub enum ExpertRole {
 }
 
 impl ExpertRole {
-    /// Get the system prompt for this expert role
+    /// Get the system prompt for this expert role (async to avoid blocking)
     /// Checks database for custom prompt first, falls back to default
-    pub fn system_prompt(&self, db: &Database) -> String {
+    pub async fn system_prompt<C: ToolContext>(&self, ctx: &C) -> String {
         let role_key = self.db_key();
 
-        // Get role instructions (custom or default)
-        let role_instructions = if let Ok(Some(custom_prompt)) = db.get_custom_prompt(role_key) {
-            custom_prompt
+        // Get role instructions (custom or default) - use pool for async access
+        let custom_prompt = ctx.pool().get_custom_prompt(role_key).await.ok().flatten();
+
+        let role_instructions = if let Some(prompt) = custom_prompt {
+            prompt
         } else {
             match self {
                 ExpertRole::Architect => ARCHITECT_PROMPT,
@@ -811,23 +812,25 @@ fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFinding
     findings
 }
 
-/// Get learned patterns from database and format for context injection
-fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> String {
+/// Get learned patterns from database and format for context injection (async)
+async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> String {
     // Map expert role to correction type
-    let correction_type = match expert_role {
+    let correction_type: Option<&'static str> = match expert_role {
         "code_reviewer" => Some("code_quality"),
         "security" => Some("security"),
         _ => None,
     };
 
-    // Get project ID synchronously (we're in a sync context here)
-    // This is called before the async expert loop, so we need sync access
-    let db = ctx.db();
+    // Use spawn_blocking with the existing db method to avoid blocking async runtime
+    let db = ctx.db().clone();
+    let correction_type_owned = correction_type.map(String::from);
 
-    // Try to get relevant corrections
-    let corrections = db
-        .get_relevant_corrections(None, correction_type, 10)
-        .unwrap_or_default();
+    let corrections = tokio::task::spawn_blocking(move || {
+        db.get_relevant_corrections(None, correction_type_owned.as_deref(), 10)
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
 
     if corrections.is_empty() {
         return String::new();
@@ -979,19 +982,21 @@ pub async fn consult_expert<C: ToolContext>(
     context: String,
     question: Option<String>,
 ) -> Result<String, String> {
-    // Get the appropriate LLM client for this expert role
+    // Get the appropriate LLM client for this expert role (async to avoid blocking!)
     let client: Arc<dyn LlmClient> = ctx.llm_factory()
-        .client_for_role(expert.db_key(), ctx.db())
+        .client_for_role(expert.db_key(), ctx.pool())
+        .await
         .map_err(|e| e.to_string())?;
 
     let provider = client.provider_type();
     tracing::info!(expert = expert.db_key(), provider = %provider, "Expert consultation starting");
 
-    let system_prompt = expert.system_prompt(ctx.db());
+    // Get system prompt (async to avoid blocking!)
+    let system_prompt = expert.system_prompt(ctx).await;
 
-    // Inject learned patterns for code reviewer and security experts
+    // Inject learned patterns for code reviewer and security experts (async to avoid blocking!)
     let patterns_context = if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
-        get_patterns_context(ctx, expert.db_key())
+        get_patterns_context(ctx, expert.db_key()).await
     } else {
         String::new()
     };
