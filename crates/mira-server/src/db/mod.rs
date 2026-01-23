@@ -3,6 +3,7 @@
 
 mod chat;
 mod config;
+mod diff_analysis;
 pub mod documentation;
 mod embeddings;
 mod memory;
@@ -25,6 +26,7 @@ mod types;
 mod proxy;
 
 pub use config::{EmbeddingModelCheck, ExpertConfig};
+pub use diff_analysis::DiffAnalysis;
 pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals};
 pub use documentation::{DocGap, DocInventory, DocTask};
 pub use embeddings::PendingEmbedding;
@@ -209,6 +211,9 @@ impl Database {
 
         // Add learning columns to corrections table
         schema::migrate_corrections_learning_columns(&conn)?;
+
+        // Add diff analyses table for semantic diff analysis
+        schema::migrate_diff_analyses_table(&conn)?;
 
         Ok(())
     }

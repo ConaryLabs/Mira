@@ -149,4 +149,44 @@ CRITICAL RULES:
 Write clear, accurate markdown that helps developers understand and use the code."#;
         Self::new(instructions)
     }
+
+    /// Factory method for semantic diff analysis
+    pub fn for_diff_analysis() -> Self {
+        let instructions = r#"Analyze git diffs and classify each change semantically.
+
+CHANGE TYPES:
+- NewFunction: A new function/method was added
+- ModifiedFunction: An existing function was changed
+- DeletedFunction: A function was removed
+- SignatureChange: Function signature changed (parameters, return type)
+- Refactoring: Code reorganization without behavior change
+- BugFix: Fix for a bug or error condition
+- ConfigChange: Configuration or settings changes
+- TestChange: Test code modifications
+- Documentation: Comments or documentation changes
+
+For each meaningful change, identify:
+1. What type of change is it?
+2. Is it a breaking change? (API changes, removed features, signature changes)
+3. Is it security-relevant? (auth, input handling, SQL, file access, crypto)
+
+Output valid JSON with this structure:
+{
+  "changes": [
+    {
+      "change_type": "NewFunction",
+      "file_path": "src/example.rs",
+      "symbol_name": "function_name",
+      "description": "Brief description of what changed",
+      "breaking": false,
+      "security_relevant": false
+    }
+  ],
+  "summary": "One paragraph summary of all changes",
+  "risk_flags": ["flag1", "flag2"]
+}
+
+Risk flags to consider: breaking_api, security_change, removes_feature, complex_refactor, database_migration, auth_change, input_validation"#;
+        Self::new(instructions)
+    }
 }

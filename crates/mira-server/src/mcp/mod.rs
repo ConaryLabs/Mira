@@ -490,6 +490,16 @@ pub struct GetLearnedPatternsRequest {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeDiffRequest {
+    #[schemars(description = "Starting git ref (commit, branch, tag). Default: HEAD~1 for commits, or analyzes staged/working changes if present")]
+    pub from_ref: Option<String>,
+    #[schemars(description = "Ending git ref. Default: HEAD")]
+    pub to_ref: Option<String>,
+    #[schemars(description = "Include impact analysis (find affected callers). Default: true")]
+    pub include_impact: Option<bool>,
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(description = "Initialize session with project and context.")]
@@ -858,6 +868,16 @@ impl MiraServer {
     #[tool(description = "Extract patterns from accepted findings to improve future reviews.")]
     async fn extract_patterns(&self) -> Result<String, String> {
         tools::extract_patterns(self).await
+    }
+
+    // Semantic diff analysis tool
+
+    #[tool(description = "Analyze git diff semantically. Identifies change types, impact, and risks.")]
+    async fn analyze_diff(
+        &self,
+        Parameters(req): Parameters<AnalyzeDiffRequest>,
+    ) -> Result<String, String> {
+        tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await
     }
 }
 

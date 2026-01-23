@@ -88,6 +88,7 @@ pub trait ToolContext: Send + Sync {
 pub mod claude_local;
 pub mod code;
 pub mod dev;
+pub mod diff;
 pub mod documentation;
 pub mod experts;
 pub mod memory;
@@ -102,6 +103,7 @@ pub mod teams;
 pub use claude_local::export_claude_local;
 pub use code::*;
 pub use dev::*;
+pub use diff::*;
 pub use documentation::*;
 pub use experts::*;
 pub use memory::*;

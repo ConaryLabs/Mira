@@ -39,6 +39,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add proxy usage tracking table
     migrate_proxy_usage_table(conn)?;
 
+    // Add diff analyses table for semantic diff analysis
+    migrate_diff_analyses_table(conn)?;
+
     Ok(())
 }
 
@@ -945,6 +948,48 @@ pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
             "#
         )?;
     }
+
+    Ok(())
+}
+
+/// Migrate to add diff_analyses table for semantic diff analysis
+pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='diff_analyses'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if table_exists {
+        return Ok(());
+    }
+
+    tracing::info!("Creating diff_analyses table for semantic diff analysis");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS diff_analyses (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            from_commit TEXT NOT NULL,
+            to_commit TEXT NOT NULL,
+            analysis_type TEXT DEFAULT 'commit',
+            changes_json TEXT,
+            impact_json TEXT,
+            risk_json TEXT,
+            summary TEXT,
+            files_changed INTEGER,
+            lines_added INTEGER,
+            lines_removed INTEGER,
+            status TEXT DEFAULT 'complete',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_diff_commits ON diff_analyses(project_id, from_commit, to_commit);
+        CREATE INDEX IF NOT EXISTS idx_diff_created ON diff_analyses(project_id, created_at DESC);
+        "#
+    )?;
 
     Ok(())
 }

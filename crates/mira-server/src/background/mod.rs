@@ -3,6 +3,7 @@
 
 mod briefings;
 mod capabilities;
+pub mod diff_analysis;
 pub mod documentation;
 mod embeddings;
 mod summaries;
