@@ -9,11 +9,10 @@ use crate::db::{
     get_external_deps_sync, Database,
 };
 use crate::db::pool::DatabasePool;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::task::spawn_blocking;
 
 /// Get or generate codebase map
 pub fn get_or_generate_map(
@@ -195,37 +194,6 @@ fn get_external_deps(db: &Database, project_id: i64) -> Result<Vec<String>> {
 pub fn get_modules_with_purposes(db: &Database, project_id: i64) -> Result<Vec<Module>> {
     let conn = db.conn();
     Ok(get_cached_modules_sync(&conn, project_id)?)
-}
-
-/// Async version of get_or_generate_map that runs on a blocking thread
-pub async fn get_or_generate_map_async(
-    db: Arc<Database>,
-    project_id: i64,
-    project_path: &str,
-    project_name: &str,
-    project_type: &str,
-) -> Result<CodebaseMap> {
-    let project_path = project_path.to_string();
-    let project_name = project_name.to_string();
-    let project_type = project_type.to_string();
-
-    spawn_blocking(move || {
-        get_or_generate_map(&db, project_id, &project_path, &project_name, &project_type)
-    })
-    .await
-    .map_err(|e| anyhow!("spawn_blocking panicked: {}", e))?
-}
-
-/// Async version of get_modules_with_purposes that runs on a blocking thread
-pub async fn get_modules_with_purposes_async(
-    db: Arc<Database>,
-    project_id: i64,
-) -> Result<Vec<Module>> {
-    spawn_blocking(move || {
-        get_modules_with_purposes(&db, project_id)
-    })
-    .await
-    .map_err(|e| anyhow!("spawn_blocking panicked: {}", e))?
 }
 
 /// Pool-based async version of get_modules_with_purposes
