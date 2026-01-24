@@ -137,7 +137,7 @@ impl DeepSeekClient {
             messages,
             tools,
             tool_choice: Some("auto".into()),
-            max_tokens: Some(16000),  // Reduced from 64k to stay under 131k context limit
+            max_tokens: Some(32000),  // Increased for dual-mode: chat for tools, reasoner for synthesis
         };
 
         let body = serde_json::to_string(&request)?;

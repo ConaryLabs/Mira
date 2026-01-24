@@ -1003,13 +1003,15 @@ pub async fn consult_expert<C: ToolContext>(
 ) -> Result<String, String> {
     let expert_key = expert.db_key();
 
-    // Get the appropriate LLM client for this expert role (async to avoid blocking!)
-    let client: Arc<dyn LlmClient> = ctx.llm_factory()
-        .client_for_role(expert_key.as_str(), ctx.pool())
+    // Get dual-mode LLM clients for DeepSeek: chat for tools, reasoner for synthesis
+    // For non-DeepSeek providers, both are the same client
+    let llm_factory = ctx.llm_factory();
+    let (chat_client, reasoner_client) = llm_factory
+        .client_for_role_dual_mode(expert_key.as_str(), ctx.pool())
         .await
         .map_err(|e| e.to_string())?;
 
-    let provider = client.provider_type();
+    let provider = chat_client.provider_type();
     tracing::info!(expert = %expert_key, provider = %provider, "Expert consultation starting");
 
     // Get system prompt (async to avoid blocking!)
@@ -1057,7 +1059,7 @@ pub async fn consult_expert<C: ToolContext>(
             // For stateful providers (OpenAI Responses API), only send new messages after
             // the first call. The previous_response_id preserves context server-side.
             // For non-stateful providers (DeepSeek, Gemini), always send full history.
-            let messages_to_send = if previous_response_id.is_some() && client.supports_stateful() {
+            let messages_to_send = if previous_response_id.is_some() && chat_client.supports_stateful() {
                 // Only send tool messages (results from current iteration)
                 // These are at the end of the messages vec after the last assistant message
                 messages
@@ -1074,10 +1076,10 @@ pub async fn consult_expert<C: ToolContext>(
                 messages.clone()
             };
 
-            // Call LLM with tools using stateful API to preserve reasoning context
+            // Call LLM with tools using chat client during tool-gathering phase
             let result = timeout(
                 LLM_CALL_TIMEOUT,
-                client.chat_stateful(
+                chat_client.chat_stateful(
                     messages_to_send,
                     Some(tools.clone()),
                     previous_response_id.as_deref(),
@@ -1112,7 +1114,7 @@ pub async fn consult_expert<C: ToolContext>(
                     });
 
                     let tool_results = futures::future::join_all(tool_futures).await;
-                    
+
                     for (id, result) in tool_results {
                         total_tool_calls += 1;
                         messages.push(Message::tool_result(&id, result));
@@ -1123,7 +1125,44 @@ pub async fn consult_expert<C: ToolContext>(
                 }
             }
 
-            // No tool calls - we have the final response
+            // No tool calls - we have a preliminary response from chat client
+            // For DeepSeek dual-mode, now use reasoner for final synthesis
+            if let Some(ref reasoner) = reasoner_client {
+                tracing::debug!(
+                    expert = %expert_key,
+                    iterations,
+                    tool_calls = total_tool_calls,
+                    "Tool gathering complete, switching to reasoner for synthesis"
+                );
+
+                // Add chat client's response as context for reasoner
+                let assistant_msg = Message::assistant(
+                    result.content.clone(),
+                    result.reasoning_content.clone(),
+                );
+                messages.push(assistant_msg);
+
+                // Create synthesis prompt for reasoner
+                let synthesis_prompt = Message::user(
+                    String::from("Based on the tool results above, provide your final expert analysis. \
+                    Synthesize the findings into a clear, actionable response.")
+                );
+                messages.push(synthesis_prompt);
+
+                // Call reasoner without tools for final synthesis (no timeout reasoner, it can be slow)
+                let final_result = reasoner
+                    .chat_stateful(
+                        messages,
+                        None, // No tools for synthesis
+                        None, // No previous_response_id across different clients
+                    )
+                    .await
+                    .map_err(|e| format!("Reasoner synthesis failed: {}", e))?;
+
+                return Ok((final_result, total_tool_calls, iterations));
+            }
+
+            // No reasoner client (non-DeepSeek) - return chat client result directly
             return Ok((result, total_tool_calls, iterations));
         }
     })
