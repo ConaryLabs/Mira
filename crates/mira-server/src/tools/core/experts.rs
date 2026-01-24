@@ -4,7 +4,7 @@
 use super::ToolContext;
 use crate::db::{recall_semantic_sync, search_memories_sync};
 use crate::indexer;
-use crate::llm::{LlmClient, Message, PromptBuilder, Tool, ToolCall};
+use crate::llm::{Message, PromptBuilder, Tool, ToolCall};
 use crate::search::{embedding_to_bytes, find_callers, find_callees, hybrid_search};
 use serde_json::{json, Value};
 use std::path::Path;

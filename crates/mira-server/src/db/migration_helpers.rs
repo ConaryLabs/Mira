@@ -55,23 +55,6 @@ pub fn create_table_if_missing(
     Ok(())
 }
 
-/// Execute SQL and log error instead of discarding
-pub fn execute_or_log(conn: &Connection, sql: &str, params: &[&dyn rusqlite::ToSql]) -> Result<()> {
-    conn.execute(sql, params).map_err(|e| {
-        tracing::warn!("DB operation failed (continuing): {} - SQL: {}", e, sql);
-        e
-    })?;
-    Ok(())
-}
-
-/// Execute batch SQL and log errors
-pub fn execute_batch_or_log(conn: &Connection, sql: &str) -> Result<()> {
-    conn.execute_batch(sql).map_err(|e| {
-        tracing::warn!("DB batch failed (continuing): {}", e);
-        e
-    })?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

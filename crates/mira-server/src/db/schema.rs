@@ -421,14 +421,7 @@ pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
 
 /// Migrate to add documentation tracking tables
 pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "documentation_tasks") {
-        return Ok(());
-    }
-
-    tracing::info!("Creating documentation tracking tables");
-
-    conn.execute_batch(
-        r#"
+    create_table_if_missing(conn, "documentation_tasks", r#"
         CREATE TABLE IF NOT EXISTS documentation_tasks (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -482,22 +475,12 @@ pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
             UNIQUE(project_id, doc_path)
         );
         CREATE INDEX IF NOT EXISTS idx_doc_inventory_stale ON documentation_inventory(project_id, is_stale);
-        "#
-    )?;
-
-    Ok(())
+    "#)
 }
 
 /// Migrate to add users table for multi-user support
 pub fn migrate_users_table(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "users") {
-        return Ok(());
-    }
-
-    tracing::info!("Creating users table for multi-user support");
-
-    conn.execute_batch(
-        r#"
+    create_table_if_missing(conn, "users", r#"
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
             identity TEXT UNIQUE NOT NULL,
@@ -506,10 +489,7 @@ pub fn migrate_users_table(conn: &Connection) -> Result<()> {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_users_identity ON users(identity);
-        "#
-    )?;
-
-    Ok(())
+    "#)
 }
 
 /// Migrate memory_facts to add user_id and scope columns for multi-user sharing
@@ -559,14 +539,7 @@ pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
 
 /// Migrate to add teams tables for team-based memory sharing
 pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "teams") {
-        return Ok(());
-    }
-
-    tracing::info!("Creating teams tables for team-based memory sharing");
-
-    conn.execute_batch(
-        r#"
+    create_table_if_missing(conn, "teams", r#"
         CREATE TABLE IF NOT EXISTS teams (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
@@ -586,22 +559,12 @@ pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
         CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_identity);
-        "#
-    )?;
-
-    Ok(())
+    "#)
 }
 
 /// Migrate to add review_findings table for code review learning loop
 pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "review_findings") {
-        return Ok(());
-    }
-
-    tracing::info!("Creating review_findings table for code review learning loop");
-
-    conn.execute_batch(
-        r#"
+    create_table_if_missing(conn, "review_findings", r#"
         CREATE TABLE IF NOT EXISTS review_findings (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -625,10 +588,7 @@ pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_review_findings_expert ON review_findings(expert_role);
         CREATE INDEX IF NOT EXISTS idx_review_findings_file ON review_findings(file_path);
         CREATE INDEX IF NOT EXISTS idx_review_findings_status ON review_findings(status);
-        "#
-    )?;
-
-    Ok(())
+    "#)
 }
 
 /// Migrate corrections table to add learning columns
@@ -650,14 +610,7 @@ pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
 
 /// Migrate to add proxy_usage table for token tracking and cost estimation
 pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "proxy_usage") {
-        return Ok(());
-    }
-
-    tracing::info!("Creating proxy_usage table for token tracking and cost estimation");
-
-    conn.execute_batch(
-        r#"
+    create_table_if_missing(conn, "proxy_usage", r#"
         CREATE TABLE IF NOT EXISTS proxy_usage (
             id INTEGER PRIMARY KEY,
             backend_name TEXT NOT NULL,
@@ -676,45 +629,29 @@ pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_proxy_usage_session ON proxy_usage(session_id);
         CREATE INDEX IF NOT EXISTS idx_proxy_usage_project ON proxy_usage(project_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_proxy_usage_created ON proxy_usage(created_at DESC);
-        "#
-    )?;
+    "#)?;
 
     // Add embeddings_usage table
-    if !table_exists(conn, "embeddings_usage") {
-        tracing::info!("Creating embeddings_usage table for embedding cost tracking");
-
-        conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS embeddings_usage (
-                id INTEGER PRIMARY KEY,
-                provider TEXT NOT NULL,
-                model TEXT NOT NULL,
-                tokens INTEGER NOT NULL,
-                text_count INTEGER NOT NULL,
-                cost_estimate REAL,
-                project_id INTEGER REFERENCES projects(id),
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_embeddings_usage_provider ON embeddings_usage(provider, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_embeddings_usage_project ON embeddings_usage(project_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_embeddings_usage_created ON embeddings_usage(created_at DESC);
-            "#
-        )?;
-    }
-
-    Ok(())
+    create_table_if_missing(conn, "embeddings_usage", r#"
+        CREATE TABLE IF NOT EXISTS embeddings_usage (
+            id INTEGER PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            tokens INTEGER NOT NULL,
+            text_count INTEGER NOT NULL,
+            cost_estimate REAL,
+            project_id INTEGER REFERENCES projects(id),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_embeddings_usage_provider ON embeddings_usage(provider, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_embeddings_usage_project ON embeddings_usage(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_embeddings_usage_created ON embeddings_usage(created_at DESC);
+    "#)
 }
 
 /// Migrate to add diff_analyses table for semantic diff analysis
 pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "diff_analyses") {
-        return Ok(());
-    }
-
-    tracing::info!("Creating diff_analyses table for semantic diff analysis");
-
-    conn.execute_batch(
-        r#"
+    create_table_if_missing(conn, "diff_analyses", r#"
         CREATE TABLE IF NOT EXISTS diff_analyses (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -733,10 +670,7 @@ pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_diff_commits ON diff_analyses(project_id, from_commit, to_commit);
         CREATE INDEX IF NOT EXISTS idx_diff_created ON diff_analyses(project_id, created_at DESC);
-        "#
-    )?;
-
-    Ok(())
+    "#)
 }
 
 /// Database schema SQL
