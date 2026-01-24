@@ -87,12 +87,12 @@ pub mod dev;
 pub mod diff;
 pub mod documentation;
 pub mod experts;
+pub mod goals;
 pub mod memory;
 pub mod project;
 pub mod reviews;
 pub mod session;
 pub mod session_notes;
-pub mod tasks_goals;
 pub mod teams;
 
 // Re-export commonly used functions
@@ -106,5 +106,5 @@ pub use memory::*;
 pub use project::*;
 pub use reviews::*;
 pub use session::*;
-pub use tasks_goals::*;
+pub use goals::*;
 pub use teams::*;

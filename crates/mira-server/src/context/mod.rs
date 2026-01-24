@@ -8,7 +8,7 @@ use crate::embeddings::EmbeddingClient;
 
 mod semantic;
 mod file_aware;
-mod task_aware;
+mod goal_aware;
 mod budget;
 mod cache;
 mod config;
@@ -16,7 +16,7 @@ mod analytics;
 
 pub use semantic::SemanticInjector;
 pub use file_aware::FileAwareInjector;
-pub use task_aware::TaskAwareInjector;
+pub use goal_aware::{GoalAwareInjector, TaskAwareInjector};
 pub use budget::BudgetManager;
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;

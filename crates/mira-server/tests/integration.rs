@@ -7,7 +7,7 @@ mod test_utils;
 
 use test_utils::TestContext;
 #[allow(unused_imports)]
-use mira::tools::core::{ToolContext, session_start, set_project, get_project, remember, recall, forget, search_code, find_function_callers, find_function_callees, check_capability, get_symbols, index, summarize_codebase, session_history, ensure_session, task, goal, configure_expert, get_session_recap};
+use mira::tools::core::{ToolContext, session_start, set_project, get_project, remember, recall, forget, search_code, find_function_callers, find_function_callees, check_capability, get_symbols, index, summarize_codebase, session_history, ensure_session, goal, configure_expert, get_session_recap};
 
 #[tokio::test]
 async fn test_session_start_basic() {
@@ -405,128 +405,6 @@ async fn test_session_history_list_sessions() {
 }
 
 #[tokio::test]
-async fn test_task_create_and_list() {
-    let ctx = TestContext::new().await;
-
-    let project_path = "/tmp/test_tasks".to_string();
-    session_start(&ctx, project_path.clone(), Some("Task Test".to_string()), None)
-        .await
-        .expect("session_start failed");
-
-    // Create a task
-    let result = task(
-        &ctx,
-        "create".to_string(),
-        None,
-        Some("Write integration tests".to_string()),
-        Some("Create tests for all MCP tools".to_string()),
-        Some("pending".to_string()),
-        Some("medium".to_string()),
-        None,
-        None,
-        None,
-    )
-    .await;
-    assert!(result.is_ok(), "task create failed: {:?}", result.err());
-    let output = result.unwrap();
-    assert!(output.contains("Created task"), "Output: {}", output);
-    assert!(output.contains("Write integration tests"), "Output: {}", output);
-
-    // List tasks
-    let result = task(
-        &ctx,
-        "list".to_string(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(false),
-        Some(10),
-        None,
-    )
-    .await;
-    assert!(result.is_ok(), "task list failed: {:?}", result.err());
-    let output = result.unwrap();
-    assert!(output.contains("tasks"), "Output: {}", output);
-    assert!(output.contains("Write integration tests"), "Output: {}", output);
-}
-
-#[tokio::test]
-async fn test_task_update_and_complete() {
-    let ctx = TestContext::new().await;
-
-    let project_path = "/tmp/test_tasks_update".to_string();
-    session_start(&ctx, project_path.clone(), Some("Task Update Test".to_string()), None)
-        .await
-        .expect("session_start failed");
-
-    // Create a task first
-    let create_result = task(
-        &ctx,
-        "create".to_string(),
-        None,
-        Some("Fix bug".to_string()),
-        Some("Fix the critical bug".to_string()),
-        Some("pending".to_string()),
-        Some("high".to_string()),
-        None,
-        None,
-        None,
-    )
-    .await;
-    assert!(create_result.is_ok(), "task create failed");
-    let create_output = create_result.unwrap();
-    // Extract task ID from output
-    let id_str = create_output
-        .split("id:")
-        .nth(1)
-        .unwrap()
-        .trim()
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .trim_matches(|c: char| !c.is_digit(10));
-    let task_id: i64 = id_str.parse().expect("Failed to parse task ID");
-
-    // Update the task
-    let update_result = task(
-        &ctx,
-        "update".to_string(),
-        Some(task_id.to_string()),
-        Some("Fix bug (updated)".to_string()),
-        Some("Fixed the bug".to_string()),
-        Some("in_progress".to_string()),
-        Some("urgent".to_string()),
-        None,
-        None,
-        None,
-    )
-    .await;
-    assert!(update_result.is_ok(), "task update failed: {:?}", update_result.err());
-    let update_output = update_result.unwrap();
-    assert!(update_output.contains("Updated task"), "Output: {}", update_output);
-
-    // Complete the task
-    let complete_result = task(
-        &ctx,
-        "complete".to_string(),
-        Some(task_id.to_string()),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await;
-    assert!(complete_result.is_ok(), "task complete failed: {:?}", complete_result.err());
-    let complete_output = complete_result.unwrap();
-    assert!(complete_output.contains("Updated task"), "Output: {}", complete_output);
-}
-
-#[tokio::test]
 async fn test_goal_create_and_list() {
     let ctx = TestContext::new().await;
 
@@ -539,15 +417,18 @@ async fn test_goal_create_and_list() {
     let result = goal(
         &ctx,
         "create".to_string(),
-        None,
-        Some("Implement new feature".to_string()),
-        Some("Add user authentication".to_string()),
-        Some("planning".to_string()),
-        Some("high".to_string()),
-        Some(0),
-        None,
-        None,
-        None,
+        None, // goal_id
+        Some("Implement new feature".to_string()), // title
+        Some("Add user authentication".to_string()), // description
+        Some("planning".to_string()), // status
+        Some("high".to_string()), // priority
+        Some(0), // progress_percent
+        None, // include_finished
+        None, // limit
+        None, // goals (bulk)
+        None, // milestone_title
+        None, // milestone_id
+        None, // weight
     )
     .await;
     assert!(result.is_ok(), "goal create failed: {:?}", result.err());
@@ -559,15 +440,18 @@ async fn test_goal_create_and_list() {
     let result = goal(
         &ctx,
         "list".to_string(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(false),
-        Some(10),
-        None,
+        None, // goal_id
+        None, // title
+        None, // description
+        None, // status
+        None, // priority
+        None, // progress_percent
+        Some(false), // include_finished
+        Some(10), // limit
+        None, // goals (bulk)
+        None, // milestone_title
+        None, // milestone_id
+        None, // weight
     )
     .await;
     assert!(result.is_ok(), "goal list failed: {:?}", result.err());
@@ -902,37 +786,41 @@ async fn test_context_injection_config() {
 }
 
 #[tokio::test]
-async fn test_context_injection_with_tasks() {
+async fn test_context_injection_with_goals() {
     use mira::context::ContextInjectionManager;
 
     let ctx = TestContext::new().await;
 
-    // Create a project and some tasks
-    let project_path = "/tmp/test_injection_tasks".to_string();
+    // Create a project and some goals
+    let project_path = "/tmp/test_injection_goals".to_string();
     session_start(&ctx, project_path.clone(), Some("Injection Test".to_string()), None)
         .await
         .expect("session_start failed");
 
-    // Create a task
-    task(
+    // Create a goal
+    goal(
         &ctx,
         "create".to_string(),
-        None,
-        Some("Fix authentication bug".to_string()),
-        Some("High priority security issue".to_string()),
-        None,
-        Some("high".to_string()),
-        None,
-        None,
-        None,
+        None, // goal_id
+        Some("Fix authentication bug".to_string()), // title
+        Some("High priority security issue".to_string()), // description
+        None, // status
+        Some("high".to_string()), // priority
+        None, // progress_percent
+        None, // include_finished
+        None, // limit
+        None, // goals (bulk)
+        None, // milestone_title
+        None, // milestone_id
+        None, // weight
     )
     .await
-    .expect("task creation failed");
+    .expect("goal creation failed");
 
     // Create injection manager
     let manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
-    // Get context - should include task info if task-aware injection is enabled
+    // Get context - should include goal info if task-aware injection is enabled
     // Note: due to sampling, this might be skipped
     let config = manager.config();
     assert!(config.enable_task_aware, "Task-aware injection should be enabled by default");

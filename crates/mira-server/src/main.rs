@@ -11,7 +11,7 @@ use mira::mcp::{
     SessionStartRequest, SetProjectRequest, RememberRequest, RecallRequest,
     ForgetRequest, GetSymbolsRequest, SemanticCodeSearchRequest,
     FindCallersRequest, FindCalleesRequest, CheckCapabilityRequest,
-    TaskRequest, GoalRequest, IndexRequest, SessionHistoryRequest,
+    GoalRequest, IndexRequest, SessionHistoryRequest,
     ConsultArchitectRequest, ConsultCodeReviewerRequest,
     ConsultPlanReviewerRequest, ConsultScopeAnalystRequest,
     ConsultSecurityRequest, ConsultExpertsRequest, ConfigureExpertRequest,
@@ -313,13 +313,9 @@ async fn run_tool(name: String, args: String) -> Result<()> {
             let req: CheckCapabilityRequest = serde_json::from_str(&args)?;
             mira::tools::check_capability(&server, req.description).await
         }
-        "task" => {
-             let req: TaskRequest = serde_json::from_str(&args)?;
-             mira::tools::task(&server, req.action, req.task_id, req.title, req.description, req.status, req.priority, req.include_completed, req.limit, req.tasks).await
-        }
         "goal" => {
              let req: GoalRequest = serde_json::from_str(&args)?;
-             mira::tools::goal(&server, req.action, req.goal_id, req.title, req.description, req.status, req.priority, req.progress_percent, req.include_finished, req.limit, req.goals).await
+             mira::tools::goal(&server, req.action, req.goal_id, req.title, req.description, req.status, req.priority, req.progress_percent, req.include_finished, req.limit, req.goals, req.milestone_title, req.milestone_id, req.weight).await
         }
         "index" => {
              let req: IndexRequest = serde_json::from_str(&args)?;

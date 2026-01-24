@@ -28,6 +28,7 @@ mod tasks_tests;
 mod teams;
 mod types;
 mod proxy;
+mod milestones;
 
 pub use cartographer::{
     count_cached_modules_sync,
@@ -102,6 +103,11 @@ pub use tasks::{
     get_pending_tasks_sync, get_task_by_id_sync, get_active_goals_sync,
     create_task_sync, get_tasks_sync, update_task_sync, delete_task_sync,
     get_goal_by_id_sync, create_goal_sync, get_goals_sync, update_goal_sync, delete_goal_sync,
+};
+pub use milestones::{
+    parse_milestone_row, create_milestone_sync, get_milestones_for_goal_sync,
+    get_milestone_by_id_sync, update_milestone_sync, complete_milestone_sync,
+    delete_milestone_sync, calculate_goal_progress_sync, update_goal_progress_from_milestones_sync,
 };
 pub use session::{
     create_session_sync, get_recent_sessions_sync, get_session_history_sync,

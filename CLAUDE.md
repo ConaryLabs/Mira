@@ -110,76 +110,94 @@ The assistant used Grep because:
 
 ---
 
-## Task Management
+## Task and Goal Management
 
-Use Mira's `task` and `goal` tools for **cross-session persistence**. This is the PRIMARY task management system for this project.
+### Session Workflow: Use Claude's Built-in Tasks
 
-### When to Use Mira Tasks
+For current session work, use Claude Code's native task system:
+- `TaskCreate` - Create tasks for multi-step work
+- `TaskUpdate` - Mark in_progress/completed, set dependencies
+- `TaskList` - View current session tasks
 
-Use Mira tasks proactively in these scenarios:
+These are session-scoped and optimized for real-time workflow tracking.
 
-1. **Multi-session work** - Any task that might span multiple conversations
-2. **Complex multi-step tasks** - When work requires 3+ distinct steps
-3. **User provides multiple tasks** - Capture all items for tracking
-4. **Before starting implementation** - Create tasks to track progress
-5. **Architectural decisions** - Track decisions that affect future work
-6. **Bugs and issues** - Log issues discovered during development
+### Cross-Session Planning: Use Mira Goals
 
-### When NOT to Use Mira Tasks
-
-Use TodoWrite (or nothing) when:
-
-1. Single, trivial task completable in one response
-2. Pure information/explanation requests
-3. Quick one-off commands (run build, check status)
-
-### Task Tool Usage
+For work spanning multiple sessions, use Mira's `goal` tool with milestones:
 
 ```
-task(action="create", title="Implement user authentication", priority="high")
-task(action="list")  # See pending tasks from previous sessions
-task(action="update", task_id="123", status="completed")
-goal(action="create", title="v2.0 Release", description="Major feature milestone")
+goal(action="create", title="Implement auth system", priority="high")
+goal(action="add_milestone", goal_id="1", milestone_title="Design API", weight=2)
+goal(action="add_milestone", goal_id="1", milestone_title="Implement endpoints", weight=3)
+goal(action="complete_milestone", milestone_id="1")  # Auto-updates progress
+goal(action="list")  # Shows goals with progress %
+goal(action="get", goal_id="1")  # Shows goal details with milestones
 ```
+
+**When to use goals:**
+- Multi-session objectives (features, refactors, migrations)
+- Tracking progress over time
+- Breaking large work into weighted milestones
+
+**Goal statuses:** planning, in_progress, blocked, completed, abandoned
+
+**Priorities:** low, medium, high, critical
+
+**Goal actions:**
+- `create` / `bulk_create` - Create new goal(s)
+- `list` / `get` - View goals and their milestones
+- `update` / `progress` - Update goal fields or progress
+- `delete` - Remove a goal
+- `add_milestone` - Add a milestone to a goal (with optional weight)
+- `complete_milestone` - Mark milestone done (auto-updates goal progress)
+- `delete_milestone` - Remove a milestone
+
+### Quick Reference
+
+| Need | Tool |
+|------|------|
+| Track work in THIS session | Claude's `TaskCreate` |
+| Track work across sessions | Mira's `goal` |
+| Add sub-items to goal | `goal(action="add_milestone")` |
+| Check long-term progress | `goal(action="list")` |
 
 ### Examples
 
 <example>
-User: I need to refactor the database layer to use connection pooling, add retry logic, and update all the queries.
-Assistant: This is a multi-step task that may span sessions. Let me create tasks to track this work.
-*Uses task(action="bulk_create", tasks=[...]) to create:*
-1. Research connection pooling options for SQLite
-2. Implement connection pool wrapper
-3. Add retry logic with exponential backoff
-4. Update query functions to use pool
-5. Add integration tests for pool behavior
-6. Update documentation
+User: I need to implement a new authentication system for the app.
+Assistant: This is a significant feature that will span multiple sessions. Let me create a goal to track it.
+*Uses goal(action="create", title="Implement authentication system", priority="high")*
+Created goal with id 1.
 
-Let me also check if there are any existing tasks related to database work.
-*Uses task(action="list")*
+Now let me add milestones for the major steps.
+*Uses goal(action="add_milestone", goal_id="1", milestone_title="Design auth flow", weight=1)*
+*Uses goal(action="add_milestone", goal_id="1", milestone_title="Implement JWT handling", weight=2)*
+*Uses goal(action="add_milestone", goal_id="1", milestone_title="Add login/logout endpoints", weight=2)*
+*Uses goal(action="add_milestone", goal_id="1", milestone_title="Write tests", weight=1)*
 
 <reasoning>
-The assistant used Mira tasks because:
-1. This refactoring will likely span multiple sessions
-2. There are 6 distinct steps that need tracking
-3. Mira tasks persist across sessions, unlike TodoWrite
-4. If the conversation ends, the task list survives for the next session
-5. Checking existing tasks avoids duplicate work
+The assistant used Mira goals because:
+1. Authentication is a multi-session feature
+2. Milestones break the work into trackable steps
+3. Weights reflect relative effort (JWT handling > design)
+4. Progress auto-calculates as milestones complete
 </reasoning>
 </example>
 
 <example>
-User: What's the status on the work we discussed yesterday?
-Assistant: Let me check your pending tasks and goals.
-*Uses task(action="list") and goal(action="list")*
-You have 3 pending tasks from yesterday's session and 1 goal in progress.
+User: What's the status on the auth work we discussed yesterday?
+Assistant: Let me check your goals.
+*Uses goal(action="list")*
+You have 1 goal in progress: "Implement authentication system" at 25% (1/4 milestones).
+
+*Uses goal(action="get", goal_id="1")*
+Shows: Design auth flow (completed), JWT handling (pending), login/logout (pending), tests (pending).
 
 <reasoning>
-The assistant used Mira task list because:
-1. The user is asking about cross-session work
-2. Mira tasks persist between sessions
-3. TodoWrite would be empty since it's a new session
-4. This demonstrates the value of persistent task tracking
+The assistant used goal list/get because:
+1. Goals persist across sessions
+2. Milestones show granular progress
+3. The 25% progress reflects the completed design milestone
 </reasoning>
 </example>
 
@@ -187,14 +205,13 @@ The assistant used Mira task list because:
 User: Add a comment to this function
 Assistant: I'll add the comment directly.
 *Uses Edit tool to add the comment*
-Done. Added the comment explaining the function's purpose.
+Done.
 
 <reasoning>
-The assistant did NOT use task tracking because:
+The assistant did NOT use goal tracking because:
 1. This is a single, trivial task
 2. It completes in one action
-3. No multi-step tracking needed
-4. Creating a task would be overhead with no benefit
+3. No multi-session tracking needed
 </reasoning>
 </example>
 

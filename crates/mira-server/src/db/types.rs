@@ -75,6 +75,16 @@ pub struct Goal {
     pub created_at: String,
 }
 
+/// Milestone record (sub-item of a goal)
+#[derive(Debug, Clone)]
+pub struct Milestone {
+    pub id: i64,
+    pub goal_id: Option<i64>,
+    pub title: String,
+    pub completed: bool,
+    pub weight: i32,
+}
+
 /// Project briefing (What's New since last session)
 #[derive(Debug, Clone)]
 pub struct ProjectBriefing {

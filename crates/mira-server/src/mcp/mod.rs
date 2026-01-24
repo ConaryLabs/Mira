@@ -240,34 +240,8 @@ pub struct CheckCapabilityRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct TaskRequest {
-    #[schemars(description = "Action: create/bulk_create/list/get/update/complete/delete")]
-    pub action: String,
-    #[schemars(description = "Task ID")]
-    pub task_id: Option<String>,
-    #[schemars(description = "Title")]
-    pub title: Option<String>,
-    #[schemars(description = "Description")]
-    pub description: Option<String>,
-    #[schemars(description = "Status: pending/in_progress/completed/blocked")]
-    pub status: Option<String>,
-    #[schemars(description = "Priority: low/medium/high/urgent")]
-    pub priority: Option<String>,
-    #[schemars(description = "Parent task ID")]
-    pub parent_id: Option<String>,
-    #[schemars(description = "Completion notes")]
-    pub notes: Option<String>,
-    #[schemars(description = "Include completed")]
-    pub include_completed: Option<bool>,
-    #[schemars(description = "Max results")]
-    pub limit: Option<i64>,
-    #[schemars(description = "For bulk_create: JSON array of tasks [{title, description?, priority?}, ...]")]
-    pub tasks: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoalRequest {
-    #[schemars(description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/progress")]
+    #[schemars(description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress")]
     pub action: String,
     #[schemars(description = "Goal ID")]
     pub goal_id: Option<String>,
@@ -285,9 +259,11 @@ pub struct GoalRequest {
     pub progress_percent: Option<i32>,
     #[schemars(description = "Include finished goals")]
     pub include_finished: Option<bool>,
-    #[schemars(description = "Milestone ID")]
+    #[schemars(description = "Milestone ID (for complete_milestone/delete_milestone)")]
     pub milestone_id: Option<String>,
-    #[schemars(description = "Milestone weight")]
+    #[schemars(description = "Milestone title (for add_milestone)")]
+    pub milestone_title: Option<String>,
+    #[schemars(description = "Milestone weight (for add_milestone, default: 1)")]
     pub weight: Option<i32>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
@@ -590,26 +566,6 @@ impl MiraServer {
         tools::check_capability(self, req.description).await
     }
 
-    #[tool(description = "Manage tasks (create, list, update, delete). Supports bulk operations.")]
-    async fn task(
-        &self,
-        Parameters(req): Parameters<TaskRequest>,
-    ) -> Result<String, String> {
-        tools::task(
-            self,
-            req.action,
-            req.task_id,
-            req.title,
-            req.description,
-            req.status,
-            req.priority,
-            req.include_completed,
-            req.limit,
-            req.tasks,
-        )
-        .await
-    }
-
     #[tool(description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations.")]
     async fn goal(
         &self,
@@ -627,6 +583,9 @@ impl MiraServer {
             req.include_finished,
             req.limit,
             req.goals,
+            req.milestone_title,
+            req.milestone_id,
+            req.weight,
         )
         .await
     }
