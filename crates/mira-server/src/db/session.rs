@@ -68,6 +68,98 @@ pub fn get_session_history_sync(conn: &Connection, session_id: &str, limit: usiz
     rows.collect()
 }
 
+/// Build session recap - sync version for pool.interact()
+pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> String {
+    use super::project::get_project_info_sync;
+    use super::chat::get_last_chat_time_sync;
+    use super::tasks::{get_pending_tasks_sync, get_active_goals_sync};
+
+    let mut recap_parts = Vec::new();
+
+    // Get project name if available
+    let project_name = project_id.and_then(|pid| {
+        get_project_info_sync(conn, pid)
+            .ok()
+            .flatten()
+            .and_then(|(name, _path)| name)
+    });
+
+    // Welcome header
+    let welcome = if let Some(name) = project_name {
+        format!("Welcome back to {} project!", name)
+    } else {
+        "Welcome back!".to_string()
+    };
+    recap_parts.push(format!(
+        "╔══════════════════════════════════════╗\n\
+         ║   {}      ║\n\
+         ╚══════════════════════════════════════╝",
+        welcome
+    ));
+
+    // Time since last chat
+    if let Ok(Some(last_chat_time)) = get_last_chat_time_sync(conn) {
+        if let Ok(parsed) = DateTime::parse_from_rfc3339(&last_chat_time) {
+            let now = Utc::now();
+            let duration = now.signed_duration_since(parsed);
+            let hours = duration.num_hours();
+            let minutes = duration.num_minutes() % 60;
+            let time_ago = if hours > 0 {
+                format!("{} hours, {} minutes ago", hours, minutes)
+            } else {
+                format!("{} minutes ago", minutes)
+            };
+            recap_parts.push(format!("Last chat: {}", time_ago));
+        }
+    }
+
+    // Recent sessions (excluding current)
+    if let Some(pid) = project_id {
+        if let Ok(sessions) = get_recent_sessions_sync(conn, pid, 2) {
+            let recent: Vec<_> = sessions.iter().filter(|s| s.status != "active").collect();
+            if !recent.is_empty() {
+                let mut session_lines = Vec::new();
+                for sess in recent {
+                    let short_id = &sess.id[..8.min(sess.id.len())];
+                    let timestamp = &sess.last_activity[..16.min(sess.last_activity.len())];
+                    if let Some(ref summary) = sess.summary {
+                        session_lines
+                            .push(format!("• [{}] {} - {}", short_id, timestamp, summary));
+                    } else {
+                        session_lines.push(format!("• [{}] {}", short_id, timestamp));
+                    }
+                }
+                recap_parts.push(format!("Recent sessions:\n{}", session_lines.join("\n")));
+            }
+        }
+    }
+
+    // Pending tasks
+    if let Ok(tasks) = get_pending_tasks_sync(conn, project_id, 3) {
+        if !tasks.is_empty() {
+            let task_lines: Vec<String> = tasks
+                .iter()
+                .map(|t| format!("• [ ] {} ({})", t.title, t.priority))
+                .collect();
+            recap_parts.push(format!("Pending tasks:\n{}", task_lines.join("\n")));
+        }
+    }
+
+    // Active goals
+    if let Ok(goals) = get_active_goals_sync(conn, project_id, 3) {
+        if !goals.is_empty() {
+            let goal_lines: Vec<String> = goals
+                .iter()
+                .map(|g| format!("• {} ({}%) - {}", g.title, g.progress_percent, g.status))
+                .collect();
+            recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
+        }
+    }
+
+    // Return formatted recap content
+    recap_parts.join("\n\n")
+}
+
 // ============================================================================
 // Database impl methods
 // ============================================================================

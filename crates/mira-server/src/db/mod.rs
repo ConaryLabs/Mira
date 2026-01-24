@@ -86,7 +86,12 @@ pub use memory::{
     delete_memory_sync,
 };
 pub use reviews::{Correction, ReviewFinding, store_review_finding_sync, get_relevant_corrections_sync};
-pub use teams::{Team, TeamMember};
+pub use teams::{
+    Team, TeamMember,
+    create_team_sync, get_team_sync, get_team_by_name_sync,
+    add_team_member_sync, remove_team_member_sync, is_team_member_sync,
+    list_user_teams_sync, list_team_members_sync,
+};
 pub use types::*;
 pub use tasks::{
     parse_task_row, parse_goal_row,
@@ -96,10 +101,13 @@ pub use tasks::{
 };
 pub use session::{
     create_session_sync, get_recent_sessions_sync, get_session_history_sync,
+    build_session_recap_sync,
 };
+pub use chat::get_last_chat_time_sync;
 pub use project::{
     get_or_create_project_sync,
     update_project_name_sync,
+    get_project_info_sync,
     upsert_session_sync,
     get_indexed_projects_sync,
     search_memories_text_sync,

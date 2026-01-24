@@ -1,6 +1,11 @@
 // crates/mira-server/src/tools/core/teams.rs
 // Team management tools for multi-user memory sharing
 
+use crate::db::{
+    create_team_sync, get_team_sync, get_team_by_name_sync,
+    add_team_member_sync, remove_team_member_sync, is_team_member_sync,
+    list_user_teams_sync, list_team_members_sync,
+};
 use crate::tools::core::ToolContext;
 
 /// Create a new team
@@ -18,19 +23,38 @@ pub async fn team_create<C: ToolContext>(
     let user_id = user_id.unwrap();
 
     // Check if team with same name already exists
-    if let Ok(Some(_)) = ctx.db().get_team_by_name(&name) {
+    let name_clone = name.clone();
+    let existing = ctx
+        .pool()
+        .interact(move |conn| {
+            get_team_by_name_sync(conn, &name_clone).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if existing.is_some() {
         return Err(format!("Team '{}' already exists", name));
     }
 
     // Create the team
+    let name_clone2 = name.clone();
+    let user_id_for_create = user_id.clone();
     let team_id = ctx
-        .db()
-        .create_team(&name, description.as_deref(), Some(&user_id))
+        .pool()
+        .interact(move |conn| {
+            create_team_sync(conn, &name_clone2, description.as_deref(), Some(&user_id_for_create))
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     // Add creator as admin
-    ctx.db()
-        .add_team_member(team_id, &user_id, Some("admin"))
+    ctx.pool()
+        .interact(move |conn| {
+            add_team_member_sync(conn, team_id, &user_id, Some("admin"))
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     Ok(format!(
@@ -56,15 +80,21 @@ pub async fn team_invite<C: ToolContext>(
 
     // Verify the team exists
     let team = ctx
-        .db()
-        .get_team(team_id)
+        .pool()
+        .interact(move |conn| {
+            get_team_sync(conn, team_id).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Team {} not found", team_id))?;
 
     // Check if current user is an admin or owner
     let members = ctx
-        .db()
-        .list_team_members(team_id)
+        .pool()
+        .interact(move |conn| {
+            list_team_members_sync(conn, team_id).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     let is_admin = members
@@ -77,8 +107,14 @@ pub async fn team_invite<C: ToolContext>(
 
     // Add the member
     let role = role.unwrap_or_else(|| "member".to_string());
-    ctx.db()
-        .add_team_member(team_id, &user_identity, Some(&role))
+    let user_identity_clone = user_identity.clone();
+    let role_clone = role.clone();
+    ctx.pool()
+        .interact(move |conn| {
+            add_team_member_sync(conn, team_id, &user_identity_clone, Some(&role_clone))
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     Ok(format!(
@@ -103,16 +139,22 @@ pub async fn team_remove<C: ToolContext>(
 
     // Verify the team exists
     let team = ctx
-        .db()
-        .get_team(team_id)
+        .pool()
+        .interact(move |conn| {
+            get_team_sync(conn, team_id).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Team {} not found", team_id))?;
 
     // Check if current user is an admin (or removing themselves)
     if current_user != user_identity {
         let members = ctx
-            .db()
-            .list_team_members(team_id)
+            .pool()
+            .interact(move |conn| {
+                list_team_members_sync(conn, team_id).map_err(|e| anyhow::anyhow!(e))
+            })
+            .await
             .map_err(|e| e.to_string())?;
 
         let is_admin = members
@@ -125,9 +167,14 @@ pub async fn team_remove<C: ToolContext>(
     }
 
     // Remove the member
+    let user_identity_clone = user_identity.clone();
     let removed = ctx
-        .db()
-        .remove_team_member(team_id, &user_identity)
+        .pool()
+        .interact(move |conn| {
+            remove_team_member_sync(conn, team_id, &user_identity_clone)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if removed {
@@ -148,8 +195,11 @@ pub async fn team_list<C: ToolContext>(ctx: &C) -> Result<String, String> {
     let user_id = user_id.unwrap();
 
     let teams = ctx
-        .db()
-        .list_user_teams(&user_id)
+        .pool()
+        .interact(move |conn| {
+            list_user_teams_sync(conn, &user_id).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if teams.is_empty() {
@@ -175,21 +225,36 @@ pub async fn team_members<C: ToolContext>(ctx: &C, team_id: i64) -> Result<Strin
 
     // Verify the team exists
     let team = ctx
-        .db()
-        .get_team(team_id)
+        .pool()
+        .interact(move |conn| {
+            get_team_sync(conn, team_id).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Team {} not found", team_id))?;
 
     // Check if user is a member (only members can see the member list)
-    if let Some(ref uid) = user_id {
-        if !ctx.db().is_team_member(team_id, uid).map_err(|e| e.to_string())? {
+    if let Some(uid) = user_id {
+        let uid_clone = uid.clone();
+        let is_member = ctx
+            .pool()
+            .interact(move |conn| {
+                is_team_member_sync(conn, team_id, &uid_clone).map_err(|e| anyhow::anyhow!(e))
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !is_member {
             return Err("You must be a team member to view the member list".to_string());
         }
     }
 
     let members = ctx
-        .db()
-        .list_team_members(team_id)
+        .pool()
+        .interact(move |conn| {
+            list_team_members_sync(conn, team_id).map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if members.is_empty() {

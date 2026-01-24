@@ -41,6 +41,24 @@ pub fn update_project_name_sync(
     Ok(())
 }
 
+/// Get project info by ID (name, path) - sync version for pool.interact()
+pub fn get_project_info_sync(
+    conn: &Connection,
+    project_id: i64,
+) -> rusqlite::Result<Option<(Option<String>, String)>> {
+    let result = conn.query_row(
+        "SELECT name, path FROM projects WHERE id = ?",
+        [project_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    );
+
+    match result {
+        Ok(info) => Ok(Some(info)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Create or update a session - sync version for pool.interact()
 pub fn upsert_session_sync(
     conn: &Connection,
