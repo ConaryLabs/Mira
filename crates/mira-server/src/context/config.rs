@@ -1,7 +1,8 @@
 // crates/mira-server/src/context/config.rs
 // Configuration for proactive context injection
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
+use crate::db::{get_server_state_sync, set_server_state_sync};
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -46,56 +47,70 @@ impl Default for InjectionConfig {
 
 impl InjectionConfig {
     /// Load configuration from database
-    pub fn load(db: &Arc<Database>) -> Result<Self> {
-        let mut config = Self::default();
+    pub async fn load(pool: &Arc<DatabasePool>) -> Result<Self> {
+        let pool = pool.clone();
+        pool.interact(move |conn| {
+            let mut config = Self::default();
 
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}enabled", CONFIG_PREFIX)) {
-            config.enabled = v == "true";
-        }
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}max_chars", CONFIG_PREFIX)) {
-            if let Ok(n) = v.parse() {
-                config.max_chars = n;
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enabled", CONFIG_PREFIX)) {
+                config.enabled = v == "true";
             }
-        }
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}min_message_len", CONFIG_PREFIX)) {
-            if let Ok(n) = v.parse() {
-                config.min_message_len = n;
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}max_chars", CONFIG_PREFIX)) {
+                if let Ok(n) = v.parse() {
+                    config.max_chars = n;
+                }
             }
-        }
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}max_message_len", CONFIG_PREFIX)) {
-            if let Ok(n) = v.parse() {
-                config.max_message_len = n;
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}min_message_len", CONFIG_PREFIX)) {
+                if let Ok(n) = v.parse() {
+                    config.min_message_len = n;
+                }
             }
-        }
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}sample_rate", CONFIG_PREFIX)) {
-            if let Ok(n) = v.parse() {
-                config.sample_rate = n;
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}max_message_len", CONFIG_PREFIX)) {
+                if let Ok(n) = v.parse() {
+                    config.max_message_len = n;
+                }
             }
-        }
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}enable_semantic", CONFIG_PREFIX)) {
-            config.enable_semantic = v == "true";
-        }
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}enable_file_aware", CONFIG_PREFIX)) {
-            config.enable_file_aware = v == "true";
-        }
-        if let Ok(Some(v)) = db.get_server_state(&format!("{}enable_task_aware", CONFIG_PREFIX)) {
-            config.enable_task_aware = v == "true";
-        }
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}sample_rate", CONFIG_PREFIX)) {
+                if let Ok(n) = v.parse() {
+                    config.sample_rate = n;
+                }
+            }
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enable_semantic", CONFIG_PREFIX)) {
+                config.enable_semantic = v == "true";
+            }
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enable_file_aware", CONFIG_PREFIX)) {
+                config.enable_file_aware = v == "true";
+            }
+            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enable_task_aware", CONFIG_PREFIX)) {
+                config.enable_task_aware = v == "true";
+            }
 
-        Ok(config)
+            Ok(config)
+        }).await
     }
 
     /// Save configuration to database
-    pub fn save(&self, db: &Arc<Database>) -> Result<()> {
-        db.set_server_state(&format!("{}enabled", CONFIG_PREFIX), &self.enabled.to_string())?;
-        db.set_server_state(&format!("{}max_chars", CONFIG_PREFIX), &self.max_chars.to_string())?;
-        db.set_server_state(&format!("{}min_message_len", CONFIG_PREFIX), &self.min_message_len.to_string())?;
-        db.set_server_state(&format!("{}max_message_len", CONFIG_PREFIX), &self.max_message_len.to_string())?;
-        db.set_server_state(&format!("{}sample_rate", CONFIG_PREFIX), &self.sample_rate.to_string())?;
-        db.set_server_state(&format!("{}enable_semantic", CONFIG_PREFIX), &self.enable_semantic.to_string())?;
-        db.set_server_state(&format!("{}enable_file_aware", CONFIG_PREFIX), &self.enable_file_aware.to_string())?;
-        db.set_server_state(&format!("{}enable_task_aware", CONFIG_PREFIX), &self.enable_task_aware.to_string())?;
-        Ok(())
+    pub async fn save(&self, pool: &Arc<DatabasePool>) -> Result<()> {
+        let config = self.clone();
+        pool.interact(move |conn| {
+            set_server_state_sync(conn, &format!("{}enabled", CONFIG_PREFIX), &config.enabled.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, &format!("{}max_chars", CONFIG_PREFIX), &config.max_chars.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, &format!("{}min_message_len", CONFIG_PREFIX), &config.min_message_len.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, &format!("{}max_message_len", CONFIG_PREFIX), &config.max_message_len.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, &format!("{}sample_rate", CONFIG_PREFIX), &config.sample_rate.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, &format!("{}enable_semantic", CONFIG_PREFIX), &config.enable_semantic.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, &format!("{}enable_file_aware", CONFIG_PREFIX), &config.enable_file_aware.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            set_server_state_sync(conn, &format!("{}enable_task_aware", CONFIG_PREFIX), &config.enable_task_aware.to_string())
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok(())
+        }).await
     }
 
     /// Create a builder for fluent configuration

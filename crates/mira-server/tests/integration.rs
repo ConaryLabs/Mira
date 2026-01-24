@@ -822,7 +822,7 @@ async fn test_context_injection_basic() {
     let ctx = TestContext::new().await;
 
     // Create injection manager
-    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.pool().clone(), ctx.embeddings().cloned());
+    let manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
     // Test with a code-related message
     let result = manager
@@ -842,7 +842,7 @@ async fn test_context_injection_skip_simple_commands() {
     use mira::context::ContextInjectionManager;
 
     let ctx = TestContext::new().await;
-    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.pool().clone(), ctx.embeddings().cloned());
+    let manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
     // Simple commands should be skipped
     let result = manager.get_context_for_message("git status", "test-session").await;
@@ -860,7 +860,7 @@ async fn test_context_injection_skip_short_messages() {
     use mira::context::ContextInjectionManager;
 
     let ctx = TestContext::new().await;
-    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.pool().clone(), ctx.embeddings().cloned());
+    let manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
     // Very short messages should be skipped
     let result = manager.get_context_for_message("hi", "test-session").await;
@@ -872,7 +872,7 @@ async fn test_context_injection_config() {
     use mira::context::{ContextInjectionManager, InjectionConfig};
 
     let ctx = TestContext::new().await;
-    let mut manager = ContextInjectionManager::new(ctx.db().clone(), ctx.pool().clone(), ctx.embeddings().cloned());
+    let mut manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
     // Verify default config
     assert!(manager.config().enabled);
@@ -885,7 +885,7 @@ async fn test_context_injection_config() {
         .max_chars(2000)
         .sample_rate(1.0)
         .build();
-    manager.set_config(new_config);
+    manager.set_config(new_config).await;
 
     // Verify injection is disabled
     let result = manager
@@ -926,7 +926,7 @@ async fn test_context_injection_with_tasks() {
     .expect("task creation failed");
 
     // Create injection manager
-    let manager = ContextInjectionManager::new(ctx.db().clone(), ctx.pool().clone(), ctx.embeddings().cloned());
+    let manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
     // Get context - should include task info if task-aware injection is enabled
     // Note: due to sampling, this might be skipped

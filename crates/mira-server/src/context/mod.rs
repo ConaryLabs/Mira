@@ -2,8 +2,8 @@
 // Proactive context injection for Mira
 
 use std::sync::Arc;
-use crate::db::Database;
 use crate::db::pool::DatabasePool;
+use crate::db::{get_server_state_sync, get_or_create_project_sync};
 use crate::embeddings::EmbeddingClient;
 
 mod semantic;
@@ -96,7 +96,7 @@ impl InjectionSource {
 
 /// Main context injection manager
 pub struct ContextInjectionManager {
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     semantic_injector: SemanticInjector,
     file_injector: FileAwareInjector,
     task_injector: TaskAwareInjector,
@@ -107,12 +107,12 @@ pub struct ContextInjectionManager {
 }
 
 impl ContextInjectionManager {
-    pub fn new(db: Arc<Database>, pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
+    pub async fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
         // Load config from database
-        let config = InjectionConfig::load(&db).unwrap_or_default();
+        let config = InjectionConfig::load(&pool).await.unwrap_or_default();
 
         Self {
-            db: db.clone(),
+            pool: pool.clone(),
             semantic_injector: SemanticInjector::new(pool.clone(), embeddings),
             file_injector: FileAwareInjector::new(pool.clone()),
             task_injector: TaskAwareInjector::new(pool.clone()),
@@ -129,8 +129,8 @@ impl ContextInjectionManager {
     }
 
     /// Update configuration
-    pub fn set_config(&mut self, config: InjectionConfig) {
-        if let Err(e) = config.save(&self.db) {
+    pub async fn set_config(&mut self, config: InjectionConfig) {
+        if let Err(e) = config.save(&self.pool).await {
             tracing::warn!("Failed to save injection config: {}", e);
         }
         self.budget_manager = BudgetManager::with_limit(config.max_chars);
@@ -139,14 +139,22 @@ impl ContextInjectionManager {
 
     /// Get project ID and path for the current session (if any)
     async fn get_project_info(&self) -> (Option<i64>, Option<String>) {
-        match self.db.get_last_active_project() {
-            Ok(Some(path)) => {
-                match self.db.get_or_create_project(&path, None) {
-                    Ok((id, _name)) => (Some(id), Some(path)),
-                    Err(_) => (None, None),
-                }
+        let pool = self.pool.clone();
+        match pool.interact(move |conn| {
+            // Get last active project path from server state
+            let path = get_server_state_sync(conn, "active_project_path")
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            if let Some(path) = path {
+                let (id, _name) = get_or_create_project_sync(conn, &path, None)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                Ok((Some(id), Some(path)))
+            } else {
+                Ok((None, None))
             }
-            _ => (None, None),
+        }).await {
+            Ok(result) => result,
+            Err(_) => (None, None),
         }
     }
 

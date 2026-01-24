@@ -2,7 +2,6 @@
 // UserPromptSubmit hook handler for proactive context injection
 
 use anyhow::Result;
-use crate::db::Database;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::{read_hook_input, write_hook_output};
@@ -43,10 +42,9 @@ pub async fn run() -> Result<()> {
 
     // Open database and create context injection manager
     let db_path = get_db_path();
-    let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(std::path::Path::new(&db_path)).await?);
     let embeddings = get_embeddings(Some(pool.clone()));
-    let manager = crate::context::ContextInjectionManager::new(db, pool, embeddings);
+    let manager = crate::context::ContextInjectionManager::new(pool, embeddings).await;
 
     // Get relevant context with metadata
     let result = manager.get_context_for_message(user_message, session_id).await;
