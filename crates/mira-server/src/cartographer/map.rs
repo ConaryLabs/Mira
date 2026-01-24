@@ -233,12 +233,157 @@ pub async fn get_modules_with_purposes_pool(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<Module>> {
-    Ok(pool.interact(move |conn| {
+    pool.interact(move |conn| {
         get_cached_modules_sync(conn, project_id)
             .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| anyhow!("pool.interact failed: {}", e))?)
+}
+
+/// Pool-based async version of get_or_generate_map
+pub async fn get_or_generate_map_pool(
+    pool: Arc<DatabasePool>,
+    project_id: i64,
+    project_path: String,
+    project_name: String,
+    project_type: String,
+) -> Result<CodebaseMap> {
+    pool.interact(move |conn| {
+        get_or_generate_map_sync(
+            conn,
+            project_id,
+            &project_path,
+            &project_name,
+            &project_type,
+        )
+    })
+    .await
+}
+
+/// Sync version of get_or_generate_map that takes a Connection directly
+fn get_or_generate_map_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    project_path: &str,
+    project_name: &str,
+    project_type: &str,
+) -> Result<CodebaseMap> {
+    tracing::info!(
+        "get_or_generate_map_sync: project_id={}, path={}",
+        project_id,
+        project_path
+    );
+
+    // Check if we have cached modules
+    let cached_count: i64 = count_cached_modules_sync(conn, project_id)?;
+
+    tracing::info!("Cached modules: {}", cached_count);
+
+    if cached_count == 0 {
+        // Generate fresh using polyglot detection
+        let path = Path::new(project_path);
+        let modules = detect_modules(path, project_type);
+
+        // Enrich with database data and store
+        let enriched = enrich_and_store_modules_sync(conn, project_id, modules, path, project_type)?;
+
+        return Ok(CodebaseMap {
+            name: project_name.to_string(),
+            project_type: project_type.to_string(),
+            modules: enriched,
+            entry_points: find_entry_points(path, project_type),
+            external_deps: get_external_deps_sync(conn, project_id)
+                .map_err(|e| anyhow::anyhow!("{}", e))?,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    // Load from cache
+    let modules: Vec<Module> = get_cached_modules_sync(conn, project_id)?;
+
+    Ok(CodebaseMap {
+        name: project_name.to_string(),
+        project_type: project_type.to_string(),
+        modules,
+        entry_points: find_entry_points(Path::new(project_path), project_type),
+        external_deps: get_external_deps_sync(conn, project_id)
+            .map_err(|e| anyhow::anyhow!("{}", e))?,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// Sync version of enrich_and_store_modules
+fn enrich_and_store_modules_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    mut modules: Vec<Module>,
+    project_path: &Path,
+    project_type: &str,
+) -> Result<Vec<Module>> {
+    tracing::info!(
+        "enrich_and_store_modules_sync: starting with {} modules",
+        modules.len()
+    );
+
+    // First pass: collect exports, symbol counts, line counts, raw deps
+    let mut raw_deps_per_module: Vec<Vec<String>> = Vec::with_capacity(modules.len());
+    let total_modules = modules.len();
+
+    for (i, module) in modules.iter_mut().enumerate() {
+        tracing::debug!(
+            "Module {}/{}: {} (path={})",
+            i + 1,
+            total_modules,
+            module.id,
+            module.path
+        );
+
+        // Get exports (pub symbols in this module's path)
+        let pattern = format!("{}%", module.path);
+        module.exports = get_module_exports_sync(conn, project_id, &pattern, 20)?;
+        tracing::debug!("  found {} exports", module.exports.len());
+
+        // Get symbol count
+        module.symbol_count = count_symbols_in_path_sync(conn, project_id, &pattern)?;
+        tracing::debug!("  symbol_count: {}", module.symbol_count);
+
+        // Get dependencies from imports
+        let raw_deps = get_module_dependencies_sync(conn, project_id, &pattern)?;
+        tracing::debug!("  found {} deps", raw_deps.len());
+        raw_deps_per_module.push(raw_deps);
+
+        // Get line count from files (polyglot)
+        tracing::debug!("  counting lines...");
+        module.line_count = count_lines_in_module(project_path, &module.path, project_type);
+        tracing::debug!("  line_count: {}", module.line_count);
+
+        // Generate purpose heuristic
+        if module.purpose.is_none() {
+            module.purpose = generate_purpose_heuristic(&module.name, &module.exports);
+        }
+        tracing::debug!("  done with module");
+    }
+
+    // Second pass: resolve dependencies (needs immutable access to modules)
+    // Create a snapshot of module IDs for dependency resolution
+    let module_ids: Vec<(String, String)> = modules
+        .iter()
+        .map(|m| (m.id.clone(), m.name.clone()))
+        .collect();
+
+    for (i, module) in modules.iter_mut().enumerate() {
+        module.depends_on = raw_deps_per_module[i]
+            .iter()
+            .filter_map(|import| resolve_import_to_module(import, &module_ids, project_type))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Store in database
+        upsert_module_sync(conn, project_id, module)?;
+    }
+
+    Ok(modules)
 }
 
 #[cfg(test)]

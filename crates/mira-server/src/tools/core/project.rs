@@ -354,13 +354,12 @@ pub async fn session_start<C: ToolContext>(
 
     // Load codebase map (only for Rust projects for now)
     if project_type == "rust" {
-        let db_clone = db.clone();
-        match cartographer::get_or_generate_map_async(
-            db_clone,
+        match cartographer::get_or_generate_map_pool(
+            ctx.pool().clone(),
             project_id,
-            &project_path,
-            display_name,
-            project_type,
+            project_path.clone(),
+            display_name.to_string(),
+            project_type.to_string(),
         ).await {
             Ok(map) => {
                 if !map.modules.is_empty() {
