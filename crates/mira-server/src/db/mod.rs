@@ -11,6 +11,7 @@ mod embeddings;
 mod index;
 mod memory;
 mod search;
+mod migration_helpers;
 #[cfg(test)]
 mod memory_tests;
 pub mod pool;

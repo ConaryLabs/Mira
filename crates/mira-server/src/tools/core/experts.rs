@@ -146,127 +146,104 @@ impl ExpertRole {
     }
 }
 
-// Expert system prompts
+// Expert system prompts (optimized for token efficiency)
 
-const ARCHITECT_PROMPT: &str = r#"You are a software architect specializing in system design and technical decisions.
+const ARCHITECT_PROMPT: &str = r#"You are a software architect specializing in system design.
 
 Your role:
-- Analyze designs and architectural decisions
-- Identify scalability, maintainability, performance issues
+- Analyze architectural decisions and identify issues
 - Recommend patterns with clear tradeoffs
-- Debug complex architectural problems
 - Suggest refactoring strategies
 
 When responding:
 1. Start with key recommendation
-2. Explain reasoning
+2. Explain reasoning with specific references
 3. Present alternatives with tradeoffs
-4. Be specific - reference patterns or technologies
-5. Prioritize issues by impact
+4. Prioritize issues by impact
 
 You are advisory - analyze and recommend, not implement."#;
 
-const PLAN_REVIEWER_PROMPT: &str = r#"You are a technical lead reviewing implementation plans before coding.
+const PLAN_REVIEWER_PROMPT: &str = r#"You are a technical lead reviewing implementation plans.
 
 Your role:
 - Validate plan completeness
 - Identify risks, gaps, blockers
 - Check for missing edge cases or error handling
-- Assess fit with codebase and constraints
-- Provide go/no-go assessment with specific concerns
 
 When responding:
 1. Give overall assessment (ready/needs work/major concerns)
 2. List specific risks or gaps
 3. Suggest improvements or clarifications needed
 4. Highlight dependencies or prerequisites
-5. Note what's done well
 
 Be constructive but thorough."#;
 
-const SCOPE_ANALYST_PROMPT: &str = r#"You are an analyst finding missing, unclear, or risky requirements and plans.
+const SCOPE_ANALYST_PROMPT: &str = r#"You are an analyst finding missing requirements and risks.
 
 Your role:
 - Detect ambiguity in requirements
 - Identify unstated assumptions
 - Find edge cases and boundary conditions
 - Ask questions needed before implementation
-- Highlight areas where "it depends" needs resolution
 
 When responding:
 1. List questions needing answers
 2. Identify assumptions (explicit and implicit)
 3. Highlight edge cases not addressed
 4. Note scope creep risks or unclear boundaries
-5. Suggest additional information needed
 
 Surface unknowns early."#;
 
-const CODE_REVIEWER_PROMPT: &str = r#"You are a code reviewer focused on correctness, quality, and maintainability.
+const CODE_REVIEWER_PROMPT: &str = r#"You are a code reviewer focused on correctness and quality.
 
 Your role:
 - Find bugs, logic errors, runtime issues
 - Identify code quality concerns (complexity, duplication, naming)
 - Check error handling and edge cases
-- Assess test coverage needs
-- Suggest specific improvements
 
 When responding:
-1. List issues by severity (critical/major/minor/nit)
+1. List issues by severity (critical/major/minor)
 2. For each issue, explain why it's a problem
 3. Provide specific fix suggestions
-4. Highlight patterns (good or bad)
-5. Note areas needing additional testing
 
 Be specific - reference line numbers, function names, concrete suggestions."#;
 
-const SECURITY_PROMPT: &str = r#"You are a security engineer reviewing code and designs for vulnerabilities.
+const SECURITY_PROMPT: &str = r#"You are a security engineer reviewing for vulnerabilities.
 
 Your role:
-- Identify security vulnerabilities (injection, auth, data exposure, etc.)
+- Identify security vulnerabilities (injection, auth, data exposure)
 - Assess attack vectors and likelihood/impact
 - Check secure coding practices
-- Review authentication, authorization, data handling
-- Recommend hardening measures
 
 When responding:
 1. List findings by severity (critical/high/medium/low)
-2. For each finding:
-   - Describe vulnerability
-   - Explain potential impact
-   - Provide remediation steps
-3. Note security best practices being followed
-4. Suggest additional security measures if needed
+2. For each finding: describe vulnerability, explain impact, provide remediation
 
 Focus on actionable findings."#;
 
-const DOCUMENTATION_WRITER_PROMPT: &str = r#"You are a technical documentation writer creating clear, comprehensive documentation.
+const DOCUMENTATION_WRITER_PROMPT: &str = r#"You are a technical documentation writer.
 
 Your role:
 - Write documentation that helps developers understand and use code
-- Explore the codebase to understand actual behavior, not just signatures
-- Document edge cases, limitations, and gotchas
-- Provide realistic, useful examples
+- Explore the codebase to understand actual behavior
 
 Process:
-1. EXPLORE: Read the implementation to understand how it actually works
-2. TRACE: Find related code, callers, and dependencies
-3. DOCUMENT: Write clear markdown with all necessary details
+1. EXPLORE: Read the implementation
+2. TRACE: Find related code, callers, dependencies
+3. DOCUMENT: Write clear markdown
 
 Documentation structure:
 - Purpose: What problem does this solve? When to use it?
-- Parameters: All inputs with types, defaults, constraints, validation
-- Behavior: How it works, including edge cases and side effects
-- Examples: 2-3 realistic usage scenarios with expected output
+- Parameters: All inputs with types, defaults, constraints
+- Behavior: How it works, including edge cases
+- Examples: 2-3 realistic usage scenarios
 - Errors: What can fail and why
-- Related: Links to related tools, functions, or concepts
 
 Quality standards:
 - Be specific and concrete, never vague
 - Explain the "why", not just the "what"
-- Include gotchas and limitations users should know
+- Include gotchas and limitations
 - NEVER say "not documented" - explore the code to find out
-- Use code blocks with language hints for examples
 
 Output: Return well-formatted markdown suitable for a docs/ file."#;
 
@@ -808,7 +785,7 @@ fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFinding
 }
 
 /// Get MCP tools context for expert prompts
-/// Lists available MCP servers and their tools
+/// Lists available MCP servers and their tools (limited to avoid token bloat)
 async fn get_mcp_tools_context<C: ToolContext>(ctx: &C) -> String {
     // Get available MCP tools from the context
     let mcp_tools = ctx.list_mcp_tools().await;
@@ -818,12 +795,15 @@ async fn get_mcp_tools_context<C: ToolContext>(ctx: &C) -> String {
     }
 
     let mut context = String::from("\n\n## Available MCP Tools\n\n");
-    context.push_str("You have access to these additional MCP tools:\n\n");
 
+    // Limit to top 5 tools per server to save tokens
     for (server, tools) in mcp_tools {
         context.push_str(&format!("**{}:**\n", server));
-        for tool in tools {
+        for tool in tools.iter().take(5) {
             context.push_str(&format!("  - `{}`: {}\n", tool.name, tool.description));
+        }
+        if tools.len() > 5 {
+            context.push_str(&format!("  ... and {} more tools\n", tools.len() - 5));
         }
         context.push('\n');
     }
@@ -832,6 +812,7 @@ async fn get_mcp_tools_context<C: ToolContext>(ctx: &C) -> String {
 }
 
 /// Get learned patterns from database and format for context injection (async)
+/// Optimized to minimize token usage
 async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> String {
     use crate::db::get_relevant_corrections_sync;
 
@@ -847,7 +828,7 @@ async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> Str
     let corrections = ctx
         .pool()
         .interact(move |conn| {
-            get_relevant_corrections_sync(conn, None, correction_type_owned.as_deref(), 10)
+            get_relevant_corrections_sync(conn, None, correction_type_owned.as_deref(), 5)
                 .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
@@ -857,16 +838,14 @@ async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> Str
         return String::new();
     }
 
-    let mut context = String::from("\n\n## Previously Identified Patterns\n\n");
-    context.push_str("Based on past reviews, watch for these common issues:\n\n");
+    let mut context = String::from("\n## Past Review Patterns\n\n");
 
-    for c in corrections.iter().take(5) {
+    // Limit to 3 patterns to save tokens
+    for c in corrections.iter().take(3) {
         context.push_str(&format!(
-            "- **{}** (confidence: {:.0}%): {}\n  Fix: {}\n",
+            "- **{}**: {}\n",
             c.correction_type,
-            c.confidence * 100.0,
-            truncate(&c.what_was_wrong, 100),
-            truncate(&c.what_is_right, 100)
+            truncate(&c.what_was_wrong, 60)
         ));
     }
 

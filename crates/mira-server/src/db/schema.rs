@@ -4,6 +4,9 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+// Import migration helpers
+use super::migration_helpers::{table_exists, column_exists, add_column_if_missing};
+
 /// Run all schema setup and migrations.
 ///
 /// Called during database initialization. This function is idempotent -
@@ -139,99 +142,45 @@ pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
 
 /// Migrate pending_embeddings to add start_line column
 pub fn migrate_pending_embeddings_line_numbers(conn: &Connection) -> Result<()> {
-    // Check if pending_embeddings exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pending_embeddings'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    // Early return if table doesn't exist
+    if !table_exists(conn, "pending_embeddings") {
         return Ok(());
     }
 
-    // Check if start_line column exists
-    let has_column: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('pending_embeddings') WHERE name = 'start_line'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_column {
-        tracing::info!("Migrating pending_embeddings to add start_line column");
-        conn.execute(
-            "ALTER TABLE pending_embeddings ADD COLUMN start_line INTEGER NOT NULL DEFAULT 1",
-            [],
-        )?;
-    }
-
-    Ok(())
+    // Add column if missing
+    add_column_if_missing(
+        conn,
+        "pending_embeddings",
+        "start_line",
+        "INTEGER NOT NULL DEFAULT 1"
+    )
 }
 
 /// Migrate tool_history to add full_result column for complete tool output storage
 pub fn migrate_tool_history_full_result(conn: &Connection) -> Result<()> {
-    // Check if tool_history exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_history'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    // Early return if table doesn't exist
+    if !table_exists(conn, "tool_history") {
         return Ok(());
     }
 
-    // Check if full_result column exists
-    let has_column: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('tool_history') WHERE name='full_result'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_column {
-        tracing::info!("Migrating tool_history to add full_result column");
-        conn.execute(
-            "ALTER TABLE tool_history ADD COLUMN full_result TEXT",
-            [],
-        )?;
-    }
-
-    Ok(())
+    // Add column if missing
+    add_column_if_missing(
+        conn,
+        "tool_history",
+        "full_result",
+        "TEXT"
+    )
 }
 
 /// Migrate memory_facts to add has_embedding column for tracking embedding status
 pub fn migrate_memory_facts_has_embedding(conn: &Connection) -> Result<()> {
-    // Check if memory_facts exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_facts'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    // Early return if table doesn't exist
+    if !table_exists(conn, "memory_facts") {
         return Ok(());
     }
 
-    // Check if has_embedding column exists
-    let has_column: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='has_embedding'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_column {
+    // Add column if missing (also handles backfill)
+    if !column_exists(conn, "memory_facts", "has_embedding") {
         tracing::info!("Migrating memory_facts to add has_embedding column");
         conn.execute(
             "ALTER TABLE memory_facts ADD COLUMN has_embedding INTEGER DEFAULT 0",

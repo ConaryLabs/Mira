@@ -2,19 +2,18 @@
 // DeepSeek API client (non-streaming, uses deepseek-reasoner)
 
 use super::types::{ChatResult, FunctionCall, Message, Tool, ToolCall, Usage};
+use crate::llm::http_client::LlmHttpClient;
 use crate::llm::provider::{LlmClient, Provider};
+use crate::llm::truncate_messages_to_budget;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, Span};
 use uuid::Uuid;
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
-
-/// Request timeout - reasoner can take a while for complex queries
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Chat completion request
 #[derive(Debug, Serialize)]
@@ -69,7 +68,7 @@ struct ResponseFunction {
 pub struct DeepSeekClient {
     api_key: String,
     model: String,
-    client: reqwest::Client,
+    http: LlmHttpClient,
 }
 
 impl DeepSeekClient {
@@ -80,18 +79,16 @@ impl DeepSeekClient {
 
     /// Create a new DeepSeek client with custom model
     pub fn with_model(api_key: String, model: String) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
-        Self { api_key, model, client }
+        let http = LlmHttpClient::new(
+            Duration::from_secs(300),
+            Duration::from_secs(30),
+        );
+        Self { api_key, model, http }
     }
 
     /// Create a new DeepSeek client with a shared HTTP client
-    pub fn with_http_client(api_key: String, model: String, client: reqwest::Client) -> Self {
-        Self { api_key, model, client }
+    pub fn with_http_client(api_key: String, model: String, client: Client) -> Self {
+        Self { api_key, model, http: LlmHttpClient::from_client(client) }
     }
 
     /// Calculate cache hit ratio from hit and miss token counts
@@ -110,6 +107,23 @@ impl DeepSeekClient {
 
         Span::current().record("request_id", &request_id);
 
+        // Apply budget-aware truncation if enabled
+        let messages = if self.supports_context_budget() {
+            let original_count = messages.len();
+            let messages = truncate_messages_to_budget(messages);
+            if messages.len() != original_count {
+                info!(
+                    request_id = %request_id,
+                    original_messages = original_count,
+                    truncated_messages = messages.len(),
+                    "Applied context budget truncation"
+                );
+            }
+            messages
+        } else {
+            messages
+        };
+
         info!(
             request_id = %request_id,
             message_count = messages.len(),
@@ -123,154 +137,103 @@ impl DeepSeekClient {
             messages,
             tools,
             tool_choice: Some("auto".into()),
-            max_tokens: Some(64000),
+            max_tokens: Some(16000),  // Reduced from 64k to stay under 131k context limit
         };
 
         let body = serde_json::to_string(&request)?;
         debug!(request_id = %request_id, "DeepSeek request: {}", body);
 
-        let mut attempts = 0;
-        let max_attempts = 3;
-        let mut backoff = Duration::from_secs(1);
+        let response_body = self.http.execute_with_retry(
+            &request_id,
+            DEEPSEEK_API_URL,
+            &self.api_key,
+            body,
+        ).await?;
 
-        loop {
-            let response_result = self
-                .client
-                .post(DEEPSEEK_API_URL)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .body(body.clone())
-                .send()
-                .await;
+        let data: ChatResponse = serde_json::from_str(&response_body)
+            .map_err(|e| anyhow!("Failed to parse DeepSeek response: {}", e))?;
 
-            match response_result {
-                Ok(response) => {
-                    let status = response.status();
-                    if !status.is_success() {
-                        let error_body = response.text().await.unwrap_or_default();
-                        
-                        // Check for transient errors
-                        if attempts < max_attempts && (status.as_u16() == 429 || status.is_server_error()) {
-                            tracing::warn!(
-                                request_id = %request_id,
-                                status = %status,
-                                error = %error_body,
-                                "Transient error from DeepSeek, retrying in {:?}...",
-                                backoff
-                            );
-                            tokio::time::sleep(backoff).await;
-                            attempts += 1;
-                            backoff *= 2;
-                            continue;
-                        }
+        let duration_ms = start_time.elapsed().as_millis() as u64;
 
-                        return Err(anyhow!("DeepSeek API error {}: {}", status, error_body));
-                    }
+        // Extract response from first choice
+        let choice = data.choices.into_iter().next();
+        let (content, reasoning_content, tool_calls) = match choice {
+            Some(c) => {
+                let msg = c.message;
+                let tc: Option<Vec<ToolCall>> = msg.tool_calls.map(|calls| {
+                    calls
+                        .into_iter()
+                        .map(|tc| ToolCall {
+                            id: tc.id,
+                            item_id: None,
+                            call_type: tc.call_type,
+                            function: FunctionCall {
+                                name: tc.function.name,
+                                arguments: tc.function.arguments,
+                            },
+                            thought_signature: None, // DeepSeek doesn't use thought signatures
+                        })
+                        .collect()
+                });
+                (msg.content, msg.reasoning_content, tc)
+            }
+            None => (None, None, None),
+        };
 
-                    let data: ChatResponse = response
-                        .json()
-                        .await
-                        .map_err(|e| anyhow!("Failed to parse DeepSeek response: {}", e))?;
+        // Log usage stats
+        if let Some(ref u) = data.usage {
+            // Calculate cache hit ratio if both hit and miss are available
+            let cache_hit_ratio = Self::calculate_cache_hit_ratio(u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens);
 
-                    let duration_ms = start_time.elapsed().as_millis() as u64;
+            info!(
+                request_id = %request_id,
+                prompt_tokens = u.prompt_tokens,
+                completion_tokens = u.completion_tokens,
+                cache_hit = ?u.prompt_cache_hit_tokens,
+                cache_miss = ?u.prompt_cache_miss_tokens,
+                cache_hit_ratio = ?cache_hit_ratio.map(|r| format!("{:.1}%", r * 100.0)),
+                "DeepSeek usage stats"
+            );
+        }
 
-                    // Extract response from first choice
-                    let choice = data.choices.into_iter().next();
-                    let (content, reasoning_content, tool_calls) = match choice {
-                        Some(c) => {
-                            let msg = c.message;
-                            let tc: Option<Vec<ToolCall>> = msg.tool_calls.map(|calls| {
-                                calls
-                                    .into_iter()
-                                    .map(|tc| ToolCall {
-                                        id: tc.id,
-                                        item_id: None,
-                                        call_type: tc.call_type,
-                                        function: FunctionCall {
-                                            name: tc.function.name,
-                                            arguments: tc.function.arguments,
-                                        },
-                                        thought_signature: None, // DeepSeek doesn't use thought signatures
-                                    })
-                                    .collect()
-                            });
-                            (msg.content, msg.reasoning_content, tc)
-                        }
-                        None => (None, None, None),
-                    };
-
-                    // Log usage stats
-                    if let Some(ref u) = data.usage {
-                        // Calculate cache hit ratio if both hit and miss are available
-                        let cache_hit_ratio = Self::calculate_cache_hit_ratio(u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens);
-
-                        info!(
-                            request_id = %request_id,
-                            prompt_tokens = u.prompt_tokens,
-                            completion_tokens = u.completion_tokens,
-                            cache_hit = ?u.prompt_cache_hit_tokens,
-                            cache_miss = ?u.prompt_cache_miss_tokens,
-                            cache_hit_ratio = ?cache_hit_ratio.map(|r| format!("{:.1}%", r * 100.0)),
-                            "DeepSeek usage stats"
-                        );
-                    }
-
-                    // Log tool calls if any
-                    if let Some(ref tcs) = tool_calls {
-                        info!(
-                            request_id = %request_id,
-                            tool_count = tcs.len(),
-                            tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
-                            "DeepSeek requested tool calls"
-                        );
-                        for tc in tcs {
-                            let args: serde_json::Value =
-                                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
-                            debug!(
-                                request_id = %request_id,
-                                tool = %tc.function.name,
-                                call_id = %tc.id,
-                                args = %args,
-                                "Tool call"
-                            );
-                        }
-                    }
-
-                    info!(
-                        request_id = %request_id,
-                        duration_ms = duration_ms,
-                        content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
-                        reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
-                        tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-                        "DeepSeek chat complete"
-                    );
-
-                    return Ok(ChatResult {
-                        request_id,
-                        content,
-                        reasoning_content,
-                        tool_calls,
-                        usage: data.usage,
-                        duration_ms,
-                    });
-                }
-                Err(e) => {
-                    if attempts < max_attempts {
-                        tracing::warn!(
-                            request_id = %request_id,
-                            error = %e,
-                            "Request failed, retrying in {:?}...",
-                            backoff
-                        );
-                        tokio::time::sleep(backoff).await;
-                        attempts += 1;
-                        backoff *= 2;
-                        continue;
-                    }
-                    return Err(anyhow!("DeepSeek request failed after retries: {}", e));
-                }
+        // Log tool calls if any
+        if let Some(ref tcs) = tool_calls {
+            info!(
+                request_id = %request_id,
+                tool_count = tcs.len(),
+                tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
+                "DeepSeek requested tool calls"
+            );
+            for tc in tcs {
+                let args: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
+                debug!(
+                    request_id = %request_id,
+                    tool = %tc.function.name,
+                    call_id = %tc.id,
+                    args = %args,
+                    "Tool call"
+                );
             }
         }
+
+        info!(
+            request_id = %request_id,
+            duration_ms = duration_ms,
+            content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
+            reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+            tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
+            "DeepSeek chat complete"
+        );
+
+        Ok(ChatResult {
+            request_id,
+            content,
+            reasoning_content,
+            tool_calls,
+            usage: data.usage,
+            duration_ms,
+        })
     }
 }
 
@@ -282,6 +245,11 @@ impl LlmClient for DeepSeekClient {
 
     fn model_name(&self) -> String {
         self.model.clone()
+    }
+
+    /// DeepSeek needs budget management due to 131k token limit
+    fn supports_context_budget(&self) -> bool {
+        true
     }
 
     async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
