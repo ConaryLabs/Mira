@@ -88,6 +88,11 @@ pub use types::*;
 pub use tasks::{
     parse_task_row, parse_goal_row,
     get_pending_tasks_sync, get_task_by_id_sync, get_active_goals_sync,
+    create_task_sync, get_tasks_sync, update_task_sync, delete_task_sync,
+    get_goal_by_id_sync, create_goal_sync, get_goals_sync, update_goal_sync, delete_goal_sync,
+};
+pub use session::{
+    create_session_sync, get_recent_sessions_sync, get_session_history_sync,
 };
 pub use project::{
     get_or_create_project_sync,

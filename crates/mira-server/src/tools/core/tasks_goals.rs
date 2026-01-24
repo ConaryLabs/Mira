@@ -1,6 +1,11 @@
 //! crates/mira-server/src/tools/core/tasks_goals.rs
 //! Unified task and goal tools
 
+use crate::db::{
+    create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync,
+    get_active_goals_sync, get_goal_by_id_sync, get_goals_sync, get_task_by_id_sync,
+    get_tasks_sync, update_goal_sync, update_task_sync,
+};
 use crate::tools::core::ToolContext;
 use serde::Deserialize;
 
@@ -44,7 +49,12 @@ pub async fn task<C: ToolContext>(
                 .parse()
                 .map_err(|_| "Invalid task ID".to_string())?;
 
-            let task = ctx.db().get_task_by_id(id)
+            let task = ctx
+                .pool()
+                .interact(move |conn| {
+                    get_task_by_id_sync(conn, id).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("Task {} not found", id))?;
 
@@ -62,20 +72,38 @@ pub async fn task<C: ToolContext>(
         }
         "create" => {
             let title = title.ok_or("Title is required for create action".to_string())?;
-            let id = ctx.db().create_task(
-                project_id,
-                None, // goal_id
-                &title,
-                description.as_deref(),
-                status.as_deref(),
-                priority.as_deref(),
-            ).map_err(|e| e.to_string())?;
+            let title_clone = title.clone();
+            let description_clone = description.clone();
+            let status_clone = status.clone();
+            let priority_clone = priority.clone();
+
+            let id = ctx
+                .pool()
+                .interact(move |conn| {
+                    create_task_sync(
+                        conn,
+                        project_id,
+                        None, // goal_id
+                        &title_clone,
+                        description_clone.as_deref(),
+                        status_clone.as_deref(),
+                        priority_clone.as_deref(),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
             Ok(format!("Created task '{}' (id: {})", title, id))
         }
         "bulk_create" => {
             let tasks_json = tasks.ok_or("tasks parameter is required for bulk_create action")?;
-            let bulk_tasks: Vec<BulkTask> = serde_json::from_str(&tasks_json)
-                .map_err(|e| format!("Invalid tasks JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]", e))?;
+            let bulk_tasks: Vec<BulkTask> = serde_json::from_str(&tasks_json).map_err(|e| {
+                format!(
+                    "Invalid tasks JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]",
+                    e
+                )
+            })?;
 
             if bulk_tasks.is_empty() {
                 return Err("tasks array cannot be empty".to_string());
@@ -83,23 +111,53 @@ pub async fn task<C: ToolContext>(
 
             let mut created = Vec::new();
             for t in bulk_tasks {
-                let id = ctx.db().create_task(
-                    project_id,
-                    None, // goal_id
-                    &t.title,
-                    t.description.as_deref(),
-                    t.status.as_deref(),
-                    t.priority.as_deref(),
-                ).map_err(|e| e.to_string())?;
+                let title = t.title.clone();
+                let description = t.description.clone();
+                let status = t.status.clone();
+                let priority = t.priority.clone();
+
+                let id = ctx
+                    .pool()
+                    .interact(move |conn| {
+                        create_task_sync(
+                            conn,
+                            project_id,
+                            None, // goal_id
+                            &title,
+                            description.as_deref(),
+                            status.as_deref(),
+                            priority.as_deref(),
+                        )
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+
                 created.push(format!("[{}] {}", id, t.title));
             }
 
-            Ok(format!("Created {} tasks:\n  {}", created.len(), created.join("\n  ")))
+            Ok(format!(
+                "Created {} tasks:\n  {}",
+                created.len(),
+                created.join("\n  ")
+            ))
         }
         "list" => {
             let include_completed = include_completed.unwrap_or(false);
-            let status_filter = if include_completed { None } else { Some("!completed") };
-            let tasks = ctx.db().get_tasks(project_id, status_filter).map_err(|e| e.to_string())?;
+            let status_filter: Option<String> = if include_completed {
+                None
+            } else {
+                Some("!completed".to_string())
+            };
+
+            let tasks = ctx
+                .pool()
+                .interact(move |conn| {
+                    get_tasks_sync(conn, project_id, status_filter.as_deref())
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
 
             // Apply limit
             let limit = limit.unwrap_or(20) as usize;
@@ -131,17 +189,27 @@ pub async fn task<C: ToolContext>(
                 .map_err(|_| "Invalid task ID".to_string())?;
 
             let new_status = if action == "complete" {
-                Some("completed")
+                Some("completed".to_string())
             } else {
-                status.as_deref()
+                status
             };
 
-            ctx.db().update_task(
-                id,
-                title.as_deref(),
-                new_status,
-                priority.as_deref(),
-            ).map_err(|e| e.to_string())?;
+            let title_clone = title.clone();
+            let priority_clone = priority.clone();
+
+            ctx.pool()
+                .interact(move |conn| {
+                    update_task_sync(
+                        conn,
+                        id,
+                        title_clone.as_deref(),
+                        new_status.as_deref(),
+                        priority_clone.as_deref(),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
 
             Ok(format!("Updated task {}", id))
         }
@@ -151,11 +219,19 @@ pub async fn task<C: ToolContext>(
                 .parse()
                 .map_err(|_| "Invalid task ID".to_string())?;
 
-            ctx.db().delete_task(id).map_err(|e| e.to_string())?;
+            ctx.pool()
+                .interact(move |conn| {
+                    delete_task_sync(conn, id).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
 
             Ok(format!("Deleted task {}", id))
         }
-        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, get, update, complete, delete", action))
+        _ => Err(format!(
+            "Unknown action: {}. Valid actions: create, bulk_create, list, get, update, complete, delete",
+            action
+        )),
     }
 }
 
@@ -182,7 +258,12 @@ pub async fn goal<C: ToolContext>(
                 .parse()
                 .map_err(|_| "Invalid goal ID".to_string())?;
 
-            let goal = ctx.db().get_goal_by_id(id)
+            let goal = ctx
+                .pool()
+                .interact(move |conn| {
+                    get_goal_by_id_sync(conn, id).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("Goal {} not found", id))?;
 
@@ -196,7 +277,12 @@ pub async fn goal<C: ToolContext>(
             response.push_str(&format!("  Created: {}\n", goal.created_at));
 
             // Also show related tasks
-            let tasks = ctx.db().get_tasks(project_id, None)
+            let tasks = ctx
+                .pool()
+                .interact(move |conn| {
+                    get_tasks_sync(conn, project_id, None).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .filter(|t| t.goal_id == Some(id))
@@ -218,20 +304,38 @@ pub async fn goal<C: ToolContext>(
         }
         "create" => {
             let title = title.ok_or("Title is required for create action".to_string())?;
-            let id = ctx.db().create_goal(
-                project_id,
-                &title,
-                description.as_deref(),
-                status.as_deref(),
-                priority.as_deref(),
-                progress_percent.map(|p| p as i64),
-            ).map_err(|e| e.to_string())?;
+            let title_clone = title.clone();
+            let description_clone = description.clone();
+            let status_clone = status.clone();
+            let priority_clone = priority.clone();
+
+            let id = ctx
+                .pool()
+                .interact(move |conn| {
+                    create_goal_sync(
+                        conn,
+                        project_id,
+                        &title_clone,
+                        description_clone.as_deref(),
+                        status_clone.as_deref(),
+                        priority_clone.as_deref(),
+                        progress_percent.map(|p| p as i64),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
             Ok(format!("Created goal '{}' (id: {})", title, id))
         }
         "bulk_create" => {
             let goals_json = goals.ok_or("goals parameter is required for bulk_create action")?;
-            let bulk_goals: Vec<BulkGoal> = serde_json::from_str(&goals_json)
-                .map_err(|e| format!("Invalid goals JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]", e))?;
+            let bulk_goals: Vec<BulkGoal> = serde_json::from_str(&goals_json).map_err(|e| {
+                format!(
+                    "Invalid goals JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]",
+                    e
+                )
+            })?;
 
             if bulk_goals.is_empty() {
                 return Err("goals array cannot be empty".to_string());
@@ -239,27 +343,57 @@ pub async fn goal<C: ToolContext>(
 
             let mut created = Vec::new();
             for g in bulk_goals {
-                let id = ctx.db().create_goal(
-                    project_id,
-                    &g.title,
-                    g.description.as_deref(),
-                    g.status.as_deref(),
-                    g.priority.as_deref(),
-                    None, // progress_percent
-                ).map_err(|e| e.to_string())?;
+                let title = g.title.clone();
+                let description = g.description.clone();
+                let status = g.status.clone();
+                let priority = g.priority.clone();
+
+                let id = ctx
+                    .pool()
+                    .interact(move |conn| {
+                        create_goal_sync(
+                            conn,
+                            project_id,
+                            &title,
+                            description.as_deref(),
+                            status.as_deref(),
+                            priority.as_deref(),
+                            None, // progress_percent
+                        )
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+
                 created.push(format!("[{}] {}", id, g.title));
             }
 
-            Ok(format!("Created {} goals:\n  {}", created.len(), created.join("\n  ")))
+            Ok(format!(
+                "Created {} goals:\n  {}",
+                created.len(),
+                created.join("\n  ")
+            ))
         }
         "list" => {
             let include_finished = include_finished.unwrap_or(false);
             // Use get_active_goals for non-finished, get_goals(None) for all
             let goals = if include_finished {
-                ctx.db().get_goals(project_id, None).map_err(|e| e.to_string())?
+                ctx.pool()
+                    .interact(move |conn| {
+                        get_goals_sync(conn, project_id, None)
+                            .map_err(|e| anyhow::anyhow!("{}", e))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?
             } else {
                 // get_active_goals excludes 'completed' and 'abandoned'
-                ctx.db().get_active_goals(project_id, 100).map_err(|e| e.to_string())?
+                ctx.pool()
+                    .interact(move |conn| {
+                        get_active_goals_sync(conn, project_id, 100)
+                            .map_err(|e| anyhow::anyhow!("{}", e))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?
             };
 
             // Apply limit
@@ -291,13 +425,24 @@ pub async fn goal<C: ToolContext>(
                 .parse()
                 .map_err(|_| "Invalid goal ID".to_string())?;
 
-            ctx.db().update_goal(
-                id,
-                title.as_deref(),
-                status.as_deref(),
-                priority.as_deref(),
-                progress_percent.map(|p| p as i64),
-            ).map_err(|e| e.to_string())?;
+            let title_clone = title.clone();
+            let status_clone = status.clone();
+            let priority_clone = priority.clone();
+
+            ctx.pool()
+                .interact(move |conn| {
+                    update_goal_sync(
+                        conn,
+                        id,
+                        title_clone.as_deref(),
+                        status_clone.as_deref(),
+                        priority_clone.as_deref(),
+                        progress_percent.map(|p| p as i64),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
 
             Ok(format!("Updated goal {}", id))
         }
@@ -307,10 +452,18 @@ pub async fn goal<C: ToolContext>(
                 .parse()
                 .map_err(|_| "Invalid goal ID".to_string())?;
 
-            ctx.db().delete_goal(id).map_err(|e| e.to_string())?;
+            ctx.pool()
+                .interact(move |conn| {
+                    delete_goal_sync(conn, id).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
 
             Ok(format!("Deleted goal {}", id))
         }
-        _ => Err(format!("Unknown action: {}. Valid actions: create, bulk_create, list, get, update, progress, delete", action))
+        _ => Err(format!(
+            "Unknown action: {}. Valid actions: create, bulk_create, list, get, update, progress, delete",
+            action
+        )),
     }
 }

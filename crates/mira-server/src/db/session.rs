@@ -3,10 +3,74 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 use super::types::{SessionInfo, ToolHistoryEntry};
 use super::Database;
+
+// ============================================================================
+// Sync functions for pool.interact() usage
+// ============================================================================
+
+/// Create or update a session (sync version for pool.interact)
+pub fn create_session_sync(conn: &Connection, session_id: &str, project_id: Option<i64>) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO sessions (id, project_id, status, started_at, last_activity)
+         VALUES (?1, ?2, 'active', datetime('now'), datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET last_activity = datetime('now')",
+        params![session_id, project_id],
+    )?;
+    Ok(())
+}
+
+/// Get recent sessions for a project (sync version for pool.interact)
+pub fn get_recent_sessions_sync(conn: &Connection, project_id: i64, limit: usize) -> rusqlite::Result<Vec<SessionInfo>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, status, summary, started_at, last_activity
+         FROM sessions
+         WHERE project_id = ?
+         ORDER BY last_activity DESC, rowid DESC
+         LIMIT ?",
+    )?;
+    let rows = stmt.query_map(params![project_id, limit as i64], |row| {
+        Ok(SessionInfo {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            status: row.get(2)?,
+            summary: row.get(3)?,
+            started_at: row.get(4)?,
+            last_activity: row.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Get session history (sync version for pool.interact)
+pub fn get_session_history_sync(conn: &Connection, session_id: &str, limit: usize) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at
+         FROM tool_history
+         WHERE session_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?",
+    )?;
+    let rows = stmt.query_map(params![session_id, limit as i64], |row| {
+        Ok(ToolHistoryEntry {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            tool_name: row.get(2)?,
+            arguments: row.get(3)?,
+            result_summary: row.get(4)?,
+            success: row.get::<_, i32>(5)? != 0,
+            created_at: row.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
+// ============================================================================
+// Database impl methods
+// ============================================================================
 
 impl Database {
     /// Create or update a session
