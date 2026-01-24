@@ -35,19 +35,16 @@ fn get_embeddings(http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> 
 /// Get embeddings client with database pool for usage tracking
 ///
 /// Environment variables:
-/// - MIRA_EMBEDDING_PROVIDER: "openai" (default) or "google"
-/// - MIRA_EMBEDDING_MODEL: Model name (e.g., "text-embedding-3-small", "gemini-embedding-001")
-/// - MIRA_EMBEDDING_DIMENSIONS: Output dimensions (Google only, default: 768)
-/// - MIRA_EMBEDDING_TASK_TYPE: Task type for Google (RETRIEVAL_DOCUMENT, SEMANTIC_SIMILARITY, etc.)
-/// - OPENAI_API_KEY: Required for OpenAI provider
-/// - GOOGLE_API_KEY: Required for Google provider
+/// - MIRA_EMBEDDING_DIMENSIONS: Output dimensions (default: 768)
+/// - MIRA_EMBEDDING_TASK_TYPE: Task type (RETRIEVAL_DOCUMENT, SEMANTIC_SIMILARITY, etc.)
+/// - GEMINI_API_KEY: Required for Gemini embeddings
+/// - GOOGLE_API_KEY: Alternative to GEMINI_API_KEY
 fn get_embeddings_with_pool(pool: Option<Arc<DatabasePool>>, http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
     let client = EmbeddingClient::from_env_with_http_client(pool.clone(), http_client)?;
 
-    // Log the configured provider
+    // Log the configured model
     info!(
-        "Embedding provider: {} (model: {}, {} dimensions)",
-        client.provider(),
+        "Embeddings enabled (model: {}, {} dimensions)",
         client.model_name(),
         client.dimensions()
     );

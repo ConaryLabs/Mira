@@ -1,7 +1,7 @@
 // crates/mira-server/src/db/config.rs
 // Configuration storage (custom system prompts, LLM provider config, etc.)
 
-use crate::embeddings::EmbeddingModel;
+use crate::embeddings::GoogleEmbeddingModel;
 use crate::llm::Provider;
 use anyhow::Result;
 use rusqlite::{params, Connection};
@@ -303,22 +303,22 @@ impl Database {
 
     /// Get the configured embedding model
     /// Returns None if no model has been configured yet
-    pub fn get_embedding_model(&self) -> Result<Option<EmbeddingModel>> {
+    pub fn get_embedding_model(&self) -> Result<Option<GoogleEmbeddingModel>> {
         match self.get_server_state(EMBEDDING_MODEL_KEY)? {
-            Some(name) => Ok(EmbeddingModel::from_name(&name)),
+            Some(name) => Ok(GoogleEmbeddingModel::from_name(&name)),
             None => Ok(None),
         }
     }
 
     /// Set the embedding model configuration
     /// WARNING: Changing the model after vectors exist requires re-indexing
-    pub fn set_embedding_model(&self, model: EmbeddingModel) -> Result<()> {
+    pub fn set_embedding_model(&self, model: GoogleEmbeddingModel) -> Result<()> {
         self.set_server_state(EMBEDDING_MODEL_KEY, model.model_name())
     }
 
     /// Check if embedding model can be safely used
     /// Returns Ok(()) if safe, Err with warning message if model mismatch detected
-    pub fn check_embedding_model(&self, model: EmbeddingModel) -> Result<EmbeddingModelCheck> {
+    pub fn check_embedding_model(&self, model: GoogleEmbeddingModel) -> Result<EmbeddingModelCheck> {
         let stored = self.get_embedding_model()?;
 
         match stored {
@@ -368,8 +368,8 @@ pub enum EmbeddingModelCheck {
     Matches,
     /// Model mismatch detected
     Mismatch {
-        stored: EmbeddingModel,
-        requested: EmbeddingModel,
+        stored: GoogleEmbeddingModel,
+        requested: GoogleEmbeddingModel,
         has_vectors: bool,
     },
 }
