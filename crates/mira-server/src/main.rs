@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mira::background;
 use mira::db::pool::DatabasePool;
-use mira::db::Database;
 use mira::embeddings::EmbeddingClient;
 use mira::http::create_shared_client;
 use mira::llm::DeepSeekClient;
@@ -571,7 +570,7 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::DebugCarto { path }) => {
-            run_debug_carto(path)?;
+            run_debug_carto(path).await?;
         }
         Some(Commands::DebugSession { path }) => {
             run_debug_session(path).await?;
@@ -646,7 +645,7 @@ async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
 }
 
 /// Debug cartographer module detection
-fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
+async fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
     let project_path = match path {
         Some(p) => p,
         None => std::env::current_dir()?,
@@ -668,20 +667,25 @@ fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
     // Try full map generation with database
     println!("\n--- Database Integration ---\n");
     let db_path = get_db_path();
-    let db = Database::open(&db_path)?;
-    let (project_id, name) = db.get_or_create_project(
-        project_path.to_string_lossy().as_ref(),
-        None,
-    )?;
+    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+
+    let project_path_str = project_path.to_string_lossy().to_string();
+    let (project_id, name) = {
+        let path_clone = project_path_str.clone();
+        pool.interact(move |conn| {
+            mira::db::get_or_create_project_sync(conn, &path_clone, None)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        }).await?
+    };
     println!("Project ID: {}, Name: {:?}", project_id, name);
 
-    match mira::cartographer::get_or_generate_map(
-        &db,
+    match mira::cartographer::get_or_generate_map_pool(
+        pool,
         project_id,
-        project_path.to_string_lossy().as_ref(),
-        name.as_deref().unwrap_or("unknown"),
-        "rust",
-    ) {
+        project_path_str,
+        name.unwrap_or_else(|| "unknown".to_string()),
+        "rust".to_string(),
+    ).await {
         Ok(map) => {
             println!("\nCodebase map generated with {} modules", map.modules.len());
             println!("\n{}", mira::cartographer::format_compact(&map));
@@ -1147,74 +1151,80 @@ fn run_backend_env(name: Option<&str>) -> Result<()> {
 
 /// Show usage statistics from the database
 async fn run_backend_usage(backend: Option<&str>, days: u32) -> Result<()> {
-    use mira::db::Database;
-
     let db_path = get_db_path();
-    let db = Database::open(&db_path)?;
+    let pool = DatabasePool::open(&db_path).await?;
 
     // Calculate date range
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    let backend_owned = backend.map(|s| s.to_string());
 
     // Query usage from database
-    let conn = db.conn();
-    let sql = if let Some(backend_name) = backend {
-        format!(
-            "SELECT backend_name, model,
-                    SUM(input_tokens) as total_input,
-                    SUM(output_tokens) as total_output,
-                    SUM(cache_creation_tokens) as total_cache_create,
-                    SUM(cache_read_tokens) as total_cache_read,
-                    SUM(cost_estimate) as total_cost,
-                    COUNT(*) as request_count
-             FROM proxy_usage
-             WHERE backend_name = '{}' AND created_at >= '{}'
-             GROUP BY backend_name, model
-             ORDER BY total_cost DESC",
-            backend_name, cutoff_str
-        )
-    } else {
-        format!(
-            "SELECT backend_name, model,
-                    SUM(input_tokens) as total_input,
-                    SUM(output_tokens) as total_output,
-                    SUM(cache_creation_tokens) as total_cache_create,
-                    SUM(cache_read_tokens) as total_cache_read,
-                    SUM(cost_estimate) as total_cost,
-                    COUNT(*) as request_count
-             FROM proxy_usage
-             WHERE created_at >= '{}'
-             GROUP BY backend_name, model
-             ORDER BY total_cost DESC",
-            cutoff_str
-        )
-    };
+    let cutoff_clone = cutoff_str.clone();
+    let usage_result = pool.interact(move |conn| {
+        let sql = if let Some(ref backend_name) = backend_owned {
+            format!(
+                "SELECT backend_name, model,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        SUM(cache_creation_tokens) as total_cache_create,
+                        SUM(cache_read_tokens) as total_cache_read,
+                        SUM(cost_estimate) as total_cost,
+                        COUNT(*) as request_count
+                 FROM proxy_usage
+                 WHERE backend_name = '{}' AND created_at >= '{}'
+                 GROUP BY backend_name, model
+                 ORDER BY total_cost DESC",
+                backend_name, cutoff_clone
+            )
+        } else {
+            format!(
+                "SELECT backend_name, model,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        SUM(cache_creation_tokens) as total_cache_create,
+                        SUM(cache_read_tokens) as total_cache_read,
+                        SUM(cost_estimate) as total_cost,
+                        COUNT(*) as request_count
+                 FROM proxy_usage
+                 WHERE created_at >= '{}'
+                 GROUP BY backend_name, model
+                 ORDER BY total_cost DESC",
+                cutoff_clone
+            )
+        };
 
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(_) => {
-            println!("No usage data available yet.");
-            println!("\nUsage tracking starts when requests go through the proxy.");
-            println!("Start the proxy with: mira proxy start -d");
-            return Ok(());
-        }
-    };
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(_) => return Ok::<_, anyhow::Error>(None),
+        };
 
-    let rows: Vec<(String, Option<String>, i64, i64, i64, i64, f64, i64)> = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get::<_, f64>(6).unwrap_or(0.0),
-                row.get(7)?,
-            ))
-        })?
-        .filter_map(Result::ok)
-        .collect();
+        let rows: Vec<(String, Option<String>, i64, i64, i64, i64, f64, i64)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get::<_, f64>(6).unwrap_or(0.0),
+                    row.get(7)?,
+                ))
+            })
+            .map_err(|e| anyhow::anyhow!("{}", e))?
+            .filter_map(Result::ok)
+            .collect();
+
+        Ok(Some(rows))
+    }).await?;
+
+    let Some(rows) = usage_result else {
+        println!("No usage data available yet.");
+        println!("\nUsage tracking starts when requests go through the proxy.");
+        println!("Start the proxy with: mira proxy start -d");
+        return Ok(());
+    };
 
     if rows.is_empty() {
         println!("No usage data in the last {} days.", days);
@@ -1255,22 +1265,26 @@ async fn run_backend_usage(backend: Option<&str>, days: u32) -> Result<()> {
         "TOTAL", "", "", "", total_requests, total_cost);
 
     // Also show embedding usage
-    drop(stmt);
-    let embed_sql = format!(
-        "SELECT provider, model,
-                SUM(tokens) as total_tokens,
-                SUM(text_count) as total_texts,
-                SUM(cost_estimate) as total_cost,
-                COUNT(*) as request_count
-         FROM embeddings_usage
-         WHERE created_at >= '{}'
-         GROUP BY provider, model
-         ORDER BY total_cost DESC",
-        cutoff_str
-    );
+    let embed_rows = pool.interact(move |conn| {
+        let embed_sql = format!(
+            "SELECT provider, model,
+                    SUM(tokens) as total_tokens,
+                    SUM(text_count) as total_texts,
+                    SUM(cost_estimate) as total_cost,
+                    COUNT(*) as request_count
+             FROM embeddings_usage
+             WHERE created_at >= '{}'
+             GROUP BY provider, model
+             ORDER BY total_cost DESC",
+            cutoff_str
+        );
 
-    if let Ok(mut embed_stmt) = conn.prepare(&embed_sql) {
-        let embed_rows: Vec<(String, String, i64, i64, f64, i64)> = embed_stmt
+        let mut embed_stmt = match conn.prepare(&embed_sql) {
+            Ok(s) => s,
+            Err(_) => return Ok::<_, anyhow::Error>(Vec::new()),
+        };
+
+        let rows: Vec<(String, String, i64, i64, f64, i64)> = embed_stmt
             .query_map([], |row| {
                 Ok((
                     row.get(0)?,
@@ -1280,43 +1294,46 @@ async fn run_backend_usage(backend: Option<&str>, days: u32) -> Result<()> {
                     row.get::<_, f64>(4).unwrap_or(0.0),
                     row.get(5)?,
                 ))
-            })?
+            })
+            .map_err(|e| anyhow::anyhow!("{}", e))?
             .filter_map(Result::ok)
             .collect();
 
-        if !embed_rows.is_empty() {
-            println!("\n\nEmbedding Usage\n");
-            println!("{:<12} {:<25} {:>12} {:>10} {:>10} {:>8}",
-                "Provider", "Model", "Tokens", "Texts", "Requests", "Cost");
-            println!("{}", "-".repeat(80));
+        Ok(rows)
+    }).await?;
 
-            let mut embed_total_cost = 0.0;
-            let mut embed_total_requests = 0i64;
+    if !embed_rows.is_empty() {
+        println!("\n\nEmbedding Usage\n");
+        println!("{:<12} {:<25} {:>12} {:>10} {:>10} {:>8}",
+            "Provider", "Model", "Tokens", "Texts", "Requests", "Cost");
+        println!("{}", "-".repeat(80));
 
-            for (provider, model, tokens, texts, cost, requests) in &embed_rows {
-                let model_display = if model.len() > 24 {
-                    format!("{}...", &model[..21])
-                } else {
-                    model.clone()
-                };
+        let mut embed_total_cost = 0.0;
+        let mut embed_total_requests = 0i64;
 
-                println!("{:<12} {:<25} {:>12} {:>10} {:>10} ${:>7.4}",
-                    provider,
-                    model_display,
-                    format_tokens(*tokens),
-                    texts,
-                    requests,
-                    cost
-                );
+        for (provider, model, tokens, texts, cost, requests) in &embed_rows {
+            let model_display = if model.len() > 24 {
+                format!("{}...", &model[..21])
+            } else {
+                model.clone()
+            };
 
-                embed_total_cost += cost;
-                embed_total_requests += requests;
-            }
-
-            println!("{}", "-".repeat(80));
             println!("{:<12} {:<25} {:>12} {:>10} {:>10} ${:>7.4}",
-                "TOTAL", "", "", "", embed_total_requests, embed_total_cost);
+                provider,
+                model_display,
+                format_tokens(*tokens),
+                texts,
+                requests,
+                cost
+            );
+
+            embed_total_cost += cost;
+            embed_total_requests += requests;
         }
+
+        println!("{}", "-".repeat(80));
+        println!("{:<12} {:<25} {:>12} {:>10} {:>10} ${:>7.4}",
+            "TOTAL", "", "", "", embed_total_requests, embed_total_cost);
     }
 
     Ok(())

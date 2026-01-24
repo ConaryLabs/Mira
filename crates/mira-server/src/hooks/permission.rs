@@ -2,7 +2,7 @@
 // Permission hook for Claude Code auto-approval
 
 use anyhow::Result;
-use crate::db::{Database, get_permission_rules_sync};
+use crate::db::{pool::DatabasePool, get_permission_rules_sync};
 use crate::hooks::{read_hook_input, write_hook_output};
 use std::path::PathBuf;
 
@@ -11,17 +11,18 @@ pub async fn run() -> Result<()> {
     let input = read_hook_input()?;
 
     // Extract tool info from hook input
-    let tool_name = input["tool_name"].as_str().unwrap_or("");
+    let tool_name = input["tool_name"].as_str().unwrap_or("").to_string();
     let tool_input = &input["tool_input"];
 
-    // Open database
+    // Open database pool
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let db_path = home.join(".mira/mira.db");
-    let db = Database::open(&db_path)?;
+    let pool = DatabasePool::open(&db_path).await?;
 
-    // Check for matching permission rule
-    let conn = db.conn();
-    let rules = get_permission_rules_sync(&conn, tool_name);
+    // Check for matching permission rules
+    let rules = pool.interact(move |conn| {
+        Ok::<_, anyhow::Error>(get_permission_rules_sync(conn, &tool_name))
+    }).await?;
 
     // Check if any rule matches
     for (pattern, match_type) in rules {

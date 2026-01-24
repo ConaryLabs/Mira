@@ -4,6 +4,9 @@
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use crate::db::pool::DatabasePool;
+use crate::db::{store_memory_sync, StoreMemoryParams, get_last_active_project_sync, get_or_create_project_sync};
 
 /// Get database path (same as main.rs)
 fn get_db_path() -> PathBuf {
@@ -55,17 +58,25 @@ async fn save_pre_compaction_state(
     trigger: &str,
     transcript: Option<&str>,
 ) -> Result<()> {
-    // Get database
+    // Get database pool
     let db_path = get_db_path();
-    let db = std::sync::Arc::new(crate::db::Database::open(&db_path)?);
+    let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Get current project from last active
-    let project_id = db
-        .get_last_active_project()
-        .ok()
-        .flatten()
-        .and_then(|path| db.get_or_create_project(&path, None).ok())
-        .map(|(id, _)| id);
+    let project_id = {
+        let pool_clone = pool.clone();
+        pool_clone.interact(move |conn| {
+            let path = get_last_active_project_sync(conn).ok().flatten();
+            let result = if let Some(path) = path {
+                get_or_create_project_sync(conn, &path, None)
+                    .ok()
+                    .map(|(id, _)| id)
+            } else {
+                None
+            };
+            Ok::<_, anyhow::Error>(result)
+        }).await.ok().flatten()
+    };
 
     // Save compaction event as a session note
     let note_content = format!(
@@ -75,18 +86,26 @@ async fn save_pre_compaction_state(
     );
 
     // Store as a session event
-    db.store_memory(
-        project_id,
-        None,
-        &note_content,
-        "session_event",
-        Some("compaction"),
-        0.3, // Low confidence - just a log
-    )?;
+    {
+        let pool_clone = pool.clone();
+        pool_clone.interact(move |conn| {
+            store_memory_sync(conn, StoreMemoryParams {
+                project_id,
+                key: None,
+                content: &note_content,
+                fact_type: "session_event",
+                category: Some("compaction"),
+                confidence: 0.3, // Low confidence - just a log
+                session_id: None,
+                user_id: None,
+                scope: "project",
+            }).map_err(|e| anyhow::anyhow!("{}", e))
+        }).await?
+    };
 
     // If we have transcript, extract key information
     if let Some(transcript) = transcript {
-        if let Err(e) = extract_and_save_context(&db, project_id, session_id, transcript).await {
+        if let Err(e) = extract_and_save_context(&pool, project_id, session_id, transcript).await {
             eprintln!("[mira] Context extraction failed: {}", e);
         }
     }
@@ -97,7 +116,7 @@ async fn save_pre_compaction_state(
 
 /// Extract important context from transcript before it's summarized
 async fn extract_and_save_context(
-    db: &std::sync::Arc<crate::db::Database>,
+    pool: &Arc<DatabasePool>,
     project_id: Option<i64>,
     session_id: &str,
     transcript: &str,
@@ -114,7 +133,7 @@ async fn extract_and_save_context(
             || lower.contains("will use")
             || lower.contains("approach:")
         {
-            important_lines.push(("decision", line.trim()));
+            important_lines.push(("decision", line.trim().to_string()));
         }
 
         // Capture TODOs and next steps
@@ -123,7 +142,7 @@ async fn extract_and_save_context(
             || lower.contains("remaining:")
             || lower.contains("still need to")
         {
-            important_lines.push(("context", line.trim()));
+            important_lines.push(("context", line.trim().to_string()));
         }
 
         // Capture errors/issues
@@ -132,27 +151,35 @@ async fn extract_and_save_context(
             || lower.contains("issue:")
             || lower.contains("bug:")
         {
-            important_lines.push(("issue", line.trim()));
+            important_lines.push(("issue", line.trim().to_string()));
         }
     }
 
     // Store extracted context
     let count = important_lines.len().min(10); // Limit to 10 items
+    let session_id_owned = session_id.to_string();
+
     for (category, content) in important_lines.into_iter().take(10) {
         // Skip very short or very long lines
         if content.len() < 10 || content.len() > 500 {
             continue;
         }
 
-        db.store_memory_with_session(
-            project_id,
-            None,
-            content,
-            "extracted",
-            Some(category),
-            0.4, // Moderate confidence - auto-extracted
-            Some(session_id),
-        )?;
+        let category_owned = category.to_string();
+        let session_id_clone = session_id_owned.clone();
+        pool.interact(move |conn| {
+            store_memory_sync(conn, StoreMemoryParams {
+                project_id,
+                key: None,
+                content: &content,
+                fact_type: "extracted",
+                category: Some(&category_owned),
+                confidence: 0.4, // Moderate confidence - auto-extracted
+                session_id: Some(&session_id_clone),
+                user_id: None,
+                scope: "project",
+            }).map_err(|e| anyhow::anyhow!("{}", e))
+        }).await?;
     }
 
     if count > 0 {
