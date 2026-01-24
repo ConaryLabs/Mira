@@ -1,6 +1,14 @@
 // crates/mira-types/src/lib.rs
-// Shared types for Mira (native + WASM compatible)
-// No native-only dependencies allowed here
+
+//! Shared data contracts between the Mira native server and its clients.
+//!
+//! This crate provides the core domain model for:
+//! - **Project context**: Mapping filesystem paths to database entities
+//! - **Semantic memory**: Evidence-based facts with lifecycle and scoping
+//! - **WebSocket protocol**: Real-time tool execution and agent collaboration
+//!
+//! These types are designed to work across native and WASM builds,
+//! with no native-only dependencies allowed.
 
 use serde::{Deserialize, Serialize};
 
@@ -8,39 +16,86 @@ use serde::{Deserialize, Serialize};
 // DOMAIN TYPES
 // ═══════════════════════════════════════
 
-/// Project context
+/// Represents the connection between a local filesystem path and a Mira database entity.
+///
+/// This context is required for almost all operations (indexing, memory retrieval, chat).
+/// It ensures that memories and preferences are scoped to the correct workspace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectContext {
+    /// The persistent database ID for this project. Use this for all foreign keys.
     pub id: i64,
+    /// The absolute filesystem path to the project root. Used for file operations.
     pub path: String,
+    /// Human-readable display name (e.g., directory name or parsed from package.json/Cargo.toml).
     pub name: Option<String>,
 }
 
-/// Memory fact from semantic memory
+/// A semantic unit of knowledge derived from user interactions or code analysis.
+///
+/// # Lifecycle
+///
+/// 1. **Creation**: Created as `status: "candidate"` with initial confidence (capped at 0.5).
+/// 2. **Reinforcement**: If the fact is recalled and useful in subsequent sessions,
+///    `session_count` increments and `confidence` increases.
+/// 3. **Verification**: High-confidence facts effectively become permanent knowledge.
+///
+/// # Scoping
+///
+/// Controls visibility via the `scope` field:
+/// - `"project"` (default): Visible only within `project_id`.
+/// - `"user"`: Visible to the specific `user_id` across all their projects.
+/// - `"team"`: Visible to all members of `team_id`.
+/// - `"global"`: Universal constants (rare).
+///
+/// # Fact Types
+///
+/// The `fact_type` field classifies the kind of knowledge:
+/// - `"general"`: General observations or context
+/// - `"preference"`: User preferences (coding style, tooling choices)
+/// - `"decision"`: Architectural or design decisions with rationale
+/// - `"context"`: Project-specific context (tech stack, conventions)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryFact {
     pub id: i64,
+    /// The project this fact originated from. Required unless scope is "user" or "global".
     pub project_id: Option<i64>,
+    /// Optional structured key for key-value lookups (e.g., "preference:linter").
     pub key: Option<String>,
+    /// The natural language fact (e.g., "The user prefers strictly typed Python code").
     pub content: String,
+    /// Classification: "general", "preference", "decision", "context".
     pub fact_type: String,
+    /// Broad grouping for filtering (e.g., "coding", "tooling", "architecture").
     pub category: Option<String>,
+    /// Confidence score from 0.0 to 1.0. Higher values indicate verified knowledge.
     pub confidence: f64,
+    /// ISO 8601 timestamp of when this fact was created.
     pub created_at: String,
+
     // Evidence-based memory fields
+
+    /// Number of distinct sessions where this fact was recalled or reinforced.
     #[serde(default = "default_session_count")]
     pub session_count: i32,
+    /// Session ID where this fact was first observed.
     #[serde(default)]
     pub first_session_id: Option<String>,
+    /// Session ID where this fact was most recently reinforced.
     #[serde(default)]
     pub last_session_id: Option<String>,
+    /// State of the fact: "candidate", "verified", or "rejected".
     #[serde(default = "default_status")]
     pub status: String,
+
     // Multi-user memory sharing fields
+
+    /// Owner of the memory (for user-scoped memories).
     #[serde(default)]
     pub user_id: Option<String>,
+    /// Visibility scope: "project", "user", "team", or "global".
     #[serde(default = "default_scope")]
     pub scope: String,
+    /// Team ID (required if scope is "team").
     #[serde(default)]
     pub team_id: Option<i64>,
 }
@@ -61,11 +116,15 @@ fn default_scope() -> String {
 // AGENT COLLABORATION
 // ═══════════════════════════════════════
 
-/// Agent role in collaboration
+/// Identifies the speaker in a chat or collaboration stream.
+///
+/// Used by clients to determine avatar/styling and attribute messages correctly.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRole {
+    /// The local Mira orchestrator/server.
     Mira,
+    /// The remote LLM intelligence (Claude).
     Claude,
 }
 
@@ -73,29 +132,57 @@ pub enum AgentRole {
 // WEBSOCKET EVENTS
 // ═══════════════════════════════════════
 
-/// WebSocket event for MCP tool broadcasting
+/// Real-time events for the Model Context Protocol (MCP) and chat stream.
+///
+/// # Protocol Flow
+///
+/// ## Tool Execution
+/// 1. Server emits [`WsEvent::ToolStart`] with a unique `call_id`.
+/// 2. Tool executes (either on server or client).
+/// 3. [`WsEvent::ToolResult`] is emitted with the matching `call_id` and output.
+///
+/// ## Chat Streaming
+/// - [`WsEvent::AgentResponse`] streams chunks of text.
+/// - `complete: true` signals the end of a turn.
+///
+/// # Correlation
+///
+/// `ToolStart` and `ToolResult` are correlated by `call_id`. Clients must track
+/// pending tool calls and match results to their corresponding starts.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsEvent {
-    // Tool execution
+    /// The agent has decided to call a tool.
     ToolStart {
+        /// Name of the tool being invoked.
         tool_name: String,
+        /// JSON arguments map passed to the tool.
         arguments: serde_json::Value,
+        /// Unique correlation ID to match with [`WsEvent::ToolResult`].
         call_id: String,
     },
+    /// The output of a tool execution.
     ToolResult {
+        /// Name of the tool that was invoked.
         tool_name: String,
+        /// The tool's output (typically JSON or plain text).
         result: String,
+        /// Whether the tool executed successfully.
         success: bool,
+        /// Must match the `call_id` from the corresponding [`WsEvent::ToolStart`].
         call_id: String,
+        /// Execution time in milliseconds.
         duration_ms: u64,
     },
-
-    // Agent collaboration
+    /// A chat message or thought from an agent.
     AgentResponse {
+        /// ID of the user message this is replying to.
         in_reply_to: String,
+        /// Which agent sent this response.
         from: AgentRole,
+        /// The message content (may be a partial chunk if streaming).
         content: String,
+        /// If false, this is a partial stream chunk. If true, the message is complete.
         complete: bool,
     },
 }

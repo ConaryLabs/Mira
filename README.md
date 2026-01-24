@@ -20,7 +20,7 @@ Mira runs as an MCP server alongside Claude Code, providing:
 - **Expert Consultation** - Second opinions from specialized AI reviewers with codebase access
 - **Automatic Documentation** - Detects gaps, flags stale docs, generates updates
 - **LLM Proxy** - Route requests to multiple backends with usage tracking
-- **Task Tracking** - Goals and tasks that persist across conversations
+- **Goal Tracking** - Goals and milestones that persist across conversations
 
 ## Quick Start
 
@@ -122,14 +122,16 @@ Route LLM requests through Mira for multi-backend support and usage tracking:
 
 Configure backends with pricing info to track costs across providers.
 
-### Task & Goal Tracking
+### Goal & Milestone Tracking
 
 ```
-task(action="create", title="Implement auth middleware", priority="high")
 goal(action="create", title="v2.0 Release", description="Ship new features")
+goal(action="add_milestone", goal_id="1", milestone_title="Complete API redesign", weight=5)
+goal(action="complete_milestone", milestone_id="1")
+goal(action="progress")  # Shows weighted progress
 ```
 
-Tasks and goals persist across sessions - pick up where you left off.
+Goals and milestones persist across sessions - pick up where you left off.
 
 ## How It Works
 

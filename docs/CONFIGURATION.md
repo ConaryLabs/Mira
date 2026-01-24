@@ -12,11 +12,11 @@ Mira uses environment variables for API keys and configuration. These can be set
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | Yes* | Powers experts, summaries, capabilities, documentation generation |
-| `GEMINI_API_KEY` | No | For embeddings (Google text-embedding-004) |
-| `OPENAI_API_KEY` | No | Alternative embedding provider (text-embedding-3-small) |
+| `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, capabilities, documentation (default provider) |
+| `GEMINI_API_KEY` | No | For embeddings and as alternative expert provider |
+| `OPENAI_API_KEY` | No | Alternative embedding/expert provider |
 
-*Required for most intelligence features. Mira runs without it but with reduced functionality.
+*At least one provider key (DeepSeek, Gemini, or OpenAI) is required for intelligence features. DeepSeek is the default. Mira runs without any keys but with reduced functionality (no experts, no summaries, no semantic search).
 
 ### Embeddings Configuration
 
@@ -203,11 +203,13 @@ configure_expert(action="delete", role="architect")
 
 ### Provider Options
 
-| Provider | Models |
-|----------|--------|
-| `deepseek` | `deepseek-reasoner` (default) |
-| `openai` | `gpt-4o`, `o1-preview`, etc. |
-| `gemini` | `gemini-2.0-flash`, `gemini-1.5-pro`, etc. |
+| Provider | Default Model | Best For |
+|----------|---------------|----------|
+| `deepseek` | `deepseek-reasoner` | Extended reasoning, multi-step analysis |
+| `openai` | `gpt-5.2` | General purpose |
+| `gemini` | `gemini-3-pro-preview` | Cost-effective, good reasoning |
+
+Use `configure_expert(action="providers")` to see available providers and their configured models.
 
 ---
 

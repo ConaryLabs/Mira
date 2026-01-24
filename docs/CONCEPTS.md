@@ -18,7 +18,9 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 | **Fact Type** | Categorizes the memory (see below) |
 | **Confidence** | A score (0.0 - 1.0) indicating reliability |
 | **Scope** | Where the memory applies (project, personal, team) |
+| **Status** | Lifecycle state: `candidate`, `verified`, or `rejected` |
 | **Category** | Optional grouping (e.g., "coding", "architecture") |
+| **Owner** | User ID or Team ID for shared/scoped memories |
 
 ### Fact Types
 
@@ -149,6 +151,15 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 | **Security** | Vulnerabilities and hardening |
 | **Documentation Writer** | Generates comprehensive documentation |
 
+### Provider Configuration
+
+Experts can be backed by different LLM providers via `configure_expert`:
+- **DeepSeek** (default) - Optimized for extended reasoning
+- **OpenAI** - GPT-4o and other models
+- **Gemini** - Google's models
+
+Each expert role can use a different provider based on the task requirements.
+
 ### How Experts Work
 
 Experts operate in a multi-turn **agentic loop**:
@@ -236,32 +247,39 @@ The Documentation Writer expert explores the actual implementation to produce ac
 
 ---
 
-## 7. Tasks and Goals
+## 7. Goals and Milestones
 
-Mira provides persistent task tracking that survives across sessions.
-
-### Tasks
-
-Individual work items with:
-- Title and description
-- Priority (low, medium, high, urgent)
-- Status (pending, in_progress, completed, blocked)
-
-```
-task(action="create", title="Add auth middleware", priority="high")
-task(action="list")
-task(action="update", task_id="123", status="completed")
-```
+Mira provides persistent goal tracking that survives across sessions. For in-session task tracking, use Claude Code's native task system.
 
 ### Goals
 
-Higher-level objectives with milestones:
+High-level objectives that span multiple sessions:
+- Title and description
+- Priority (low, medium, high, critical)
+- Status (planning, in_progress, blocked, completed, abandoned)
 
 ```
 goal(action="create", title="v2.0 Release", description="Ship new features")
-goal(action="add_milestone", goal_id="1", title="Complete API redesign")
-goal(action="progress")  → See overall progress
+goal(action="list")
+goal(action="update", goal_id="1", status="in_progress")
 ```
+
+### Milestones
+
+Quantifiable steps toward a goal with weighted progress:
+- **Title**: What needs to be done
+- **Weight**: Impact on goal progress (default: 1, higher = more significant)
+- **Status**: Completed or pending
+
+```
+goal(action="add_milestone", goal_id="1", milestone_title="Design API", weight=2)
+goal(action="add_milestone", goal_id="1", milestone_title="Implement endpoints", weight=5)
+goal(action="add_milestone", goal_id="1", milestone_title="Write tests", weight=3)
+goal(action="complete_milestone", milestone_id="1")  # Auto-updates goal progress
+goal(action="progress")  # Shows weighted progress percentage
+```
+
+Progress is calculated from weighted milestones: completing a weight-5 milestone contributes more than a weight-1 milestone.
 
 ---
 

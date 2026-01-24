@@ -183,7 +183,9 @@ Goal milestones for progress calculation.
 | completed | INTEGER | 1 if done |
 | weight | INTEGER | Weight for progress calc |
 
-### tasks
+### tasks (Deprecated)
+
+> **Note:** Task tracking via Mira is deprecated. Use Claude Code's native task system for in-session tracking, and Goals with Milestones for cross-session tracking.
 
 Actionable tasks, optionally linked to goals.
 
@@ -282,6 +284,29 @@ Code review findings from expert consultations (learning loop).
 | reviewed_at | TEXT | When reviewed |
 
 When findings are accepted/rejected, patterns are extracted into `corrections` for future expert consultations.
+
+### diff_analyses
+
+Semantic analysis of git diffs and commits.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| from_commit | TEXT | Base commit hash |
+| to_commit | TEXT | Target commit hash |
+| analysis_type | TEXT | `commit`, `staged`, `working` |
+| changes_json | TEXT | JSON breakdown of changes by type |
+| impact_json | TEXT | JSON analysis of affected code |
+| risk_json | TEXT | JSON risk assessment |
+| summary | TEXT | Human-readable summary |
+| files_changed | INTEGER | Number of files modified |
+| lines_added | INTEGER | Lines added |
+| lines_removed | INTEGER | Lines removed |
+| status | TEXT | `complete` or `partial` |
+| created_at | TEXT | Timestamp |
+
+Used by `analyze_diff` tool to cache semantic analysis of git changes.
 
 ---
 

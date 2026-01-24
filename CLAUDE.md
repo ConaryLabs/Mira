@@ -58,6 +58,9 @@ Use Grep/Glob directly only when:
 | What calls this function? | `grep -r "function_name"` | `find_callers("function_name")` |
 | List functions in file | `grep "fn " file.rs` | `get_symbols(file_path="file.rs")` |
 | Check if feature exists | `grep -r "feature"` | `check_capability("feature description")` |
+| Where is X defined? | `grep "struct X"` | `cclsp: find_definition` |
+| Rename a symbol | Find & replace | `cclsp: rename_symbol` |
+| Use external library | Guess from training data | `Context7: resolve-library-id` → `query-docs` |
 | Find config files | `find . -name "*.toml"` | `glob("**/*.toml")` - OK, exact pattern |
 | Find error message | `semantic_code_search("error 404")` | `grep "error 404"` - OK, literal string |
 
@@ -378,49 +381,171 @@ Use experts for second opinions before major decisions:
 | File structure | `get_symbols` |
 | What calls X? | `find_callers` |
 | What does X call? | `find_callees` |
+| **Where is X defined?** | **cclsp: `find_definition`** |
+| **All usages of X** | **cclsp: `find_references`** |
+| **Rename symbol safely** | **cclsp: `rename_symbol`** |
+| **Check for type errors** | **cclsp: `get_diagnostics`** |
 | Past decisions | `recall` |
 | Feature exists? | `check_capability` |
 | Codebase overview | `session_start` output |
-| Library documentation | `resolve-library-id` + `query-docs` |
+| **External library API** | **Context7: `resolve-library-id` → `query-docs`** |
 | Literal string search | `Grep` (OK for this) |
 | Exact filename pattern | `Glob` (OK for this) |
 
 ---
 
-## rust-analyzer LSP Plugin
+## LSP Tools (cclsp)
 
-The `rust-analyzer@claude-code-lsps` plugin is enabled in `~/.claude/settings.json`. It provides **passive background intelligence** - not directly callable tools.
+The `cclsp` MCP server provides precise code navigation via LSP.
+
+### When to Use cclsp
+
+Use cclsp for **precise, compiler-accurate** operations:
+
+1. **Jump to definition** - `find_definition` when you need exact location
+2. **Find all references** - `find_references` for any symbol (variables, types, not just functions)
+3. **Safe renaming** - `rename_symbol` for refactoring across files
+4. **Check for errors** - `get_diagnostics` without running full build
+
+### cclsp vs Mira
+
+| Task | cclsp | Mira |
+|------|-------|------|
+| "Where is X defined?" | `find_definition` - exact location | `semantic_code_search` - finds related code |
+| "What uses X?" | `find_references` - all usages | `find_callers` - function call sites only |
+| "Rename this variable" | `rename_symbol` - safe refactor | N/A |
+| "Any type errors?" | `get_diagnostics` - compiler errors | N/A |
+| "Find auth-related code" | N/A | `semantic_code_search` - concept search |
+
+### Examples
+
+<example>
+User: Rename the `process_request` function to `handle_request`
+Assistant: I'll use LSP to safely rename across all files.
+*Uses rename_symbol(file_path="src/handler.rs", symbol_name="process_request", new_name="handle_request")*
+Renamed in 5 files: handler.rs, middleware.rs, tests.rs...
+
+<reasoning>
+The assistant used cclsp rename_symbol because:
+1. Renaming requires updating all references
+2. LSP ensures no references are missed
+3. Handles imports and re-exports correctly
+</reasoning>
+</example>
+
+<example>
+User: Where is the Config struct defined?
+Assistant: Let me find the exact definition.
+*Uses find_definition(file_path="src/main.rs", symbol_name="Config")*
+Found: `src/config.rs:15`
+
+<reasoning>
+The assistant used find_definition because:
+1. User wants the exact location, not related code
+2. LSP provides precise line number
+3. Faster than searching for "struct Config"
+</reasoning>
+</example>
+
+<example>
+User: What uses the DatabasePool type?
+Assistant: Let me find all references.
+*Uses find_references(file_path="src/db/pool.rs", symbol_name="DatabasePool")*
+Found 23 references across 8 files...
+
+<reasoning>
+The assistant used find_references because:
+1. Need all usages, not just function calls
+2. Includes type annotations, impl blocks, imports
+3. More comprehensive than find_callers
+</reasoning>
+</example>
+
+---
+
+## rust-analyzer Background Diagnostics
+
+The `rust-analyzer@claude-code-lsps` plugin provides **passive background intelligence** in addition to the cclsp tools above.
 
 **What it does:**
 - Automatic diagnostics after file edits (type errors, unused variables, etc.)
 - Fix suggestions inline with errors
 - Surfaced via `<new-diagnostics>` in system reminders
 
-**Mira vs LSP:**
-
-| Capability | Mira | LSP |
-|------------|------|-----|
-| Invocation | Explicit tool calls | Automatic after edits |
-| Diagnostics | No | Yes, with fix suggestions |
-| Semantic search | Yes | No |
-| Memory/context | Yes | No |
-
-**Usage:** Just edit `.rs` files normally. Diagnostics appear automatically if there are errors. No explicit invocation needed.
+**Usage:** Just edit `.rs` files normally. Diagnostics appear automatically if there are errors.
 
 ---
 
-## Documentation MCP Servers
+## External Library Documentation
 
-### Context7
-- Provides up-to-date documentation and code examples for any library
-- Tools: `resolve-library-id` and `query-docs`
-- Always call `resolve-library-id` first to get library ID unless user provides ID in format `/org/project`
-- Auto-invoke when user asks about library documentation
+### CRITICAL: Use Context7 for Library Questions
 
-### OpenAI Docs
-- Provides documentation for OpenAI API, SDKs, and related tools
-- Tools: `search_openai_docs`, `fetch_openai_doc`, `list_openai_docs`, `list_api_endpoints`, `get_openapi_spec`
-- Use when working with OpenAI API, SDKs, ChatGPT Apps SDK, or Codex
+Before guessing at library APIs or using potentially outdated knowledge, check Context7.
+
+**Proactive triggers - use Context7 when:**
+1. **Implementing with external libraries** - Check current API before writing code
+2. **Debugging library errors** - Verify correct usage patterns
+3. **User asks "how do I use X"** - Get up-to-date examples
+4. **Uncertain about library API** - Don't guess, look it up
+5. **Library version matters** - Context7 has version-specific docs
+
+**Workflow:**
+```
+resolve-library-id(libraryName="tokio", query="async runtime spawn tasks")
+query-docs(libraryId="/tokio-rs/tokio", query="how to spawn async tasks")
+```
+
+### When NOT to Use Context7
+
+- Standard library features (Rust std, Python builtins, etc.)
+- You're confident in the API from recent experience
+- Simple operations with well-known patterns
+
+### Examples
+
+<example>
+User: Help me add async file reading with tokio
+Assistant: Let me check the current tokio API for file operations.
+*Uses resolve-library-id(libraryName="tokio", query="async file reading")*
+*Uses query-docs(libraryId="/tokio-rs/tokio", query="async file reading tokio::fs")*
+Found: Use `tokio::fs::read_to_string` for async file reading...
+
+<reasoning>
+The assistant used Context7 because:
+1. Tokio APIs evolve and may have changed
+2. Getting current examples ensures correct usage
+3. Better than guessing at async patterns
+</reasoning>
+</example>
+
+<example>
+User: I'm getting an error with serde deserialization
+Assistant: Let me check the current serde docs for the correct pattern.
+*Uses resolve-library-id(libraryName="serde", query="deserialization derive")*
+*Uses query-docs(libraryId="/serde-rs/serde", query="deserialize struct derive macro")*
+
+<reasoning>
+The assistant used Context7 because:
+1. Serde has specific derive patterns that are easy to get wrong
+2. Current docs show the correct attribute syntax
+3. Helps diagnose if the error is from incorrect usage
+</reasoning>
+</example>
+
+<example>
+User: Use reqwest to make an HTTP POST
+Assistant: I'll implement the POST request using reqwest.
+*Uses resolve-library-id(libraryName="reqwest", query="HTTP POST request")*
+*Uses query-docs(libraryId="/seanmonstar/reqwest", query="POST request with JSON body")*
+
+<reasoning>
+The assistant used Context7 because:
+1. reqwest API has async/blocking variants
+2. JSON body handling has specific patterns
+3. Current docs ensure correct Client usage
+</reasoning>
+</example>
+
 
 ---
 

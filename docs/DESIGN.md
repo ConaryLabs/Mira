@@ -183,40 +183,50 @@ Mira stores everything in SQLite and embeds vector search using `sqlite-vec`
 
 ---
 
-## Decision 3: DeepSeek Reasoner for Intelligence
+## Decision 3: Multi-Provider Intelligence
 
 ### What We Chose
 
-Mira's intelligence features default to DeepSeek Reasoner when available.
-This includes experts, background summaries, capability detection, and more.
+Mira's intelligence features use a **Provider Factory** that supports DeepSeek,
+OpenAI, and Gemini. While DeepSeek Reasoner is the default for its reasoning
+capabilities, users can configure different providers per expert role.
 
-### Why DeepSeek Reasoner
+### Why Multi-Provider
 
-**1) Extended thinking fits expert tools**
-- Mira's experts do multi-step work: explore code, call tools repeatedly,
-  synthesize findings, produce recommendations.
-- Models optimized for extended reasoning excel at this.
+**1) Different tasks benefit from different models**
+- Extended reasoning tasks (architects, security) → DeepSeek Reasoner
+- Alternative providers → Gemini or OpenAI
+- Cost optimization → Choose based on task complexity
 
-**2) Tool access matters**
-- Experts are not just "answerers" - they're tool-using loops that can
-  search code, trace call graphs, read files, and recall memories.
+**2) Resilience and choice**
+- No single-provider lock-in
+- If one provider is down, switch to another
+- Users can optimize for cost, speed, or quality
 
-**3) Cost-effective for background work**
-- Background tasks like "summarize this module" require massive token usage.
-- DeepSeek offers high intelligence-to-cost ratio for ambient processing.
+**3) Tool access across providers**
+- All providers support tool-calling for the agentic expert loop
+- Experts can search code, trace call graphs, read files, recall memories
+
+### Configuration
+
+```
+configure_expert(action="set", role="architect", provider="gemini", model="gemini-3-pro-preview")
+configure_expert(action="set", role="code_reviewer", provider="deepseek")
+configure_expert(action="providers")  # List available providers
+```
 
 ### Tradeoffs
 
 | Pro | Con |
 |-----|-----|
-| Deep reasoning capability | Requires API key for full functionality |
-| Cost-effective | Higher latency than chat models |
-| Structured output | External dependency |
+| Provider choice | Requires at least one API key |
+| Cost optimization | Configuration complexity |
+| No vendor lock-in | Different providers have different strengths |
 
-### Provider Flexibility
+### Default Behavior
 
-Multi-provider support already exists via `ProviderFactory`. Experts can be
-configured to use different providers per role. The prompt strategy is designed
+DeepSeek Reasoner remains the default for its extended thinking capabilities,
+which excel at multi-step expert analysis. The prompt strategy is designed
 for cache efficiency with static prefixes.
 
 ---
@@ -346,7 +356,7 @@ The schema is "product-shaped," not purely technical:
 | Code | `code_symbols`, `call_graph`, `vec_code` | Code intelligence |
 | Sessions | `sessions`, `tool_history` | Provenance and history |
 | Background | `pending_embeddings`, `project_briefings` | Work queues |
-| Workflow | `tasks`, `goals`, `milestones` | Task tracking |
+| Workflow | `goals`, `milestones` | Goal and milestone tracking |
 | Learning | `review_findings`, `corrections` | Expert feedback loop |
 
 ### Embeddings and Search
@@ -410,7 +420,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
 | Storage | SQLite single-file | Horizontal scaling |
-| Intelligence | DeepSeek Reasoner | Offline-only operation |
+| Intelligence | Multi-provider (DeepSeek default) | Requires at least one API key |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |
 | Data | Local-first | Built-in sync |
