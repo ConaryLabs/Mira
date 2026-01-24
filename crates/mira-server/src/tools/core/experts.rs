@@ -779,6 +779,8 @@ fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFinding
 
 /// Get learned patterns from database and format for context injection (async)
 async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> String {
+    use crate::db::get_relevant_corrections_sync;
+
     // Map expert role to correction type
     let correction_type: Option<&'static str> = match expert_role {
         "code_reviewer" => Some("code_quality"),
@@ -786,16 +788,16 @@ async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> Str
         _ => None,
     };
 
-    // Use spawn_blocking with the existing db method to avoid blocking async runtime
-    let db = ctx.db().clone();
     let correction_type_owned = correction_type.map(String::from);
 
-    let corrections = tokio::task::spawn_blocking(move || {
-        db.get_relevant_corrections(None, correction_type_owned.as_deref(), 10)
-            .unwrap_or_default()
-    })
-    .await
-    .unwrap_or_default();
+    let corrections = ctx
+        .pool()
+        .interact(move |conn| {
+            get_relevant_corrections_sync(conn, None, correction_type_owned.as_deref(), 10)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .unwrap_or_else(|_| Vec::new());
 
     if corrections.is_empty() {
         return String::new();
@@ -832,6 +834,8 @@ async fn store_findings<C: ToolContext>(
     findings: &[ParsedFinding],
     expert_role: &str,
 ) -> usize {
+    use crate::db::store_review_finding_sync;
+
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_or_create_session().await;
     let user_id = ctx.get_user_identity();
@@ -842,19 +846,36 @@ async fn store_findings<C: ToolContext>(
             continue; // Skip very short findings
         }
 
-        let result = ctx.db().store_review_finding(
-            project_id,
-            expert_role,
-            finding.file_path.as_deref(),
-            &finding.finding_type,
-            &finding.severity,
-            &finding.content,
-            finding.code_snippet.as_deref(),
-            finding.suggestion.as_deref(),
-            0.7, // Default confidence for parsed findings
-            user_id.as_deref(),
-            Some(&session_id),
-        );
+        let expert_role = expert_role.to_string();
+        let file_path = finding.file_path.clone();
+        let finding_type = finding.finding_type.clone();
+        let severity = finding.severity.clone();
+        let content = finding.content.clone();
+        let code_snippet = finding.code_snippet.clone();
+        let suggestion = finding.suggestion.clone();
+        let user_id_clone = user_id.clone();
+        let session_id_clone = session_id.clone();
+
+        let result = ctx
+            .pool()
+            .interact(move |conn| {
+                store_review_finding_sync(
+                    conn,
+                    project_id,
+                    &expert_role,
+                    file_path.as_deref(),
+                    &finding_type,
+                    &severity,
+                    &content,
+                    code_snippet.as_deref(),
+                    suggestion.as_deref(),
+                    0.7, // Default confidence for parsed findings
+                    user_id_clone.as_deref(),
+                    Some(&session_id_clone),
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await;
 
         if result.is_ok() {
             stored += 1;
@@ -1239,6 +1260,10 @@ pub async fn configure_expert<C: ToolContext>(
     provider: Option<String>,
     model: Option<String>,
 ) -> Result<String, String> {
+    use crate::db::{
+        delete_custom_prompt_sync, get_expert_config_sync, list_custom_prompts_sync,
+        set_expert_config_sync,
+    };
     use crate::llm::Provider;
 
     match action.as_str() {
@@ -1268,18 +1293,29 @@ pub async fn configure_expert<C: ToolContext>(
                 return Err("At least one of prompt, provider, or model is required for 'set' action".to_string());
             }
 
-            ctx.db().set_expert_config(
-                role_key,
-                prompt.as_deref(),
-                parsed_provider,
-                model.as_deref(),
-            ).map_err(|e| e.to_string())?;
+            let role_key_clone = role_key.to_string();
+            let prompt_clone = prompt.clone();
+            let model_clone = model.clone();
+
+            ctx.pool()
+                .interact(move |conn| {
+                    set_expert_config_sync(
+                        conn,
+                        &role_key_clone,
+                        prompt_clone.as_deref(),
+                        parsed_provider,
+                        model_clone.as_deref(),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
 
             let mut msg = format!("Configuration updated for '{}' expert:", role_key);
             if prompt.is_some() {
                 msg.push_str(" prompt set");
             }
-            if let Some(ref p) = parsed_provider {
+            if let Some(ref p) = provider {
                 msg.push_str(&format!(" provider={}", p));
             }
             if let Some(ref m) = model {
@@ -1299,29 +1335,34 @@ pub async fn configure_expert<C: ToolContext>(
                     role_key
                 ))?;
 
-            match ctx.db().get_expert_config(role_key) {
-                Ok(config) => {
-                    let mut output = format!("Configuration for '{}' ({}):\n", role_key, expert.name());
-                    output.push_str(&format!("  Provider: {}\n", config.provider));
-                    if let Some(ref m) = config.model {
-                        output.push_str(&format!("  Model: {}\n", m));
-                    } else {
-                        output.push_str(&format!("  Model: {} (default)\n", config.provider.default_model()));
-                    }
-                    if let Some(ref p) = config.prompt {
-                        let preview = if p.len() > 200 {
-                            format!("{}...", &p[..200])
-                        } else {
-                            p.clone()
-                        };
-                        output.push_str(&format!("  Custom prompt: {}\n", preview));
-                    } else {
-                        output.push_str("  Prompt: (default)\n");
-                    }
-                    Ok(output)
-                }
-                Err(e) => Err(e.to_string()),
+            let role_key_clone = role_key.to_string();
+            let config = ctx
+                .pool()
+                .interact(move |conn| {
+                    get_expert_config_sync(conn, &role_key_clone)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut output = format!("Configuration for '{}' ({}):\n", role_key, expert.name());
+            output.push_str(&format!("  Provider: {}\n", config.provider));
+            if let Some(ref m) = config.model {
+                output.push_str(&format!("  Model: {}\n", m));
+            } else {
+                output.push_str(&format!("  Model: {} (default)\n", config.provider.default_model()));
             }
+            if let Some(ref p) = config.prompt {
+                let preview = if p.len() > 200 {
+                    format!("{}...", &p[..200])
+                } else {
+                    p.clone()
+                };
+                output.push_str(&format!("  Custom prompt: {}\n", preview));
+            } else {
+                output.push_str("  Prompt: (default)\n");
+            }
+            Ok(output)
         }
 
         "delete" => {
@@ -1336,38 +1377,51 @@ pub async fn configure_expert<C: ToolContext>(
                 ));
             }
 
-            match ctx.db().delete_custom_prompt(role_key) {
-                Ok(true) => Ok(format!("Configuration deleted for '{}'. Reverted to defaults.", role_key)),
-                Ok(false) => Ok(format!("No custom configuration was set for '{}'.", role_key)),
-                Err(e) => Err(e.to_string()),
+            let role_key_clone = role_key.to_string();
+            let deleted = ctx
+                .pool()
+                .interact(move |conn| {
+                    delete_custom_prompt_sync(conn, &role_key_clone)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if deleted {
+                Ok(format!("Configuration deleted for '{}'. Reverted to defaults.", role_key))
+            } else {
+                Ok(format!("No custom configuration was set for '{}'.", role_key))
             }
         }
 
         "list" => {
-            match ctx.db().list_custom_prompts() {
-                Ok(configs) => {
-                    if configs.is_empty() {
-                        Ok("No custom configurations. All experts use default settings.".to_string())
+            let configs = ctx
+                .pool()
+                .interact(move |conn| {
+                    list_custom_prompts_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if configs.is_empty() {
+                Ok("No custom configurations. All experts use default settings.".to_string())
+            } else {
+                let mut output = format!("{} expert configurations:\n\n", configs.len());
+                for (role_key, prompt_text, provider_str, model_opt) in configs {
+                    let prompt_preview = if prompt_text.len() > 50 {
+                        format!("{}...", &prompt_text[..50])
+                    } else if prompt_text.is_empty() {
+                        "(default)".to_string()
                     } else {
-                        let mut output = format!("{} expert configurations:\n\n", configs.len());
-                        for (role_key, prompt_text, provider_str, model_opt) in configs {
-                            let prompt_preview = if prompt_text.len() > 50 {
-                                format!("{}...", &prompt_text[..50])
-                            } else if prompt_text.is_empty() {
-                                "(default)".to_string()
-                            } else {
-                                prompt_text
-                            };
-                            let model_str = model_opt.as_deref().unwrap_or("default");
-                            output.push_str(&format!(
-                                "  {}: provider={}, model={}, prompt={}\n",
-                                role_key, provider_str, model_str, prompt_preview
-                            ));
-                        }
-                        Ok(output)
-                    }
+                        prompt_text
+                    };
+                    let model_str = model_opt.as_deref().unwrap_or("default");
+                    output.push_str(&format!(
+                        "  {}: provider={}, model={}, prompt={}\n",
+                        role_key, provider_str, model_str, prompt_preview
+                    ));
                 }
-                Err(e) => Err(e.to_string()),
+                Ok(output)
             }
         }
 
