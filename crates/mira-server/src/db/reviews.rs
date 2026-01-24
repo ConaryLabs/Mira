@@ -2,9 +2,88 @@
 // Database operations for code review findings and learned patterns
 
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 use super::Database;
+
+// ============================================================================
+// Sync functions for pool.interact() usage
+// ============================================================================
+
+/// Store a new review finding (sync version for pool.interact)
+#[allow(clippy::too_many_arguments)]
+pub fn store_review_finding_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    expert_role: &str,
+    file_path: Option<&str>,
+    finding_type: &str,
+    severity: &str,
+    content: &str,
+    code_snippet: Option<&str>,
+    suggestion: Option<&str>,
+    confidence: f64,
+    user_id: Option<&str>,
+    session_id: Option<&str>,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO review_findings (
+            project_id, expert_role, file_path, finding_type, severity,
+            content, code_snippet, suggestion, confidence, user_id, session_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            project_id,
+            expert_role,
+            file_path,
+            finding_type,
+            severity,
+            content,
+            code_snippet,
+            suggestion,
+            confidence,
+            user_id,
+            session_id
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Get relevant corrections for context injection (sync version for pool.interact)
+pub fn get_relevant_corrections_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    correction_type: Option<&str>,
+    limit: usize,
+) -> rusqlite::Result<Vec<Correction>> {
+    let sql = match correction_type {
+        Some(_) => "SELECT id, project_id, what_was_wrong, what_is_right, correction_type,
+                           scope, confidence, occurrence_count, acceptance_rate, created_at
+                    FROM corrections
+                    WHERE (project_id = ? OR project_id IS NULL OR scope = 'global')
+                          AND correction_type = ?
+                          AND confidence >= 0.5
+                    ORDER BY acceptance_rate DESC, occurrence_count DESC
+                    LIMIT ?",
+        None => "SELECT id, project_id, what_was_wrong, what_is_right, correction_type,
+                        scope, confidence, occurrence_count, acceptance_rate, created_at
+                 FROM corrections
+                 WHERE (project_id = ? OR project_id IS NULL OR scope = 'global')
+                       AND confidence >= 0.5
+                 ORDER BY acceptance_rate DESC, occurrence_count DESC
+                 LIMIT ?",
+    };
+
+    let mut stmt = conn.prepare(sql)?;
+    let rows = match correction_type {
+        Some(ct) => stmt.query_map(params![project_id, ct, limit as i64], parse_correction_row)?,
+        None => stmt.query_map(params![project_id, limit as i64], parse_correction_row)?,
+    };
+    rows.collect()
+}
+
+// ============================================================================
+// Types and Database impl methods
+// ============================================================================
 
 /// A code review finding from an expert consultation
 #[derive(Debug, Clone)]

@@ -40,7 +40,10 @@ pub use cartographer::{
     get_modules_needing_summaries_sync,
     update_module_purposes_sync,
 };
-pub use config::{EmbeddingModelCheck, ExpertConfig};
+pub use config::{
+    EmbeddingModelCheck, ExpertConfig,
+    get_expert_config_sync, set_expert_config_sync, delete_custom_prompt_sync, list_custom_prompts_sync,
+};
 pub use index::{
     clear_project_index_sync,
     clear_file_index_sync,
@@ -82,7 +85,7 @@ pub use memory::{
     record_memory_access_sync,
     delete_memory_sync,
 };
-pub use reviews::{Correction, ReviewFinding};
+pub use reviews::{Correction, ReviewFinding, store_review_finding_sync, get_relevant_corrections_sync};
 pub use teams::{Team, TeamMember};
 pub use types::*;
 pub use tasks::{
