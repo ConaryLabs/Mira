@@ -12,7 +12,9 @@ pub enum ApiType {
     /// Anthropic Messages API (/v1/messages)
     #[default]
     Anthropic,
-    /// OpenAI-compatible API (/v1/chat/completions)
+    /// OpenAI-compatible API format (/v1/chat/completions)
+    /// Note: Refers to the API protocol format, not the OpenAI service
+    /// Used by DeepSeek and other providers following this standard
     Openai,
 }
 
@@ -66,7 +68,7 @@ pub struct BackendConfig {
     /// Whether this backend is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// API type (anthropic or openai) - affects endpoint and request format
+    /// API type (anthropic or openai-compatible format) - affects endpoint and request format
     #[serde(default)]
     pub api_type: ApiType,
     /// Optional model mapping (proxy model name -> backend model name)

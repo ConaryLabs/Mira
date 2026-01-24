@@ -1006,7 +1006,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
 CREATE TABLE IF NOT EXISTS system_prompts (
     role TEXT PRIMARY KEY,             -- 'architect', 'plan_reviewer', etc.
     prompt TEXT NOT NULL,              -- custom system prompt
-    provider TEXT DEFAULT 'deepseek',  -- LLM provider: 'deepseek', 'openai', 'gemini'
+    provider TEXT DEFAULT 'deepseek',  -- LLM provider: 'deepseek', 'gemini'
     model TEXT,                        -- custom model name (optional)
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );

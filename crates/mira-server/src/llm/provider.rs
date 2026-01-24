@@ -86,8 +86,8 @@ pub trait LlmClient: Send + Sync {
     ) -> Result<ChatResult>;
 
     /// Send a stateful chat request with optional previous response ID for continuation.
-    /// This is used by providers like OpenAI that support stateful conversations via
-    /// the Responses API. The previous_response_id allows the provider to maintain
+    /// This is used by providers that support stateful conversations via
+    /// a continuation API. The previous_response_id allows the provider to maintain
     /// context including reasoning items across turns.
     ///
     /// Default implementation ignores previous_response_id and calls chat().

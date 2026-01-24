@@ -1041,7 +1041,7 @@ pub async fn consult_expert<C: ToolContext>(
 
     let mut total_tool_calls = 0;
     let mut iterations = 0;
-    // Track previous response ID for stateful providers (like OpenAI)
+    // Track previous response ID for stateful providers
     // This preserves reasoning context across tool-calling turns
     let mut previous_response_id: Option<String> = None;
 
@@ -1056,7 +1056,7 @@ pub async fn consult_expert<C: ToolContext>(
                 ));
             }
 
-            // For stateful providers (OpenAI Responses API), only send new messages after
+            // For stateful providers, only send new messages after
             // the first call. The previous_response_id preserves context server-side.
             // For non-stateful providers (DeepSeek, Gemini), always send full history.
             let messages_to_send = if previous_response_id.is_some() && chat_client.supports_stateful() {
@@ -1357,7 +1357,7 @@ pub async fn configure_expert<C: ToolContext>(
             // Parse provider if provided
             let parsed_provider = if let Some(ref p) = provider {
                 Some(Provider::from_str(p).ok_or_else(|| {
-                    format!("Invalid provider '{}'. Valid providers: deepseek, openai, gemini", p)
+                    format!("Invalid provider '{}'. Valid providers: deepseek, gemini", p)
                 })?)
             } else {
                 None
@@ -1506,7 +1506,7 @@ pub async fn configure_expert<C: ToolContext>(
             let available = factory.available_providers();
 
             if available.is_empty() {
-                Ok("No LLM providers available. Set DEEPSEEK_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.".to_string())
+                Ok("No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.".to_string())
             } else {
                 let mut output = format!("{} LLM providers available:\n\n", available.len());
                 for p in &available {

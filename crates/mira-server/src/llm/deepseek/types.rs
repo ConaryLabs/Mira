@@ -64,7 +64,7 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
-    /// Optional item ID (used by OpenAI Responses API which has separate id and call_id)
+    /// Optional item ID for providers with extended tool call tracking
     #[serde(skip_serializing_if = "Option::is_none")]
     pub item_id: Option<String>,
     #[serde(rename = "type")]

@@ -441,7 +441,7 @@ impl LlmClient for GeminiClient {
             if let Some(ref tool_calls) = msg.tool_calls {
                 for tc in tool_calls {
                     call_id_to_name.insert(tc.id.clone(), tc.function.name.clone());
-                    // Also map item_id if present (used by OpenAI, but maybe present in shared structs)
+                    // Also map item_id if present (for providers with extended tool call tracking)
                     if let Some(ref item_id) = tc.item_id {
                          call_id_to_name.insert(item_id.clone(), tc.function.name.clone());
                     }
