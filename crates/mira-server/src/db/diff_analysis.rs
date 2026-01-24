@@ -114,6 +114,24 @@ pub fn get_cached_diff_analysis_sync(
     }
 }
 
+/// Get recent diff analyses for a project (sync version for pool.interact())
+pub fn get_recent_diff_analyses_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    limit: usize,
+) -> rusqlite::Result<Vec<DiffAnalysis>> {
+    let sql = "SELECT id, project_id, from_commit, to_commit, analysis_type,
+                      changes_json, impact_json, risk_json, summary,
+                      files_changed, lines_added, lines_removed, status, created_at
+               FROM diff_analyses
+               WHERE project_id = ? OR project_id IS NULL
+               ORDER BY created_at DESC
+               LIMIT ?";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![project_id, limit as i64], parse_diff_analysis_row)?;
+    rows.collect()
+}
+
 impl Database {
     /// Store a new diff analysis
     pub fn store_diff_analysis(

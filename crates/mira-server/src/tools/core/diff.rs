@@ -4,9 +4,10 @@
 use std::path::Path;
 
 use crate::background::diff_analysis::{
-    analyze_diff, format_diff_analysis, get_head_commit, get_staged_diff, get_working_diff,
-    resolve_ref, DiffAnalysisResult, DiffStats, RiskAssessment,
+    analyze_diff, build_impact_graph, format_diff_analysis, get_head_commit, get_staged_diff,
+    get_working_diff, map_to_symbols, resolve_ref, DiffAnalysisResult, DiffStats, RiskAssessment,
 };
+use crate::db::get_recent_diff_analyses_sync;
 use crate::search::format_project_header;
 use crate::tools::core::ToolContext;
 
@@ -95,9 +96,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
     diff_content: &str,
     include_impact: bool,
 ) -> Result<String, String> {
-    use crate::background::diff_analysis::{
-        analyze_diff_semantic, build_impact_graph, calculate_risk_level, map_to_symbols,
-    };
+    use crate::background::diff_analysis::{analyze_diff_semantic, calculate_risk_level};
 
     let deepseek = ctx
         .deepseek()
@@ -122,25 +121,25 @@ async fn analyze_staged_or_working<C: ToolContext>(
 
     // Build impact if requested
     let impact = if include_impact && !changes.is_empty() {
-        let db = ctx.db().clone();
+        let pool = ctx.pool().clone();
         let files = stats.files.clone();
         let changes_clone = changes.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = db.conn();
-            let symbols = map_to_symbols(&conn, project_id, &files);
-            if symbols.is_empty() {
+        pool.interact(move |conn| {
+            let symbols = map_to_symbols(conn, project_id, &files);
+            let result = if symbols.is_empty() {
                 let pseudo_symbols: Vec<(String, String, String)> = changes_clone
                     .iter()
                     .filter_map(|c| {
-                        c.symbol_name.as_ref().map(|name| {
-                            (name.clone(), "function".to_string(), c.file_path.clone())
-                        })
+                        c.symbol_name
+                            .as_ref()
+                            .map(|name| (name.clone(), "function".to_string(), c.file_path.clone()))
                     })
                     .collect();
-                build_impact_graph(&conn, project_id, &pseudo_symbols, 2)
+                build_impact_graph(conn, project_id, &pseudo_symbols, 2)
             } else {
-                build_impact_graph(&conn, project_id, &symbols, 2)
-            }
+                build_impact_graph(conn, project_id, &symbols, 2)
+            };
+            Ok::<_, anyhow::Error>(result)
         })
         .await
         .ok()
@@ -299,8 +298,12 @@ pub async fn list_diff_analyses<C: ToolContext>(
     let limit = limit.unwrap_or(10) as usize;
 
     let analyses = ctx
-        .db()
-        .get_recent_diff_analyses(project_id, limit)
+        .pool()
+        .interact(move |conn| {
+            get_recent_diff_analyses_sync(conn, project_id, limit)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if analyses.is_empty() {
