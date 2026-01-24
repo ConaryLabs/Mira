@@ -101,7 +101,7 @@ pub use tasks::{
 };
 pub use session::{
     create_session_sync, get_recent_sessions_sync, get_session_history_sync,
-    build_session_recap_sync,
+    build_session_recap_sync, get_session_stats_sync,
 };
 pub use chat::get_last_chat_time_sync;
 pub use project::{
@@ -117,6 +117,9 @@ pub use project::{
     update_project_briefing_sync,
     set_server_state_sync,
     get_server_state_sync,
+    get_project_briefing_sync,
+    mark_session_for_briefing_sync,
+    save_active_project_sync,
 };
 pub use background::{
     get_scan_info_sync,

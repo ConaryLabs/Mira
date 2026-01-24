@@ -160,6 +160,31 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
     recap_parts.join("\n\n")
 }
 
+/// Get tool call count and unique tools for a session - sync version
+pub fn get_session_stats_sync(conn: &Connection, session_id: &str) -> rusqlite::Result<(usize, Vec<String>)> {
+    // Get count
+    let count: usize = conn.query_row(
+        "SELECT COUNT(*) FROM tool_history WHERE session_id = ?",
+        params![session_id],
+        |row| row.get(0),
+    )?;
+
+    // Get unique tool names (top 5 most used)
+    let mut stmt = conn.prepare(
+        "SELECT tool_name, COUNT(*) as cnt FROM tool_history
+         WHERE session_id = ?
+         GROUP BY tool_name
+         ORDER BY cnt DESC
+         LIMIT 5",
+    )?;
+    let tools: Vec<String> = stmt
+        .query_map(params![session_id], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok((count, tools))
+}
+
 // ============================================================================
 // Database impl methods
 // ============================================================================

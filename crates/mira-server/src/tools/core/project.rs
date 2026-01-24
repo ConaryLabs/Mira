@@ -9,7 +9,9 @@ use crate::cartographer;
 use crate::db::{
     get_or_create_project_sync, update_project_name_sync, upsert_session_sync,
     search_memories_text_sync, get_preferences_sync, get_health_alerts_sync,
-    Database,
+    set_server_state_sync, get_project_briefing_sync, mark_session_for_briefing_sync,
+    save_active_project_sync, get_recent_sessions_sync, get_session_stats_sync,
+    store_memory_sync, StoreMemoryParams,
 };
 use crate::db::documentation::count_doc_tasks_by_status;
 use crate::tools::core::claude_local;
@@ -133,8 +135,13 @@ async fn init_project<C: ToolContext>(
             .await;
     }
 
-    // Persist active project for restart recovery (still use legacy db for this non-critical operation)
-    if let Err(e) = ctx.db().save_active_project(project_path) {
+    // Persist active project for restart recovery
+    let path_for_save = project_path.to_string();
+    if let Err(e) = ctx
+        .pool()
+        .interact(move |conn| save_active_project_sync(conn, &path_for_save).map_err(|e| anyhow::anyhow!(e)))
+        .await
+    {
         tracing::warn!("Failed to persist active project: {}", e);
     }
 
@@ -175,32 +182,56 @@ pub async fn session_start<C: ToolContext>(
     name: Option<String>,
     session_id: Option<String>,
 ) -> Result<String, String> {
-    let db = ctx.db();
-
     // Initialize project (shared with set_project)
     let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
 
     // Set session ID (use provided, or generate new)
     let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // Create session via pool (same database as project)
-    let sid_clone = sid.clone();
-    ctx.pool()
+    // Gather system context content (synchronous, no DB needed)
+    let system_context = gather_system_context_content();
+
+    // Create session, persist state, store system context, and get briefing in one pool call
+    let sid_for_db = sid.clone();
+    let briefing_text: Option<String> = ctx
+        .pool()
         .interact(move |conn| {
-            upsert_session_sync(conn, &sid_clone, Some(project_id)).map_err(|e| anyhow::anyhow!(e))
+            // Create/update session
+            upsert_session_sync(conn, &sid_for_db, Some(project_id))?;
+
+            // Persist active session ID for restart recovery
+            set_server_state_sync(conn, "active_session_id", &sid_for_db)?;
+
+            // Store system context as memory
+            if let Some(ref content) = system_context {
+                let _ = store_memory_sync(conn, StoreMemoryParams {
+                    project_id: None, // global
+                    key: Some("system_context"),
+                    content,
+                    fact_type: "context",
+                    category: Some("system"),
+                    confidence: 1.0,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                });
+            }
+
+            // Get project briefing
+            let briefing = get_project_briefing_sync(conn, project_id)
+                .ok()
+                .flatten()
+                .and_then(|b| b.briefing_text);
+
+            // Mark session for briefing (clears briefing for next time)
+            let _ = mark_session_for_briefing_sync(conn, project_id);
+
+            Ok(briefing)
         })
         .await
         .map_err(|e| e.to_string())?;
 
     ctx.set_session_id(sid.clone()).await;
-
-    // Persist active session ID for restart recovery (CLI tools)
-    if let Err(e) = db.set_server_state("active_session_id", &sid) {
-        tracing::warn!("Failed to persist active session ID: {}", e);
-    }
-
-    // Gather and store system context (for bash tool awareness)
-    gather_system_context(db);
 
     // Import CLAUDE.local.md entries as memories (if file exists)
     let imported_count = claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
@@ -222,43 +253,36 @@ pub async fn session_start<C: ToolContext>(
         ));
     }
 
-    // Check for "What's New" briefing (git changes since last session)
-    if let Ok(Some(briefing)) = db.get_project_briefing(project_id) {
-        if let Some(text) = &briefing.briefing_text {
-            response.push_str(&format!("\nWhat's new: {}\n", text));
-        }
+    // Check for "What's New" briefing
+    if let Some(text) = briefing_text {
+        response.push_str(&format!("\nWhat's new: {}\n", text));
     }
 
-    // Mark that a session occurred (clears briefing for next time)
-    if let Err(e) = db.mark_session_for_briefing(project_id) {
-        tracing::warn!("Failed to mark session for briefing: {}", e);
-    }
+    // Get recent sessions and their stats in one pool call
+    let sid_for_filter = sid.clone();
+    let recent_session_data: Vec<(String, String, Option<String>, usize, Vec<String>)> = ctx
+        .pool()
+        .interact(move |conn| {
+            let sessions = get_recent_sessions_sync(conn, project_id, 4).unwrap_or_default();
+            let mut result = Vec::new();
+            for sess in sessions.into_iter().filter(|s| s.id != sid_for_filter).take(3) {
+                let (tool_count, tools) = get_session_stats_sync(conn, &sess.id).unwrap_or((0, vec![]));
+                result.push((sess.id, sess.last_activity, sess.summary, tool_count, tools));
+            }
+            Ok(result)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // Show recent sessions (skip current, show last 3)
-    let recent_sessions = db
-        .get_recent_sessions(project_id, 4)
-        .unwrap_or_default();
-
-    let previous_sessions: Vec<_> = recent_sessions
-        .iter()
-        .filter(|s| s.id != sid)
-        .take(3)
-        .collect();
-
-    if !previous_sessions.is_empty() {
+    if !recent_session_data.is_empty() {
         response.push_str("\nRecent sessions:\n");
-        for sess in &previous_sessions {
-            let short_id = &sess.id[..8];
-            let timestamp = &sess.last_activity[..16]; // YYYY-MM-DD HH:MM
+        for (sess_id, last_activity, summary, tool_count, tools) in &recent_session_data {
+            let short_id = &sess_id[..8.min(sess_id.len())];
+            let timestamp = &last_activity[..16.min(last_activity.len())];
 
-            // Get session stats
-            let (tool_count, tools) = db
-                .get_session_stats(&sess.id)
-                .unwrap_or((0, vec![]));
-
-            if let Some(ref summary) = sess.summary {
-                response.push_str(&format!("  [{}] {} - {}\n", short_id, timestamp, summary));
-            } else if tool_count > 0 {
+            if let Some(sum) = summary {
+                response.push_str(&format!("  [{}] {} - {}\n", short_id, timestamp, sum));
+            } else if *tool_count > 0 {
                 let tools_str = tools.join(", ");
                 response.push_str(&format!(
                     "  [{}] {} - {} tool calls ({})\n",
@@ -375,16 +399,16 @@ pub async fn session_start<C: ToolContext>(
     }
 
     // Show database path
-    if let Some(db_path) = db.path() {
-        response.push_str(&format!("\nDatabase: {}\n", db_path));
+    if let Some(db_path) = ctx.pool().path() {
+        response.push_str(&format!("\nDatabase: {}\n", db_path.display()));
     }
 
     response.push_str("\nReady.");
     Ok(response)
 }
 
-/// Gather and store system context for bash tool usage
-fn gather_system_context(db: &Database) {
+/// Gather system context content for bash tool usage (returns content string, does not store)
+fn gather_system_context_content() -> Option<String> {
     let mut context_parts = Vec::new();
 
     // OS info
@@ -463,19 +487,10 @@ fn gather_system_context(db: &Database) {
         }
     }
 
-    // Store as memory with key for upsert
-    if !context_parts.is_empty() {
-        let content = context_parts.join("\n");
-        if let Err(e) = db.store_memory(
-            None, // global, not project-specific
-            Some("system_context"),
-            &content,
-            "context",
-            Some("system"),
-            1.0,
-        ) {
-            tracing::warn!("Failed to store system context memory: {}", e);
-        }
+    if context_parts.is_empty() {
+        None
+    } else {
+        Some(context_parts.join("\n"))
     }
 }
 

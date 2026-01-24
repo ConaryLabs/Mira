@@ -235,6 +235,53 @@ pub fn get_server_state_sync(conn: &Connection, key: &str) -> rusqlite::Result<O
     }
 }
 
+/// Get project briefing (What's New since last session) - sync version
+pub fn get_project_briefing_sync(
+    conn: &Connection,
+    project_id: i64,
+) -> rusqlite::Result<Option<super::types::ProjectBriefing>> {
+    let result = conn.query_row(
+        "SELECT project_id, last_known_commit, last_session_at, briefing_text, generated_at
+         FROM project_briefings WHERE project_id = ?",
+        [project_id],
+        |row| Ok(super::types::ProjectBriefing {
+            project_id: row.get(0)?,
+            last_known_commit: row.get(1)?,
+            last_session_at: row.get(2)?,
+            briefing_text: row.get(3)?,
+            generated_at: row.get(4)?,
+        }),
+    );
+
+    match result {
+        Ok(briefing) => Ok(Some(briefing)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Mark that a session occurred for this project (clears the briefing) - sync version
+pub fn mark_session_for_briefing_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO project_briefings (project_id, last_session_at)
+         VALUES (?, CURRENT_TIMESTAMP)
+         ON CONFLICT(project_id) DO UPDATE SET
+            last_session_at = CURRENT_TIMESTAMP,
+            briefing_text = NULL",
+        [project_id],
+    )?;
+    Ok(())
+}
+
+/// Save active project path for restart recovery - sync version
+pub fn save_active_project_sync(conn: &Connection, path: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO server_state (key, value) VALUES ('active_project', ?)",
+        [path],
+    )?;
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Database impl methods
 // ═══════════════════════════════════════════════════════════════════════════════
