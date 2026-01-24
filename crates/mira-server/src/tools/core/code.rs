@@ -67,12 +67,12 @@ pub async fn search_code<C: ToolContext>(
     );
 
     for r in &result.results {
-        // Use shared context expansion with DB for full symbol bounds
+        // Use shared context expansion (DB-free version with fallback)
         let expanded = expand_context_with_db(
             &r.file_path,
             &r.content,
             project_path.as_deref(),
-            Some(ctx.db()),
+            None, // TODO: migrate expand_context_with_db to use pool
             project_id,
         );
 
@@ -350,7 +350,7 @@ pub async fn index<C: ToolContext>(
 
             // Index code (skip embeddings if requested for faster indexing)
             let embeddings = if skip_embed { None } else { ctx.embeddings().cloned() };
-            let stats = indexer::index_project(path, ctx.db().clone(), embeddings, project_id)
+            let stats = indexer::index_project(path, ctx.pool().clone(), embeddings, project_id)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -362,7 +362,7 @@ pub async fn index<C: ToolContext>(
             // Auto-summarize modules that don't have descriptions yet
             if let Some(pid) = project_id {
                 if let Some(deepseek) = ctx.deepseek() {
-                    match auto_summarize_modules(ctx.db(), pid, &project_path, deepseek).await {
+                    match auto_summarize_modules(ctx.pool(), pid, &project_path, deepseek).await {
                         Ok(count) if count > 0 => {
                             response.push_str(&format!(", summarized {} modules", count));
                         }
@@ -400,18 +400,19 @@ pub async fn index<C: ToolContext>(
 
 /// Auto-summarize modules that don't have descriptions (called after indexing)
 async fn auto_summarize_modules(
-    db: &std::sync::Arc<crate::db::Database>,
+    pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
     project_id: i64,
     project_path: &str,
     deepseek: &crate::llm::DeepSeekClient,
 ) -> Result<usize, String> {
     // Get modules needing summaries
-    let db_clone = db.clone();
-    let mut modules = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        cartographer::get_modules_needing_summaries(&conn, project_id).map_err(|e| e.to_string())
-    })
-    .await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    let mut modules = pool
+        .interact(move |conn| {
+            cartographer::get_modules_needing_summaries(conn, project_id)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if modules.is_empty() {
         return Ok(0);
@@ -439,12 +440,13 @@ async fn auto_summarize_modules(
         return Err("Failed to parse summaries".to_string());
     }
 
-    let db_clone = db.clone();
-    let updated = tokio::task::spawn_blocking(move || {
-        let conn = db_clone.conn();
-        cartographer::update_module_purposes(&conn, project_id, &summaries).map_err(|e| e.to_string())
-    })
-    .await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
+    let updated = pool
+        .interact(move |conn| {
+            cartographer::update_module_purposes(conn, project_id, &summaries)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(updated)
 }

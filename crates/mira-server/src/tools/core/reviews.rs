@@ -2,6 +2,11 @@
 // MCP tool implementations for code review findings and feedback
 
 use super::ToolContext;
+use crate::db::{
+    get_findings_sync, get_finding_sync, get_finding_stats_sync,
+    update_finding_status_sync, bulk_update_finding_status_sync,
+    get_relevant_corrections_sync, extract_patterns_from_findings_sync,
+};
 
 /// List review findings with optional filters
 pub async fn list_findings<C: ToolContext>(
@@ -14,15 +19,23 @@ pub async fn list_findings<C: ToolContext>(
     let project_id = ctx.project_id().await;
     let limit = limit.unwrap_or(20) as usize;
 
+    let status_clone = status.clone();
+    let file_path_clone = file_path.clone();
+    let expert_role_clone = expert_role.clone();
     let findings = ctx
-        .db()
-        .get_findings(
-            project_id,
-            status.as_deref(),
-            expert_role.as_deref(),
-            file_path.as_deref(),
-            limit,
-        )
+        .pool()
+        .interact(move |conn| {
+            get_findings_sync(
+                conn,
+                project_id,
+                status_clone.as_deref(),
+                expert_role_clone.as_deref(),
+                file_path_clone.as_deref(),
+                limit,
+            )
+            .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if findings.is_empty() {
@@ -41,8 +54,12 @@ pub async fn list_findings<C: ToolContext>(
 
     // Get stats for context
     let (pending, accepted, rejected, fixed) = ctx
-        .db()
-        .get_finding_stats(project_id)
+        .pool()
+        .interact(move |conn| {
+            get_finding_stats_sync(conn, project_id)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .unwrap_or((0, 0, 0, 0));
 
     let mut output = format!(
@@ -101,8 +118,12 @@ pub async fn review_finding<C: ToolContext>(
 
     // Get the finding first to verify it exists
     let finding = ctx
-        .db()
-        .get_finding(finding_id)
+        .pool()
+        .interact(move |conn| {
+            get_finding_sync(conn, finding_id)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Finding {} not found", finding_id))?;
 
@@ -117,14 +138,22 @@ pub async fn review_finding<C: ToolContext>(
     let reviewed_by = ctx.get_user_identity();
 
     // Update the status
+    let status_clone = status.clone();
+    let feedback_clone = feedback.clone();
+    let reviewed_by_clone = reviewed_by.clone();
     let updated = ctx
-        .db()
-        .update_finding_status(
-            finding_id,
-            &status,
-            feedback.as_deref(),
-            reviewed_by.as_deref(),
-        )
+        .pool()
+        .interact(move |conn| {
+            update_finding_status_sync(
+                conn,
+                finding_id,
+                &status_clone,
+                feedback_clone.as_deref(),
+                reviewed_by_clone.as_deref(),
+            )
+            .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if !updated {
@@ -169,16 +198,22 @@ pub async fn bulk_review_findings<C: ToolContext>(
     }
 
     let reviewed_by = ctx.get_user_identity();
+    let finding_ids_len = finding_ids.len();
+    let status_clone = status.clone();
 
     let updated = ctx
-        .db()
-        .bulk_update_finding_status(&finding_ids, &status, reviewed_by.as_deref())
+        .pool()
+        .interact(move |conn| {
+            bulk_update_finding_status_sync(conn, &finding_ids, &status_clone, reviewed_by.as_deref())
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     Ok(format!(
         "Updated {} of {} findings to '{}'",
         updated,
-        finding_ids.len(),
+        finding_ids_len,
         status
     ))
 }
@@ -189,8 +224,12 @@ pub async fn get_finding<C: ToolContext>(
     finding_id: i64,
 ) -> Result<String, String> {
     let finding = ctx
-        .db()
-        .get_finding(finding_id)
+        .pool()
+        .interact(move |conn| {
+            get_finding_sync(conn, finding_id)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Finding {} not found", finding_id))?;
 
@@ -239,8 +278,12 @@ pub async fn get_learned_patterns<C: ToolContext>(
     let limit = limit.unwrap_or(20) as usize;
 
     let corrections = ctx
-        .db()
-        .get_relevant_corrections(project_id, correction_type.as_deref(), limit)
+        .pool()
+        .interact(move |conn| {
+            get_relevant_corrections_sync(conn, project_id, correction_type.as_deref(), limit)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if corrections.is_empty() {
@@ -270,8 +313,12 @@ pub async fn extract_patterns<C: ToolContext>(ctx: &C) -> Result<String, String>
     let project_id = ctx.project_id().await;
 
     let created = ctx
-        .db()
-        .extract_patterns_from_findings(project_id)
+        .pool()
+        .interact(move |conn| {
+            extract_patterns_from_findings_sync(conn, project_id)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     if created == 0 {
@@ -286,8 +333,12 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<String, String
     let project_id = ctx.project_id().await;
 
     let (pending, accepted, rejected, fixed) = ctx
-        .db()
-        .get_finding_stats(project_id)
+        .pool()
+        .interact(move |conn| {
+            get_finding_stats_sync(conn, project_id)
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
         .map_err(|e| e.to_string())?;
 
     let total = pending + accepted + rejected + fixed;

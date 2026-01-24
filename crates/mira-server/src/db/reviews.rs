@@ -81,6 +81,195 @@ pub fn get_relevant_corrections_sync(
     rows.collect()
 }
 
+/// Get review findings with optional filters (sync version for pool.interact)
+pub fn get_findings_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    status: Option<&str>,
+    expert_role: Option<&str>,
+    file_path: Option<&str>,
+    limit: usize,
+) -> rusqlite::Result<Vec<ReviewFinding>> {
+    // Build dynamic query
+    let mut conditions = vec!["(project_id = ?1 OR project_id IS NULL)"];
+    if status.is_some() {
+        conditions.push("status = ?2");
+    }
+    if expert_role.is_some() {
+        conditions.push("expert_role = ?3");
+    }
+    if file_path.is_some() {
+        conditions.push("file_path = ?4");
+    }
+
+    let sql = format!(
+        "SELECT id, project_id, expert_role, file_path, finding_type, severity,
+                content, code_snippet, suggestion, status, feedback, confidence,
+                user_id, reviewed_by, session_id, created_at, reviewed_at
+         FROM review_findings
+         WHERE {}
+         ORDER BY created_at DESC
+         LIMIT ?5",
+        conditions.join(" AND ")
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        params![
+            project_id,
+            status.unwrap_or(""),
+            expert_role.unwrap_or(""),
+            file_path.unwrap_or(""),
+            limit as i64
+        ],
+        parse_review_finding_row,
+    )?;
+    rows.collect()
+}
+
+/// Get a single finding by ID (sync version for pool.interact)
+pub fn get_finding_sync(conn: &Connection, finding_id: i64) -> rusqlite::Result<Option<ReviewFinding>> {
+    let sql = "SELECT id, project_id, expert_role, file_path, finding_type, severity,
+                      content, code_snippet, suggestion, status, feedback, confidence,
+                      user_id, reviewed_by, session_id, created_at, reviewed_at
+               FROM review_findings
+               WHERE id = ?";
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query_map([finding_id], parse_review_finding_row)?;
+    match rows.next() {
+        Some(Ok(finding)) => Ok(Some(finding)),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
+    }
+}
+
+/// Get statistics about review findings (sync version for pool.interact)
+pub fn get_finding_stats_sync(conn: &Connection, project_id: Option<i64>) -> rusqlite::Result<(i64, i64, i64, i64)> {
+    let sql = "SELECT
+                   SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                   SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
+                   SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+                   SUM(CASE WHEN status = 'fixed' THEN 1 ELSE 0 END) as fixed
+               FROM review_findings
+               WHERE project_id = ? OR project_id IS NULL";
+
+    conn.query_row(sql, [project_id], |row| {
+        Ok((
+            row.get::<_, Option<i64>>(0)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+        ))
+    })
+}
+
+/// Update a finding's status (sync version for pool.interact)
+pub fn update_finding_status_sync(
+    conn: &Connection,
+    finding_id: i64,
+    status: &str,
+    feedback: Option<&str>,
+    reviewed_by: Option<&str>,
+) -> rusqlite::Result<bool> {
+    let rows = conn.execute(
+        "UPDATE review_findings
+         SET status = ?, feedback = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+         WHERE id = ?",
+        params![status, feedback, reviewed_by, finding_id],
+    )?;
+    Ok(rows > 0)
+}
+
+/// Bulk update finding statuses (sync version for pool.interact)
+pub fn bulk_update_finding_status_sync(
+    conn: &Connection,
+    finding_ids: &[i64],
+    status: &str,
+    reviewed_by: Option<&str>,
+) -> rusqlite::Result<usize> {
+    if finding_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let placeholders: Vec<&str> = finding_ids.iter().map(|_| "?").collect();
+    let sql = format!(
+        "UPDATE review_findings
+         SET status = ?1, reviewed_by = ?2, reviewed_at = CURRENT_TIMESTAMP
+         WHERE id IN ({})",
+        placeholders.join(",")
+    );
+
+    // Build params dynamically
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![
+        Box::new(status.to_string()),
+        Box::new(reviewed_by.map(|s| s.to_string())),
+    ];
+    for id in finding_ids {
+        params_vec.push(Box::new(*id));
+    }
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    conn.execute(&sql, params_refs.as_slice())
+}
+
+/// Extract patterns from accepted findings (sync version for pool.interact)
+pub fn extract_patterns_from_findings_sync(conn: &Connection, project_id: Option<i64>) -> rusqlite::Result<usize> {
+    // Find accepted findings that could become patterns
+    let sql = "SELECT finding_type, content, suggestion, COUNT(*) as cnt
+               FROM review_findings
+               WHERE (project_id = ? OR project_id IS NULL)
+                     AND status = 'accepted'
+                     AND suggestion IS NOT NULL
+               GROUP BY finding_type, content
+               HAVING cnt >= 2
+               ORDER BY cnt DESC
+               LIMIT 50";
+
+    let mut stmt = conn.prepare(sql)?;
+    let patterns: Vec<(String, String, String, i64)> = stmt
+        .query_map([project_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut created = 0;
+    for (finding_type, content, suggestion, count) in patterns {
+        // Check if this pattern already exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM corrections
+                 WHERE (project_id = ? OR project_id IS NULL)
+                       AND what_was_wrong = ?",
+                params![project_id, &content],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if !exists {
+            // Create new correction
+            let confidence = (count as f64 / 10.0).min(1.0);
+            conn.execute(
+                "INSERT INTO corrections (
+                    project_id, what_was_wrong, what_is_right, correction_type,
+                    scope, confidence, occurrence_count, acceptance_rate
+                ) VALUES (?, ?, ?, ?, 'project', ?, ?, 1.0)",
+                params![project_id, &content, &suggestion, &finding_type, confidence, count],
+            )?;
+            created += 1;
+        } else {
+            conn.execute(
+                "UPDATE corrections
+                 SET occurrence_count = occurrence_count + ?
+                 WHERE (project_id = ? OR project_id IS NULL) AND what_was_wrong = ?",
+                params![count, project_id, &content],
+            )?;
+        }
+    }
+
+    Ok(created)
+}
+
 // ============================================================================
 // Types and Database impl methods
 // ============================================================================

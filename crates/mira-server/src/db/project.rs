@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use mira_types::MemoryFact;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{parse_memory_fact_row, Database};
 
@@ -280,6 +280,16 @@ pub fn save_active_project_sync(conn: &Connection, path: &str) -> rusqlite::Resu
         [path],
     )?;
     Ok(())
+}
+
+/// Get last active project path for restart recovery - sync version
+pub fn get_last_active_project_sync(conn: &Connection) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM server_state WHERE key = 'active_project'",
+        [],
+        |row| row.get(0),
+    )
+    .optional()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

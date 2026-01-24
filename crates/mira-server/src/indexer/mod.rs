@@ -4,8 +4,9 @@
 pub mod parsers;
 
 use crate::db::{
-    Database, SymbolInsert, ImportInsert,
+    SymbolInsert, ImportInsert,
     insert_symbol_sync, insert_import_sync, insert_call_sync, insert_chunk_embedding_sync,
+    pool::DatabasePool,
 };
 use crate::embeddings::EmbeddingClient;
 use crate::project_files::walker::FileWalker;
@@ -77,12 +78,11 @@ fn prepare_chunk_data(
 
 /// Helper to store chunk embeddings in database
 async fn store_chunk_embeddings(
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     chunk_data: Vec<(String, String, usize, Vec<u8>)>,
     project_id: Option<i64>,
-) -> Result<usize, rusqlite::Error> {
-    tokio::task::spawn_blocking(move || {
-        let conn = db.conn();
+) -> Result<usize> {
+    pool.interact(move |conn| {
         let tx = conn.unchecked_transaction()?;
         let mut errors = 0usize;
 
@@ -102,13 +102,13 @@ async fn store_chunk_embeddings(
 
         tx.commit()?;
         Ok(errors)
-    }).await.expect("store_chunk_embeddings spawn_blocking panicked")
+    }).await
 }
 
 /// Flush accumulated chunks to database and generate embeddings
 async fn flush_chunks(
     mut pending_chunks: Vec<PendingChunk>,
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
     stats: &mut IndexStats,
@@ -127,7 +127,7 @@ async fn flush_chunks(
 
                 let chunk_data = prepare_chunk_data(&pending_chunks, &vectors);
 
-                match store_chunk_embeddings(db.clone(), chunk_data, project_id).await {
+                match store_chunk_embeddings(pool.clone(), chunk_data, project_id).await {
                     Ok(error_count) => {
                         stats.chunks += chunk_count - error_count;
                         stats.errors += error_count;
@@ -246,7 +246,7 @@ fn store_function_calls(
 /// Flush accumulated file data (symbols, imports, calls) to database
 async fn flush_code_batch(
     pending_batches: &mut Vec<PendingFileBatch>,
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     project_id: Option<i64>,
     stats: &mut IndexStats,
 ) -> Result<()> {
@@ -260,8 +260,7 @@ async fn flush_code_batch(
     tracing::info!("Flushing {} files ({} symbols, {} calls)...", batches.len(), total_symbols, total_calls);
 
     // Process all batches in a single transaction
-    let error_count = tokio::task::spawn_blocking(move || {
-        let conn = db.conn();
+    let error_count = pool.interact(move |conn| {
         let tx = conn.unchecked_transaction()?;
         let mut total_errors = 0usize;
 
@@ -287,8 +286,8 @@ async fn flush_code_batch(
         }
 
         tx.commit()?;
-        Ok::<_, rusqlite::Error>(total_errors)
-    }).await.expect("flush_code_batch spawn_blocking panicked")?;
+        Ok(total_errors)
+    }).await?;
 
     stats.symbols += total_symbols - error_count;
     stats.errors += error_count;
@@ -598,17 +597,15 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
 }
 
 /// Clear existing data for a project from all relevant tables
-async fn clear_existing_project_data(db: Arc<Database>, project_id: Option<i64>) -> Result<()> {
+async fn clear_existing_project_data(pool: Arc<DatabasePool>, project_id: Option<i64>) -> Result<()> {
     use crate::db::clear_project_index_sync;
 
     tracing::info!("Clearing existing data...");
     if let Some(pid) = project_id {
-        tokio::task::spawn_blocking(move || {
-            let conn = db.conn();
-            clear_project_index_sync(&conn, pid)
+        pool.interact(move |conn| {
+            clear_project_index_sync(conn, pid).map_err(|e| anyhow::anyhow!(e))
         })
-        .await
-        .expect("clear_existing_project_data spawn_blocking panicked")?;
+        .await?;
     }
     Ok(())
 }
@@ -619,7 +616,7 @@ async fn process_files_loop(
     path: &Path,
     pending_batches: &mut Vec<PendingFileBatch>,
     pending_chunks: &mut Vec<PendingChunk>,
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
     stats: &mut IndexStats,
@@ -667,7 +664,7 @@ async fn process_files_loop(
                 let total_batched_symbols: usize = pending_batches.iter().map(|b| b.symbols.len()).sum();
                 if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD || pending_batches.len() >= FILE_FLUSH_THRESHOLD {
                     let flush_start = std::time::Instant::now();
-                    flush_code_batch(pending_batches, db.clone(), project_id, stats).await?;
+                    flush_code_batch(pending_batches, pool.clone(), project_id, stats).await?;
                     tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
                 }
 
@@ -690,7 +687,7 @@ async fn process_files_loop(
                         let chunks_to_flush = std::mem::replace(pending_chunks, Vec::new());
                         flush_chunks(
                             chunks_to_flush,
-                            db.clone(),
+                            pool.clone(),
                             embeddings.clone(),
                             project_id,
                             stats,
@@ -711,20 +708,20 @@ async fn process_files_loop(
 async fn flush_remaining_data(
     pending_batches: &mut Vec<PendingFileBatch>,
     pending_chunks: Vec<PendingChunk>,
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
     stats: &mut IndexStats,
 ) -> Result<()> {
     // Flush any remaining file batches
     if !pending_batches.is_empty() {
-        flush_code_batch(pending_batches, db.clone(), project_id, stats).await?;
+        flush_code_batch(pending_batches, pool.clone(), project_id, stats).await?;
     }
 
     // Flush any remaining chunks
     flush_chunks(
         pending_chunks,
-        db.clone(),
+        pool.clone(),
         embeddings.clone(),
         project_id,
         stats,
@@ -734,10 +731,10 @@ async fn flush_remaining_data(
 }
 
 /// Rebuild FTS5 full-text search index for a project if project_id is Some
-fn rebuild_fts_index_if_needed(db: Arc<Database>, project_id: Option<i64>) {
+async fn rebuild_fts_index_if_needed(pool: Arc<DatabasePool>, project_id: Option<i64>) {
     if let Some(pid) = project_id {
         tracing::info!("Rebuilding FTS5 search index for project {}", pid);
-        if let Err(e) = db.rebuild_fts_for_project(pid) {
+        if let Err(e) = pool.rebuild_fts_for_project(pid).await {
             tracing::warn!("Failed to rebuild FTS5 index: {}", e);
         }
     }
@@ -746,7 +743,7 @@ fn rebuild_fts_index_if_needed(db: Arc<Database>, project_id: Option<i64>) {
 /// Index an entire project
 pub async fn index_project(
     path: &Path,
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     project_id: Option<i64>,
 ) -> Result<IndexStats> {
@@ -767,7 +764,7 @@ pub async fn index_project(
     tracing::info!("Found {} files to index", files.len());
 
     // Clear existing data for this project
-    clear_existing_project_data(db.clone(), project_id).await?;
+    clear_existing_project_data(pool.clone(), project_id).await?;
 
     tracing::info!("Processing files...");
 
@@ -782,7 +779,7 @@ pub async fn index_project(
         path,
         &mut pending_batches,
         &mut pending_chunks,
-        db.clone(),
+        pool.clone(),
         embeddings.clone(),
         project_id,
         &mut stats,
@@ -792,14 +789,14 @@ pub async fn index_project(
     flush_remaining_data(
         &mut pending_batches,
         pending_chunks,
-        db.clone(),
+        pool.clone(),
         embeddings.clone(),
         project_id,
         &mut stats,
     ).await?;
 
     // Rebuild FTS5 full-text search index for this project
-    rebuild_fts_index_if_needed(db.clone(), project_id);
+    rebuild_fts_index_if_needed(pool.clone(), project_id).await;
 
     if stats.errors > 0 {
         tracing::warn!(

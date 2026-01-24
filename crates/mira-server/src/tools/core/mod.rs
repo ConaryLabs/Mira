@@ -10,7 +10,6 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 
 use crate::db::pool::DatabasePool;
-use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use crate::background::watcher::WatcherHandle;
@@ -21,10 +20,7 @@ use crate::background::watcher::WatcherHandle;
 pub trait ToolContext: Send + Sync {
     // === Core Resources (always available) ===
 
-    /// Legacy sync database (being phased out - prefer pool())
-    fn db(&self) -> &Arc<Database>;
-
-    /// Async connection pool (preferred for new code)
+    /// Async connection pool for database operations
     fn pool(&self) -> &Arc<DatabasePool>;
 
     /// Embeddings client for semantic search (optional)

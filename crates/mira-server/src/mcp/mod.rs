@@ -11,7 +11,6 @@ use tokio::sync::oneshot;
 
 use crate::background::watcher::WatcherHandle;
 use crate::db::pool::DatabasePool;
-use crate::db::Database;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::session::read_claude_session_id;
 use crate::llm::{DeepSeekClient, ProviderFactory};
@@ -33,9 +32,7 @@ use tokio::sync::RwLock;
 /// MCP Server state
 #[derive(Clone)]
 pub struct MiraServer {
-    /// Legacy sync database (being phased out)
-    pub db: Arc<Database>,
-    /// Async connection pool (preferred for new code)
+    /// Async connection pool for database operations
     pub pool: Arc<DatabasePool>,
     pub embeddings: Option<Arc<EmbeddingClient>>,
     pub deepseek: Option<Arc<DeepSeekClient>>,
@@ -60,7 +57,7 @@ impl MiraServer {
             .map(|key| Arc::new(DeepSeekClient::new(key)))
     }
 
-    pub fn new(db: Arc<Database>, pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
+    pub fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
         // Try to create DeepSeek client from env (kept for backward compatibility)
         let deepseek = Self::create_deepseek_client();
 
@@ -68,7 +65,6 @@ impl MiraServer {
         let llm_factory = Arc::new(ProviderFactory::new());
 
         Self {
-            db,
             pool,
             embeddings,
             deepseek,
@@ -84,7 +80,6 @@ impl MiraServer {
 
     /// Create with a file watcher for incremental indexing
     pub fn with_watcher(
-        db: Arc<Database>,
         pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         watcher: WatcherHandle,
@@ -94,7 +89,6 @@ impl MiraServer {
         let llm_factory = Arc::new(ProviderFactory::new());
 
         Self {
-            db,
             pool,
             embeddings,
             deepseek,
@@ -111,7 +105,6 @@ impl MiraServer {
     /// Create with a broadcast channel and watcher (for future embedding scenarios)
     #[allow(dead_code)]
     pub fn with_broadcaster(
-        db: Arc<Database>,
         pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         deepseek: Option<Arc<DeepSeekClient>>,
@@ -124,7 +117,6 @@ impl MiraServer {
         let llm_factory = Arc::new(ProviderFactory::new());
 
         Self {
-            db,
             pool,
             embeddings,
             deepseek,
@@ -967,8 +959,22 @@ impl ServerHandler for MiraServer {
             } else {
                 result_text.clone()
             };
-            let full_result = if result_text.len() > 100 { Some(result_text.as_str()) } else { None };
-            if let Err(e) = self.db.log_tool_call(&session_id, &tool_name, &args_json, &summary, full_result, success) {
+            let full_result_str = if result_text.len() > 100 { Some(result_text.clone()) } else { None };
+            let session_id_clone = session_id.clone();
+            let tool_name_clone = tool_name.clone();
+            let args_json_clone = args_json.clone();
+            let summary_clone = summary.clone();
+            if let Err(e) = self.pool.interact(move |conn| {
+                crate::db::log_tool_call_sync(
+                    conn,
+                    &session_id_clone,
+                    &tool_name_clone,
+                    &args_json_clone,
+                    &summary_clone,
+                    full_result_str.as_deref(),
+                    success,
+                ).map_err(|e| anyhow::anyhow!(e))
+            }).await {
                 eprintln!("[HISTORY] Failed to log tool call: {}", e);
             }
 

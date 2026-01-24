@@ -185,6 +185,24 @@ pub fn get_session_stats_sync(conn: &Connection, session_id: &str) -> rusqlite::
     Ok((count, tools))
 }
 
+/// Log a tool call to history - sync version for pool.interact()
+pub fn log_tool_call_sync(
+    conn: &Connection,
+    session_id: &str,
+    tool_name: &str,
+    arguments: &str,
+    result_summary: &str,
+    full_result: Option<&str>,
+    success: bool,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO tool_history (session_id, tool_name, arguments, result_summary, full_result, success, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+        params![session_id, tool_name, arguments, result_summary, full_result, success as i32],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 // ============================================================================
 // Database impl methods
 // ============================================================================

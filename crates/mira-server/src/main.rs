@@ -222,42 +222,41 @@ async fn setup_server_context() -> Result<MiraServer> {
     // Create shared HTTP client for all network operations
     let http_client = create_shared_client();
 
-    // Open database (both legacy sync and new async pool)
+    // Open database pool
     let db_path = get_db_path();
-    let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
     let embeddings = get_embeddings_with_pool(Some(pool.clone()), http_client.clone());
 
     // Create server context
-    let server = MiraServer::new(db.clone(), pool, embeddings);
+    let server = MiraServer::new(pool.clone(), embeddings);
 
     // Restore context (Project & Session)
-    if let Ok(Some(path)) = db.get_last_active_project() {
-        if let Ok((id, name)) = db.get_or_create_project(&path, None) {
-            let project = ProjectContext {
-                id,
-                path: path.clone(),
-                name,
-            };
-            server.set_project(project).await;
+    let restored_project = pool.interact(|conn| {
+        // Try to get last active project
+        if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
+            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
+                return Ok(Some(ProjectContext { id, path, name }));
+            }
         }
-    } else {
         // Fallback: Check if CWD is a project
         if let Ok(cwd) = std::env::current_dir() {
             let path_str = cwd.to_string_lossy().to_string();
-            // Simple heuristic: if we can get a name, it's likely a project
-            if let Ok((id, name)) = db.get_or_create_project(&path_str, None) {
-                 let project = ProjectContext {
-                    id,
-                    path: path_str,
-                    name,
-                };
-                server.set_project(project).await;
+            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None) {
+                return Ok(Some(ProjectContext { id, path: path_str, name }));
             }
         }
+        Ok(None)
+    }).await?;
+
+    if let Some(project) = restored_project {
+        server.set_project(project).await;
     }
 
-    if let Ok(Some(sid)) = db.get_server_state("active_session_id") {
+    // Restore session ID
+    if let Ok(Some(sid)) = pool.interact(|conn| {
+        mira::db::get_server_state_sync(conn, "active_session_id")
+            .map_err(|e| anyhow::anyhow!(e))
+    }).await {
         server.set_session_id(sid).await;
     }
 
@@ -384,9 +383,8 @@ async fn run_mcp_server() -> Result<()> {
     // Create shared HTTP client for all network operations
     let http_client = create_shared_client();
 
-    // Open database (both legacy sync and new async pool)
+    // Open database pool
     let db_path = get_db_path();
-    let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Initialize embeddings if API key available (with usage tracking)
@@ -419,50 +417,49 @@ async fn run_mcp_server() -> Result<()> {
     let watcher_handle = background::watcher::spawn(pool.clone(), watcher_shutdown_rx);
     info!("File watcher started");
 
-    // Clone db for restoration before moving ownership to server
-    let db_for_restore = db.clone();
-
     // Create MCP server with watcher
-    let server = MiraServer::with_watcher(db, pool, embeddings, watcher_handle);
+    let server = MiraServer::with_watcher(pool.clone(), embeddings, watcher_handle);
 
-    // Restore context (Project & Session) - similar to run_tool()
-    if let Ok(Some(path)) = db_for_restore.get_last_active_project() {
-        if let Ok((id, name)) = db_for_restore.get_or_create_project(&path, None) {
-            let project = ProjectContext {
-                id,
-                path: path.clone(),
-                name,
-            };
-            info!("Restoring project: {} (id: {})", project.path, project.id);
-            server.set_project(project).await;
-
-            // Register with watcher if available
-            if let Some(watcher) = server.watcher() {
-                watcher.watch(id, std::path::PathBuf::from(path)).await;
+    // Restore context (Project & Session)
+    let restore_pool = pool.clone();
+    let restored = restore_pool.interact(|conn| {
+        // Try to get last active project
+        if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
+            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
+                return Ok(Some((ProjectContext { id, path, name }, true)));
             }
         }
-    } else {
         // Fallback: Check if CWD is a project
         if let Ok(cwd) = std::env::current_dir() {
             let path_str = cwd.to_string_lossy().to_string();
-            // Simple heuristic: if we can get a name, it's likely a project
-            if let Ok((id, name)) = db_for_restore.get_or_create_project(&path_str, None) {
-                let project = ProjectContext {
-                    id,
-                    path: path_str,
-                    name,
-                };
-                info!("Restoring project from CWD: {} (id: {})", project.path, project.id);
-                server.set_project(project).await;
-
-                if let Some(watcher) = server.watcher() {
-                    watcher.watch(id, cwd).await;
-                }
+            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None) {
+                return Ok(Some((ProjectContext { id, path: path_str, name }, false)));
             }
+        }
+        Ok(None)
+    }).await?;
+
+    if let Some((project, from_stored)) = restored {
+        if from_stored {
+            info!("Restoring project: {} (id: {})", project.path, project.id);
+        } else {
+            info!("Restoring project from CWD: {} (id: {})", project.path, project.id);
+        }
+        let project_path = project.path.clone();
+        let project_id = project.id;
+        server.set_project(project).await;
+
+        // Register with watcher if available
+        if let Some(watcher) = server.watcher() {
+            watcher.watch(project_id, std::path::PathBuf::from(project_path)).await;
         }
     }
 
-    if let Ok(Some(sid)) = db_for_restore.get_server_state("active_session_id") {
+    // Restore session ID
+    if let Ok(Some(sid)) = pool.interact(|conn| {
+        mira::db::get_server_state_sync(conn, "active_session_id")
+            .map_err(|e| anyhow::anyhow!(e))
+    }).await {
         info!("Restoring session: {}", sid);
         server.set_session_id(sid).await;
     }
@@ -484,23 +481,26 @@ async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
     let http_client = create_shared_client();
 
     let db_path = get_db_path();
-    let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     let embeddings = if no_embed { None } else { get_embeddings_with_pool(Some(pool.clone()), http_client) };
 
     // Get or create project
-    let (project_id, _project_name) = db.get_or_create_project(
-        path.to_string_lossy().as_ref(),
-        path.file_name().and_then(|n| n.to_str()),
-    )?;
+    let path_str = path.to_string_lossy().to_string();
+    let project_name = path.file_name().and_then(|n| n.to_str()).map(|s| s.to_string());
+    let (project_id, _project_name) = pool
+        .interact(move |conn| {
+            mira::db::get_or_create_project_sync(conn, &path_str, project_name.as_deref())
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await?;
 
     // Set project ID for usage tracking
     if let Some(ref emb) = embeddings {
         emb.set_project_id(Some(project_id)).await;
     }
 
-    let stats = mira::indexer::index_project(&path, db, embeddings, Some(project_id)).await?;
+    let stats = mira::indexer::index_project(&path, pool, embeddings, Some(project_id)).await?;
 
     println!(
         "Indexed {} files, {} symbols, {} code chunks",
@@ -619,11 +619,10 @@ async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
     println!("Project: {:?}\n", project_path);
 
     let db_path = get_db_path();
-    let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Create a minimal MCP server context
-    let server = mira::mcp::MiraServer::new(db.clone(), pool, None);
+    let server = mira::mcp::MiraServer::new(pool, None);
 
     // Call session_start
     let result = mira::tools::session_start(

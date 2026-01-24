@@ -13,10 +13,6 @@ use tokio::sync::{oneshot, RwLock};
 
 #[async_trait]
 impl ToolContext for MiraServer {
-    fn db(&self) -> &Arc<crate::db::Database> {
-        &self.db
-    }
-
     fn pool(&self) -> &Arc<crate::db::pool::DatabasePool> {
         &self.pool
     }

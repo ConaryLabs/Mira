@@ -750,18 +750,19 @@ async fn test_pool_and_database_share_state() {
 
     let project_id = ctx.project_id().await.expect("Should have project_id");
 
-    // Verify project exists via legacy Database
-    let db = ctx.db();
-    let conn = db.conn();
-    let project_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM projects WHERE id = ?",
-            [project_id],
-            |_row| Ok(true),
-        )
-        .unwrap_or(false);
+    // Verify project exists via pool
+    let project_exists = ctx.pool()
+        .interact(move |conn| {
+            Ok::<bool, anyhow::Error>(conn.query_row(
+                "SELECT 1 FROM projects WHERE id = ?",
+                [project_id],
+                |_row| Ok(true),
+            ).unwrap_or(false))
+        })
+        .await
+        .unwrap();
 
-    assert!(project_exists, "Project created via pool should be visible via legacy Database");
+    assert!(project_exists, "Project created via pool should be visible");
 
     // Create a memory via pool
     remember(
@@ -776,16 +777,19 @@ async fn test_pool_and_database_share_state() {
     .await
     .expect("remember failed");
 
-    // Verify memory exists via legacy Database
-    let memory_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM memory_facts WHERE key = ?",
-            ["pool_share_test"],
-            |_row| Ok(true),
-        )
-        .unwrap_or(false);
+    // Verify memory exists via pool
+    let memory_exists = ctx.pool()
+        .interact(|conn| {
+            Ok::<bool, anyhow::Error>(conn.query_row(
+                "SELECT 1 FROM memory_facts WHERE key = ?",
+                ["pool_share_test"],
+                |_row| Ok(true),
+            ).unwrap_or(false))
+        })
+        .await
+        .unwrap();
 
-    assert!(memory_exists, "Memory created via pool should be visible via legacy Database");
+    assert!(memory_exists, "Memory created via pool should be visible");
 }
 
 #[tokio::test]

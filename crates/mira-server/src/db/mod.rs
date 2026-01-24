@@ -85,7 +85,11 @@ pub use memory::{
     record_memory_access_sync,
     delete_memory_sync,
 };
-pub use reviews::{Correction, ReviewFinding, store_review_finding_sync, get_relevant_corrections_sync};
+pub use reviews::{
+    Correction, ReviewFinding, store_review_finding_sync, get_relevant_corrections_sync,
+    get_findings_sync, get_finding_sync, get_finding_stats_sync, update_finding_status_sync,
+    bulk_update_finding_status_sync, extract_patterns_from_findings_sync,
+};
 pub use teams::{
     Team, TeamMember,
     create_team_sync, get_team_sync, get_team_by_name_sync,
@@ -101,7 +105,7 @@ pub use tasks::{
 };
 pub use session::{
     create_session_sync, get_recent_sessions_sync, get_session_history_sync,
-    build_session_recap_sync, get_session_stats_sync,
+    build_session_recap_sync, get_session_stats_sync, log_tool_call_sync,
 };
 pub use chat::get_last_chat_time_sync;
 pub use project::{
@@ -120,6 +124,7 @@ pub use project::{
     get_project_briefing_sync,
     mark_session_for_briefing_sync,
     save_active_project_sync,
+    get_last_active_project_sync,
 };
 pub use background::{
     get_scan_info_sync,
