@@ -91,6 +91,17 @@ impl DeepSeekClient {
         Self { api_key, model, http: LlmHttpClient::from_client(client) }
     }
 
+    /// Get model-specific max_tokens limit
+    /// - deepseek-chat: 8192 (API limit)
+    /// - deepseek-reasoner: 65536 (64k limit for synthesis)
+    fn max_tokens_for_model(model: &str) -> u32 {
+        if model.contains("reasoner") {
+            65536  // Reasoner models support up to 64k output
+        } else {
+            8192   // Chat models have 8k limit
+        }
+    }
+
     /// Calculate cache hit ratio from hit and miss token counts
     fn calculate_cache_hit_ratio(hit: Option<u32>, miss: Option<u32>) -> Option<f64> {
         match (hit, miss) {
@@ -132,12 +143,13 @@ impl DeepSeekClient {
             "Starting DeepSeek chat request"
         );
 
+        let max_tokens = Self::max_tokens_for_model(&self.model);
         let request = ChatRequest {
             model: self.model.clone(),
             messages,
             tools,
             tool_choice: Some("auto".into()),
-            max_tokens: Some(32000),  // Increased for dual-mode: chat for tools, reasoner for synthesis
+            max_tokens: Some(max_tokens),
         };
 
         let body = serde_json::to_string(&request)?;
