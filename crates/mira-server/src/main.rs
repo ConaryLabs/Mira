@@ -30,10 +30,10 @@ use tracing_subscriber::FmtSubscriber;
 /// Supports multiple providers via MIRA_EMBEDDING_PROVIDER env var (openai, google)
 #[allow(dead_code)]
 fn get_embeddings(http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
-    get_embeddings_with_db(None, http_client)
+    get_embeddings_with_pool(None, http_client)
 }
 
-/// Get embeddings client with database for usage tracking
+/// Get embeddings client with database pool for usage tracking
 ///
 /// Environment variables:
 /// - MIRA_EMBEDDING_PROVIDER: "openai" (default) or "google"
@@ -42,8 +42,8 @@ fn get_embeddings(http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> 
 /// - MIRA_EMBEDDING_TASK_TYPE: Task type for Google (RETRIEVAL_DOCUMENT, SEMANTIC_SIMILARITY, etc.)
 /// - OPENAI_API_KEY: Required for OpenAI provider
 /// - GOOGLE_API_KEY: Required for Google provider
-fn get_embeddings_with_db(db: Option<Arc<Database>>, http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
-    let client = EmbeddingClient::from_env_with_http_client(db.clone(), http_client)?;
+fn get_embeddings_with_pool(pool: Option<Arc<DatabasePool>>, http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
+    let client = EmbeddingClient::from_env_with_http_client(pool.clone(), http_client)?;
 
     // Log the configured provider
     info!(
@@ -226,7 +226,7 @@ async fn setup_server_context() -> Result<MiraServer> {
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
-    let embeddings = get_embeddings_with_db(Some(db.clone()), http_client.clone());
+    let embeddings = get_embeddings_with_pool(Some(pool.clone()), http_client.clone());
 
     // Create server context
     let server = MiraServer::new(db.clone(), pool, embeddings);
@@ -390,7 +390,7 @@ async fn run_mcp_server() -> Result<()> {
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Initialize embeddings if API key available (with usage tracking)
-    let embeddings = get_embeddings_with_db(Some(db.clone()), http_client.clone());
+    let embeddings = get_embeddings_with_pool(Some(pool.clone()), http_client.clone());
 
     if embeddings.is_some() {
         info!("Semantic search enabled (OpenAI embeddings)");
@@ -485,8 +485,9 @@ async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
 
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
+    let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
-    let embeddings = if no_embed { None } else { get_embeddings_with_db(Some(db.clone()), http_client) };
+    let embeddings = if no_embed { None } else { get_embeddings_with_pool(Some(pool.clone()), http_client) };
 
     // Get or create project
     let (project_id, _project_name) = db.get_or_create_project(

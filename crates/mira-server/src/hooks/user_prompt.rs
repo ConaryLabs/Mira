@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use crate::db::Database;
+use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::{read_hook_input, write_hook_output};
 use std::path::PathBuf;
@@ -14,9 +15,9 @@ fn get_db_path() -> PathBuf {
     home.join(".mira/mira.db")
 }
 
-/// Get embeddings client if available
-fn get_embeddings() -> Option<Arc<EmbeddingClient>> {
-    EmbeddingClient::from_env(None).map(Arc::new)
+/// Get embeddings client if available (with pool for usage tracking)
+fn get_embeddings(pool: Option<Arc<DatabasePool>>) -> Option<Arc<EmbeddingClient>> {
+    EmbeddingClient::from_env(pool).map(Arc::new)
 }
 
 /// Run UserPromptSubmit hook
@@ -43,8 +44,8 @@ pub async fn run() -> Result<()> {
     // Open database and create context injection manager
     let db_path = get_db_path();
     let db = Arc::new(Database::open(&db_path)?);
-    let pool = Arc::new(crate::db::pool::DatabasePool::open(std::path::Path::new(&db_path)).await?);
-    let embeddings = get_embeddings();
+    let pool = Arc::new(DatabasePool::open(std::path::Path::new(&db_path)).await?);
+    let embeddings = get_embeddings(Some(pool.clone()));
     let manager = crate::context::ContextInjectionManager::new(db, pool, embeddings);
 
     // Get relevant context with metadata

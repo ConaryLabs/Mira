@@ -1,7 +1,8 @@
 // crates/mira-server/src/embeddings.rs
 // OpenAI embeddings API client
 
-use crate::db::{Database, EmbeddingUsageRecord};
+use crate::db::pool::DatabasePool;
+use crate::db::{EmbeddingUsageRecord, insert_embedding_usage_sync};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -99,7 +100,7 @@ pub struct Embeddings {
     api_key: String,
     model: EmbeddingModel,
     http_client: reqwest::Client,
-    db: Option<Arc<Database>>,
+    pool: Option<Arc<DatabasePool>>,
     project_id: Arc<RwLock<Option<i64>>>,
 }
 
@@ -109,33 +110,33 @@ impl Embeddings {
         Self::with_model(api_key, EmbeddingModel::default(), None)
     }
 
-    /// Create embeddings client with database for usage tracking
-    pub fn with_db(api_key: String, db: Option<Arc<Database>>) -> Self {
-        Self::with_model(api_key, EmbeddingModel::default(), db)
+    /// Create embeddings client with database pool for usage tracking
+    pub fn with_pool(api_key: String, pool: Option<Arc<DatabasePool>>) -> Self {
+        Self::with_model(api_key, EmbeddingModel::default(), pool)
     }
 
-    /// Create embeddings client with specific model and optional database
-    pub fn with_model(api_key: String, model: EmbeddingModel, db: Option<Arc<Database>>) -> Self {
+    /// Create embeddings client with specific model and optional database pool
+    pub fn with_model(api_key: String, model: EmbeddingModel, pool: Option<Arc<DatabasePool>>) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(TIMEOUT_SECS))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        Self::with_http_client(api_key, model, db, http_client)
+        Self::with_http_client(api_key, model, pool, http_client)
     }
 
     /// Create embeddings client with a shared HTTP client
     pub fn with_http_client(
         api_key: String,
         model: EmbeddingModel,
-        db: Option<Arc<Database>>,
+        pool: Option<Arc<DatabasePool>>,
         http_client: reqwest::Client,
     ) -> Self {
         Self {
             api_key,
             model,
             http_client,
-            db,
+            pool,
             project_id: Arc::new(RwLock::new(None)),
         }
     }
@@ -163,7 +164,7 @@ impl Embeddings {
 
     /// Record embedding usage
     async fn record_usage(&self, tokens: u64, text_count: u64) {
-        if let Some(ref db) = self.db {
+        if let Some(ref pool) = self.pool {
             let project_id = *self.project_id.read().await;
             let cost = (tokens as f64 / 1_000_000.0) * self.model.cost_per_million();
 
@@ -176,7 +177,10 @@ impl Embeddings {
                 project_id,
             };
 
-            if let Err(e) = db.insert_embedding_usage(&record) {
+            if let Err(e) = pool.interact(move |conn| {
+                insert_embedding_usage_sync(conn, &record)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }).await {
                 tracing::warn!("Failed to record embedding usage: {}", e);
             }
         }

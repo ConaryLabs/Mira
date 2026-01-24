@@ -34,6 +34,24 @@ pub fn insert_proxy_usage_sync(conn: &Connection, record: &UsageRecord) -> Resul
     Ok(conn.last_insert_rowid())
 }
 
+/// Insert an embedding usage record - sync version for pool.interact()
+pub fn insert_embedding_usage_sync(conn: &Connection, record: &EmbeddingUsageRecord) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO embeddings_usage (
+            provider, model, tokens, text_count, cost_estimate, project_id
+        ) VALUES (?, ?, ?, ?, ?, ?)",
+        params![
+            record.provider,
+            record.model,
+            record.tokens as i64,
+            record.text_count as i64,
+            record.cost_estimate,
+            record.project_id,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Database impl methods
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -7,7 +7,7 @@ mod openai;
 pub use google::{GoogleEmbeddingModel, GoogleEmbeddings, TaskType};
 pub use openai::{EmbeddingModel, Embeddings, EMBEDDING_DIM};
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -67,18 +67,18 @@ impl EmbeddingClient {
     ///
     /// Checks MIRA_EMBEDDING_PROVIDER env var (default: openai)
     /// Then checks for the appropriate API key
-    pub fn from_env(db: Option<Arc<Database>>) -> Option<Self> {
+    pub fn from_env(pool: Option<Arc<DatabasePool>>) -> Option<Self> {
         let provider = std::env::var("MIRA_EMBEDDING_PROVIDER")
             .ok()
             .and_then(|s| EmbeddingProvider::from_str(&s))
             .unwrap_or_default();
 
-        Self::new(provider, db)
+        Self::new(provider, pool)
     }
 
     /// Create a new embedding client from environment configuration with a shared HTTP client
     pub fn from_env_with_http_client(
-        db: Option<Arc<Database>>,
+        pool: Option<Arc<DatabasePool>>,
         http_client: reqwest::Client,
     ) -> Option<Self> {
         let provider = std::env::var("MIRA_EMBEDDING_PROVIDER")
@@ -86,11 +86,11 @@ impl EmbeddingClient {
             .and_then(|s| EmbeddingProvider::from_str(&s))
             .unwrap_or_default();
 
-        Self::new_with_http_client(provider, db, http_client)
+        Self::new_with_http_client(provider, pool, http_client)
     }
 
     /// Create a new embedding client for the specified provider
-    pub fn new(provider: EmbeddingProvider, db: Option<Arc<Database>>) -> Option<Self> {
+    pub fn new(provider: EmbeddingProvider, pool: Option<Arc<DatabasePool>>) -> Option<Self> {
         match provider {
             EmbeddingProvider::OpenAI => {
                 let api_key = std::env::var("OPENAI_API_KEY")
@@ -103,7 +103,7 @@ impl EmbeddingClient {
                     .and_then(|m| EmbeddingModel::from_name(&m))
                     .unwrap_or_default();
 
-                Some(Self::OpenAI(Embeddings::with_model(api_key, model, db)))
+                Some(Self::OpenAI(Embeddings::with_model(api_key, model, pool)))
             }
             EmbeddingProvider::Google => {
                 // Try GEMINI_API_KEY first (Gemini/generativelanguage API), fall back to GOOGLE_API_KEY
@@ -138,7 +138,7 @@ impl EmbeddingClient {
                     GoogleEmbeddingModel::default(),
                     dimensions,
                     task_type,
-                    db,
+                    pool,
                 )))
             }
         }
@@ -147,7 +147,7 @@ impl EmbeddingClient {
     /// Create a new embedding client for the specified provider with a shared HTTP client
     pub fn new_with_http_client(
         provider: EmbeddingProvider,
-        db: Option<Arc<Database>>,
+        pool: Option<Arc<DatabasePool>>,
         http_client: reqwest::Client,
     ) -> Option<Self> {
         match provider {
@@ -161,7 +161,7 @@ impl EmbeddingClient {
                     .and_then(|m| EmbeddingModel::from_name(&m))
                     .unwrap_or_default();
 
-                Some(Self::OpenAI(Embeddings::with_http_client(api_key, model, db, http_client)))
+                Some(Self::OpenAI(Embeddings::with_http_client(api_key, model, pool, http_client)))
             }
             EmbeddingProvider::Google => {
                 let api_key = std::env::var("GEMINI_API_KEY")
@@ -193,7 +193,7 @@ impl EmbeddingClient {
                     GoogleEmbeddingModel::default(),
                     dimensions,
                     task_type,
-                    db,
+                    pool,
                     http_client,
                 )))
             }

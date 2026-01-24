@@ -67,7 +67,7 @@ pub use search::{
     semantic_code_search_sync,
 };
 pub use diff_analysis::{DiffAnalysis, store_diff_analysis_sync, get_cached_diff_analysis_sync};
-pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals, insert_proxy_usage_sync};
+pub use proxy::{EmbeddingUsageRecord, EmbeddingUsageSummary, UsageSummaryRow, UsageTotals, insert_proxy_usage_sync, insert_embedding_usage_sync};
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
 pub use memory::{
