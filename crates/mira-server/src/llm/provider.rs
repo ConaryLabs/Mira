@@ -13,7 +13,6 @@ use super::{ChatResult, Message, Tool};
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     DeepSeek,
-    OpenAi,
     Gemini,
     Ollama, // Reserved for local sovereignty - not implemented yet
 }
@@ -23,7 +22,6 @@ impl Provider {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "deepseek" => Some(Self::DeepSeek),
-            "openai" => Some(Self::OpenAi),
             "gemini" => Some(Self::Gemini),
             "ollama" => Some(Self::Ollama),
             _ => None,
@@ -34,7 +32,6 @@ impl Provider {
     pub fn api_key_env_var(&self) -> &'static str {
         match self {
             Self::DeepSeek => "DEEPSEEK_API_KEY",
-            Self::OpenAi => "OPENAI_API_KEY",
             Self::Gemini => "GEMINI_API_KEY",
             Self::Ollama => "OLLAMA_HOST", // Ollama uses host, not API key
         }
@@ -44,7 +41,6 @@ impl Provider {
     pub fn default_model(&self) -> &'static str {
         match self {
             Self::DeepSeek => "deepseek-reasoner",
-            Self::OpenAi => "gpt-5.2",
             Self::Gemini => "gemini-3-pro-preview",
             Self::Ollama => "llama3.3",
         }
@@ -55,7 +51,6 @@ impl fmt::Display for Provider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DeepSeek => write!(f, "deepseek"),
-            Self::OpenAi => write!(f, "openai"),
             Self::Gemini => write!(f, "gemini"),
             Self::Ollama => write!(f, "ollama"),
         }
@@ -145,13 +140,6 @@ mod tests {
     }
 
     #[test]
-    fn test_provider_from_str_openai() {
-        assert_eq!(Provider::from_str("openai"), Some(Provider::OpenAi));
-        assert_eq!(Provider::from_str("OpenAI"), Some(Provider::OpenAi));
-        assert_eq!(Provider::from_str("OPENAI"), Some(Provider::OpenAi));
-    }
-
-    #[test]
     fn test_provider_from_str_gemini() {
         assert_eq!(Provider::from_str("gemini"), Some(Provider::Gemini));
         assert_eq!(Provider::from_str("Gemini"), Some(Provider::Gemini));
@@ -179,7 +167,6 @@ mod tests {
     #[test]
     fn test_provider_api_key_env_var() {
         assert_eq!(Provider::DeepSeek.api_key_env_var(), "DEEPSEEK_API_KEY");
-        assert_eq!(Provider::OpenAi.api_key_env_var(), "OPENAI_API_KEY");
         assert_eq!(Provider::Gemini.api_key_env_var(), "GEMINI_API_KEY");
         assert_eq!(Provider::Ollama.api_key_env_var(), "OLLAMA_HOST");
     }
@@ -191,7 +178,6 @@ mod tests {
     #[test]
     fn test_provider_default_model() {
         assert_eq!(Provider::DeepSeek.default_model(), "deepseek-reasoner");
-        assert_eq!(Provider::OpenAi.default_model(), "gpt-5.2");
         assert_eq!(Provider::Gemini.default_model(), "gemini-3-pro-preview");
         assert_eq!(Provider::Ollama.default_model(), "llama3.3");
     }
@@ -203,7 +189,6 @@ mod tests {
     #[test]
     fn test_provider_display() {
         assert_eq!(format!("{}", Provider::DeepSeek), "deepseek");
-        assert_eq!(format!("{}", Provider::OpenAi), "openai");
         assert_eq!(format!("{}", Provider::Gemini), "gemini");
         assert_eq!(format!("{}", Provider::Ollama), "ollama");
     }
@@ -215,8 +200,7 @@ mod tests {
     #[test]
     fn test_provider_equality() {
         assert_eq!(Provider::DeepSeek, Provider::DeepSeek);
-        assert_ne!(Provider::DeepSeek, Provider::OpenAi);
-        assert_ne!(Provider::OpenAi, Provider::Gemini);
+        assert_ne!(Provider::DeepSeek, Provider::Gemini);
     }
 
     #[test]
@@ -237,17 +221,14 @@ mod tests {
         let json = serde_json::to_string(&Provider::DeepSeek).unwrap();
         assert_eq!(json, "\"deepseek\"");
 
-        let json = serde_json::to_string(&Provider::OpenAi).unwrap();
-        assert_eq!(json, "\"openai\"");
+        let json = serde_json::to_string(&Provider::Gemini).unwrap();
+        assert_eq!(json, "\"gemini\"");
     }
 
     #[test]
     fn test_provider_deserialize() {
         let provider: Provider = serde_json::from_str("\"deepseek\"").unwrap();
         assert_eq!(provider, Provider::DeepSeek);
-
-        let provider: Provider = serde_json::from_str("\"openai\"").unwrap();
-        assert_eq!(provider, Provider::OpenAi);
 
         let provider: Provider = serde_json::from_str("\"gemini\"").unwrap();
         assert_eq!(provider, Provider::Gemini);

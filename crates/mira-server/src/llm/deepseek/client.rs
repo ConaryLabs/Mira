@@ -123,7 +123,7 @@ impl DeepSeekClient {
             messages,
             tools,
             tool_choice: Some("auto".into()),
-            max_tokens: Some(8192),
+            max_tokens: Some(64000),
         };
 
         let body = serde_json::to_string(&request)?;

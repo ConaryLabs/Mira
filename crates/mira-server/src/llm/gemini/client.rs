@@ -481,7 +481,7 @@ impl LlmClient for GeminiClient {
             system_instruction,
             tools: gemini_tools,
             generation_config: GenerationConfig {
-                max_output_tokens: 8192,
+                max_output_tokens: 65536,
                 temperature: Some(1.0), // Keep at 1.0 for reasoning per Google docs
                 thinking_config: Some(ThinkingConfig {
                     thinking_level: self.thinking_level.clone(),

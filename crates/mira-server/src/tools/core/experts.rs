@@ -28,7 +28,7 @@ const MAX_CONCURRENT_EXPERTS: usize = 3;
 const PARALLEL_EXPERT_TIMEOUT: Duration = Duration::from_secs(900); // 15 minutes for reasoning models
 
 /// Expert roles available for consultation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ExpertRole {
     Architect,
     PlanReviewer,
@@ -36,6 +36,8 @@ pub enum ExpertRole {
     CodeReviewer,
     Security,
     DocumentationWriter,
+    /// Custom role with name and description
+    Custom(String, String), // (name, description)
 }
 
 impl ExpertRole {
@@ -45,7 +47,7 @@ impl ExpertRole {
         let role_key = self.db_key();
 
         // Get role instructions (custom or default) - use pool for async access
-        let custom_prompt = ctx.pool().get_custom_prompt(role_key).await.ok().flatten();
+        let custom_prompt = ctx.pool().get_custom_prompt(&role_key).await.ok().flatten();
 
         let role_instructions = if let Some(prompt) = custom_prompt {
             prompt
@@ -57,40 +59,52 @@ impl ExpertRole {
                 ExpertRole::CodeReviewer => CODE_REVIEWER_PROMPT,
                 ExpertRole::Security => SECURITY_PROMPT,
                 ExpertRole::DocumentationWriter => DOCUMENTATION_WRITER_PROMPT,
+                ExpertRole::Custom(_name, description) => {
+                    // For custom roles, build from the description
+                    &description
+                }
             }.to_string()
         };
 
         // Build standardized prompt with static prefix and tool guidance
-        PromptBuilder::new(role_instructions)
+        // Include current date and MCP tools context
+        let date_context = format!("\n\nCurrent date: {}", chrono::Utc::now().format("%Y-%m-%d"));
+        let mcp_context = get_mcp_tools_context(ctx).await;
+
+        let base_prompt = PromptBuilder::new(role_instructions)
             .with_tool_guidance()
-            .build_system_prompt()
+            .build_system_prompt();
+
+        format!("{}{}{}", base_prompt, date_context, mcp_context)
     }
 
     /// Database key for this expert role
-    pub fn db_key(&self) -> &'static str {
+    pub fn db_key(&self) -> String {
         match self {
-            ExpertRole::Architect => "architect",
-            ExpertRole::PlanReviewer => "plan_reviewer",
-            ExpertRole::ScopeAnalyst => "scope_analyst",
-            ExpertRole::CodeReviewer => "code_reviewer",
-            ExpertRole::Security => "security",
-            ExpertRole::DocumentationWriter => "documentation_writer",
+            ExpertRole::Architect => "architect".to_string(),
+            ExpertRole::PlanReviewer => "plan_reviewer".to_string(),
+            ExpertRole::ScopeAnalyst => "scope_analyst".to_string(),
+            ExpertRole::CodeReviewer => "code_reviewer".to_string(),
+            ExpertRole::Security => "security".to_string(),
+            ExpertRole::DocumentationWriter => "documentation_writer".to_string(),
+            ExpertRole::Custom(name, _) => format!("custom:{}", name.to_lowercase().replace(' ', "_")),
         }
     }
 
     /// Display name for this expert
-    pub fn name(&self) -> &'static str {
+    pub fn name(&self) -> String {
         match self {
-            ExpertRole::Architect => "Architect",
-            ExpertRole::PlanReviewer => "Plan Reviewer",
-            ExpertRole::ScopeAnalyst => "Scope Analyst",
-            ExpertRole::CodeReviewer => "Code Reviewer",
-            ExpertRole::Security => "Security Analyst",
-            ExpertRole::DocumentationWriter => "Documentation Writer",
+            ExpertRole::Architect => "Architect".to_string(),
+            ExpertRole::PlanReviewer => "Plan Reviewer".to_string(),
+            ExpertRole::ScopeAnalyst => "Scope Analyst".to_string(),
+            ExpertRole::CodeReviewer => "Code Reviewer".to_string(),
+            ExpertRole::Security => "Security Analyst".to_string(),
+            ExpertRole::DocumentationWriter => "Documentation Writer".to_string(),
+            ExpertRole::Custom(name, _) => name.clone(),
         }
     }
 
-    /// Get role from database key
+    /// Get role from database key (returns None for custom roles not in DB)
     pub fn from_db_key(key: &str) -> Option<Self> {
         match key {
             "architect" => Some(ExpertRole::Architect),
@@ -99,11 +113,27 @@ impl ExpertRole {
             "code_reviewer" => Some(ExpertRole::CodeReviewer),
             "security" => Some(ExpertRole::Security),
             "documentation_writer" => Some(ExpertRole::DocumentationWriter),
-            _ => None,
+            _ => {
+                // Check for custom role pattern
+                if let Some(rest) = key.strip_prefix("custom:") {
+                    let name = rest.to_string();
+                    Some(ExpertRole::Custom(
+                        name.replace('_', " "),
+                        "Custom expert role".to_string(),
+                    ))
+                } else {
+                    None
+                }
+            }
         }
     }
 
-    /// List all available roles
+    /// Create a custom role
+    pub fn custom(name: String, description: String) -> Self {
+        ExpertRole::Custom(name, description)
+    }
+
+    /// List all predefined roles (not custom ones)
     pub fn all() -> &'static [ExpertRole] {
         &[
             ExpertRole::Architect,
@@ -777,6 +807,30 @@ fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFinding
     findings
 }
 
+/// Get MCP tools context for expert prompts
+/// Lists available MCP servers and their tools
+async fn get_mcp_tools_context<C: ToolContext>(ctx: &C) -> String {
+    // Get available MCP tools from the context
+    let mcp_tools = ctx.list_mcp_tools().await;
+
+    if mcp_tools.is_empty() {
+        return String::new();
+    }
+
+    let mut context = String::from("\n\n## Available MCP Tools\n\n");
+    context.push_str("You have access to these additional MCP tools:\n\n");
+
+    for (server, tools) in mcp_tools {
+        context.push_str(&format!("**{}:**\n", server));
+        for tool in tools {
+            context.push_str(&format!("  - `{}`: {}\n", tool.name, tool.description));
+        }
+        context.push('\n');
+    }
+
+    context
+}
+
 /// Get learned patterns from database and format for context injection (async)
 async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) -> String {
     use crate::db::get_relevant_corrections_sync;
@@ -968,21 +1022,23 @@ pub async fn consult_expert<C: ToolContext>(
     context: String,
     question: Option<String>,
 ) -> Result<String, String> {
+    let expert_key = expert.db_key();
+
     // Get the appropriate LLM client for this expert role (async to avoid blocking!)
     let client: Arc<dyn LlmClient> = ctx.llm_factory()
-        .client_for_role(expert.db_key(), ctx.pool())
+        .client_for_role(expert_key.as_str(), ctx.pool())
         .await
         .map_err(|e| e.to_string())?;
 
     let provider = client.provider_type();
-    tracing::info!(expert = expert.db_key(), provider = %provider, "Expert consultation starting");
+    tracing::info!(expert = %expert_key, provider = %provider, "Expert consultation starting");
 
     // Get system prompt (async to avoid blocking!)
     let system_prompt = expert.system_prompt(ctx).await;
 
     // Inject learned patterns for code reviewer and security experts (async to avoid blocking!)
     let patterns_context = if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
-        get_patterns_context(ctx, expert.db_key()).await
+        get_patterns_context(ctx, expert_key.as_str()).await
     } else {
         String::new()
     };
@@ -1104,11 +1160,11 @@ pub async fn consult_expert<C: ToolContext>(
     // Parse and store findings for code reviewer and security experts
     if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
         if let Some(ref content) = final_result.content {
-            let findings = parse_expert_findings(content, expert.db_key());
+            let findings = parse_expert_findings(content, expert_key.as_str());
             if !findings.is_empty() {
-                let stored = store_findings(ctx, &findings, expert.db_key()).await;
+                let stored = store_findings(ctx, &findings, expert_key.as_str()).await;
                 tracing::debug!(
-                    expert = expert.db_key(),
+                    expert = %expert_key,
                     parsed = findings.len(),
                     stored,
                     "Parsed and stored review findings"
@@ -1197,11 +1253,12 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
             let ctx = ctx.clone();
             let context = Arc::clone(&context);
             let question = question.clone();
+            let role_clone = role.clone();
             async move {
                 let result =
                     consult_expert(&ctx, role, context.to_string(), question.map(|q| q.to_string()))
                         .await;
-                (role, result)
+                (role_clone, result)
             }
         })
         .buffer_unordered(MAX_CONCURRENT_EXPERTS)

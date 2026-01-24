@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use mira_types::{ProjectContext, WsEvent};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
@@ -13,6 +14,13 @@ use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use crate::background::watcher::WatcherHandle;
+
+/// Information about an MCP tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolInfo {
+    pub name: String,
+    pub description: String,
+}
 
 /// Common context required by all tools.
 /// Implemented by MiraServer (MCP).
@@ -77,6 +85,11 @@ pub trait ToolContext: Send + Sync {
     /// Watcher handle for file system monitoring (optional)
     fn watcher(&self) -> Option<&WatcherHandle> {
         None
+    }
+
+    /// List available MCP tools (optional, for expert context)
+    async fn list_mcp_tools(&self) -> Vec<(String, Vec<McpToolInfo>)> {
+        Vec::new()
     }
 }
 

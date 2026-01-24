@@ -1140,7 +1140,11 @@ fn run_backend_env(name: Option<&str>) -> Result<()> {
         println!("export {}=\"{}\"", key, value);
     }
 
-    eprintln!("\n# Usage: eval \"$(mira backend env {})\"", backend_name);
+    // Show activation message with model info
+    let model = backend.env.get("ANTHROPIC_MODEL")
+        .map(|s| s.as_str())
+        .unwrap_or("default");
+    eprintln!("# Activated: {} ({})", backend_name, model);
 
     Ok(())
 }

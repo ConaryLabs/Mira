@@ -4,7 +4,6 @@
 use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::gemini::GeminiClient;
-use crate::llm::openai::OpenAiClient;
 use crate::llm::provider::{LlmClient, Provider};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,7 +16,6 @@ pub struct ProviderFactory {
     fallback_order: Vec<Provider>,
     // Store API keys to create custom clients on demand
     deepseek_key: Option<String>,
-    openai_key: Option<String>,
     gemini_key: Option<String>,
 }
 
@@ -28,7 +26,6 @@ impl ProviderFactory {
         
         // Load API keys
         let deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok().filter(|k| !k.trim().is_empty());
-        let openai_key = std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.trim().is_empty());
         let gemini_key = std::env::var("GEMINI_API_KEY").ok().filter(|k| !k.trim().is_empty());
 
         // Check for global default provider
@@ -46,15 +43,6 @@ impl ProviderFactory {
             clients.insert(Provider::DeepSeek, Arc::new(DeepSeekClient::new(key.clone())));
         }
 
-        // Initialize OpenAI client
-        if let Some(ref key) = openai_key {
-            info!("OpenAI client initialized");
-            // Disable web_search by default to avoid 400s on models that don't support it
-            let mut client = OpenAiClient::new(key.clone());
-            client.set_web_search(false);
-            clients.insert(Provider::OpenAi, Arc::new(client));
-        }
-
         // Initialize Gemini client
         if let Some(ref key) = gemini_key {
             info!("Gemini client initialized");
@@ -65,15 +53,14 @@ impl ProviderFactory {
         let available: Vec<_> = clients.keys().map(|p| p.to_string()).collect();
         info!(providers = ?available, "LLM providers available");
 
-        // Default fallback order: DeepSeek -> OpenAI -> Gemini
-        let fallback_order = vec![Provider::DeepSeek, Provider::OpenAi, Provider::Gemini];
+        // Default fallback order: DeepSeek -> Gemini
+        let fallback_order = vec![Provider::DeepSeek, Provider::Gemini];
 
         Self {
             clients,
             default_provider,
             fallback_order,
             deepseek_key,
-            openai_key,
             gemini_key,
         }
     }
@@ -92,13 +79,6 @@ impl ProviderFactory {
                 let client_opt: Option<Arc<dyn LlmClient>> = match config.provider {
                     Provider::DeepSeek => self.deepseek_key.as_ref().map(|k| {
                         Arc::new(DeepSeekClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
-                    }),
-                    Provider::OpenAi => self.openai_key.as_ref().map(|k| {
-                        let mut client = OpenAiClient::with_model(k.clone(), model);
-                        // For experts, we usually want tool access, not general web search unless specified
-                        // TODO: Make this configurable per expert
-                        client.set_web_search(false);
-                        Arc::new(client) as Arc<dyn LlmClient>
                     }),
                     Provider::Gemini => self.gemini_key.as_ref().map(|k| {
                         Arc::new(GeminiClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
@@ -158,7 +138,7 @@ impl ProviderFactory {
             }
         }
 
-        Err("No LLM providers available. Set DEEPSEEK_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.".into())
+        Err("No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.".into())
     }
 
     /// Get a specific provider client (if available)
@@ -202,9 +182,8 @@ mod tests {
         ProviderFactory {
             clients: HashMap::new(),
             default_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::OpenAi, Provider::Gemini],
+            fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
             deepseek_key: None,
-            openai_key: None,
             gemini_key: None,
         }
     }
@@ -220,7 +199,6 @@ mod tests {
     fn test_empty_factory_is_available_false() {
         let factory = empty_factory();
         assert!(!factory.is_available(Provider::DeepSeek));
-        assert!(!factory.is_available(Provider::OpenAi));
         assert!(!factory.is_available(Provider::Gemini));
     }
 
@@ -228,7 +206,6 @@ mod tests {
     fn test_empty_factory_get_provider_none() {
         let factory = empty_factory();
         assert!(factory.get_provider(Provider::DeepSeek).is_none());
-        assert!(factory.get_provider(Provider::OpenAi).is_none());
         assert!(factory.get_provider(Provider::Gemini).is_none());
     }
 
@@ -243,9 +220,8 @@ mod tests {
         let factory = ProviderFactory {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
-            fallback_order: vec![Provider::DeepSeek, Provider::OpenAi, Provider::Gemini],
+            fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
             deepseek_key: None,
-            openai_key: None,
             gemini_key: None,
         };
         assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
@@ -254,9 +230,8 @@ mod tests {
     #[test]
     fn test_fallback_order() {
         let factory = empty_factory();
-        assert_eq!(factory.fallback_order.len(), 3);
+        assert_eq!(factory.fallback_order.len(), 2);
         assert_eq!(factory.fallback_order[0], Provider::DeepSeek);
-        assert_eq!(factory.fallback_order[1], Provider::OpenAi);
-        assert_eq!(factory.fallback_order[2], Provider::Gemini);
+        assert_eq!(factory.fallback_order[1], Provider::Gemini);
     }
 }
