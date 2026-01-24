@@ -7,6 +7,10 @@ use rusqlite::params;
 use super::types::{ChatMessage, ChatSummary};
 use super::Database;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Database impl methods
+// ═══════════════════════════════════════════════════════════════════════════════
+
 impl Database {
     /// Store a chat message
     pub fn store_chat_message(
