@@ -976,7 +976,7 @@ impl ServerHandler for MiraServer {
             if success {
                 let project_id = self.project.read().await.as_ref().map(|p| p.id);
                 extraction::spawn_tool_extraction(
-                    self.db.clone(),
+                    self.pool.clone(),
                     self.embeddings.clone(),
                     self.deepseek.clone(),
                     project_id,

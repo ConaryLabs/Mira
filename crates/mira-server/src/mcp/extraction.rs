@@ -4,9 +4,11 @@
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::db::Database;
+use crate::db::pool::DatabasePool;
+use crate::db::{store_memory_sync, store_fact_embedding_sync, StoreMemoryParams};
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, PromptBuilder};
+use crate::search::embedding_to_bytes;
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
@@ -21,7 +23,7 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
 
 /// Spawn background extraction for a tool call
 pub fn spawn_tool_extraction(
-    db: Arc<Database>,
+    pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
     project_id: Option<i64>,
@@ -51,7 +53,7 @@ pub fn spawn_tool_extraction(
 
     tokio::spawn(async move {
         if let Err(e) = extract_and_store(
-            &db,
+            &pool,
             embeddings.as_ref(),
             &deepseek,
             project_id,
@@ -66,7 +68,7 @@ pub fn spawn_tool_extraction(
 
 /// Perform extraction and store results
 async fn extract_and_store(
-    db: &Database,
+    pool: &DatabasePool,
     embeddings: Option<&Arc<EmbeddingClient>>,
     deepseek: &DeepSeekClient,
     project_id: Option<i64>,
@@ -114,19 +116,33 @@ async fn extract_and_store(
             .map(|k| format!("tool:{}:{}", tool_name, k))
             .unwrap_or_else(|| format!("tool:{}:{}", tool_name, uuid::Uuid::new_v4()));
 
-        let id = db.store_memory(
-            project_id,
-            Some(&key),
-            &outcome.content,
-            &outcome.category,
-            Some("tool_outcome"),
-            0.85, // Slightly lower than manual, higher than chat extraction
-        )?;
+        // Store memory using pool
+        let content_clone = outcome.content.clone();
+        let key_clone = key.clone();
+        let category_clone = outcome.category.clone();
+        let id = pool.interact(move |conn| {
+            store_memory_sync(conn, StoreMemoryParams {
+                project_id,
+                key: Some(&key_clone),
+                content: &content_clone,
+                fact_type: "tool_outcome",
+                category: Some(&category_clone),
+                confidence: 0.85,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+            }).map_err(|e| anyhow::anyhow!("{}", e))
+        }).await?;
 
         // Store embedding if available (also marks fact as having embedding)
         if let Some(embeddings) = embeddings {
             if let Ok(embedding) = embeddings.embed(&outcome.content).await {
-                if let Err(e) = db.store_fact_embedding(id, &outcome.content, &embedding) {
+                let embedding_bytes = embedding_to_bytes(&embedding);
+                let content_for_embed = outcome.content.clone();
+                if let Err(e) = pool.interact(move |conn| {
+                    store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                }).await {
                     warn!("Failed to store embedding for outcome {}: {}", id, e);
                 }
             }

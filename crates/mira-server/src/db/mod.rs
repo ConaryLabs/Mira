@@ -74,7 +74,7 @@ pub use memory::{
     parse_memory_fact_row,
     // Sync functions for pool.interact() usage
     store_memory_sync, StoreMemoryParams,
-    store_embedding_sync,
+    store_embedding_sync, store_fact_embedding_sync,
     import_confirmed_memory_sync,
     search_capabilities_sync,
     recall_semantic_sync,

@@ -627,6 +627,28 @@ pub fn store_embedding_sync(
     Ok(())
 }
 
+/// Store embedding for a fact and mark as embedded (sync version for pool.interact())
+pub fn store_fact_embedding_sync(
+    conn: &rusqlite::Connection,
+    fact_id: i64,
+    content: &str,
+    embedding_bytes: &[u8],
+) -> rusqlite::Result<()> {
+    // Insert or update embedding
+    conn.execute(
+        "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
+        rusqlite::params![fact_id, embedding_bytes, fact_id, content],
+    )?;
+
+    // Mark fact as having embedding
+    conn.execute(
+        "UPDATE memory_facts SET has_embedding = 1 WHERE id = ?",
+        [fact_id],
+    )?;
+
+    Ok(())
+}
+
 /// Semantic search for memories with scope filtering (sync version for pool.interact())
 /// Returns (fact_id, content, distance) tuples
 pub fn recall_semantic_sync(
