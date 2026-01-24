@@ -22,6 +22,7 @@ pub struct BackgroundWorker {
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
+    deepseek_chat: Option<Arc<DeepSeekClient>>,
     llm_factory: Arc<ProviderFactory>,
     shutdown: watch::Receiver<bool>,
     cycle_count: u64,
@@ -32,12 +33,13 @@ impl BackgroundWorker {
         pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         deepseek: Option<Arc<DeepSeekClient>>,
+        deepseek_chat: Option<Arc<DeepSeekClient>>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         // Create provider factory with all available LLM clients
         let llm_factory = Arc::new(ProviderFactory::new());
 
-        Self { pool, embeddings, deepseek, llm_factory, shutdown, cycle_count: 0 }
+        Self { pool, embeddings, deepseek, deepseek_chat, llm_factory, shutdown, cycle_count: 0 }
     }
 
     /// Start the background worker loop
@@ -97,21 +99,22 @@ impl BackgroundWorker {
 
         // Process DeepSeek-dependent tasks (summaries, briefings, capabilities)
         if let Some(ref ds) = self.deepseek {
-            // Process summaries one at a time (rate limited)
-            let count = self.process_summary_queue(ds).await?;
+            // Process summaries one at a time (rate limited) - use chat client for cost savings
+            let client = self.deepseek_chat.as_ref().unwrap_or(ds);
+            let count = self.process_summary_queue(client).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} summaries", count);
             }
             processed += count;
 
-            // Process project briefings (What's New since last session)
-            let count = self.process_briefings(ds).await?;
+            // Process project briefings (What's New since last session) - use chat client
+            let count = self.process_briefings(client).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} briefings", count);
             }
             processed += count;
 
-            // Process capabilities inventory (periodic codebase scan)
+            // Process capabilities inventory (periodic codebase scan) - use reasoner for quality
             let count = self.process_capabilities(ds).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} capabilities", count);
@@ -178,10 +181,11 @@ pub fn spawn(
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
     deepseek: Option<Arc<DeepSeekClient>>,
+    deepseek_chat: Option<Arc<DeepSeekClient>>,
 ) -> watch::Sender<bool> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let worker = BackgroundWorker::new(pool, embeddings, deepseek, shutdown_rx);
+    let worker = BackgroundWorker::new(pool, embeddings, deepseek, deepseek_chat, shutdown_rx);
 
     tokio::spawn(async move {
         worker.run().await;

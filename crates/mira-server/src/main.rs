@@ -63,6 +63,14 @@ fn get_deepseek(http_client: reqwest::Client) -> Option<Arc<DeepSeekClient>> {
         .map(|key| Arc::new(DeepSeekClient::with_http_client(key, "deepseek-reasoner".into(), http_client)))
 }
 
+/// Get DeepSeek chat client for simple summarization tasks (cost-optimized)
+fn get_deepseek_chat(http_client: reqwest::Client) -> Option<Arc<DeepSeekClient>> {
+    std::env::var("DEEPSEEK_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .map(|key| Arc::new(DeepSeekClient::with_http_client(key, "deepseek-chat".into(), http_client)))
+}
+
 #[derive(Parser)]
 #[command(name = "mira")]
 #[command(about = "Memory and Intelligence Layer for AI Agents")]
@@ -393,6 +401,7 @@ async fn run_mcp_server() -> Result<()> {
 
     // Initialize DeepSeek client if API key available
     let deepseek = get_deepseek(http_client.clone());
+    let deepseek_chat = get_deepseek_chat(http_client.clone());
 
     if deepseek.is_some() {
         info!("DeepSeek enabled (for experts and module summaries)");
@@ -404,7 +413,8 @@ async fn run_mcp_server() -> Result<()> {
     let bg_pool = pool.clone();
     let bg_embeddings = embeddings.clone();
     let bg_deepseek = deepseek.clone();
-    let _shutdown_tx = background::spawn(bg_pool, bg_embeddings, bg_deepseek);
+    let bg_deepseek_chat = deepseek_chat.clone();
+    let _shutdown_tx = background::spawn(bg_pool, bg_embeddings, bg_deepseek, bg_deepseek_chat);
     info!("Background worker started");
 
     // Spawn file watcher for incremental indexing
