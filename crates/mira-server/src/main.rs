@@ -175,9 +175,14 @@ enum HookAction {
     PreCompact,
     /// Handle UserPromptSubmit hooks - inject proactive context
     UserPrompt,
-    /// Legacy PostToolUse hook (no-op for compatibility)
+    /// Handle PostToolUse hooks - track file changes, provide hints
+    PostTool,
+    /// Handle Stop hooks - check goals, save session state
+    Stop,
+    /// Legacy hooks (no-op for compatibility)
+    #[command(hide = true)]
     Posttool,
-    /// Legacy PreToolUse hook (no-op for compatibility)
+    #[command(hide = true)]
     Pretool,
 }
 
@@ -567,6 +572,12 @@ async fn main() -> Result<()> {
             }
             HookAction::UserPrompt => {
                 mira::hooks::user_prompt::run().await?;
+            }
+            HookAction::PostTool => {
+                mira::hooks::post_tool::run().await?;
+            }
+            HookAction::Stop => {
+                mira::hooks::stop::run().await?;
             }
             HookAction::Posttool | HookAction::Pretool => {
                 // Legacy no-op hooks for compatibility

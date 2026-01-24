@@ -2,8 +2,10 @@
 // Claude Code hook handlers
 
 pub mod permission;
+pub mod post_tool;
 pub mod precompact;
 pub mod session;
+pub mod stop;
 pub mod user_prompt;
 
 use anyhow::Result;

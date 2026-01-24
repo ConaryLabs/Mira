@@ -1,0 +1,18 @@
+{
+  "name": "mira",
+  "description": "Semantic memory and code intelligence for Claude Code. Persistent memory across sessions, expert consultations, goal tracking, and proactive context injection.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Peter Chaganti"
+  },
+  "homepage": "https://github.com/pchaganti/mira",
+  "repository": "https://github.com/pchaganti/mira",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "context",
+    "code-intelligence",
+    "semantic-search",
+    "goals"
+  ]
+}
