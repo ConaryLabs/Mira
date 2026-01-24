@@ -5,7 +5,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 // Import migration helpers
-use super::migration_helpers::{table_exists, column_exists, add_column_if_missing};
+use super::migration_helpers::{table_exists, column_exists, add_column_if_missing, create_table_if_missing};
 
 /// Run all schema setup and migrations.
 ///
@@ -198,35 +198,16 @@ pub fn migrate_memory_facts_has_embedding(conn: &Connection) -> Result<()> {
 
 /// Migrate chat_messages to add summary_id for reversible summarization
 pub fn migrate_chat_messages_summary_id(conn: &Connection) -> Result<()> {
-    // Check if chat_messages exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_messages'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    if !table_exists(conn, "chat_messages") {
         return Ok(());
     }
 
-    // Check if summary_id column exists
-    let has_column: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('chat_messages') WHERE name='summary_id'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_column {
-        tracing::info!("Migrating chat_messages to add summary_id column for reversible summarization");
+    if !column_exists(conn, "chat_messages", "summary_id") {
+        tracing::info!("Migrating chat_messages to add summary_id column");
         conn.execute(
             "ALTER TABLE chat_messages ADD COLUMN summary_id INTEGER REFERENCES chat_summaries(id) ON DELETE SET NULL",
             [],
         )?;
-        // Add index for efficient lookup by summary
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_messages_summary ON chat_messages(summary_id)",
             [],
@@ -238,35 +219,16 @@ pub fn migrate_chat_messages_summary_id(conn: &Connection) -> Result<()> {
 
 /// Migrate chat_summaries to add project_id column for multi-project separation
 pub fn migrate_chat_summaries_project_id(conn: &Connection) -> Result<()> {
-    // Check if chat_summaries exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_summaries'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    if !table_exists(conn, "chat_summaries") {
         return Ok(());
     }
 
-    // Check if project_id column exists
-    let has_column: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('chat_summaries') WHERE name='project_id'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_column {
+    if !column_exists(conn, "chat_summaries", "project_id") {
         tracing::info!("Migrating chat_summaries to add project_id column");
         conn.execute(
             "ALTER TABLE chat_summaries ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE",
             [],
         )?;
-        // Add index for efficient project-scoped queries
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_summaries_project ON chat_summaries(project_id, summary_level, created_at DESC)",
             [],
@@ -346,29 +308,11 @@ pub fn rebuild_code_fts_for_project(conn: &Connection, project_id: i64) -> Resul
 
 /// Migrate system_prompts to add provider and model columns
 pub fn migrate_system_prompts_provider(conn: &Connection) -> Result<()> {
-    // Check if system_prompts exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_prompts'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    if !table_exists(conn, "system_prompts") {
         return Ok(());
     }
 
-    // Check if provider column exists
-    let has_provider: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('system_prompts') WHERE name='provider'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_provider {
+    if !column_exists(conn, "system_prompts", "provider") {
         tracing::info!("Adding provider and model columns to system_prompts");
         conn.execute_batch(
             "ALTER TABLE system_prompts ADD COLUMN provider TEXT DEFAULT 'deepseek';
@@ -381,16 +325,7 @@ pub fn migrate_system_prompts_provider(conn: &Connection) -> Result<()> {
 
 /// Migrate system_prompts to strip old TOOL_USAGE_PROMPT suffix for KV cache optimization
 pub fn migrate_system_prompts_strip_tool_suffix(conn: &Connection) -> Result<()> {
-    // Check if system_prompts exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_prompts'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    if !table_exists(conn, "system_prompts") {
         return Ok(());
     }
 
@@ -408,7 +343,6 @@ pub fn migrate_system_prompts_strip_tool_suffix(conn: &Connection) -> Result<()>
     tracing::info!("Migrating {} system prompts to strip old tool usage suffix", rows.len());
 
     for (role, prompt) in rows {
-        // Find the position of the tool usage suffix
         if let Some(pos) = prompt.find("Use tools to explore codebase before analysis.") {
             let stripped = prompt[..pos].trim_end().to_string();
             conn.execute(
@@ -424,29 +358,11 @@ pub fn migrate_system_prompts_strip_tool_suffix(conn: &Connection) -> Result<()>
 
 /// Migrate memory_facts to add evidence-based tracking columns
 pub fn migrate_memory_facts_evidence_tracking(conn: &Connection) -> Result<()> {
-    // Check if memory_facts exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_facts'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    if !table_exists(conn, "memory_facts") {
         return Ok(());
     }
 
-    // Check if session_count column exists (indicator of migration status)
-    let has_session_count: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='session_count'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_session_count {
+    if !column_exists(conn, "memory_facts", "session_count") {
         tracing::info!("Migrating memory_facts to add evidence-based tracking columns");
         conn.execute_batch(
             "ALTER TABLE memory_facts ADD COLUMN session_count INTEGER DEFAULT 1;
@@ -455,14 +371,12 @@ pub fn migrate_memory_facts_evidence_tracking(conn: &Connection) -> Result<()> {
              ALTER TABLE memory_facts ADD COLUMN status TEXT DEFAULT 'candidate';",
         )?;
 
-        // Backfill: existing memories with high confidence are already 'confirmed'
         conn.execute(
             "UPDATE memory_facts SET status = 'confirmed' WHERE confidence >= 0.8",
             [],
         )?;
     }
 
-    // Create index for status-based queries (runs for both new and migrated databases)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_facts(status)",
         [],
@@ -473,19 +387,10 @@ pub fn migrate_memory_facts_evidence_tracking(conn: &Connection) -> Result<()> {
 
 /// Migrate imports table to add unique constraint and deduplicate
 pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
-    // Check if imports table exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='imports'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-    if !table_exists {
+    if !table_exists(conn, "imports") {
         return Ok(());
     }
 
-    // Check if unique index already exists
     let index_exists: bool = conn
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type='index' AND name='uniq_imports'",
@@ -493,13 +398,13 @@ pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
             |_| Ok(true),
         )
         .unwrap_or(false);
+
     if index_exists {
         return Ok(());
     }
 
     tracing::info!("Deduplicating imports and adding unique constraint");
 
-    // Delete duplicate rows, keeping the one with the smallest id
     conn.execute_batch(
         "DELETE FROM imports
          WHERE id NOT IN (
@@ -509,7 +414,6 @@ pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
          )"
     )?;
 
-    // Create unique index
     conn.execute_batch("CREATE UNIQUE INDEX uniq_imports ON imports(project_id, file_path, import_path)")?;
 
     Ok(())
@@ -517,15 +421,7 @@ pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
 
 /// Migrate to add documentation tracking tables
 pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
-    let tables_exist: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='documentation_tasks'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if tables_exist {
+    if table_exists(conn, "documentation_tasks") {
         return Ok(());
     }
 
@@ -594,15 +490,7 @@ pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
 
 /// Migrate to add users table for multi-user support
 pub fn migrate_users_table(conn: &Connection) -> Result<()> {
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if table_exists {
+    if table_exists(conn, "users") {
         return Ok(());
     }
 
@@ -626,29 +514,11 @@ pub fn migrate_users_table(conn: &Connection) -> Result<()> {
 
 /// Migrate memory_facts to add user_id and scope columns for multi-user sharing
 pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
-    // Check if memory_facts exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_facts'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    if !table_exists(conn, "memory_facts") {
         return Ok(());
     }
 
-    // Check if user_id column exists
-    let has_user_id: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='user_id'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_user_id {
+    if !column_exists(conn, "memory_facts", "user_id") {
         tracing::info!("Adding user_id column to memory_facts for multi-user support");
         conn.execute(
             "ALTER TABLE memory_facts ADD COLUMN user_id TEXT",
@@ -660,16 +530,7 @@ pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
         )?;
     }
 
-    // Check if scope column exists
-    let has_scope: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='scope'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_scope {
+    if !column_exists(conn, "memory_facts", "scope") {
         tracing::info!("Adding scope column to memory_facts for visibility control");
         conn.execute(
             "ALTER TABLE memory_facts ADD COLUMN scope TEXT DEFAULT 'project'",
@@ -681,16 +542,7 @@ pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
         )?;
     }
 
-    // Check if team_id column exists
-    let has_team_id: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('memory_facts') WHERE name='team_id'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_team_id {
+    if !column_exists(conn, "memory_facts", "team_id") {
         tracing::info!("Adding team_id column to memory_facts for team sharing");
         conn.execute(
             "ALTER TABLE memory_facts ADD COLUMN team_id INTEGER",
@@ -707,15 +559,7 @@ pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
 
 /// Migrate to add teams tables for team-based memory sharing
 pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
-    let teams_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='teams'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if teams_exists {
+    if table_exists(conn, "teams") {
         return Ok(());
     }
 
@@ -750,15 +594,7 @@ pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
 
 /// Migrate to add review_findings table for code review learning loop
 pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_findings'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if table_exists {
+    if table_exists(conn, "review_findings") {
         return Ok(());
     }
 
@@ -797,29 +633,11 @@ pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
 
 /// Migrate corrections table to add learning columns
 pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
-    // Check if corrections table exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='corrections'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
+    if !table_exists(conn, "corrections") {
         return Ok(());
     }
 
-    // Check if occurrence_count column exists
-    let has_occurrence_count: bool = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('corrections') WHERE name='occurrence_count'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !has_occurrence_count {
+    if !column_exists(conn, "corrections", "occurrence_count") {
         tracing::info!("Adding learning columns to corrections table");
         conn.execute_batch(
             "ALTER TABLE corrections ADD COLUMN occurrence_count INTEGER DEFAULT 1;
@@ -832,51 +650,37 @@ pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
 
 /// Migrate to add proxy_usage table for token tracking and cost estimation
 pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='proxy_usage'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
-        tracing::info!("Creating proxy_usage table for token tracking and cost estimation");
-
-        conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS proxy_usage (
-                id INTEGER PRIMARY KEY,
-                backend_name TEXT NOT NULL,
-                model TEXT,
-                input_tokens INTEGER NOT NULL,
-                output_tokens INTEGER NOT NULL,
-                cache_creation_tokens INTEGER DEFAULT 0,
-                cache_read_tokens INTEGER DEFAULT 0,
-                cost_estimate REAL,
-                request_id TEXT,
-                session_id TEXT,
-                project_id INTEGER REFERENCES projects(id),
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_proxy_usage_backend ON proxy_usage(backend_name, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_proxy_usage_session ON proxy_usage(session_id);
-            CREATE INDEX IF NOT EXISTS idx_proxy_usage_project ON proxy_usage(project_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_proxy_usage_created ON proxy_usage(created_at DESC);
-            "#
-        )?;
+    if table_exists(conn, "proxy_usage") {
+        return Ok(());
     }
 
-    // Add embeddings_usage table
-    let embeddings_table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='embeddings_usage'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
+    tracing::info!("Creating proxy_usage table for token tracking and cost estimation");
 
-    if !embeddings_table_exists {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS proxy_usage (
+            id INTEGER PRIMARY KEY,
+            backend_name TEXT NOT NULL,
+            model TEXT,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cost_estimate REAL,
+            request_id TEXT,
+            session_id TEXT,
+            project_id INTEGER REFERENCES projects(id),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_backend ON proxy_usage(backend_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_session ON proxy_usage(session_id);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_project ON proxy_usage(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_created ON proxy_usage(created_at DESC);
+        "#
+    )?;
+
+    // Add embeddings_usage table
+    if !table_exists(conn, "embeddings_usage") {
         tracing::info!("Creating embeddings_usage table for embedding cost tracking");
 
         conn.execute_batch(
@@ -903,15 +707,7 @@ pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
 
 /// Migrate to add diff_analyses table for semantic diff analysis
 pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='diff_analyses'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if table_exists {
+    if table_exists(conn, "diff_analyses") {
         return Ok(());
     }
 
