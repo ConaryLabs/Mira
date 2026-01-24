@@ -12,6 +12,21 @@ Then `recall("preferences")` before writing code.
 
 ---
 
+## Anti-Patterns
+
+**NEVER** do these in the Mira codebase:
+
+| Don't | Do Instead |
+|-------|------------|
+| Use `Database` directly | Use `DatabasePool` for all database access |
+| Store secrets in memories | Keep secrets in `.env` only |
+| Skip `session_start` | Always call at conversation start |
+| Guess at MCP tool parameters | Check tool schema or existing usage first |
+| Add dependencies without checking | Run `recall("dependencies")` first |
+| Modify `proxy.rs` handler signatures | Coordinate changes across all tool handlers |
+
+---
+
 ## CRITICAL: Tool Selection
 
 STOP before using Grep or Glob. Use Mira tools instead.
@@ -220,6 +235,15 @@ The assistant did NOT use goal tracking because:
 ## Memory System
 
 Use `remember` to store decisions and context. Use `recall` to retrieve them.
+
+### Evidence Threshold
+
+**Don't store one-off observations.** A pattern seen once is not yet a pattern. Only use `remember` for:
+- Patterns observed **multiple times** across sessions
+- Decisions **explicitly requested** by the user to remember
+- Mistakes that caused **real problems** (not hypothetical issues)
+
+When uncertain, don't store it. Memories accumulate and dilute recall quality.
 
 ### When to Use Memory
 
