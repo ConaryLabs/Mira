@@ -18,16 +18,20 @@ pub async fn list_doc_tasks(
 ) -> Result<String, String> {
     let project_id_opt = ctx.project_id().await;
 
-    let db = ctx.db();
-    let conn = db.conn();
-
-    let tasks = list_db_doc_tasks(
-        &conn,
-        project_id_opt,
-        status.as_deref(),
-        doc_type.as_deref(),
-        priority.as_deref(),
-    )?;
+    let tasks = ctx
+        .pool()
+        .interact(move |conn| {
+            list_db_doc_tasks(
+                conn,
+                project_id_opt,
+                status.as_deref(),
+                doc_type.as_deref(),
+                priority.as_deref(),
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if tasks.is_empty() {
         return Ok("No documentation tasks found.".to_string());
@@ -80,12 +84,16 @@ pub async fn skip_doc_task(
     task_id: i64,
     reason: Option<String>,
 ) -> Result<String, String> {
-    let db = ctx.db();
-    let conn = db.conn();
-
     let skip_reason = reason.unwrap_or_else(|| "Skipped by user".to_string());
+    let skip_reason_clone = skip_reason.clone();
 
-    mark_doc_task_skipped(&conn, task_id, &skip_reason)?;
+    ctx.pool()
+        .interact(move |conn| {
+            mark_doc_task_skipped(conn, task_id, &skip_reason_clone)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(format!("Task {} skipped: {}", task_id, skip_reason))
 }
@@ -95,10 +103,13 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
     let project_id_opt = ctx.project_id().await;
     let project_id = project_id_opt.ok_or("No active project")?;
 
-    let db = ctx.db();
-    let conn = db.conn();
-
-    let inventory = get_doc_inventory(&conn, project_id)?;
+    let inventory = ctx
+        .pool()
+        .interact(move |conn| {
+            get_doc_inventory(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if inventory.is_empty() {
         return Ok("No documentation inventory found. Run scan to build inventory.".to_string());
@@ -171,11 +182,14 @@ pub async fn write_documentation<C: ToolContext>(
     use crate::tools::core::experts::{consult_expert, ExpertRole};
 
     // Get task details
-    let task = {
-        let db = ctx.db();
-        let conn = db.conn();
-        get_doc_task(&conn, task_id)?.ok_or(format!("Task {} not found", task_id))?
-    };
+    let task = ctx
+        .pool()
+        .interact(move |conn| {
+            get_doc_task(conn, task_id).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or(format!("Task {} not found", task_id))?;
 
     // Only allow writing for pending tasks
     if task.status != "pending" {
@@ -186,17 +200,19 @@ pub async fn write_documentation<C: ToolContext>(
     }
 
     // Get project path
-    let project_path = {
-        let db = ctx.db();
-        let conn = db.conn();
-        let project_id = task.project_id.ok_or("No project_id on task")?;
-        conn.query_row(
-            "SELECT path FROM projects WHERE id = ?",
-            [project_id],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|e| e.to_string())?
-    };
+    let project_id = task.project_id.ok_or("No project_id on task")?;
+    let project_path = ctx
+        .pool()
+        .interact(move |conn| {
+            conn.query_row(
+                "SELECT path FROM projects WHERE id = ?",
+                [project_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Build context for the expert
     let context = build_expert_context(ctx, &task, &project_path).await?;
@@ -238,11 +254,12 @@ pub async fn write_documentation<C: ToolContext>(
         .map_err(|e| format!("Failed to write file: {}", e))?;
 
     // Mark task as applied
-    {
-        let db = ctx.db();
-        let conn = db.conn();
-        mark_doc_task_applied(&conn, task_id)?;
-    }
+    ctx.pool()
+        .interact(move |conn| {
+            mark_doc_task_applied(conn, task_id).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(format!(
         "Documentation written to `{}`\nTask {} marked complete.",
