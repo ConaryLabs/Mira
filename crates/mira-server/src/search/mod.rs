@@ -7,7 +7,7 @@ mod keyword;
 mod semantic;
 mod utils;
 
-pub use context::{expand_context, expand_context_with_db};
+pub use context::{expand_context, expand_context_with_conn};
 pub use crossref::{
     crossref_search, find_callers, find_callees, format_crossref_results, CrossRefResult,
     CrossRefType,

@@ -8,7 +8,7 @@ use crate::db::search_capabilities_sync;
 use crate::indexer;
 use crate::llm::Message;
 use crate::search::{
-    crossref_search, embedding_to_bytes, expand_context_with_db, find_callers, find_callees,
+    crossref_search, embedding_to_bytes, expand_context_with_conn, find_callers, find_callees,
     format_crossref_results, format_project_header, hybrid_search, CrossRefType,
 };
 use crate::tools::core::ToolContext;
@@ -66,17 +66,34 @@ pub async fn search_code<C: ToolContext>(
         result.search_type
     );
 
-    for r in &result.results {
-        // Use shared context expansion (DB-free version with fallback)
-        let expanded = expand_context_with_db(
-            &r.file_path,
-            &r.content,
-            project_path.as_deref(),
-            None, // TODO: migrate expand_context_with_db to use pool
-            project_id,
-        );
+    // Batch expand results with DB access for symbol bounds
+    let results_data: Vec<_> = result.results.iter()
+        .map(|r| (r.file_path.clone(), r.content.clone(), r.score))
+        .collect();
 
-        response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", r.file_path, r.score));
+    let project_path_clone = project_path.clone();
+    type ExpandedResult = (String, String, f32, Option<(Option<String>, String)>);
+    let expanded_results: Vec<ExpandedResult> = ctx
+        .pool()
+        .interact(move |conn| -> Result<Vec<ExpandedResult>, anyhow::Error> {
+            Ok(results_data.iter()
+                .map(|(file_path, content, score)| {
+                    let expanded = expand_context_with_conn(
+                        file_path,
+                        content,
+                        project_path_clone.as_deref(),
+                        Some(conn),
+                        project_id,
+                    );
+                    (file_path.clone(), content.clone(), *score, expanded)
+                })
+                .collect())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    for (file_path, content, score, expanded) in expanded_results {
+        response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", file_path, score));
 
         if let Some((symbol_info, full_code)) = expanded {
             if let Some(info) = symbol_info {
@@ -89,10 +106,10 @@ pub async fn search_code<C: ToolContext>(
             };
             response.push_str(&format!("```\n{}\n```\n\n", code_display));
         } else {
-            let display = if r.content.len() > 500 {
-                format!("{}...", &r.content[..500])
+            let display = if content.len() > 500 {
+                format!("{}...", &content[..500])
             } else {
-                r.content.clone()
+                content
             };
             response.push_str(&format!("```\n{}\n```\n\n", display));
         }

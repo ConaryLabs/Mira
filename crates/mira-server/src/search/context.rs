@@ -1,7 +1,8 @@
 // crates/mira-server/src/search/context.rs
 // Context expansion for search results
 
-use crate::db::{get_symbol_bounds_sync, Database};
+use crate::db::get_symbol_bounds_sync;
+use rusqlite::Connection;
 use std::path::Path;
 
 /// Parse symbol name and kind from chunk header
@@ -34,15 +35,14 @@ fn parse_symbol_header(chunk_content: &str) -> Option<(String, String)> {
     Some((kind.to_string(), name.trim().to_string()))
 }
 
-/// Look up symbol bounds from code_symbols table
-fn lookup_symbol_bounds(
-    db: &Database,
+/// Look up symbol bounds from code_symbols table (sync version for pool.interact)
+fn lookup_symbol_bounds_sync(
+    conn: &Connection,
     project_id: Option<i64>,
     file_path: &str,
     symbol_name: &str,
 ) -> Option<(u32, u32)> {
-    let conn = db.conn();
-    get_symbol_bounds_sync(&conn, file_path, symbol_name, project_id)
+    get_symbol_bounds_sync(conn, file_path, symbol_name, project_id)
 }
 
 /// Expand search result to full symbol using code_symbols table
@@ -51,15 +51,15 @@ pub fn expand_context(
     chunk_content: &str,
     project_path: Option<&str>,
 ) -> Option<(Option<String>, String)> {
-    expand_context_with_db(file_path, chunk_content, project_path, None, None)
+    expand_context_with_conn(file_path, chunk_content, project_path, None, None)
 }
 
-/// Expand search result to full symbol using code_symbols table (with DB access)
-pub fn expand_context_with_db(
+/// Expand search result to full symbol using code_symbols table (with Connection for pool.interact)
+pub fn expand_context_with_conn(
     file_path: &str,
     chunk_content: &str,
     project_path: Option<&str>,
-    db: Option<&Database>,
+    conn: Option<&Connection>,
     project_id: Option<i64>,
 ) -> Option<(Option<String>, String)> {
     // Extract symbol info from header
@@ -70,9 +70,9 @@ pub fn expand_context_with_db(
     };
 
     // Try to expand using symbol bounds from DB
-    if let (Some(db), Some(proj_path)) = (db, project_path) {
+    if let (Some(conn), Some(proj_path)) = (conn, project_path) {
         if let Some((kind, name)) = parse_symbol_header(chunk_content) {
-            if let Some((start_line, end_line)) = lookup_symbol_bounds(db, project_id, file_path, &name) {
+            if let Some((start_line, end_line)) = lookup_symbol_bounds_sync(conn, project_id, file_path, &name) {
                 let full_path = Path::new(proj_path).join(file_path);
                 if let Ok(file_content) = std::fs::read_to_string(&full_path) {
                     let all_lines: Vec<&str> = file_content.lines().collect();

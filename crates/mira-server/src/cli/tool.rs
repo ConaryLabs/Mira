@@ -4,7 +4,7 @@
 use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
-use mira::mcp::{
+use mira::mcp::requests::{
     SessionStartRequest, SetProjectRequest, RememberRequest, RecallRequest,
     ForgetRequest, GetSymbolsRequest, SemanticCodeSearchRequest,
     FindCallersRequest, FindCalleesRequest, CheckCapabilityRequest,
@@ -12,7 +12,7 @@ use mira::mcp::{
     ConsultArchitectRequest, ConsultCodeReviewerRequest,
     ConsultPlanReviewerRequest, ConsultScopeAnalystRequest,
     ConsultSecurityRequest, ConsultExpertsRequest, ConfigureExpertRequest,
-    ReplyToMiraRequest
+    ReplyToMiraRequest,
 };
 
 /// Execute a tool directly from the command line
