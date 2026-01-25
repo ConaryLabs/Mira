@@ -334,28 +334,112 @@ fn detect_language(path: &str) -> &'static str {
 
 /// Extract markdown content from expert response
 fn extract_markdown_from_response(response: &str) -> String {
+    let mut content = response.to_string();
+
+    // Strip token stats at the end (e.g., "*Tokens: 27196 prompt, 1121 completion*")
+    if let Some(pos) = content.rfind("\n---\n*Tokens:") {
+        content = content[..pos].to_string();
+    } else if let Some(pos) = content.rfind("*Tokens:") {
+        if let Some(line_start) = content[..pos].rfind('\n') {
+            content = content[..line_start].to_string();
+        }
+    }
+
+    // Strip <details> blocks (reasoning sections)
+    while let Some(start) = content.find("<details>") {
+        if let Some(end) = content.find("</details>") {
+            let before = &content[..start];
+            let after = &content[end + 10..];
+            content = format!("{}{}", before.trim(), after);
+        } else {
+            break;
+        }
+    }
+
     // If response contains a code block with markdown, extract it
-    if let Some(start) = response.find("```md") {
-        if let Some(end) = response[start + 5..].find("```") {
-            return response[start + 5..start + 5 + end].trim().to_string();
+    if let Some(start) = content.find("```md") {
+        if let Some(end) = content[start + 5..].find("```") {
+            return content[start + 5..start + 5 + end].trim().to_string();
         }
     }
 
-    if let Some(start) = response.find("```markdown") {
-        if let Some(end) = response[start + 11..].find("```") {
-            return response[start + 11..start + 11 + end].trim().to_string();
+    if let Some(start) = content.find("```markdown") {
+        if let Some(end) = content[start + 11..].find("```") {
+            return content[start + 11..start + 11 + end].trim().to_string();
         }
     }
 
-    // Look for the first heading and take everything from there
-    if let Some(heading_pos) = response.find("\n# ") {
-        return response[heading_pos + 1..].trim().to_string();
+    // Strip analytical sections that shouldn't be in reference docs
+    let analytical_patterns = [
+        "\n## Key Findings",
+        "\n## Actionable Insights",
+        "\n## Actionable Recommendations",
+        "\n## Recommendations",
+        "\n## Quality Assessment",
+        "\n## Conclusion",
+        "\n## Assessment",
+        "\n## Analysis",
+        "\n## Overall Assessment",
+        "\n## Future Enhancement",
+        "\n### For Documentation",
+        "\n### For Users",
+        "\n### For Developers",
+        "\n### For Implementation",
+    ];
+
+    for pattern in analytical_patterns {
+        // Find the section and remove it along with its content until the next heading
+        while let Some(start) = content.find(pattern) {
+            // Find the next section heading (## or end of content)
+            let after_heading = start + pattern.len();
+            let next_section = content[after_heading..]
+                .find("\n## ")
+                .map(|p| after_heading + p)
+                .unwrap_or(content.len());
+
+            let before = &content[..start];
+            let after = &content[next_section..];
+            content = format!("{}{}", before.trim_end(), after);
+        }
     }
 
-    if response.starts_with("# ") {
-        return response.to_string();
+    // Look for the first proper heading, skipping meta-headings
+    let meta_prefixes = [
+        "# Documentation Writer",
+        "# Analysis",
+        "# Expert",
+        "# Summary",
+    ];
+
+    for pattern in ["# ", "\n# "] {
+        if let Some(pos) = content.find(pattern) {
+            let start = if pattern.starts_with('\n') {
+                pos + 1
+            } else {
+                pos
+            };
+            let heading_line = &content[start..];
+            // Skip meta headings
+            let is_meta = meta_prefixes
+                .iter()
+                .any(|prefix| heading_line.starts_with(prefix));
+            if !is_meta {
+                return content[start..].trim().to_string();
+            }
+        }
     }
 
-    // Fallback: return the whole response
-    response.to_string()
+    // Look for ## heading after skipping meta content
+    if let Some(pos) = content.find("\n## ") {
+        let heading_line = &content[pos + 1..];
+        if !heading_line.starts_with("## Documentation Writer")
+            && !heading_line.starts_with("## Analysis")
+            && !heading_line.starts_with("## Summary")
+        {
+            return content[pos + 1..].trim().to_string();
+        }
+    }
+
+    // Fallback: return cleaned content
+    content.trim().to_string()
 }

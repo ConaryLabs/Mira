@@ -225,6 +225,52 @@ pub fn mark_doc_task_skipped(
     .map_err(|e| e.to_string())
 }
 
+/// Reset orphaned tasks whose target files no longer exist
+/// Returns the number of tasks reset
+pub fn reset_orphaned_doc_tasks(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    project_path: &str,
+) -> Result<usize, String> {
+    use std::path::Path;
+
+    // Get all applied tasks for this project
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, target_doc_path FROM documentation_tasks
+             WHERE project_id = ? AND status = 'applied'",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let tasks: Vec<(i64, String)> = stmt
+        .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut reset_count = 0;
+    for (task_id, target_path) in tasks {
+        let full_path = Path::new(project_path).join(&target_path);
+        if !full_path.exists() {
+            conn.execute(
+                "UPDATE documentation_tasks
+                 SET status = 'pending', applied_at = NULL, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?",
+                [task_id],
+            )
+            .map_err(|e| e.to_string())?;
+            reset_count += 1;
+            tracing::info!(
+                "Reset orphaned doc task {} (file missing: {})",
+                task_id,
+                target_path
+            );
+        }
+    }
+
+    Ok(reset_count)
+}
+
 /// Add or update documentation inventory entry
 pub fn upsert_doc_inventory(
     conn: &rusqlite::Connection,

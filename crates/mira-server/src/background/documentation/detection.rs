@@ -55,6 +55,18 @@ pub async fn scan_documentation_gaps(pool: &Arc<DatabasePool>) -> Result<usize, 
             }
         }
 
+        // Reset orphaned tasks (files deleted but task still marked applied)
+        let project_path_for_reset = project_path.clone();
+        let reset_count = pool.interact(move |conn| {
+            crate::db::documentation::reset_orphaned_doc_tasks(conn, project_id, &project_path_for_reset)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if reset_count > 0 {
+            tracing::info!("Documentation: reset {} orphaned tasks for project {}", reset_count, project_id);
+        }
+
         // Scan for gaps
         let created = detect_gaps_for_project(pool, project_id, project_path_ref).await?;
         total_created += created;
