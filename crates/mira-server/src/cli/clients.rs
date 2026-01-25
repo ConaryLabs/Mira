@@ -49,14 +49,3 @@ pub fn get_deepseek_chat(http_client: reqwest::Client) -> Option<Arc<DeepSeekCli
         .filter(|k| !k.trim().is_empty())
         .map(|key| Arc::new(DeepSeekClient::with_http_client(key, "deepseek-chat".into(), http_client)))
 }
-
-/// Format token count with K/M suffix
-pub fn format_tokens(tokens: i64) -> String {
-    if tokens >= 1_000_000 {
-        format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    } else if tokens >= 1_000 {
-        format!("{:.1}K", tokens as f64 / 1_000.0)
-    } else {
-        tokens.to_string()
-    }
-}

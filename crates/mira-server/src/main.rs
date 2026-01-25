@@ -8,7 +8,7 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use cli::{Cli, Commands, HookAction, ProxyAction, BackendAction};
+use cli::{Cli, Commands, HookAction};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,8 +32,6 @@ async fn main() -> Result<()> {
         Some(Commands::Index { .. }) => Level::INFO,
         Some(Commands::DebugCarto { .. }) => Level::DEBUG,
         Some(Commands::DebugSession { .. }) => Level::DEBUG,
-        Some(Commands::Proxy { .. }) => Level::INFO,
-        Some(Commands::Backend { .. }) => Level::INFO,
     };
 
     let subscriber = FmtSubscriber::builder()
@@ -81,34 +79,6 @@ async fn main() -> Result<()> {
         }
         Some(Commands::DebugSession { path }) => {
             cli::run_debug_session(path).await?;
-        }
-        Some(Commands::Proxy { action }) => match action {
-            ProxyAction::Start { config, host, port, daemon } => {
-                cli::run_proxy_start(config, host, port, daemon).await?;
-            }
-            ProxyAction::Stop => {
-                cli::run_proxy_stop()?;
-            }
-            ProxyAction::Status => {
-                cli::run_proxy_status()?;
-            }
-        }
-        Some(Commands::Backend { action }) => match action {
-            BackendAction::List => {
-                cli::run_backend_list()?;
-            }
-            BackendAction::Use { name } => {
-                cli::run_backend_use(&name).await?;
-            }
-            BackendAction::Test { name } => {
-                cli::run_backend_test(&name).await?;
-            }
-            BackendAction::Env { name } => {
-                cli::run_backend_env(name.as_deref())?;
-            }
-            BackendAction::Usage { backend, days } => {
-                cli::run_backend_usage(backend.as_deref(), days).await?;
-            }
         }
     }
 

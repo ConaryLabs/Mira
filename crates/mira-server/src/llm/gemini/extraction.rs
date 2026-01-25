@@ -2,7 +2,9 @@
 // Response extraction helpers for Gemini API responses
 
 use crate::llm::deepseek::{FunctionCall, ToolCall};
-use crate::llm::gemini::types::{GeminiContent, GeminiFunctionCall, GeminiPart};
+use crate::llm::gemini::types::{GeminiContent, GeminiPart};
+#[cfg(test)]
+use crate::llm::gemini::types::GeminiFunctionCall;
 
 /// Extract tool calls from Gemini response
 pub fn extract_tool_calls(content: &GeminiContent) -> Option<Vec<ToolCall>> {

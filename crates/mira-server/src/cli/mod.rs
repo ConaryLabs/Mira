@@ -4,19 +4,15 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-pub mod backend;
 pub mod clients;
 pub mod debug;
 pub mod index;
-pub mod proxy;
 pub mod serve;
 pub mod tool;
 
 // Re-export command handlers
-pub use backend::*;
 pub use debug::*;
 pub use index::run_index;
-pub use proxy::*;
 pub use serve::run_mcp_server;
 pub use tool::run_tool;
 
@@ -75,46 +71,6 @@ pub enum Commands {
         #[arg(short, long)]
         path: Option<PathBuf>,
     },
-
-    /// LLM proxy server management
-    Proxy {
-        #[command(subcommand)]
-        action: ProxyAction,
-    },
-
-    /// Manage LLM backends
-    Backend {
-        #[command(subcommand)]
-        action: BackendAction,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ProxyAction {
-    /// Start the proxy server
-    Start {
-        /// Config file path (default: ~/.config/mira/proxy.toml)
-        #[arg(short, long)]
-        config: Option<PathBuf>,
-
-        /// Host to bind to (overrides config)
-        #[arg(long)]
-        host: Option<String>,
-
-        /// Port to listen on (overrides config)
-        #[arg(short, long)]
-        port: Option<u16>,
-
-        /// Run in background (daemon mode)
-        #[arg(short, long)]
-        daemon: bool,
-    },
-
-    /// Stop the running proxy server
-    Stop,
-
-    /// Check proxy server status
-    Status,
 }
 
 #[derive(Subcommand)]
@@ -136,41 +92,6 @@ pub enum HookAction {
     Posttool,
     #[command(hide = true)]
     Pretool,
-}
-
-#[derive(Subcommand)]
-pub enum BackendAction {
-    /// List configured backends
-    List,
-
-    /// Set the default backend
-    Use {
-        /// Backend name to set as default
-        name: String,
-    },
-
-    /// Test connectivity to a backend
-    Test {
-        /// Backend name to test
-        name: String,
-    },
-
-    /// Print environment variables for a backend (shell export format)
-    Env {
-        /// Backend name (uses default if not specified)
-        name: Option<String>,
-    },
-
-    /// Show usage statistics
-    Usage {
-        /// Filter by backend name
-        #[arg(short, long)]
-        backend: Option<String>,
-
-        /// Number of days to show (default: 7)
-        #[arg(short, long, default_value = "7")]
-        days: u32,
-    },
 }
 
 /// Get the default database path

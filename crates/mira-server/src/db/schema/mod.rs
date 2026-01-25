@@ -47,8 +47,8 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add learning columns to corrections table
     reviews::migrate_corrections_learning_columns(conn)?;
 
-    // Add proxy usage tracking table
-    reviews::migrate_proxy_usage_table(conn)?;
+    // Add embeddings usage tracking table
+    reviews::migrate_embeddings_usage_table(conn)?;
 
     // Add diff analyses table for semantic diff analysis
     reviews::migrate_diff_analyses_table(conn)?;

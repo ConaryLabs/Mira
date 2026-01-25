@@ -1,5 +1,5 @@
 // crates/mira-server/src/db/schema/reviews.rs
-// Review findings and usage tracking migrations
+// Review findings and embeddings usage tracking migrations
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -51,30 +51,8 @@ pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Migrate to add proxy_usage table for token tracking and cost estimation
-pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "proxy_usage", r#"
-        CREATE TABLE IF NOT EXISTS proxy_usage (
-            id INTEGER PRIMARY KEY,
-            backend_name TEXT NOT NULL,
-            model TEXT,
-            input_tokens INTEGER NOT NULL,
-            output_tokens INTEGER NOT NULL,
-            cache_creation_tokens INTEGER DEFAULT 0,
-            cache_read_tokens INTEGER DEFAULT 0,
-            cost_estimate REAL,
-            request_id TEXT,
-            session_id TEXT,
-            project_id INTEGER REFERENCES projects(id),
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_proxy_usage_backend ON proxy_usage(backend_name, created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_proxy_usage_session ON proxy_usage(session_id);
-        CREATE INDEX IF NOT EXISTS idx_proxy_usage_project ON proxy_usage(project_id, created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_proxy_usage_created ON proxy_usage(created_at DESC);
-    "#)?;
-
-    // Add embeddings_usage table
+/// Migrate to add embeddings_usage table for embedding cost tracking
+pub fn migrate_embeddings_usage_table(conn: &Connection) -> Result<()> {
     create_table_if_missing(conn, "embeddings_usage", r#"
         CREATE TABLE IF NOT EXISTS embeddings_usage (
             id INTEGER PRIMARY KEY,

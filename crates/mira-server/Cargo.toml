@@ -32,7 +32,7 @@ zerocopy = "0.8"
 deadpool-sqlite = { version = "0.12", features = ["rt_tokio_1", "tracing"] }
 
 # MCP Server
-rmcp = { version = "0.12", features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }
+rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
 schemars = "1"
 
 # CLI
@@ -46,12 +46,8 @@ uuid = { version = "1.8", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.9"
 
-# HTTP client (for embeddings API, proxy)
+# HTTP client (for embeddings API)
 reqwest = { version = "0.13", features = ["json", "rustls", "stream", "multipart"] }
-mime_guess = "2.0"
-
-# HTTP server (for proxy)
-axum = "0.8"
 
 # Code parsing (tree-sitter for multi-language support)
 tree-sitter = "0.25"
@@ -88,7 +84,6 @@ once_cell = "1.21"
 async-trait = "0.1"
 thiserror = "2.0"
 sha2 = "0.10"
-tokio-util = "0.7.17"
 url = "2.5.7"
 futures = "0.3.31"
 lru = "0.12.0"
