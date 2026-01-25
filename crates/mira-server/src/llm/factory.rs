@@ -1,6 +1,7 @@
 // crates/mira-server/src/llm/factory.rs
 // Provider factory for managing multiple LLM clients
 
+use crate::config::MiraConfig;
 use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::gemini::GeminiClient;
@@ -31,10 +32,15 @@ impl ProviderFactory {
         let gemini_key = std::env::var("GEMINI_API_KEY").ok().filter(|k| !k.trim().is_empty());
         let glm_key = std::env::var("ZAI_API_KEY").ok().filter(|k| !k.trim().is_empty());
 
-        // Check for global default provider
-        let default_provider = std::env::var("DEFAULT_LLM_PROVIDER")
-            .ok()
-            .and_then(|s| Provider::from_str(&s));
+        // Load config file
+        let config = MiraConfig::load();
+
+        // Check for default provider: config file first, then env var
+        let default_provider = config.default_provider().or_else(|| {
+            std::env::var("DEFAULT_LLM_PROVIDER")
+                .ok()
+                .and_then(|s| Provider::from_str(&s))
+        });
 
         if let Some(ref p) = default_provider {
             info!(provider = %p, "Global default LLM provider configured");
