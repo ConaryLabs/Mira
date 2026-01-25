@@ -8,7 +8,7 @@ use crate::db::{
 };
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{DeepSeekClient, PromptBuilder};
+use crate::llm::{LlmClient, PromptBuilder};
 use crate::search::embedding_to_bytes;
 use std::path::Path;
 use std::process::Command;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 /// Check if capabilities inventory needs regeneration and process if so
 pub async fn process_capabilities(
     pool: &Arc<DatabasePool>,
-    deepseek: &Arc<DeepSeekClient>,
+    client: &Arc<dyn LlmClient>,
     embeddings: Option<&Arc<EmbeddingClient>>,
 ) -> Result<usize, String> {
     // Get projects that need capability scanning
@@ -38,7 +38,7 @@ pub async fn process_capabilities(
         }
 
         // Generate capabilities inventory
-        match generate_capabilities_inventory(pool, deepseek, embeddings, project_id, &project_path).await {
+        match generate_capabilities_inventory(pool, client, embeddings, project_id, &project_path).await {
             Ok(count) => {
                 tracing::info!(
                     "Generated {} capabilities for project {} ({})",
@@ -176,7 +176,7 @@ const MAX_TOTAL_CONTEXT_BYTES: usize = 200_000;
 /// Generate the full capabilities inventory for a project
 async fn generate_capabilities_inventory(
     pool: &Arc<DatabasePool>,
-    deepseek: &Arc<DeepSeekClient>,
+    client: &Arc<dyn LlmClient>,
     embeddings: Option<&Arc<EmbeddingClient>>,
     project_id: i64,
     project_path: &str,
@@ -269,10 +269,10 @@ Only list working, implemented capabilities. Do NOT list problems, issues, or in
     let messages = PromptBuilder::for_capabilities()
         .build_messages(prompt);
 
-    let result = deepseek
+    let result = client
         .chat(messages, None)
         .await
-        .map_err(|e| format!("DeepSeek request failed: {}", e))?;
+        .map_err(|e| format!("LLM request failed: {}", e))?;
 
     let content = result
         .content

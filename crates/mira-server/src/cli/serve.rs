@@ -1,7 +1,7 @@
 // crates/mira-server/src/cli/serve.rs
 // MCP server initialization and main loop
 
-use super::clients::{get_deepseek, get_deepseek_chat, get_embeddings_with_pool};
+use super::clients::get_embeddings_with_pool;
 use super::get_db_path;
 use anyhow::Result;
 use mira::background;
@@ -78,22 +78,20 @@ pub async fn run_mcp_server() -> Result<()> {
         info!("Semantic search disabled (no GEMINI_API_KEY)");
     }
 
-    // Initialize DeepSeek client if API key available
-    let deepseek = get_deepseek(http_client.clone());
-    let deepseek_chat = get_deepseek_chat(http_client.clone());
+    // Initialize LLM provider factory (handles DeepSeek, GLM, Gemini with fallback)
+    let llm_factory = Arc::new(mira::llm::ProviderFactory::new());
 
-    if deepseek.is_some() {
-        info!("DeepSeek enabled (for experts and module summaries)");
+    if llm_factory.has_providers() {
+        let providers: Vec<_> = llm_factory.available_providers().iter().map(|p| p.to_string()).collect();
+        info!("LLM providers available: {}", providers.join(", "));
     } else {
-        info!("DeepSeek disabled (no DEEPSEEK_API_KEY)");
+        info!("No LLM providers configured (set DEEPSEEK_API_KEY, ZAI_API_KEY, or GEMINI_API_KEY)");
     }
 
     // Spawn background worker for batch processing
     let bg_pool = pool.clone();
     let bg_embeddings = embeddings.clone();
-    let bg_deepseek = deepseek.clone();
-    let bg_deepseek_chat = deepseek_chat.clone();
-    let _shutdown_tx = background::spawn(bg_pool, bg_embeddings, bg_deepseek, bg_deepseek_chat);
+    let _shutdown_tx = background::spawn(bg_pool, bg_embeddings, llm_factory.clone());
     info!("Background worker started");
 
     // Spawn file watcher for incremental indexing

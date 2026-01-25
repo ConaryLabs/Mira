@@ -3,7 +3,7 @@
 
 use crate::db::{get_large_functions_sync, get_error_heavy_functions_sync, store_memory_sync, StoreMemoryParams};
 use crate::db::pool::DatabasePool;
-use crate::llm::{DeepSeekClient, PromptBuilder};
+use crate::llm::{LlmClient, PromptBuilder};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -60,7 +60,7 @@ fn extract_function_code(
 /// Generic LLM analysis function that abstracts the common pattern
 async fn analyze_functions<F, P>(
     pool: &Arc<DatabasePool>,
-    deepseek: &Arc<DeepSeekClient>,
+    client: &Arc<dyn LlmClient>,
     project_id: i64,
     project_path: &str,
     query_fn: F,
@@ -111,7 +111,7 @@ where
         // Build the analysis prompt
         let prompt = prompt_builder(&name, &file_path, start_line, end_line, &function_code);
 
-        // Call DeepSeek Reasoner - use appropriate prompt builder based on category
+        // Call LLM - use appropriate prompt builder based on category
         let messages = if category == "complexity" {
             PromptBuilder::for_code_health_complexity().build_messages(prompt)
         } else if category == "error_quality" {
@@ -121,7 +121,7 @@ where
             PromptBuilder::for_code_health_complexity().build_messages(prompt)
         };
 
-        match deepseek.chat(messages, None).await {
+        match client.chat(messages, None).await {
             Ok(result) => {
                 if let Some(content) = result.content {
                     let content = content.trim();
@@ -169,16 +169,16 @@ where
     Ok(stored)
 }
 
-/// Use DeepSeek Reasoner to analyze large/complex functions
+/// Use LLM to analyze large/complex functions
 pub async fn scan_complexity(
     pool: &Arc<DatabasePool>,
-    deepseek: &Arc<DeepSeekClient>,
+    client: &Arc<dyn LlmClient>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
     analyze_functions(
         pool,
-        deepseek,
+        client,
         project_id,
         project_path,
         |conn, pid, _| get_large_functions(conn, pid, 50),
@@ -225,7 +225,7 @@ fn get_large_functions(
 /// LLM-powered analysis of error handling quality in complex functions
 pub async fn scan_error_quality(
     pool: &Arc<DatabasePool>,
-    deepseek: &Arc<DeepSeekClient>,
+    client: &Arc<dyn LlmClient>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -245,7 +245,7 @@ pub async fn scan_error_quality(
 
     analyze_functions(
         pool,
-        deepseek,
+        client,
         project_id,
         project_path,
         query_wrapper,

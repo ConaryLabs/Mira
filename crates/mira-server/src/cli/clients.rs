@@ -1,9 +1,8 @@
 // crates/mira-server/src/cli/clients.rs
-// Client initialization helpers for embeddings and LLM providers
+// Client initialization helpers for embeddings
 
 use mira::db::pool::DatabasePool;
 use mira::embeddings::EmbeddingClient;
-use mira::llm::DeepSeekClient;
 use std::sync::Arc;
 use tracing::info;
 
@@ -32,20 +31,4 @@ pub fn get_embeddings_with_pool(pool: Option<Arc<DatabasePool>>, http_client: re
     );
 
     Some(Arc::new(client))
-}
-
-/// Get DeepSeek client if API key is available
-pub fn get_deepseek(http_client: reqwest::Client) -> Option<Arc<DeepSeekClient>> {
-    std::env::var("DEEPSEEK_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-        .map(|key| Arc::new(DeepSeekClient::with_http_client(key, "deepseek-reasoner".into(), http_client)))
-}
-
-/// Get DeepSeek chat client for simple summarization tasks (cost-optimized)
-pub fn get_deepseek_chat(http_client: reqwest::Client) -> Option<Arc<DeepSeekClient>> {
-    std::env::var("DEEPSEEK_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-        .map(|key| Arc::new(DeepSeekClient::with_http_client(key, "deepseek-chat".into(), http_client)))
 }

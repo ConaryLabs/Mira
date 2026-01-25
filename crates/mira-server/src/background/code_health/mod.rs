@@ -11,7 +11,7 @@ use crate::db::{
     store_memory_sync, StoreMemoryParams,
 };
 use crate::db::pool::DatabasePool;
-use crate::llm::DeepSeekClient;
+use crate::llm::LlmClient;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -19,7 +19,7 @@ use std::sync::Arc;
 /// Check code health for all indexed projects
 pub async fn process_code_health(
     pool: &Arc<DatabasePool>,
-    deepseek: Option<&Arc<DeepSeekClient>>,
+    client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     tracing::debug!("Code health: checking for projects needing scan");
     let projects = pool.interact(move |conn| {
@@ -36,7 +36,7 @@ pub async fn process_code_health(
             continue;
         }
 
-        match scan_project_health(pool, deepseek, project_id, &project_path).await {
+        match scan_project_health(pool, client, project_id, &project_path).await {
             Ok(count) => {
                 tracing::info!(
                     "Found {} health issues for project {} ({})",
@@ -132,7 +132,7 @@ pub fn mark_health_scan_needed(db: &crate::db::Database, project_id: i64) -> Res
 /// Scan a project for health issues
 async fn scan_project_health(
     pool: &Arc<DatabasePool>,
-    deepseek: Option<&Arc<DeepSeekClient>>,
+    client: Option<&Arc<dyn LlmClient>>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -199,15 +199,15 @@ async fn scan_project_health(
     total += warnings + todos + unimpl + unused + unwraps + error_handling;
 
     // 6. LLM complexity analysis (for large functions) - async
-    if let Some(ds) = deepseek {
-        let complexity = analysis::scan_complexity(pool, ds, project_id, project_path).await?;
+    if let Some(llm) = client {
+        let complexity = analysis::scan_complexity(pool, llm, project_id, project_path).await?;
         if complexity > 0 {
             tracing::info!("Code health: found {} complexity issues via LLM", complexity);
         }
         total += complexity;
 
         // 8. LLM error handling analysis (for functions with many ? operators) - async
-        let error_quality = analysis::scan_error_quality(pool, ds, project_id, project_path).await?;
+        let error_quality = analysis::scan_error_quality(pool, llm, project_id, project_path).await?;
         if error_quality > 0 {
             tracing::info!("Code health: found {} error quality issues via LLM", error_quality);
         }

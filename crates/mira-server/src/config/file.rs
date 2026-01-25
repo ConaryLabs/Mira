@@ -16,8 +16,10 @@ pub struct MiraConfig {
 /// LLM configuration section
 #[derive(Debug, Deserialize, Default)]
 pub struct LlmConfig {
-    /// Default provider for expert consultations
-    pub default_provider: Option<String>,
+    /// Provider for expert tools (consult_architect, consult_code_reviewer, etc.)
+    pub expert_provider: Option<String>,
+    /// Provider for background intelligence (summaries, briefings, capabilities, code health)
+    pub background_provider: Option<String>,
 }
 
 impl MiraConfig {
@@ -53,10 +55,18 @@ impl MiraConfig {
             .join("config.toml")
     }
 
-    /// Get the default LLM provider from config
-    pub fn default_provider(&self) -> Option<Provider> {
+    /// Get the expert tools LLM provider from config
+    pub fn expert_provider(&self) -> Option<Provider> {
         self.llm
-            .default_provider
+            .expert_provider
+            .as_deref()
+            .and_then(Provider::from_str)
+    }
+
+    /// Get the background intelligence LLM provider from config
+    pub fn background_provider(&self) -> Option<Provider> {
+        self.llm
+            .background_provider
             .as_deref()
             .and_then(Provider::from_str)
     }
@@ -70,21 +80,25 @@ mod tests {
     fn test_parse_config() {
         let toml = r#"
 [llm]
-default_provider = "glm"
+expert_provider = "glm"
+background_provider = "deepseek"
 "#;
         let config: MiraConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.default_provider(), Some(Provider::Glm));
+        assert_eq!(config.expert_provider(), Some(Provider::Glm));
+        assert_eq!(config.background_provider(), Some(Provider::DeepSeek));
     }
 
     #[test]
     fn test_parse_empty_config() {
         let config: MiraConfig = toml::from_str("").unwrap();
-        assert_eq!(config.default_provider(), None);
+        assert_eq!(config.expert_provider(), None);
+        assert_eq!(config.background_provider(), None);
     }
 
     #[test]
     fn test_default_config() {
         let config = MiraConfig::default();
-        assert_eq!(config.default_provider(), None);
+        assert_eq!(config.expert_provider(), None);
+        assert_eq!(config.background_provider(), None);
     }
 }

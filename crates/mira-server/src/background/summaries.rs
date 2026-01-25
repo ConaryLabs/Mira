@@ -1,10 +1,10 @@
 // crates/mira-server/src/background/summaries.rs
-// Rate-limited DeepSeek summary generation
+// Rate-limited LLM summary generation
 
 use crate::cartographer;
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_with_pending_summaries_sync, get_modules_needing_summaries_sync, update_module_purposes_sync};
-use crate::llm::{DeepSeekClient, PromptBuilder};
+use crate::llm::{LlmClient, PromptBuilder};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +16,7 @@ const BATCH_SIZE: usize = 5;
 const RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
 
 /// Process pending summaries with rate limiting
-pub async fn process_queue(pool: &Arc<DatabasePool>, deepseek: &Arc<DeepSeekClient>) -> Result<usize, String> {
+pub async fn process_queue(pool: &Arc<DatabasePool>, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
     // Get all projects with pending summaries
     let projects = pool.interact(move |conn| {
         get_projects_with_pending_summaries_sync(conn)
@@ -54,10 +54,10 @@ pub async fn process_queue(pool: &Arc<DatabasePool>, deepseek: &Arc<DeepSeekClie
         // Build prompt for batch
         let prompt = cartographer::build_summary_prompt(&modules);
 
-        // Call DeepSeek
+        // Call LLM
         let messages = PromptBuilder::for_summaries()
             .build_messages(prompt);
-        match deepseek.chat(messages, None).await {
+        match client.chat(messages, None).await {
             Ok(result) => {
                 if let Some(content) = result.content {
                     let summaries = cartographer::parse_summary_response(&content);
@@ -83,7 +83,7 @@ pub async fn process_queue(pool: &Arc<DatabasePool>, deepseek: &Arc<DeepSeekClie
                 }
             }
             Err(e) => {
-                tracing::warn!("DeepSeek request failed: {}", e);
+                tracing::warn!("LLM request failed: {}", e);
             }
         }
 

@@ -15,6 +15,7 @@ use tracing::{info, warn};
 pub struct ProviderFactory {
     clients: HashMap<Provider, Arc<dyn LlmClient>>,
     default_provider: Option<Provider>,
+    background_provider: Option<Provider>,
     fallback_order: Vec<Provider>,
     // Store API keys to create custom clients on demand
     deepseek_key: Option<String>,
@@ -35,15 +36,21 @@ impl ProviderFactory {
         // Load config file
         let config = MiraConfig::load();
 
-        // Check for default provider: config file first, then env var
-        let default_provider = config.default_provider().or_else(|| {
+        // Check for expert provider: config file first, then env var
+        let default_provider = config.expert_provider().or_else(|| {
             std::env::var("DEFAULT_LLM_PROVIDER")
                 .ok()
                 .and_then(|s| Provider::from_str(&s))
         });
 
+        // Check for background provider from config
+        let background_provider = config.background_provider();
+
         if let Some(ref p) = default_provider {
-            info!(provider = %p, "Global default LLM provider configured");
+            info!(provider = %p, "Default LLM provider configured");
+        }
+        if let Some(ref p) = background_provider {
+            info!(provider = %p, "Background LLM provider configured");
         }
 
         // Initialize DeepSeek client
@@ -74,11 +81,40 @@ impl ProviderFactory {
         Self {
             clients,
             default_provider,
+            background_provider,
             fallback_order,
             deepseek_key,
             gemini_key,
             glm_key,
         }
+    }
+
+    /// Get a client for background tasks (summaries, briefings, capabilities, etc.)
+    /// Priority: background_provider config -> default_provider -> fallback chain
+    pub fn client_for_background(&self) -> Option<Arc<dyn LlmClient>> {
+        // Try background provider first
+        if let Some(ref provider) = self.background_provider {
+            if let Some(client) = self.clients.get(provider) {
+                return Some(client.clone());
+            }
+            warn!(provider = %provider, "Configured background provider not available");
+        }
+
+        // Fall back to default provider
+        if let Some(ref provider) = self.default_provider {
+            if let Some(client) = self.clients.get(provider) {
+                return Some(client.clone());
+            }
+        }
+
+        // Fall back through the chain
+        for provider in &self.fallback_order {
+            if let Some(client) = self.clients.get(provider) {
+                return Some(client.clone());
+            }
+        }
+
+        None
     }
 
     /// Get a client for a specific expert role (async to avoid blocking on DB)
@@ -244,6 +280,7 @@ mod tests {
         ProviderFactory {
             clients: HashMap::new(),
             default_provider: None,
+            background_provider: None,
             fallback_order: vec![Provider::DeepSeek, Provider::Glm, Provider::Gemini],
             deepseek_key: None,
             gemini_key: None,
@@ -283,6 +320,7 @@ mod tests {
         let factory = ProviderFactory {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
+            background_provider: None,
             fallback_order: vec![Provider::DeepSeek, Provider::Glm, Provider::Gemini],
             deepseek_key: None,
             gemini_key: None,

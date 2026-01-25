@@ -12,7 +12,7 @@ pub mod watcher;
 
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{DeepSeekClient, ProviderFactory};
+use crate::llm::{LlmClient, ProviderFactory};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -21,8 +21,6 @@ use tokio::sync::watch;
 pub struct BackgroundWorker {
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
-    deepseek: Option<Arc<DeepSeekClient>>,
-    deepseek_chat: Option<Arc<DeepSeekClient>>,
     llm_factory: Arc<ProviderFactory>,
     shutdown: watch::Receiver<bool>,
     cycle_count: u64,
@@ -32,14 +30,10 @@ impl BackgroundWorker {
     pub fn new(
         pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
-        deepseek: Option<Arc<DeepSeekClient>>,
-        deepseek_chat: Option<Arc<DeepSeekClient>>,
+        llm_factory: Arc<ProviderFactory>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
-        // Create provider factory with all available LLM clients
-        let llm_factory = Arc::new(ProviderFactory::new());
-
-        Self { pool, embeddings, deepseek, deepseek_chat, llm_factory, shutdown, cycle_count: 0 }
+        Self { pool, embeddings, llm_factory, shutdown, cycle_count: 0 }
     }
 
     /// Start the background worker loop
@@ -97,25 +91,25 @@ impl BackgroundWorker {
             processed += count;
         }
 
-        // Process DeepSeek-dependent tasks (summaries, briefings, capabilities)
-        if let Some(ref ds) = self.deepseek {
-            // Process summaries one at a time (rate limited) - use chat client for cost savings
-            let client = self.deepseek_chat.as_ref().unwrap_or(ds);
-            let count = self.process_summary_queue(client).await?;
+        // Process LLM-dependent tasks (summaries, briefings, capabilities)
+        // Uses background_provider from config (fallback to expert_provider, then DeepSeek)
+        if let Some(client) = self.llm_factory.client_for_background() {
+            // Process summaries one at a time (rate limited)
+            let count = self.process_summary_queue(&client).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} summaries", count);
             }
             processed += count;
 
-            // Process project briefings (What's New since last session) - use chat client
-            let count = self.process_briefings(client).await?;
+            // Process project briefings (What's New since last session)
+            let count = self.process_briefings(&client).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} briefings", count);
             }
             processed += count;
 
-            // Process capabilities inventory (periodic codebase scan) - use reasoner for quality
-            let count = self.process_capabilities(ds).await?;
+            // Process capabilities inventory (periodic codebase scan)
+            let count = self.process_capabilities(&client).await?;
             if count > 0 {
                 tracing::info!("Background: processed {} capabilities", count);
             }
@@ -129,30 +123,32 @@ impl BackgroundWorker {
                 }
                 processed += count;
             }
-        }
 
-        // Process code health (cargo warnings, TODOs, unused functions)
-        let count = self.process_code_health().await?;
-        if count > 0 {
-            tracing::info!("Background: processed {} health issues", count);
+            // Process code health (cargo warnings, TODOs, unused functions)
+            let count = self.process_code_health(&client).await?;
+            if count > 0 {
+                tracing::info!("Background: processed {} health issues", count);
+            }
+            processed += count;
+        } else {
+            tracing::debug!("Background: no LLM provider available for background tasks");
         }
-        processed += count;
 
         Ok(processed)
     }
 
     /// Process summaries with rate limiting
-    async fn process_summary_queue(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
+    async fn process_summary_queue(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
         summaries::process_queue(&self.pool, client).await
     }
 
     /// Process project briefings (What's New since last session)
-    async fn process_briefings(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
+    async fn process_briefings(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
         briefings::process_briefings(&self.pool, client).await
     }
 
     /// Process capabilities inventory (periodic codebase scan)
-    async fn process_capabilities(&self, client: &Arc<DeepSeekClient>) -> Result<usize, String> {
+    async fn process_capabilities(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
         capabilities::process_capabilities(
             &self.pool,
             client,
@@ -161,8 +157,8 @@ impl BackgroundWorker {
     }
 
     /// Process code health (compiler warnings, TODOs, unused code, complexity)
-    async fn process_code_health(&self) -> Result<usize, String> {
-        code_health::process_code_health(&self.pool, self.deepseek.as_ref()).await
+    async fn process_code_health(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+        code_health::process_code_health(&self.pool, Some(client)).await
     }
 
     /// Process documentation tasks (gap detection and draft generation)
@@ -180,12 +176,11 @@ impl BackgroundWorker {
 pub fn spawn(
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
-    deepseek: Option<Arc<DeepSeekClient>>,
-    deepseek_chat: Option<Arc<DeepSeekClient>>,
+    llm_factory: Arc<ProviderFactory>,
 ) -> watch::Sender<bool> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let worker = BackgroundWorker::new(pool, embeddings, deepseek, deepseek_chat, shutdown_rx);
+    let worker = BackgroundWorker::new(pool, embeddings, llm_factory, shutdown_rx);
 
     tokio::spawn(async move {
         worker.run().await;

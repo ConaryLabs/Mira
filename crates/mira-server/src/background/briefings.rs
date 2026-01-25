@@ -3,7 +3,7 @@
 
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
-use crate::llm::{DeepSeekClient, PromptBuilder};
+use crate::llm::{LlmClient, PromptBuilder};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 /// Check all projects for git changes and generate briefings
 pub async fn process_briefings(
     pool: &Arc<DatabasePool>,
-    deepseek: &Arc<DeepSeekClient>,
+    client: &Arc<dyn LlmClient>,
 ) -> Result<usize, String> {
     let projects = pool.interact(move |conn| {
         get_projects_for_briefing_check_sync(conn)
@@ -47,7 +47,7 @@ pub async fn process_briefings(
             &project_path,
             last_known_commit.as_deref(),
             &current_commit,
-            deepseek,
+            client,
         )
         .await;
 
@@ -189,12 +189,12 @@ fn get_files_changed(project_path: &str, from_commit: Option<&str>) -> Option<St
     }
 }
 
-/// Generate a briefing using DeepSeek Reasoner
+/// Generate a briefing using configured LLM provider
 async fn generate_briefing(
     project_path: &str,
     from_commit: Option<&str>,
     _to_commit: &str,
-    deepseek: &Arc<DeepSeekClient>,
+    client: &Arc<dyn LlmClient>,
 ) -> Option<String> {
 
     // Get git log
@@ -224,8 +224,8 @@ Summary:"#,
     let messages = PromptBuilder::for_briefings()
         .build_messages(prompt);
 
-    // Use reasoner (chat method uses deepseek-reasoner model)
-    match deepseek.chat(messages, None).await {
+    // Use configured background provider
+    match client.chat(messages, None).await {
         Ok(result) => {
             let summary = result.content.as_deref().unwrap_or("").trim().to_string();
             if summary.is_empty() {
