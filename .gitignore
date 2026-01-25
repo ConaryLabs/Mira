@@ -9,6 +9,7 @@
 .env.local
 .env.*.local
 .mcp.json
+plugin/hooks/hooks.json
 .claude/
 
 # Database files
