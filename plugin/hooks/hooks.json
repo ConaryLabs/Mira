@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mira hook session-start",
+            "command": "/home/peter/Mira/target/release/mira hook session-start",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mira hook user-prompt",
+            "command": "/home/peter/Mira/target/release/mira hook user-prompt",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mira hook post-tool",
+            "command": "/home/peter/Mira/target/release/mira hook post-tool",
             "timeout": 5
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mira hook pre-compact",
+            "command": "/home/peter/Mira/target/release/mira hook pre-compact",
             "timeout": 30
           }
         ]
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mira hook stop",
+            "command": "/home/peter/Mira/target/release/mira hook stop",
             "timeout": 5
           }
         ]
