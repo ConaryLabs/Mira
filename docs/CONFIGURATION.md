@@ -39,6 +39,7 @@ Mira loads environment files in this order (later overrides earlier):
 | File | Purpose |
 |------|---------|
 | `~/.mira/.env` | Global environment variables |
+| `~/.mira/config.toml` | LLM provider configuration |
 | `.env` | Project-local environment variables |
 | `.mcp.json` | MCP server configuration (project) |
 | `~/.claude/mcp.json` | MCP server configuration (global) |
@@ -203,8 +204,8 @@ configure_expert(action="delete", role="architect")
 | Provider | Default Model | Best For |
 |----------|---------------|----------|
 | `deepseek` | `deepseek-reasoner` | Extended reasoning, multi-step analysis |
-| `openai` | `gpt-5.2` | General purpose |
 | `gemini` | `gemini-3-pro-preview` | Cost-effective, good reasoning |
+| `glm` | `glm-4.7` | Thinking mode, Z.AI infrastructure |
 
 Use `configure_expert(action="providers")` to see available providers and their configured models.
 
@@ -227,44 +228,28 @@ These are managed automatically and should not be deleted while Mira is running.
 
 ---
 
-## 7. Proxy Configuration (Experimental)
+## 7. Default LLM Provider
 
-The LLM proxy allows routing requests through multiple backends.
-
-### Config File
-
-Create `~/.config/mira/proxy.toml`:
+Configure default LLM providers in `~/.mira/config.toml`:
 
 ```toml
-[backends.anthropic]
-name = "Anthropic"
-base_url = "https://api.anthropic.com"
-api_key_env = "ANTHROPIC_API_KEY"
-api_type = "anthropic"
+[llm]
+# Provider for expert tools (consult_architect, consult_code_reviewer, etc.)
+expert_provider = "deepseek"
 
-[backends.deepseek]
-name = "DeepSeek"
-base_url = "https://api.deepseek.com"
-api_key_env = "DEEPSEEK_API_KEY"
-api_type = "anthropic"
-
-[backends.deepseek.pricing]
-input_per_million = 0.14
-output_per_million = 2.19
-
-default_backend = "anthropic"
+# Provider for background intelligence (summaries, briefings, capabilities, code health)
+background_provider = "deepseek"
 ```
 
-### Backend Options
+### Available Providers
 
-| Field | Description |
-|-------|-------------|
-| `name` | Display name |
-| `base_url` | API endpoint |
-| `api_key_env` | Environment variable containing API key |
-| `api_type` | `anthropic` or `openai` |
-| `model_map` | Optional model name mapping |
-| `pricing` | Cost per million tokens for tracking |
+| Provider | Config Value | API Key Env Var | Default Model |
+|----------|--------------|-----------------|---------------|
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
+| Gemini | `gemini` | `GEMINI_API_KEY` | `gemini-3-pro-preview` |
+| GLM (Z.AI) | `glm` or `zai` | `ZAI_API_KEY` | `glm-4.7` |
+
+If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available.
 
 ---
 

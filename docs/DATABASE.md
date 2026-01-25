@@ -433,25 +433,6 @@ Tracking for batch embedding requests.
 
 ## Usage Tracking
 
-### proxy_usage
-
-LLM proxy request tracking for cost estimation.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| backend_name | TEXT | Which backend (anthropic, deepseek, etc.) |
-| model | TEXT | Model name |
-| input_tokens | INTEGER | Input token count |
-| output_tokens | INTEGER | Output token count |
-| cache_creation_tokens | INTEGER | Cache creation tokens |
-| cache_read_tokens | INTEGER | Cache read tokens |
-| cost_estimate | REAL | Estimated cost in USD |
-| request_id | TEXT | Request identifier |
-| session_id | TEXT | Session reference |
-| project_id | INTEGER FK | Project reference |
-| created_at | TEXT | Timestamp |
-
 ### embeddings_usage
 
 Embedding API usage tracking.

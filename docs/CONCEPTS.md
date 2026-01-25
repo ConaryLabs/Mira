@@ -153,10 +153,10 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 
 ### Provider Configuration
 
-Experts can be backed by different LLM providers via `configure_expert`:
+Experts can be backed by different LLM providers via `configure_expert` or `~/.mira/config.toml`:
 - **DeepSeek** (default) - Optimized for extended reasoning
-- **OpenAI** - GPT-4o and other models
-- **Gemini** - Google's models
+- **Gemini** - Google's models, cost-effective
+- **GLM** - Z.AI's GLM 4.7 with thinking mode
 
 Each expert role can use a different provider based on the task requirements.
 

@@ -19,7 +19,6 @@ Mira runs as an MCP server alongside Claude Code, providing:
 - **Background Intelligence** - Continuously analyzes your codebase, generates summaries, detects capabilities
 - **Expert Consultation** - Second opinions from specialized AI reviewers with codebase access
 - **Automatic Documentation** - Detects gaps, flags stale docs, generates updates
-- **LLM Proxy** - Route requests to multiple backends with usage tracking
 - **Goal Tracking** - Goals and milestones that persist across conversations
 
 ## Quick Start
@@ -93,7 +92,9 @@ DeepSeek Reasoner runs continuously in the background, building understanding of
 | `consult_scope_analyst` | Missing requirements, edge cases |
 | `consult_plan_reviewer` | Validate implementation plans |
 
-Experts have tool access - they can search code, trace call graphs, and explore the codebase to give informed answers. (Configurable LLM backends planned.)
+Experts have tool access - they can search code, trace call graphs, and explore the codebase to give informed answers.
+
+Configurable via `~/.mira/config.toml` to use different providers (DeepSeek, Gemini, GLM).
 
 ### Automatic Documentation
 
@@ -110,17 +111,6 @@ skip_doc_task(42)       # Skip if not needed
 ```
 
 The documentation expert analyzes the actual code behavior, not just signatures, to produce comprehensive docs.
-
-### LLM Proxy (Experimental)
-
-Route LLM requests through Mira for multi-backend support and usage tracking:
-
-- **Multi-backend routing** - Anthropic (default), DeepSeek, GLM, or any Anthropic-compatible API
-- **Dynamic switching** - Change providers at runtime
-- **Usage tracking** - Token counts and cost estimation per request
-- **Model mapping** - Map model names between proxy and backends
-
-Configure backends with pricing info to track costs across providers.
 
 ### Goal & Milestone Tracking
 

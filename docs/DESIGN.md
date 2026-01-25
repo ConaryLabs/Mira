@@ -92,7 +92,7 @@ Key components:
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
-| LLM Factory | `llm/factory.rs` | DeepSeek, OpenAI, Gemini providers |
+| LLM Factory | `llm/factory.rs` | DeepSeek, Gemini, GLM providers |
 | Embeddings | `embeddings/mod.rs` | OpenAI and Google embedding clients |
 
 ---
@@ -195,7 +195,8 @@ capabilities, users can configure different providers per expert role.
 
 **1) Different tasks benefit from different models**
 - Extended reasoning tasks (architects, security) → DeepSeek Reasoner
-- Alternative providers → Gemini or OpenAI
+- Thinking mode → GLM 4.7 (Z.AI)
+- Alternative providers → Gemini
 - Cost optimization → Choose based on task complexity
 
 **2) Resilience and choice**
@@ -209,10 +210,18 @@ capabilities, users can configure different providers per expert role.
 
 ### Configuration
 
+Via tool:
 ```
 configure_expert(action="set", role="architect", provider="gemini", model="gemini-3-pro-preview")
-configure_expert(action="set", role="code_reviewer", provider="deepseek")
+configure_expert(action="set", role="code_reviewer", provider="glm")
 configure_expert(action="providers")  # List available providers
+```
+
+Via config file (`~/.mira/config.toml`):
+```toml
+[llm]
+expert_provider = "deepseek"      # Default for all experts
+background_provider = "deepseek"  # For summaries, briefings, etc.
 ```
 
 ### Tradeoffs
