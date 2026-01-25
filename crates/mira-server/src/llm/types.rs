@@ -1,5 +1,5 @@
-// crates/mira-server/src/llm/deepseek/types.rs
-// DeepSeek API types for messages, tools, and responses
+// crates/mira-server/src/llm/types.rs
+// Shared LLM types for messages, tools, and responses (OpenAI-compatible format)
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

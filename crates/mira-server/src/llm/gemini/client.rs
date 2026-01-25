@@ -3,7 +3,7 @@
 // Handles internal translation between Mira's format and Google's format
 // Note: Built-in tools (Google Search) cannot combine with custom function tools
 
-use crate::llm::deepseek::{ChatResult, Message, Tool, Usage};
+use crate::llm::{ChatResult, Message, Tool, Usage};
 use crate::llm::gemini::conversion::{convert_message, convert_tools, google_search_tool};
 use crate::llm::gemini::extraction::{extract_content, extract_thoughts, extract_tool_calls};
 use crate::llm::gemini::types::{

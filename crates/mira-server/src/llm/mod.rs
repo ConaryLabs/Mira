@@ -1,16 +1,21 @@
 // crates/mira-server/src/llm/mod.rs
-// LLM inference clients (DeepSeek, Gemini)
+// LLM inference clients (DeepSeek, Gemini, GLM)
 
+mod types;
 mod deepseek;
 mod gemini;
+mod glm;
+pub mod openai_compat;
 mod provider;
 mod factory;
 mod prompt;
 mod context_budget;
 mod http_client;
 
-pub use deepseek::{DeepSeekClient, ChatResult, FunctionCall, FunctionDef, Message, Tool, ToolCall, Usage};
+pub use types::{ChatResult, FunctionCall, FunctionDef, Message, Tool, ToolCall, Usage};
+pub use deepseek::DeepSeekClient;
 pub use gemini::GeminiClient;
+pub use glm::GlmClient;
 pub use provider::{LlmClient, NormalizedUsage, Provider};
 pub use factory::ProviderFactory;
 pub use prompt::PromptBuilder;

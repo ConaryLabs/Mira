@@ -1,5 +1,5 @@
-// crates/mira-server/src/llm/deepseek/client.rs
-// DeepSeek API client (non-streaming, uses deepseek-reasoner)
+// crates/mira-server/src/llm/glm/client.rs
+// GLM 4.7 (Z.AI) API client with thinking mode support
 
 use crate::llm::http_client::LlmHttpClient;
 use crate::llm::openai_compat::{parse_chat_response, ChatRequest};
@@ -13,63 +13,79 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, Span};
 use uuid::Uuid;
 
-const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
+const GLM_API_URL: &str = "https://api.z.ai/api/paas/v4/chat/completions";
+const MAX_OUTPUT_TOKENS: u32 = 128_000;
+const DEFAULT_TEMPERATURE: f32 = 0.01; // GLM requires (0,1), can't use 0
+const THINKING_BUDGET_TOKENS: u32 = 8192;
 
-/// DeepSeek API client
-pub struct DeepSeekClient {
+/// GLM 4.7 API client
+pub struct GlmClient {
     api_key: String,
     model: String,
     http: LlmHttpClient,
+    thinking_enabled: bool,
 }
 
-impl DeepSeekClient {
-    /// Create a new DeepSeek client with appropriate timeouts
+impl GlmClient {
+    /// Create a new GLM client with default model (glm-4.7)
     pub fn new(api_key: String) -> Self {
-        Self::with_model(api_key, "deepseek-reasoner".into())
+        Self::with_model(api_key, "glm-4.7".into())
     }
 
-    /// Create a new DeepSeek client with custom model
+    /// Create a new GLM client with custom model
     pub fn with_model(api_key: String, model: String) -> Self {
         let http = LlmHttpClient::new(
             Duration::from_secs(300),
             Duration::from_secs(30),
         );
-        Self { api_key, model, http }
+        Self {
+            api_key,
+            model,
+            http,
+            thinking_enabled: true, // Enable by default like DeepSeek reasoner
+        }
     }
 
-    /// Create a new DeepSeek client with a shared HTTP client
+    /// Create a new GLM client with a shared HTTP client
     pub fn with_http_client(api_key: String, model: String, client: Client) -> Self {
-        Self { api_key, model, http: LlmHttpClient::from_client(client) }
-    }
-
-    /// Get model-specific max_tokens limit
-    /// - deepseek-chat: 8192 (API limit)
-    /// - deepseek-reasoner: 65536 (64k limit for synthesis)
-    fn max_tokens_for_model(model: &str) -> u32 {
-        if model.contains("reasoner") {
-            65536  // Reasoner models support up to 64k output
-        } else {
-            8192   // Chat models have 8k limit
+        Self {
+            api_key,
+            model,
+            http: LlmHttpClient::from_client(client),
+            thinking_enabled: true,
         }
     }
 
-    /// Calculate cache hit ratio from hit and miss token counts
-    fn calculate_cache_hit_ratio(hit: Option<u32>, miss: Option<u32>) -> Option<f64> {
-        match (hit, miss) {
-            (Some(hit), Some(miss)) if hit + miss > 0 => Some((hit as f64) / ((hit + miss) as f64)),
-            _ => None,
-        }
+    /// Enable or disable thinking mode
+    pub fn with_thinking(mut self, enabled: bool) -> Self {
+        self.thinking_enabled = enabled;
+        self
+    }
+}
+
+#[async_trait]
+impl LlmClient for GlmClient {
+    fn provider_type(&self) -> Provider {
+        Provider::Glm
     }
 
-    /// Chat using deepseek-reasoner model (non-streaming)
+    fn model_name(&self) -> String {
+        self.model.clone()
+    }
+
+    /// GLM has 200K context, benefits from budget management
+    fn supports_context_budget(&self) -> bool {
+        true
+    }
+
     #[instrument(skip(self, messages, tools), fields(request_id, model = %self.model, message_count = messages.len()))]
-    pub async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
+    async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
         let request_id = Uuid::new_v4().to_string();
         let start_time = Instant::now();
 
         Span::current().record("request_id", &request_id);
 
-        // Apply budget-aware truncation if enabled
+        // Apply budget-aware truncation
         let messages = if self.supports_context_budget() {
             let original_count = messages.len();
             let messages = truncate_messages_to_budget(messages);
@@ -91,21 +107,26 @@ impl DeepSeekClient {
             message_count = messages.len(),
             tool_count = tools.as_ref().map(|t| t.len()).unwrap_or(0),
             model = %self.model,
-            "Starting DeepSeek chat request"
+            thinking = self.thinking_enabled,
+            "Starting GLM chat request"
         );
 
         // Build request using shared ChatRequest
-        let max_tokens = Self::max_tokens_for_model(&self.model);
-        let request = ChatRequest::new(&self.model, messages)
+        let mut request = ChatRequest::new(&self.model, messages)
             .with_tools(tools)
-            .with_max_tokens(max_tokens);
+            .with_max_tokens(MAX_OUTPUT_TOKENS)
+            .with_temperature(DEFAULT_TEMPERATURE);
+
+        if self.thinking_enabled {
+            request = request.with_thinking(true, THINKING_BUDGET_TOKENS);
+        }
 
         let body = serde_json::to_string(&request)?;
-        debug!(request_id = %request_id, "DeepSeek request: {}", body);
+        debug!(request_id = %request_id, "GLM request: {}", body);
 
         let response_body = self.http.execute_with_retry(
             &request_id,
-            DEEPSEEK_API_URL,
+            GLM_API_URL,
             &self.api_key,
             body,
         ).await?;
@@ -115,18 +136,13 @@ impl DeepSeekClient {
         // Parse response using shared parser
         let result = parse_chat_response(&response_body, request_id.clone(), duration_ms)?;
 
-        // Log usage stats with DeepSeek-specific cache metrics
+        // Log usage stats
         if let Some(ref u) = result.usage {
-            let cache_hit_ratio = Self::calculate_cache_hit_ratio(u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens);
-
             info!(
                 request_id = %request_id,
                 prompt_tokens = u.prompt_tokens,
                 completion_tokens = u.completion_tokens,
-                cache_hit = ?u.prompt_cache_hit_tokens,
-                cache_miss = ?u.prompt_cache_miss_tokens,
-                cache_hit_ratio = ?cache_hit_ratio.map(|r| format!("{:.1}%", r * 100.0)),
-                "DeepSeek usage stats"
+                "GLM usage stats"
             );
         }
 
@@ -136,7 +152,7 @@ impl DeepSeekClient {
                 request_id = %request_id,
                 tool_count = tcs.len(),
                 tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
-                "DeepSeek requested tool calls"
+                "GLM requested tool calls"
             );
             for tc in tcs {
                 let args: serde_json::Value =
@@ -157,31 +173,10 @@ impl DeepSeekClient {
             content_len = result.content.as_ref().map(|c| c.len()).unwrap_or(0),
             reasoning_len = result.reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
             tool_calls = result.tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-            "DeepSeek chat complete"
+            "GLM chat complete"
         );
 
         Ok(result)
-    }
-}
-
-#[async_trait]
-impl LlmClient for DeepSeekClient {
-    fn provider_type(&self) -> Provider {
-        Provider::DeepSeek
-    }
-
-    fn model_name(&self) -> String {
-        self.model.clone()
-    }
-
-    /// DeepSeek needs budget management due to 131k token limit
-    fn supports_context_budget(&self) -> bool {
-        true
-    }
-
-    async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
-        // Delegate to the existing implementation
-        self.chat(messages, tools).await
     }
 }
 
@@ -190,15 +185,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_calculate_cache_hit_ratio() {
-        // Test cases
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(100)), Some(0.5));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(75), Some(25)), Some(0.75));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(100)), Some(0.0));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(0)), Some(1.0));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(0)), None);
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(None, Some(100)), None);
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), None), None);
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(None, None), None);
+    fn test_client_new() {
+        let client = GlmClient::new("test-key".to_string());
+        assert_eq!(client.model, "glm-4.7");
+        assert!(client.thinking_enabled);
+    }
+
+    #[test]
+    fn test_client_with_model() {
+        let client = GlmClient::with_model("test-key".to_string(), "glm-4-plus".to_string());
+        assert_eq!(client.model, "glm-4-plus");
+    }
+
+    #[test]
+    fn test_client_with_thinking() {
+        let client = GlmClient::new("test-key".to_string()).with_thinking(false);
+        assert!(!client.thinking_enabled);
+    }
+
+    #[test]
+    fn test_provider_type() {
+        let client = GlmClient::new("test-key".to_string());
+        assert_eq!(client.provider_type(), Provider::Glm);
+    }
+
+    #[test]
+    fn test_supports_context_budget() {
+        let client = GlmClient::new("test-key".to_string());
+        assert!(client.supports_context_budget());
     }
 }

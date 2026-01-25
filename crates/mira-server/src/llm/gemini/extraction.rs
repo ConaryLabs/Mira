@@ -1,7 +1,7 @@
 // crates/mira-server/src/llm/gemini/extraction.rs
 // Response extraction helpers for Gemini API responses
 
-use crate::llm::deepseek::{FunctionCall, ToolCall};
+use crate::llm::{FunctionCall, ToolCall};
 use crate::llm::gemini::types::{GeminiContent, GeminiPart};
 #[cfg(test)]
 use crate::llm::gemini::types::GeminiFunctionCall;

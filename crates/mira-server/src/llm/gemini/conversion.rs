@@ -1,7 +1,7 @@
 // crates/mira-server/src/llm/gemini/conversion.rs
 // Message and tool conversion between Mira and Gemini formats
 
-use crate::llm::deepseek::{Message, Tool};
+use crate::llm::{Message, Tool};
 use crate::llm::gemini::types::{
     GeminiContent, GeminiFunctionCall, GeminiFunctionDeclaration, GeminiFunctionResponse,
     GeminiFunctionsTool, GeminiPart, GeminiTool, GoogleSearchConfig, GoogleSearchTool,
@@ -131,7 +131,7 @@ pub fn google_search_tool() -> GeminiTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::deepseek::FunctionDef;
+    use crate::llm::FunctionDef;
 
     // ============================================================================
     // convert_tools tests

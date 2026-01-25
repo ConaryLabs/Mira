@@ -4,6 +4,7 @@
 use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::gemini::GeminiClient;
+use crate::llm::glm::GlmClient;
 use crate::llm::provider::{LlmClient, Provider};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,16 +18,18 @@ pub struct ProviderFactory {
     // Store API keys to create custom clients on demand
     deepseek_key: Option<String>,
     gemini_key: Option<String>,
+    glm_key: Option<String>,
 }
 
 impl ProviderFactory {
     /// Create a new factory, initializing clients from environment variables
     pub fn new() -> Self {
         let mut clients: HashMap<Provider, Arc<dyn LlmClient>> = HashMap::new();
-        
+
         // Load API keys
         let deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok().filter(|k| !k.trim().is_empty());
         let gemini_key = std::env::var("GEMINI_API_KEY").ok().filter(|k| !k.trim().is_empty());
+        let glm_key = std::env::var("ZAI_API_KEY").ok().filter(|k| !k.trim().is_empty());
 
         // Check for global default provider
         let default_provider = std::env::var("DEFAULT_LLM_PROVIDER")
@@ -43,6 +46,12 @@ impl ProviderFactory {
             clients.insert(Provider::DeepSeek, Arc::new(DeepSeekClient::new(key.clone())));
         }
 
+        // Initialize GLM client
+        if let Some(ref key) = glm_key {
+            info!("GLM client initialized");
+            clients.insert(Provider::Glm, Arc::new(GlmClient::new(key.clone())));
+        }
+
         // Initialize Gemini client
         if let Some(ref key) = gemini_key {
             info!("Gemini client initialized");
@@ -53,8 +62,8 @@ impl ProviderFactory {
         let available: Vec<_> = clients.keys().map(|p| p.to_string()).collect();
         info!(providers = ?available, "LLM providers available");
 
-        // Default fallback order: DeepSeek -> Gemini
-        let fallback_order = vec![Provider::DeepSeek, Provider::Gemini];
+        // Default fallback order: DeepSeek -> GLM -> Gemini
+        let fallback_order = vec![Provider::DeepSeek, Provider::Glm, Provider::Gemini];
 
         Self {
             clients,
@@ -62,6 +71,7 @@ impl ProviderFactory {
             fallback_order,
             deepseek_key,
             gemini_key,
+            glm_key,
         }
     }
 
@@ -79,6 +89,9 @@ impl ProviderFactory {
                 let client_opt: Option<Arc<dyn LlmClient>> = match config.provider {
                     Provider::DeepSeek => self.deepseek_key.as_ref().map(|k| {
                         Arc::new(DeepSeekClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
+                    }),
+                    Provider::Glm => self.glm_key.as_ref().map(|k| {
+                        Arc::new(GlmClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
                     }),
                     Provider::Gemini => self.gemini_key.as_ref().map(|k| {
                         Arc::new(GeminiClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
@@ -225,9 +238,10 @@ mod tests {
         ProviderFactory {
             clients: HashMap::new(),
             default_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
+            fallback_order: vec![Provider::DeepSeek, Provider::Glm, Provider::Gemini],
             deepseek_key: None,
             gemini_key: None,
+            glm_key: None,
         }
     }
 
@@ -263,9 +277,10 @@ mod tests {
         let factory = ProviderFactory {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
-            fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
+            fallback_order: vec![Provider::DeepSeek, Provider::Glm, Provider::Gemini],
             deepseek_key: None,
             gemini_key: None,
+            glm_key: None,
         };
         assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
     }
@@ -273,8 +288,9 @@ mod tests {
     #[test]
     fn test_fallback_order() {
         let factory = empty_factory();
-        assert_eq!(factory.fallback_order.len(), 2);
+        assert_eq!(factory.fallback_order.len(), 3);
         assert_eq!(factory.fallback_order[0], Provider::DeepSeek);
-        assert_eq!(factory.fallback_order[1], Provider::Gemini);
+        assert_eq!(factory.fallback_order[1], Provider::Glm);
+        assert_eq!(factory.fallback_order[2], Provider::Gemini);
     }
 }
