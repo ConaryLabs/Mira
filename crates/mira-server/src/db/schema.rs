@@ -48,6 +48,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add proactive intelligence tables for behavior tracking
     migrate_proactive_intelligence_tables(conn)?;
 
+    // Add evolutionary expert system tables
+    migrate_evolutionary_expert_tables(conn)?;
+
     Ok(())
 }
 
@@ -750,6 +753,112 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
             UNIQUE(user_id, project_id, preference_key)
         );
         CREATE INDEX IF NOT EXISTS idx_proactive_prefs_user ON proactive_preferences(user_id, project_id);
+    "#)?;
+
+    Ok(())
+}
+
+/// Migrate to add evolutionary expert system tables
+pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
+    // Expert consultations - detailed history of each consultation
+    create_table_if_missing(conn, "expert_consultations", r#"
+        CREATE TABLE IF NOT EXISTS expert_consultations (
+            id INTEGER PRIMARY KEY,
+            expert_role TEXT NOT NULL,
+            project_id INTEGER REFERENCES projects(id),
+            session_id TEXT,
+            context_hash TEXT,                -- Hash of context for pattern matching
+            problem_category TEXT,            -- Categorized problem type
+            context_summary TEXT,             -- Brief summary of the consultation context
+            tools_used TEXT,                  -- JSON array of tools called
+            tool_call_count INTEGER DEFAULT 0,
+            consultation_duration_ms INTEGER,
+            initial_confidence REAL,          -- Expert's stated confidence
+            calibrated_confidence REAL,       -- Adjusted based on history
+            prompt_version INTEGER DEFAULT 1, -- Which prompt version was used
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_expert_consultations_role ON expert_consultations(expert_role, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_expert_consultations_project ON expert_consultations(project_id, expert_role);
+        CREATE INDEX IF NOT EXISTS idx_expert_consultations_category ON expert_consultations(problem_category);
+    "#)?;
+
+    // Problem patterns - recurring problem signatures per expert
+    create_table_if_missing(conn, "problem_patterns", r#"
+        CREATE TABLE IF NOT EXISTS problem_patterns (
+            id INTEGER PRIMARY KEY,
+            expert_role TEXT NOT NULL,
+            pattern_signature TEXT NOT NULL,  -- Hash of problem characteristics
+            pattern_description TEXT,         -- Human-readable pattern description
+            common_context_elements TEXT,     -- JSON: what context elements appear together
+            successful_approaches TEXT,       -- JSON: which analysis approaches work best
+            recommended_tools TEXT,           -- JSON: which tools yield best results
+            success_rate REAL DEFAULT 0.5,
+            occurrence_count INTEGER DEFAULT 1,
+            avg_confidence REAL DEFAULT 0.5,
+            avg_acceptance_rate REAL DEFAULT 0.5,
+            last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(expert_role, pattern_signature)
+        );
+        CREATE INDEX IF NOT EXISTS idx_problem_patterns_role ON problem_patterns(expert_role, success_rate DESC);
+    "#)?;
+
+    // Expert outcomes - track whether advice led to good results
+    create_table_if_missing(conn, "expert_outcomes", r#"
+        CREATE TABLE IF NOT EXISTS expert_outcomes (
+            id INTEGER PRIMARY KEY,
+            consultation_id INTEGER REFERENCES expert_consultations(id),
+            finding_id INTEGER REFERENCES review_findings(id),
+            outcome_type TEXT NOT NULL,       -- 'code_change', 'design_adoption', 'bug_fix', 'security_fix'
+            git_commit_hash TEXT,             -- If advice led to code change
+            files_changed TEXT,               -- JSON array of changed files
+            change_similarity_score REAL,     -- How closely change matches suggestion
+            user_outcome_rating REAL,         -- User-provided rating (0-1)
+            outcome_evidence TEXT,            -- JSON: links to tests, metrics, etc.
+            time_to_outcome_seconds INTEGER,  -- How long until outcome realized
+            learned_lesson TEXT,              -- What pattern we learned
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            verified_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_expert_outcomes_consultation ON expert_outcomes(consultation_id);
+        CREATE INDEX IF NOT EXISTS idx_expert_outcomes_finding ON expert_outcomes(finding_id);
+    "#)?;
+
+    // Expert prompt evolution - track prompt versions and their performance
+    create_table_if_missing(conn, "expert_prompt_versions", r#"
+        CREATE TABLE IF NOT EXISTS expert_prompt_versions (
+            id INTEGER PRIMARY KEY,
+            expert_role TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            prompt_additions TEXT,            -- Additional context added to base prompt
+            performance_metrics TEXT,         -- JSON: acceptance_rate, outcome_success, etc.
+            adaptation_reason TEXT,           -- Why this version was created
+            consultation_count INTEGER DEFAULT 0,
+            acceptance_rate REAL DEFAULT 0.5,
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(expert_role, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_expert_prompts_active ON expert_prompt_versions(expert_role, is_active);
+    "#)?;
+
+    // Expert collaboration patterns - when experts should work together
+    create_table_if_missing(conn, "collaboration_patterns", r#"
+        CREATE TABLE IF NOT EXISTS collaboration_patterns (
+            id INTEGER PRIMARY KEY,
+            problem_domains TEXT NOT NULL,    -- JSON: which expertise domains involved
+            complexity_threshold REAL,        -- Min complexity score to trigger
+            recommended_experts TEXT NOT NULL,-- JSON: which experts to involve
+            collaboration_mode TEXT,          -- 'parallel', 'sequential', 'hierarchical'
+            synthesis_method TEXT,            -- How to combine outputs
+            success_rate REAL DEFAULT 0.5,
+            time_saved_percent REAL,          -- Efficiency vs individual consultations
+            occurrence_count INTEGER DEFAULT 1,
+            last_used_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_collab_patterns_domains ON collaboration_patterns(problem_domains);
     "#)?;
 
     Ok(())
