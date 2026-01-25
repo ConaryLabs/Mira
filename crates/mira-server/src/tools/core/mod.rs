@@ -96,6 +96,7 @@ pub trait ToolContext: Send + Sync {
 // Sub-modules with tool implementations
 pub mod claude_local;
 pub mod code;
+pub mod cross_project;
 pub mod dev;
 pub mod diff;
 pub mod documentation;
@@ -111,6 +112,7 @@ pub mod teams;
 // Re-export commonly used functions
 pub use claude_local::export_claude_local;
 pub use code::*;
+pub use cross_project::*;
 pub use dev::*;
 pub use diff::*;
 pub use documentation::*;

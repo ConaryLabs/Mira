@@ -272,6 +272,20 @@ pub struct GoalRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CrossProjectRequest {
+    #[schemars(description = "Action: get_preferences/status/enable_sharing/disable_sharing/reset_budget/get_stats/extract_patterns/sync")]
+    pub action: String,
+    #[schemars(description = "Enable pattern export (for enable_sharing)")]
+    pub export: Option<bool>,
+    #[schemars(description = "Enable pattern import (for enable_sharing)")]
+    pub import: Option<bool>,
+    #[schemars(description = "Minimum confidence for pattern extraction (default: 0.6)")]
+    pub min_confidence: Option<f64>,
+    #[schemars(description = "Privacy budget epsilon (default: 1.0)")]
+    pub epsilon: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
     #[schemars(description = "Action: project/file/status")]
     pub action: String,
@@ -586,6 +600,22 @@ impl MiraServer {
             req.milestone_title,
             req.milestone_id,
             req.weight,
+        )
+        .await
+    }
+
+    #[tool(description = "Manage cross-project intelligence sharing (enable/disable sharing, view stats, sync patterns).")]
+    async fn cross_project(
+        &self,
+        Parameters(req): Parameters<CrossProjectRequest>,
+    ) -> Result<String, String> {
+        tools::cross_project(
+            self,
+            req.action,
+            req.export,
+            req.import,
+            req.min_confidence,
+            req.epsilon,
         )
         .await
     }

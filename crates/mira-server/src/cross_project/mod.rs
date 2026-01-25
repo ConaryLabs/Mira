@@ -10,10 +10,12 @@ pub use anonymizer::{
 };
 pub use preferences::{
     SharingPreferences, get_preferences, update_preferences,
+    reset_privacy_budget, enable_sharing, disable_sharing,
 };
 pub use storage::{
     CrossProjectPattern, store_pattern, get_patterns_for_project,
     import_pattern, get_shareable_patterns, log_sharing_event,
+    get_sharing_stats, SharingStats, extract_and_store_patterns,
 };
 
 use serde::{Deserialize, Serialize};
