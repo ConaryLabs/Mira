@@ -567,9 +567,9 @@ mira debug-carto     # Debug cartographer module detection
 
 ## Environment
 
-API keys are in `/home/peter/Mira/.env`:
-- `OPENAI_API_KEY` - Embeddings (text-embedding-3-small)
+API keys are in `~/.mira/.env`:
 - `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)
+- `GEMINI_API_KEY` - Embeddings (Google text-embedding-004)
 
 ## Claude Code Config Locations
 

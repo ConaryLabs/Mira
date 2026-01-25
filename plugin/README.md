@@ -46,7 +46,7 @@ Add to your shell profile (`~/.bashrc` or `~/.zshrc`):
 
 ```bash
 export DEEPSEEK_API_KEY="your-key"    # For expert consultations
-export OPENAI_API_KEY="your-key"       # For embeddings
+export GEMINI_API_KEY="your-key"       # For embeddings
 ```
 
 ### 4. Run Claude Code with Plugin

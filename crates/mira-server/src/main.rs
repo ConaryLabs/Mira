@@ -396,9 +396,9 @@ async fn run_mcp_server() -> Result<()> {
     let embeddings = get_embeddings_with_pool(Some(pool.clone()), http_client.clone());
 
     if embeddings.is_some() {
-        info!("Semantic search enabled (OpenAI embeddings)");
+        info!("Semantic search enabled (Google embeddings)");
     } else {
-        info!("Semantic search disabled (no OPENAI_API_KEY)");
+        info!("Semantic search disabled (no GEMINI_API_KEY)");
     }
 
     // Initialize DeepSeek client if API key available

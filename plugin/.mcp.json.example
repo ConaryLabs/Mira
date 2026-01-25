@@ -6,7 +6,7 @@
       "env": {
         "MIRA_DB": "${HOME}/.mira/mira.db",
         "DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY}",
-        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
       }
     }
   }

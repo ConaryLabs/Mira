@@ -13,8 +13,7 @@ Mira uses environment variables for API keys and configuration. These can be set
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, capabilities, documentation (default provider) |
-| `GEMINI_API_KEY` | No | For embeddings and as alternative expert provider |
-| `OPENAI_API_KEY` | No | Alternative embedding/expert provider |
+| `GEMINI_API_KEY` | Recommended | For embeddings (semantic search) and as alternative expert provider |
 
 *At least one provider key (DeepSeek, Gemini, or OpenAI) is required for intelligence features. DeepSeek is the default. Mira runs without any keys but with reduced functionality (no experts, no summaries, no semantic search).
 
@@ -22,9 +21,7 @@ Mira uses environment variables for API keys and configuration. These can be set
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MIRA_EMBEDDING_PROVIDER` | Provider for embeddings (`openai` or `google`) | `google` |
-| `MIRA_EMBEDDING_MODEL` | Specific model name | Provider default |
-| `MIRA_EMBEDDING_DIMENSIONS` | Output dimensions (Google only) | 768 |
+| `MIRA_EMBEDDING_DIMENSIONS` | Output dimensions for Google embeddings | 768 |
 
 ### Environment File Loading
 
