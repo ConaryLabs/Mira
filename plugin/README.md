@@ -12,27 +12,47 @@ Semantic memory and code intelligence for Claude Code. Provides persistent memor
 
 ## Installation
 
-### From Source
+### 1. Build Mira
 
 ```bash
-# Build Mira
 cd /path/to/mira
 cargo build --release
-
-# Ensure mira is in PATH
-export PATH="$PATH:/path/to/mira/target/release"
-
-# Load plugin in Claude Code
-claude --plugin-dir /path/to/mira/plugin
 ```
 
-### Environment Variables
+### 2. Configure Plugin Files
 
-Set these in your shell or `.env`:
+Copy the example config files and update paths to your mira binary:
+
+```bash
+cd /path/to/mira/plugin
+
+# MCP server config
+cp .mcp.json.example .mcp.json
+
+# Hooks config
+cp hooks/hooks.json.example hooks/hooks.json
+```
+
+Edit both files and replace `/path/to/mira` with your actual path:
+
+```bash
+# Example: if mira is at /home/user/mira
+sed -i 's|/path/to/mira|/home/user/mira|g' .mcp.json hooks/hooks.json
+```
+
+### 3. Set Environment Variables
+
+Add to your shell profile (`~/.bashrc` or `~/.zshrc`):
 
 ```bash
 export DEEPSEEK_API_KEY="your-key"    # For expert consultations
 export GOOGLE_API_KEY="your-key"       # For embeddings
+```
+
+### 4. Run Claude Code with Plugin
+
+```bash
+claude --plugin-dir /path/to/mira/plugin
 ```
 
 ## Skills
@@ -105,23 +125,25 @@ auto_continue_goals = false  # Don't auto-continue incomplete goals
 
 ## Testing
 
-Verify hooks work correctly:
+Verify hooks work correctly (replace `/path/to/mira` with your actual path):
 
 ```bash
+MIRA=/path/to/mira/target/release/mira
+
 # Test session-start hook
-echo '{}' | mira hook session-start
+echo '{}' | $MIRA hook session-start
 
 # Test user-prompt hook
-echo '{"prompt": "test"}' | mira hook user-prompt
+echo '{"prompt": "test"}' | $MIRA hook user-prompt
 
 # Test post-tool hook
-echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/test.rs"}}' | mira hook post-tool
+echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/test.rs"}}' | $MIRA hook post-tool
 
 # Test pre-compact hook
-echo '{}' | mira hook pre-compact
+echo '{}' | $MIRA hook pre-compact
 
 # Test stop hook
-echo '{}' | mira hook stop
+echo '{}' | $MIRA hook stop
 ```
 
 ## License
