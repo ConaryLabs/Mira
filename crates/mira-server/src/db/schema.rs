@@ -51,6 +51,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add evolutionary expert system tables
     migrate_evolutionary_expert_tables(conn)?;
 
+    // Add cross-project intelligence tables for pattern sharing
+    migrate_cross_project_intelligence_tables(conn)?;
+
     Ok(())
 }
 
@@ -1150,3 +1153,76 @@ CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
     tokenize='porter unicode61 remove_diacritics 1'
 );
 "#;
+
+/// Migrate to add cross-project intelligence tables for pattern sharing
+pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()> {
+    // Cross-project patterns - anonymized patterns that can be shared
+    create_table_if_missing(conn, "cross_project_patterns", r#"
+        CREATE TABLE IF NOT EXISTS cross_project_patterns (
+            id INTEGER PRIMARY KEY,
+            pattern_type TEXT NOT NULL,           -- 'file_sequence', 'tool_chain', 'problem_pattern', 'collaboration'
+            pattern_hash TEXT UNIQUE NOT NULL,    -- Hash for deduplication and lookup
+            anonymized_data TEXT NOT NULL,        -- JSON: pattern data with all identifiers removed
+            category TEXT,                        -- High-level category (e.g., 'rust', 'web', 'database')
+            confidence REAL DEFAULT 0.5,          -- Aggregated confidence across projects
+            occurrence_count INTEGER DEFAULT 1,   -- How many projects show this pattern
+            noise_added REAL DEFAULT 0.0,         -- Differential privacy noise level applied
+            min_projects_required INTEGER DEFAULT 3, -- K-anonymity threshold
+            source_project_count INTEGER DEFAULT 1,  -- Number of projects contributing
+            last_updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_cross_patterns_type ON cross_project_patterns(pattern_type, confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_cross_patterns_category ON cross_project_patterns(category);
+        CREATE INDEX IF NOT EXISTS idx_cross_patterns_hash ON cross_project_patterns(pattern_hash);
+    "#)?;
+
+    // Pattern sharing log - tracks what patterns were shared and when
+    create_table_if_missing(conn, "pattern_sharing_log", r#"
+        CREATE TABLE IF NOT EXISTS pattern_sharing_log (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            direction TEXT NOT NULL,              -- 'exported' or 'imported'
+            pattern_type TEXT NOT NULL,
+            pattern_hash TEXT NOT NULL,
+            anonymization_level TEXT,             -- 'full', 'partial', 'none'
+            differential_privacy_epsilon REAL,    -- Privacy budget used
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_sharing_log_project ON pattern_sharing_log(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sharing_log_direction ON pattern_sharing_log(direction, pattern_type);
+    "#)?;
+
+    // Cross-project sharing preferences per project
+    create_table_if_missing(conn, "cross_project_preferences", r#"
+        CREATE TABLE IF NOT EXISTS cross_project_preferences (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER UNIQUE REFERENCES projects(id),
+            sharing_enabled INTEGER DEFAULT 0,    -- Master opt-in switch
+            export_patterns INTEGER DEFAULT 0,    -- Allow exporting patterns from this project
+            import_patterns INTEGER DEFAULT 1,    -- Allow importing patterns to this project
+            min_anonymization_level TEXT DEFAULT 'full',  -- 'full', 'partial', 'none'
+            allowed_pattern_types TEXT,           -- JSON array of allowed types, NULL = all
+            privacy_epsilon_budget REAL DEFAULT 1.0,  -- Total differential privacy budget
+            privacy_epsilon_used REAL DEFAULT 0.0,    -- Privacy budget consumed
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_cross_prefs_enabled ON cross_project_preferences(sharing_enabled);
+    "#)?;
+
+    // Pattern provenance - tracks which projects contributed (without identifying them)
+    create_table_if_missing(conn, "pattern_provenance", r#"
+        CREATE TABLE IF NOT EXISTS pattern_provenance (
+            id INTEGER PRIMARY KEY,
+            pattern_id INTEGER REFERENCES cross_project_patterns(id),
+            contribution_hash TEXT NOT NULL,      -- Hash of project contribution (not project id)
+            contribution_weight REAL DEFAULT 1.0, -- How much this contribution affects pattern
+            contributed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(pattern_id, contribution_hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_provenance_pattern ON pattern_provenance(pattern_id);
+    "#)?;
+
+    Ok(())
+}

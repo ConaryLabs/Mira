@@ -27,4 +27,5 @@ pub mod http;
 pub mod error;
 pub mod proactive;
 pub mod experts;
+pub mod cross_project;
 pub use error::{MiraError, Result};
