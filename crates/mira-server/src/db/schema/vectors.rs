@@ -1,0 +1,114 @@
+// crates/mira-server/src/db/schema/vectors.rs
+// Vector table migrations for embeddings storage
+
+use anyhow::Result;
+use rusqlite::Connection;
+use crate::db::migration_helpers::{table_exists, add_column_if_missing};
+
+/// Migrate vector tables if dimensions changed
+pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
+    // Check if vec_memory exists and has wrong dimensions
+    let needs_migration: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_memory_info'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if needs_migration {
+        // Check current dimension by looking at chunk info
+        let current_dim: Result<i64, _> = conn.query_row(
+            "SELECT vector_column_size FROM vec_memory_info WHERE vector_column_name='embedding'",
+            [],
+            |row| row.get(0),
+        );
+
+        if let Ok(dim) = current_dim {
+            if dim != 1536 {
+                tracing::info!("Migrating vector tables from {} to 1536 dimensions", dim);
+                // Drop old tables - CASCADE not supported, drop in order
+                conn.execute_batch(
+                    "DROP TABLE IF EXISTS vec_memory;
+                     DROP TABLE IF EXISTS vec_code;"
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Migrate vec_code to add start_line column (v2.1 schema)
+/// Also creates vec_code if it doesn't exist (for databases created before vec_code was added)
+pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
+    // Check if vec_code exists
+    let vec_code_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_code'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !vec_code_exists {
+        // Create vec_code table (for databases created before this table was added to schema)
+        tracing::info!("Creating vec_code table for code embeddings");
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
+                embedding float[1536],
+                +file_path TEXT,
+                +chunk_content TEXT,
+                +project_id INTEGER,
+                +start_line INTEGER
+            )",
+            [],
+        )?;
+        return Ok(());
+    }
+
+    // Check if start_line column exists by checking vec_code_info
+    let has_start_line: bool = conn
+        .query_row(
+            "SELECT 1 FROM vec_code_info WHERE auxiliary_column_name = 'start_line'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !has_start_line {
+        tracing::info!("Migrating vec_code to add start_line column");
+        // Virtual tables can't be altered - must drop and recreate
+        // Embeddings will be regenerated on next indexing
+        conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
+        // Recreate with start_line column
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
+                embedding float[1536],
+                +file_path TEXT,
+                +chunk_content TEXT,
+                +project_id INTEGER,
+                +start_line INTEGER
+            )",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Migrate pending_embeddings to add start_line column
+pub fn migrate_pending_embeddings_line_numbers(conn: &Connection) -> Result<()> {
+    // Early return if table doesn't exist
+    if !table_exists(conn, "pending_embeddings") {
+        return Ok(());
+    }
+
+    // Add column if missing
+    add_column_if_missing(
+        conn,
+        "pending_embeddings",
+        "start_line",
+        "INTEGER NOT NULL DEFAULT 1"
+    )
+}

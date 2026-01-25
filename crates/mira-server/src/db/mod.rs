@@ -279,67 +279,7 @@ impl Database {
     /// Initialize schema (idempotent)
     fn init_schema(&self) -> Result<()> {
         let conn = self.conn();
-
-        // Create tables first
-        conn.execute_batch(schema::SCHEMA)?;
-
-        // Check if vec tables need migration (dimension change)
-        schema::migrate_vec_tables(&conn)?;
-
-        // Add start_line column to pending_embeddings if missing
-        schema::migrate_pending_embeddings_line_numbers(&conn)?;
-
-        // Add start_line column to vec_code if missing (drops and recreates)
-        schema::migrate_vec_code_line_numbers(&conn)?;
-
-        // Add full_result column to tool_history if missing
-        schema::migrate_tool_history_full_result(&conn)?;
-
-        // Add project_id column to chat_summaries if missing
-        schema::migrate_chat_summaries_project_id(&conn)?;
-
-        // Add summary_id column to chat_messages for reversible summarization
-        schema::migrate_chat_messages_summary_id(&conn)?;
-
-        // Add has_embedding column to memory_facts for tracking embedding status
-        schema::migrate_memory_facts_has_embedding(&conn)?;
-
-        // Add evidence-based tracking columns to memory_facts
-        schema::migrate_memory_facts_evidence_tracking(&conn)?;
-
-        // Add provider and model columns to system_prompts for multi-LLM support
-        schema::migrate_system_prompts_provider(&conn)?;
-        // Strip old TOOL_USAGE_PROMPT suffix from system prompts for KV cache optimization
-        schema::migrate_system_prompts_strip_tool_suffix(&conn)?;
-
-        // Add FTS5 full-text search table if missing
-        schema::migrate_code_fts(&conn)?;
-
-        // Add unique constraint to imports table for deduplication
-        schema::migrate_imports_unique(&conn)?;
-
-        // Add documentation tracking tables
-        schema::migrate_documentation_tables(&conn)?;
-
-        // Add users table for multi-user support
-        schema::migrate_users_table(&conn)?;
-
-        // Add user_id, scope, team_id columns to memory_facts
-        schema::migrate_memory_user_scope(&conn)?;
-
-        // Add teams tables for team-based memory sharing
-        schema::migrate_teams_tables(&conn)?;
-
-        // Add review findings table for code review learning loop
-        schema::migrate_review_findings_table(&conn)?;
-
-        // Add learning columns to corrections table
-        schema::migrate_corrections_learning_columns(&conn)?;
-
-        // Add diff analyses table for semantic diff analysis
-        schema::migrate_diff_analyses_table(&conn)?;
-
-        Ok(())
+        schema::run_all_migrations(&conn)
     }
 
     /// Rebuild FTS5 search index from vec_code

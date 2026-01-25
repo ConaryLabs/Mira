@@ -1,0 +1,117 @@
+// crates/mira-server/src/db/schema/reviews.rs
+// Review findings and usage tracking migrations
+
+use anyhow::Result;
+use rusqlite::Connection;
+use crate::db::migration_helpers::{table_exists, column_exists, create_table_if_missing};
+
+/// Migrate to add review_findings table for code review learning loop
+pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
+    create_table_if_missing(conn, "review_findings", r#"
+        CREATE TABLE IF NOT EXISTS review_findings (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            expert_role TEXT NOT NULL,
+            file_path TEXT,
+            finding_type TEXT NOT NULL,
+            severity TEXT DEFAULT 'medium',
+            content TEXT NOT NULL,
+            code_snippet TEXT,
+            suggestion TEXT,
+            status TEXT DEFAULT 'pending',
+            feedback TEXT,
+            confidence REAL DEFAULT 0.5,
+            user_id TEXT,
+            reviewed_by TEXT,
+            session_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_findings_project ON review_findings(project_id, status);
+        CREATE INDEX IF NOT EXISTS idx_review_findings_expert ON review_findings(expert_role);
+        CREATE INDEX IF NOT EXISTS idx_review_findings_file ON review_findings(file_path);
+        CREATE INDEX IF NOT EXISTS idx_review_findings_status ON review_findings(status);
+    "#)
+}
+
+/// Migrate corrections table to add learning columns
+pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "corrections") {
+        return Ok(());
+    }
+
+    if !column_exists(conn, "corrections", "occurrence_count") {
+        tracing::info!("Adding learning columns to corrections table");
+        conn.execute_batch(
+            "ALTER TABLE corrections ADD COLUMN occurrence_count INTEGER DEFAULT 1;
+             ALTER TABLE corrections ADD COLUMN acceptance_rate REAL DEFAULT 1.0;",
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Migrate to add proxy_usage table for token tracking and cost estimation
+pub fn migrate_proxy_usage_table(conn: &Connection) -> Result<()> {
+    create_table_if_missing(conn, "proxy_usage", r#"
+        CREATE TABLE IF NOT EXISTS proxy_usage (
+            id INTEGER PRIMARY KEY,
+            backend_name TEXT NOT NULL,
+            model TEXT,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cost_estimate REAL,
+            request_id TEXT,
+            session_id TEXT,
+            project_id INTEGER REFERENCES projects(id),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_backend ON proxy_usage(backend_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_session ON proxy_usage(session_id);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_project ON proxy_usage(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_proxy_usage_created ON proxy_usage(created_at DESC);
+    "#)?;
+
+    // Add embeddings_usage table
+    create_table_if_missing(conn, "embeddings_usage", r#"
+        CREATE TABLE IF NOT EXISTS embeddings_usage (
+            id INTEGER PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            tokens INTEGER NOT NULL,
+            text_count INTEGER NOT NULL,
+            cost_estimate REAL,
+            project_id INTEGER REFERENCES projects(id),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_embeddings_usage_provider ON embeddings_usage(provider, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_embeddings_usage_project ON embeddings_usage(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_embeddings_usage_created ON embeddings_usage(created_at DESC);
+    "#)
+}
+
+/// Migrate to add diff_analyses table for semantic diff analysis
+pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
+    create_table_if_missing(conn, "diff_analyses", r#"
+        CREATE TABLE IF NOT EXISTS diff_analyses (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            from_commit TEXT NOT NULL,
+            to_commit TEXT NOT NULL,
+            analysis_type TEXT DEFAULT 'commit',
+            changes_json TEXT,
+            impact_json TEXT,
+            risk_json TEXT,
+            summary TEXT,
+            files_changed INTEGER,
+            lines_added INTEGER,
+            lines_removed INTEGER,
+            status TEXT DEFAULT 'complete',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_diff_commits ON diff_analyses(project_id, from_commit, to_commit);
+        CREATE INDEX IF NOT EXISTS idx_diff_created ON diff_analyses(project_id, created_at DESC);
+    "#)
+}

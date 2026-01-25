@@ -1,0 +1,264 @@
+// crates/mira-server/src/db/schema/intelligence.rs
+// Proactive intelligence, expert system, and cross-project migrations
+
+use anyhow::Result;
+use rusqlite::Connection;
+use crate::db::migration_helpers::create_table_if_missing;
+
+/// Migrate to add proactive intelligence tables for behavior tracking and predictions
+pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
+    // Behavior patterns table - tracks file sequences, tool chains, session flows
+    create_table_if_missing(conn, "behavior_patterns", r#"
+        CREATE TABLE IF NOT EXISTS behavior_patterns (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            pattern_type TEXT NOT NULL,      -- 'file_sequence', 'tool_chain', 'session_flow', 'query_pattern'
+            pattern_key TEXT NOT NULL,       -- unique identifier for the pattern (e.g., hash of sequence)
+            pattern_data TEXT NOT NULL,      -- JSON: sequence details, items, transitions
+            confidence REAL DEFAULT 0.5,     -- how reliable this pattern is (0.0-1.0)
+            occurrence_count INTEGER DEFAULT 1,
+            last_triggered_at TEXT,
+            first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, pattern_type, pattern_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_behavior_patterns_project ON behavior_patterns(project_id, pattern_type);
+        CREATE INDEX IF NOT EXISTS idx_behavior_patterns_confidence ON behavior_patterns(confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_behavior_patterns_recent ON behavior_patterns(last_triggered_at DESC);
+    "#)?;
+
+    // Proactive interventions table - tracks what we suggested and user response
+    create_table_if_missing(conn, "proactive_interventions", r#"
+        CREATE TABLE IF NOT EXISTS proactive_interventions (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            session_id TEXT,
+            intervention_type TEXT NOT NULL,  -- 'context_prediction', 'security_alert', 'bug_warning', 'resource_suggestion'
+            trigger_pattern_id INTEGER REFERENCES behavior_patterns(id),
+            trigger_context TEXT,             -- what triggered this intervention
+            suggestion_content TEXT NOT NULL, -- what we suggested
+            confidence REAL DEFAULT 0.5,      -- how confident we were
+            user_response TEXT,               -- 'accepted', 'dismissed', 'acted_upon', 'ignored', NULL if pending
+            response_time_ms INTEGER,         -- how long user took to respond (NULL if ignored)
+            effectiveness_score REAL,         -- computed based on response and subsequent actions
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            responded_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_interventions_project ON proactive_interventions(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_interventions_type ON proactive_interventions(intervention_type, user_response);
+        CREATE INDEX IF NOT EXISTS idx_interventions_pattern ON proactive_interventions(trigger_pattern_id);
+        CREATE INDEX IF NOT EXISTS idx_interventions_pending ON proactive_interventions(user_response) WHERE user_response IS NULL;
+    "#)?;
+
+    // Session behavior log - raw events for pattern mining
+    create_table_if_missing(conn, "session_behavior_log", r#"
+        CREATE TABLE IF NOT EXISTS session_behavior_log (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            session_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,         -- 'file_access', 'tool_use', 'query', 'context_switch'
+            event_data TEXT NOT NULL,         -- JSON: file_path, tool_name, query_text, etc.
+            sequence_position INTEGER,        -- position in session sequence
+            time_since_last_event_ms INTEGER, -- milliseconds since previous event
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_behavior_log_session ON session_behavior_log(session_id, sequence_position);
+        CREATE INDEX IF NOT EXISTS idx_behavior_log_project ON session_behavior_log(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_behavior_log_type ON session_behavior_log(event_type, created_at DESC);
+    "#)?;
+
+    // User preferences for proactive features
+    create_table_if_missing(conn, "proactive_preferences", r#"
+        CREATE TABLE IF NOT EXISTS proactive_preferences (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            project_id INTEGER REFERENCES projects(id),
+            preference_key TEXT NOT NULL,     -- 'proactivity_level', 'max_alerts_per_hour', 'min_confidence'
+            preference_value TEXT NOT NULL,   -- JSON value
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, project_id, preference_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_proactive_prefs_user ON proactive_preferences(user_id, project_id);
+    "#)?;
+
+    Ok(())
+}
+
+/// Migrate to add evolutionary expert system tables
+pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
+    // Expert consultations - detailed history of each consultation
+    create_table_if_missing(conn, "expert_consultations", r#"
+        CREATE TABLE IF NOT EXISTS expert_consultations (
+            id INTEGER PRIMARY KEY,
+            expert_role TEXT NOT NULL,
+            project_id INTEGER REFERENCES projects(id),
+            session_id TEXT,
+            context_hash TEXT,                -- Hash of context for pattern matching
+            problem_category TEXT,            -- Categorized problem type
+            context_summary TEXT,             -- Brief summary of the consultation context
+            tools_used TEXT,                  -- JSON array of tools called
+            tool_call_count INTEGER DEFAULT 0,
+            consultation_duration_ms INTEGER,
+            initial_confidence REAL,          -- Expert's stated confidence
+            calibrated_confidence REAL,       -- Adjusted based on history
+            prompt_version INTEGER DEFAULT 1, -- Which prompt version was used
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_expert_consultations_role ON expert_consultations(expert_role, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_expert_consultations_project ON expert_consultations(project_id, expert_role);
+        CREATE INDEX IF NOT EXISTS idx_expert_consultations_category ON expert_consultations(problem_category);
+    "#)?;
+
+    // Problem patterns - recurring problem signatures per expert
+    create_table_if_missing(conn, "problem_patterns", r#"
+        CREATE TABLE IF NOT EXISTS problem_patterns (
+            id INTEGER PRIMARY KEY,
+            expert_role TEXT NOT NULL,
+            pattern_signature TEXT NOT NULL,  -- Hash of problem characteristics
+            pattern_description TEXT,         -- Human-readable pattern description
+            common_context_elements TEXT,     -- JSON: what context elements appear together
+            successful_approaches TEXT,       -- JSON: which analysis approaches work best
+            recommended_tools TEXT,           -- JSON: which tools yield best results
+            success_rate REAL DEFAULT 0.5,
+            occurrence_count INTEGER DEFAULT 1,
+            avg_confidence REAL DEFAULT 0.5,
+            avg_acceptance_rate REAL DEFAULT 0.5,
+            last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(expert_role, pattern_signature)
+        );
+        CREATE INDEX IF NOT EXISTS idx_problem_patterns_role ON problem_patterns(expert_role, success_rate DESC);
+    "#)?;
+
+    // Expert outcomes - track whether advice led to good results
+    create_table_if_missing(conn, "expert_outcomes", r#"
+        CREATE TABLE IF NOT EXISTS expert_outcomes (
+            id INTEGER PRIMARY KEY,
+            consultation_id INTEGER REFERENCES expert_consultations(id),
+            finding_id INTEGER REFERENCES review_findings(id),
+            outcome_type TEXT NOT NULL,       -- 'code_change', 'design_adoption', 'bug_fix', 'security_fix'
+            git_commit_hash TEXT,             -- If advice led to code change
+            files_changed TEXT,               -- JSON array of changed files
+            change_similarity_score REAL,     -- How closely change matches suggestion
+            user_outcome_rating REAL,         -- User-provided rating (0-1)
+            outcome_evidence TEXT,            -- JSON: links to tests, metrics, etc.
+            time_to_outcome_seconds INTEGER,  -- How long until outcome realized
+            learned_lesson TEXT,              -- What pattern we learned
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            verified_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_expert_outcomes_consultation ON expert_outcomes(consultation_id);
+        CREATE INDEX IF NOT EXISTS idx_expert_outcomes_finding ON expert_outcomes(finding_id);
+    "#)?;
+
+    // Expert prompt evolution - track prompt versions and their performance
+    create_table_if_missing(conn, "expert_prompt_versions", r#"
+        CREATE TABLE IF NOT EXISTS expert_prompt_versions (
+            id INTEGER PRIMARY KEY,
+            expert_role TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            prompt_additions TEXT,            -- Additional context added to base prompt
+            performance_metrics TEXT,         -- JSON: acceptance_rate, outcome_success, etc.
+            adaptation_reason TEXT,           -- Why this version was created
+            consultation_count INTEGER DEFAULT 0,
+            acceptance_rate REAL DEFAULT 0.5,
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(expert_role, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_expert_prompts_active ON expert_prompt_versions(expert_role, is_active);
+    "#)?;
+
+    // Expert collaboration patterns - when experts should work together
+    create_table_if_missing(conn, "collaboration_patterns", r#"
+        CREATE TABLE IF NOT EXISTS collaboration_patterns (
+            id INTEGER PRIMARY KEY,
+            problem_domains TEXT NOT NULL,    -- JSON: which expertise domains involved
+            complexity_threshold REAL,        -- Min complexity score to trigger
+            recommended_experts TEXT NOT NULL,-- JSON: which experts to involve
+            collaboration_mode TEXT,          -- 'parallel', 'sequential', 'hierarchical'
+            synthesis_method TEXT,            -- How to combine outputs
+            success_rate REAL DEFAULT 0.5,
+            time_saved_percent REAL,          -- Efficiency vs individual consultations
+            occurrence_count INTEGER DEFAULT 1,
+            last_used_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_collab_patterns_domains ON collaboration_patterns(problem_domains);
+    "#)?;
+
+    Ok(())
+}
+
+/// Migrate to add cross-project intelligence tables for pattern sharing
+pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()> {
+    // Cross-project patterns - anonymized patterns that can be shared
+    create_table_if_missing(conn, "cross_project_patterns", r#"
+        CREATE TABLE IF NOT EXISTS cross_project_patterns (
+            id INTEGER PRIMARY KEY,
+            pattern_type TEXT NOT NULL,           -- 'file_sequence', 'tool_chain', 'problem_pattern', 'collaboration'
+            pattern_hash TEXT UNIQUE NOT NULL,    -- Hash for deduplication and lookup
+            anonymized_data TEXT NOT NULL,        -- JSON: pattern data with all identifiers removed
+            category TEXT,                        -- High-level category (e.g., 'rust', 'web', 'database')
+            confidence REAL DEFAULT 0.5,          -- Aggregated confidence across projects
+            occurrence_count INTEGER DEFAULT 1,   -- How many projects show this pattern
+            noise_added REAL DEFAULT 0.0,         -- Differential privacy noise level applied
+            min_projects_required INTEGER DEFAULT 3, -- K-anonymity threshold
+            source_project_count INTEGER DEFAULT 1,  -- Number of projects contributing
+            last_updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_cross_patterns_type ON cross_project_patterns(pattern_type, confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_cross_patterns_category ON cross_project_patterns(category);
+        CREATE INDEX IF NOT EXISTS idx_cross_patterns_hash ON cross_project_patterns(pattern_hash);
+    "#)?;
+
+    // Pattern sharing log - tracks what patterns were shared and when
+    create_table_if_missing(conn, "pattern_sharing_log", r#"
+        CREATE TABLE IF NOT EXISTS pattern_sharing_log (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            direction TEXT NOT NULL,              -- 'exported' or 'imported'
+            pattern_type TEXT NOT NULL,
+            pattern_hash TEXT NOT NULL,
+            anonymization_level TEXT,             -- 'full', 'partial', 'none'
+            differential_privacy_epsilon REAL,    -- Privacy budget used
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_sharing_log_project ON pattern_sharing_log(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sharing_log_direction ON pattern_sharing_log(direction, pattern_type);
+    "#)?;
+
+    // Cross-project sharing preferences per project
+    create_table_if_missing(conn, "cross_project_preferences", r#"
+        CREATE TABLE IF NOT EXISTS cross_project_preferences (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER UNIQUE REFERENCES projects(id),
+            sharing_enabled INTEGER DEFAULT 0,    -- Master opt-in switch
+            export_patterns INTEGER DEFAULT 0,    -- Allow exporting patterns from this project
+            import_patterns INTEGER DEFAULT 1,    -- Allow importing patterns to this project
+            min_anonymization_level TEXT DEFAULT 'full',  -- 'full', 'partial', 'none'
+            allowed_pattern_types TEXT,           -- JSON array of allowed types, NULL = all
+            privacy_epsilon_budget REAL DEFAULT 1.0,  -- Total differential privacy budget
+            privacy_epsilon_used REAL DEFAULT 0.0,    -- Privacy budget consumed
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_cross_prefs_enabled ON cross_project_preferences(sharing_enabled);
+    "#)?;
+
+    // Pattern provenance - tracks which projects contributed (without identifying them)
+    create_table_if_missing(conn, "pattern_provenance", r#"
+        CREATE TABLE IF NOT EXISTS pattern_provenance (
+            id INTEGER PRIMARY KEY,
+            pattern_id INTEGER REFERENCES cross_project_patterns(id),
+            contribution_hash TEXT NOT NULL,      -- Hash of project contribution (not project id)
+            contribution_weight REAL DEFAULT 1.0, -- How much this contribution affects pattern
+            contributed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(pattern_id, contribution_hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_provenance_pattern ON pattern_provenance(pattern_id);
+    "#)?;
+
+    Ok(())
+}

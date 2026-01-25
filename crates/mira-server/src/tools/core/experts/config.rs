@@ -1,0 +1,208 @@
+// crates/mira-server/src/tools/core/experts/config.rs
+// Expert configuration management
+
+use super::role::ExpertRole;
+use super::ToolContext;
+
+/// Configure expert system prompts and LLM providers (set, get, delete, list, providers)
+pub async fn configure_expert<C: ToolContext>(
+    ctx: &C,
+    action: String,
+    role: Option<String>,
+    prompt: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+) -> Result<String, String> {
+    use crate::db::{
+        delete_custom_prompt_sync, get_expert_config_sync, list_custom_prompts_sync,
+        set_expert_config_sync,
+    };
+    use crate::llm::Provider;
+
+    match action.as_str() {
+        "set" => {
+            let role_key = role.as_deref()
+                .ok_or("Role is required for 'set' action")?;
+
+            // Validate role
+            if ExpertRole::from_db_key(role_key).is_none() {
+                return Err(format!(
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    role_key
+                ));
+            }
+
+            // Parse provider if provided
+            let parsed_provider = if let Some(ref p) = provider {
+                Some(Provider::from_str(p).ok_or_else(|| {
+                    format!("Invalid provider '{}'. Valid providers: deepseek, gemini", p)
+                })?)
+            } else {
+                None
+            };
+
+            // At least one of prompt, provider, or model should be set
+            if prompt.is_none() && parsed_provider.is_none() && model.is_none() {
+                return Err("At least one of prompt, provider, or model is required for 'set' action".to_string());
+            }
+
+            let role_key_clone = role_key.to_string();
+            let prompt_clone = prompt.clone();
+            let model_clone = model.clone();
+
+            ctx.pool()
+                .interact(move |conn| {
+                    set_expert_config_sync(
+                        conn,
+                        &role_key_clone,
+                        prompt_clone.as_deref(),
+                        parsed_provider,
+                        model_clone.as_deref(),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut msg = format!("Configuration updated for '{}' expert:", role_key);
+            if prompt.is_some() {
+                msg.push_str(" prompt set");
+            }
+            if let Some(ref p) = provider {
+                msg.push_str(&format!(" provider={}", p));
+            }
+            if let Some(ref m) = model {
+                msg.push_str(&format!(" model={}", m));
+            }
+            Ok(msg)
+        }
+
+        "get" => {
+            let role_key = role.as_deref()
+                .ok_or("Role is required for 'get' action")?;
+
+            // Validate role
+            let expert = ExpertRole::from_db_key(role_key)
+                .ok_or_else(|| format!(
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    role_key
+                ))?;
+
+            let role_key_clone = role_key.to_string();
+            let config = ctx
+                .pool()
+                .interact(move |conn| {
+                    get_expert_config_sync(conn, &role_key_clone)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut output = format!("Configuration for '{}' ({}):\n", role_key, expert.name());
+            output.push_str(&format!("  Provider: {}\n", config.provider));
+            if let Some(ref m) = config.model {
+                output.push_str(&format!("  Model: {}\n", m));
+            } else {
+                output.push_str(&format!("  Model: {} (default)\n", config.provider.default_model()));
+            }
+            if let Some(ref p) = config.prompt {
+                let preview = if p.len() > 200 {
+                    format!("{}...", &p[..200])
+                } else {
+                    p.clone()
+                };
+                output.push_str(&format!("  Custom prompt: {}\n", preview));
+            } else {
+                output.push_str("  Prompt: (default)\n");
+            }
+            Ok(output)
+        }
+
+        "delete" => {
+            let role_key = role.as_deref()
+                .ok_or("Role is required for 'delete' action")?;
+
+            // Validate role
+            if ExpertRole::from_db_key(role_key).is_none() {
+                return Err(format!(
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    role_key
+                ));
+            }
+
+            let role_key_clone = role_key.to_string();
+            let deleted = ctx
+                .pool()
+                .interact(move |conn| {
+                    delete_custom_prompt_sync(conn, &role_key_clone)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if deleted {
+                Ok(format!("Configuration deleted for '{}'. Reverted to defaults.", role_key))
+            } else {
+                Ok(format!("No custom configuration was set for '{}'.", role_key))
+            }
+        }
+
+        "list" => {
+            let configs = ctx
+                .pool()
+                .interact(move |conn| {
+                    list_custom_prompts_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if configs.is_empty() {
+                Ok("No custom configurations. All experts use default settings.".to_string())
+            } else {
+                let mut output = format!("{} expert configurations:\n\n", configs.len());
+                for (role_key, prompt_text, provider_str, model_opt) in configs {
+                    let prompt_preview = if prompt_text.len() > 50 {
+                        format!("{}...", &prompt_text[..50])
+                    } else if prompt_text.is_empty() {
+                        "(default)".to_string()
+                    } else {
+                        prompt_text
+                    };
+                    let model_str = model_opt.as_deref().unwrap_or("default");
+                    output.push_str(&format!(
+                        "  {}: provider={}, model={}, prompt={}\n",
+                        role_key, provider_str, model_str, prompt_preview
+                    ));
+                }
+                Ok(output)
+            }
+        }
+
+        "providers" => {
+            // List available LLM providers
+            let factory = ctx.llm_factory();
+            let available = factory.available_providers();
+
+            if available.is_empty() {
+                Ok("No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.".to_string())
+            } else {
+                let mut output = format!("{} LLM providers available:\n\n", available.len());
+                for p in &available {
+                    let is_default = factory.default_provider() == Some(*p);
+                    let default_marker = if is_default { " (default)" } else { "" };
+                    output.push_str(&format!(
+                        "  {}: model={}{}\n",
+                        p, p.default_model(), default_marker
+                    ));
+                }
+                output.push_str("\nSet DEFAULT_LLM_PROVIDER env var to change the global default.");
+                Ok(output)
+            }
+        }
+
+        _ => Err(format!(
+            "Invalid action '{}'. Valid actions: set, get, delete, list, providers",
+            action
+        )),
+    }
+}
