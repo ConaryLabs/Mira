@@ -45,6 +45,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add diff analyses table for semantic diff analysis
     migrate_diff_analyses_table(conn)?;
 
+    // Add proactive intelligence tables for behavior tracking
+    migrate_proactive_intelligence_tables(conn)?;
+
     Ok(())
 }
 
@@ -671,6 +674,85 @@ pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_diff_commits ON diff_analyses(project_id, from_commit, to_commit);
         CREATE INDEX IF NOT EXISTS idx_diff_created ON diff_analyses(project_id, created_at DESC);
     "#)
+}
+
+/// Migrate to add proactive intelligence tables for behavior tracking and predictions
+pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
+    // Behavior patterns table - tracks file sequences, tool chains, session flows
+    create_table_if_missing(conn, "behavior_patterns", r#"
+        CREATE TABLE IF NOT EXISTS behavior_patterns (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            pattern_type TEXT NOT NULL,      -- 'file_sequence', 'tool_chain', 'session_flow', 'query_pattern'
+            pattern_key TEXT NOT NULL,       -- unique identifier for the pattern (e.g., hash of sequence)
+            pattern_data TEXT NOT NULL,      -- JSON: sequence details, items, transitions
+            confidence REAL DEFAULT 0.5,     -- how reliable this pattern is (0.0-1.0)
+            occurrence_count INTEGER DEFAULT 1,
+            last_triggered_at TEXT,
+            first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, pattern_type, pattern_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_behavior_patterns_project ON behavior_patterns(project_id, pattern_type);
+        CREATE INDEX IF NOT EXISTS idx_behavior_patterns_confidence ON behavior_patterns(confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_behavior_patterns_recent ON behavior_patterns(last_triggered_at DESC);
+    "#)?;
+
+    // Proactive interventions table - tracks what we suggested and user response
+    create_table_if_missing(conn, "proactive_interventions", r#"
+        CREATE TABLE IF NOT EXISTS proactive_interventions (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            session_id TEXT,
+            intervention_type TEXT NOT NULL,  -- 'context_prediction', 'security_alert', 'bug_warning', 'resource_suggestion'
+            trigger_pattern_id INTEGER REFERENCES behavior_patterns(id),
+            trigger_context TEXT,             -- what triggered this intervention
+            suggestion_content TEXT NOT NULL, -- what we suggested
+            confidence REAL DEFAULT 0.5,      -- how confident we were
+            user_response TEXT,               -- 'accepted', 'dismissed', 'acted_upon', 'ignored', NULL if pending
+            response_time_ms INTEGER,         -- how long user took to respond (NULL if ignored)
+            effectiveness_score REAL,         -- computed based on response and subsequent actions
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            responded_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_interventions_project ON proactive_interventions(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_interventions_type ON proactive_interventions(intervention_type, user_response);
+        CREATE INDEX IF NOT EXISTS idx_interventions_pattern ON proactive_interventions(trigger_pattern_id);
+        CREATE INDEX IF NOT EXISTS idx_interventions_pending ON proactive_interventions(user_response) WHERE user_response IS NULL;
+    "#)?;
+
+    // Session behavior log - raw events for pattern mining
+    create_table_if_missing(conn, "session_behavior_log", r#"
+        CREATE TABLE IF NOT EXISTS session_behavior_log (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            session_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,         -- 'file_access', 'tool_use', 'query', 'context_switch'
+            event_data TEXT NOT NULL,         -- JSON: file_path, tool_name, query_text, etc.
+            sequence_position INTEGER,        -- position in session sequence
+            time_since_last_event_ms INTEGER, -- milliseconds since previous event
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_behavior_log_session ON session_behavior_log(session_id, sequence_position);
+        CREATE INDEX IF NOT EXISTS idx_behavior_log_project ON session_behavior_log(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_behavior_log_type ON session_behavior_log(event_type, created_at DESC);
+    "#)?;
+
+    // User preferences for proactive features
+    create_table_if_missing(conn, "proactive_preferences", r#"
+        CREATE TABLE IF NOT EXISTS proactive_preferences (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT,
+            project_id INTEGER REFERENCES projects(id),
+            preference_key TEXT NOT NULL,     -- 'proactivity_level', 'max_alerts_per_hour', 'min_confidence'
+            preference_value TEXT NOT NULL,   -- JSON value
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, project_id, preference_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_proactive_prefs_user ON proactive_preferences(user_id, project_id);
+    "#)?;
+
+    Ok(())
 }
 
 /// Database schema SQL

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use crate::db::pool::DatabasePool;
 use crate::hooks::{read_hook_input, write_hook_output};
+use crate::proactive::behavior::BehaviorTracker;
 
 /// Get database path
 fn get_db_path() -> PathBuf {
@@ -16,7 +17,6 @@ fn get_db_path() -> PathBuf {
 /// PostToolUse hook input from Claude Code
 #[derive(Debug)]
 struct PostToolInput {
-    #[allow(dead_code)]
     session_id: String,
     tool_name: String,
     file_path: Option<String>,
@@ -95,6 +95,25 @@ pub async fn run() -> Result<()> {
     };
 
     let mut context_parts: Vec<String> = Vec::new();
+
+    // Log behavior events for proactive intelligence
+    {
+        let pool_clone = pool.clone();
+        let session_id = post_input.session_id.clone();
+        let tool_name = post_input.tool_name.clone();
+        let file_path_clone = file_path.clone();
+        let _ = pool_clone.interact(move |conn| {
+            let mut tracker = BehaviorTracker::new(session_id, project_id);
+
+            // Log tool use
+            let _ = tracker.log_tool_use(conn, &tool_name, None);
+
+            // Log file access
+            let _ = tracker.log_file_access(conn, &file_path_clone, &tool_name);
+
+            Ok::<_, anyhow::Error>(())
+        }).await;
+    }
 
     // Queue file for re-indexing (background)
     {

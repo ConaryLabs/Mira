@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::{read_hook_input, write_hook_output};
+use crate::proactive::{behavior::BehaviorTracker, predictor};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -44,18 +45,119 @@ pub async fn run() -> Result<()> {
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(std::path::Path::new(&db_path)).await?);
     let embeddings = get_embeddings(Some(pool.clone()));
-    let manager = crate::context::ContextInjectionManager::new(pool, embeddings).await;
+    let manager = crate::context::ContextInjectionManager::new(pool.clone(), embeddings).await;
+
+    // Get project ID for proactive features
+    let project_id: Option<i64> = {
+        let pool_clone = pool.clone();
+        match pool_clone.interact(move |conn| {
+            let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+            let result = if let Some(path) = path {
+                crate::db::get_or_create_project_sync(conn, &path, None)
+                    .ok()
+                    .map(|(id, _)| id)
+            } else {
+                None
+            };
+            Ok::<_, anyhow::Error>(result)
+        }).await {
+            Ok(id) => id,
+            Err(_) => None,
+        }
+    };
+
+    // Log query event for behavior tracking (background, non-blocking)
+    if let Some(project_id) = project_id {
+        let pool_clone = pool.clone();
+        let session_id_clone = session_id.to_string();
+        let message_clone = user_message.to_string();
+        let _ = pool_clone.interact(move |conn| {
+            let mut tracker = BehaviorTracker::new(session_id_clone, project_id);
+            let _ = tracker.log_query(conn, &message_clone, "user_prompt");
+            Ok::<_, anyhow::Error>(())
+        }).await;
+    }
 
     // Get relevant context with metadata
     let result = manager.get_context_for_message(user_message, session_id).await;
 
-    if result.has_context() {
+    // Get proactive predictions if enabled
+    let proactive_context: Option<String> = if let Some(project_id) = project_id {
+        let pool_clone = pool.clone();
+        match pool_clone.interact(move |conn| {
+            let config = crate::proactive::get_proactive_config(conn, None, project_id)
+                .unwrap_or_default();
+
+            if !config.enabled {
+                return Ok::<Option<String>, anyhow::Error>(None);
+            }
+
+            // Build current context from recent behavior
+            let recent_files = crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
+                .unwrap_or_default();
+
+            let current_context = predictor::CurrentContext {
+                current_file: recent_files.first().cloned(),
+                last_tool: None, // Will be populated by PostToolUse
+                recent_queries: vec![],
+                session_stage: None,
+            };
+
+            // Get predictions
+            let predictions = predictor::generate_context_predictions(conn, project_id, &current_context, &config)
+                .unwrap_or_default();
+
+            if predictions.is_empty() {
+                return Ok(None);
+            }
+
+            // Convert to intervention suggestions and format
+            let suggestions = predictor::predictions_to_interventions(&predictions, &config);
+            let context_lines: Vec<String> = suggestions
+                .iter()
+                .take(2) // Limit to 2 proactive suggestions
+                .map(|s| s.to_context_string())
+                .collect();
+
+            if context_lines.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(context_lines.join("\n")))
+            }
+        }).await {
+            Ok(ctx) => ctx,
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    // Combine reactive context with proactive predictions
+    let mut final_context = result.context.clone();
+    let has_proactive = if let Some(proactive_str) = proactive_context {
+        if !proactive_str.is_empty() {
+            if final_context.is_empty() {
+                final_context = proactive_str;
+            } else {
+                final_context = format!("{}\n\n{}", final_context, proactive_str);
+            }
+            eprintln!("[mira] Added proactive context suggestions");
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !final_context.is_empty() {
         eprintln!("[mira] {}", result.summary());
         write_hook_output(&serde_json::json!({
-            "systemMessage": result.context,
+            "systemMessage": final_context,
             "metadata": {
                 "sources": result.sources,
-                "from_cache": result.from_cache
+                "from_cache": result.from_cache,
+                "has_proactive": has_proactive
             }
         }));
     } else {

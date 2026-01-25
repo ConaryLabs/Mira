@@ -25,4 +25,5 @@ pub mod tools;
 pub mod proxy;
 pub mod http;
 pub mod error;
+pub mod proactive;
 pub use error::{MiraError, Result};
