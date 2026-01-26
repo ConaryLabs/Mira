@@ -234,6 +234,43 @@ impl DatabasePool {
         self.interact(move |conn| f(conn).map_err(Into::into)).await
     }
 
+    /// Run a closure and return Result<T, String> for tool handlers.
+    ///
+    /// This is the preferred method for MCP tool implementations that need
+    /// to return `Result<_, String>`. It handles all the error conversion
+    /// boilerplate in one place.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Before (8 lines):
+    /// let result = ctx.pool()
+    ///     .interact(move |conn| {
+    ///         some_function(conn).map_err(|e| anyhow::anyhow!("{}", e))
+    ///     })
+    ///     .await
+    ///     .map_err(|e| e.to_string())?;
+    ///
+    /// // After (3 lines):
+    /// let result = ctx.pool()
+    ///     .run(move |conn| some_function(conn))
+    ///     .await?;
+    /// ```
+    pub async fn run<F, R, E>(&self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+    {
+        self.pool
+            .get()
+            .await
+            .map_err(|e| format!("Failed to get connection: {}", e))?
+            .interact(move |conn| f(conn).map_err(|e| anyhow::anyhow!("{}", e)))
+            .await
+            .map_err(|e| format!("Database error: {}", e))?
+            .map_err(|e| e.to_string())
+    }
+
     /// Get the database file path (None for in-memory).
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()

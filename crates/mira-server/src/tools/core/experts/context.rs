@@ -2,6 +2,7 @@
 // Context helpers for expert prompts
 
 use super::ToolContext;
+use crate::utils::truncate;
 
 /// Get MCP tools context for expert prompts
 /// Lists available MCP servers and their tools (limited to avoid token bloat)
@@ -69,15 +70,6 @@ pub async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) ->
     }
 
     context
-}
-
-/// Truncate a string to max length with ellipsis
-pub fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
-    }
 }
 
 /// Build the user prompt from context and optional question

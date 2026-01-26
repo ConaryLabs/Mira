@@ -7,6 +7,7 @@ use crate::db::{
     update_finding_status_sync, bulk_update_finding_status_sync,
     get_relevant_corrections_sync, extract_patterns_from_findings_sync,
 };
+use crate::utils::truncate;
 
 /// List review findings with optional filters
 pub async fn list_findings<C: ToolContext>(
@@ -358,11 +359,3 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<String, String
     ))
 }
 
-// Helper function to truncate strings
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
-    }
-}
