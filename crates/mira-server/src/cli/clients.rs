@@ -6,13 +6,6 @@ use mira::embeddings::EmbeddingClient;
 use std::sync::Arc;
 use tracing::info;
 
-/// Get embeddings client if API key is available
-/// Supports multiple providers via MIRA_EMBEDDING_PROVIDER env var (openai, google)
-#[allow(dead_code)]
-pub fn get_embeddings(http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
-    get_embeddings_with_pool(None, http_client)
-}
-
 /// Get embeddings client with database pool for usage tracking
 ///
 /// Environment variables:

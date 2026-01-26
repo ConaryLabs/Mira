@@ -19,7 +19,6 @@ impl GoalAwareInjector {
     }
 
     /// Set the current project ID for goal queries
-    #[allow(dead_code)]
     pub fn set_project_id(&mut self, project_id: Option<i64>) {
         self.project_id = project_id;
     }

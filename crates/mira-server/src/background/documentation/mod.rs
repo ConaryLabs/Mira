@@ -13,7 +13,6 @@ pub use detection::*;
 
 /// Local struct for code symbol data (used in signature hash calculation)
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CodeSymbol {
     pub id: i64,
     pub project_id: i64,

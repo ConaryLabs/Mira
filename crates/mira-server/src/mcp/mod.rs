@@ -107,35 +107,6 @@ impl MiraServer {
         }
     }
 
-    /// Create with a broadcast channel and watcher (for future embedding scenarios)
-    #[allow(dead_code)]
-    pub fn with_broadcaster(
-        pool: Arc<DatabasePool>,
-        embeddings: Option<Arc<EmbeddingClient>>,
-        deepseek: Option<Arc<DeepSeekClient>>,
-        ws_tx: tokio::sync::broadcast::Sender<mira_types::WsEvent>,
-        session_id: Arc<RwLock<Option<String>>>,
-        project: Arc<RwLock<Option<ProjectContext>>>,
-        pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>,
-        watcher: Option<WatcherHandle>,
-    ) -> Self {
-        let llm_factory = Arc::new(ProviderFactory::new());
-
-        Self {
-            pool,
-            embeddings,
-            deepseek,
-            llm_factory,
-            project,
-            session_id,
-            branch: Arc::new(RwLock::new(None)),
-            ws_tx: Some(ws_tx),
-            watcher,
-            pending_responses,
-            tool_router: Self::tool_router(),
-        }
-    }
-
 
     /// Broadcast an event (no-op in MCP-only mode)
     pub fn broadcast(&self, event: mira_types::WsEvent) {

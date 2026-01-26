@@ -14,10 +14,6 @@ use std::sync::Arc;
 /// Maximum diff size to send to LLM (in bytes)
 const MAX_DIFF_SIZE: usize = 50_000;
 
-/// Maximum files per LLM chunk (reserved for future chunking logic)
-#[allow(dead_code)]
-const MAX_FILES_PER_CHUNK: usize = 10;
-
 /// A semantic change identified in the diff
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticChange {
