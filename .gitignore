@@ -80,3 +80,4 @@ test_repos/
 snapshots/
 MCP_DEBUG_STATUS.md
 .ralph/
+.ralphrc
