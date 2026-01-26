@@ -9,3 +9,7 @@ resolver = "2"
 edition = "2024"
 rust-version = "1.92"
 license = "Apache-2.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

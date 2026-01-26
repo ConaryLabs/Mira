@@ -9,10 +9,11 @@ use crate::indexer::batch::{
     SYMBOL_FLUSH_THRESHOLD, FILE_FLUSH_THRESHOLD, CHUNK_FLUSH_THRESHOLD,
 };
 use crate::indexer::chunking::create_semantic_chunks;
-use crate::indexer::parsing::extract_all;
+use crate::indexer::parsing::{extract_all, Symbol, Import, FunctionCall};
 use crate::indexer::types::{IndexStats, ParsedSymbol};
 use crate::project_files::walker::FileWalker;
 use anyhow::Result;
+use rayon::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -62,10 +63,64 @@ async fn clear_existing_project_data(pool: Arc<DatabasePool>, project_id: Option
     Ok(())
 }
 
-/// Process files in a loop, accumulating batches and chunks, flushing when thresholds reached
-async fn process_files_loop(
-    files: Vec<std::path::PathBuf>,
-    path: &Path,
+/// Result of parsing a single file (used for parallel parsing)
+struct ParsedFile {
+    relative_path: String,
+    symbols: Vec<Symbol>,
+    imports: Vec<Import>,
+    calls: Vec<FunctionCall>,
+    content: String,
+    parse_time_ms: u64,
+}
+
+/// Parse all files in parallel using rayon (CPU-bound work)
+fn parse_files_parallel(files: &[std::path::PathBuf], base_path: &Path) -> (Vec<ParsedFile>, usize) {
+    let results: Vec<_> = files
+        .par_iter()
+        .map(|file_path| {
+            let relative_path = file_path
+                .strip_prefix(base_path)
+                .unwrap_or(file_path)
+                .to_string_lossy()
+                .to_string();
+
+            let start = std::time::Instant::now();
+            match extract_all(file_path) {
+                Ok((symbols, imports, calls, content)) => {
+                    let parse_time_ms = start.elapsed().as_millis() as u64;
+                    Ok(ParsedFile {
+                        relative_path,
+                        symbols,
+                        imports,
+                        calls,
+                        content,
+                        parse_time_ms,
+                    })
+                }
+                Err(e) => Err((relative_path, e)),
+            }
+        })
+        .collect();
+
+    let mut parsed_files = Vec::with_capacity(results.len());
+    let mut error_count = 0;
+
+    for result in results {
+        match result {
+            Ok(parsed) => parsed_files.push(parsed),
+            Err((path, e)) => {
+                tracing::warn!("Failed to parse {}: {}", path, e);
+                error_count += 1;
+            }
+        }
+    }
+
+    (parsed_files, error_count)
+}
+
+/// Process parsed files, accumulating batches and chunks, flushing when thresholds reached
+async fn process_parsed_files(
+    parsed_files: Vec<ParsedFile>,
     pending_batches: &mut Vec<PendingFileBatch>,
     pending_chunks: &mut Vec<PendingChunk>,
     pool: Arc<DatabasePool>,
@@ -73,83 +128,72 @@ async fn process_files_loop(
     project_id: Option<i64>,
     stats: &mut IndexStats,
 ) -> Result<()> {
-    // Index each file (parse and store symbols, collect chunks)
-    for (i, file_path) in files.iter().enumerate() {
-        let relative_path = file_path
-            .strip_prefix(path)
-            .unwrap_or(file_path)
-            .to_string_lossy()
-            .to_string();
+    let total_files = parsed_files.len();
 
-        let start = std::time::Instant::now();
-        tracing::info!("[{}/{}] Parsing {}", i+1, files.len(), relative_path);
+    for (i, parsed) in parsed_files.into_iter().enumerate() {
+        tracing::info!(
+            "[{}/{}] Processing {} ({} symbols, {}ms parse)",
+            i + 1,
+            total_files,
+            parsed.relative_path,
+            parsed.symbols.len(),
+            parsed.parse_time_ms
+        );
 
-        match extract_all(file_path) {
-            Ok((symbols, imports, calls, content)) => {
-                let parse_time = start.elapsed();
-                stats.files += 1;
+        stats.files += 1;
 
-                tracing::info!("  Parsed in {:?} ({} symbols, {} imports)", parse_time, symbols.len(), imports.len());
+        // Convert symbols to ParsedSymbol for semantic chunking
+        let parsed_symbols: Vec<ParsedSymbol> = parsed
+            .symbols
+            .iter()
+            .map(|s| ParsedSymbol {
+                name: s.name.clone(),
+                kind: s.symbol_type.clone(),
+                start_line: s.start_line,
+                end_line: s.end_line,
+                signature: s.signature.clone(),
+            })
+            .collect();
 
-                // Convert symbols to ParsedSymbol before moving into closure
-                // (needed for semantic chunking later)
-                let parsed_symbols: Vec<ParsedSymbol> = symbols
-                    .iter()
-                    .map(|s| ParsedSymbol {
-                        name: s.name.clone(),
-                        kind: s.symbol_type.clone(),
-                        start_line: s.start_line,
-                        end_line: s.end_line,
-                        signature: s.signature.clone(),
-                    })
-                    .collect();
+        // Accumulate file data for batch insertion
+        pending_batches.push(PendingFileBatch {
+            file_path: parsed.relative_path.clone(),
+            symbols: parsed.symbols,
+            imports: parsed.imports,
+            calls: parsed.calls,
+        });
 
-                // Accumulate file data for batch insertion
-                pending_batches.push(PendingFileBatch {
-                    file_path: relative_path.clone(),
-                    symbols,
-                    imports,
-                    calls,
-                });
+        // Check if we should flush accumulated batches
+        let total_batched_symbols: usize = pending_batches.iter().map(|b| b.symbols.len()).sum();
+        if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD || pending_batches.len() >= FILE_FLUSH_THRESHOLD {
+            let flush_start = std::time::Instant::now();
+            flush_code_batch(pending_batches, pool.clone(), project_id, stats).await?;
+            tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
+        }
 
-                // Check if we should flush accumulated batches
-                let total_batched_symbols: usize = pending_batches.iter().map(|b| b.symbols.len()).sum();
-                if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD || pending_batches.len() >= FILE_FLUSH_THRESHOLD {
-                    let flush_start = std::time::Instant::now();
-                    flush_code_batch(pending_batches, pool.clone(), project_id, stats).await?;
-                    tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
-                }
-
-                // Collect chunks for batch embedding (if embeddings enabled)
-                // Note: content was already read by extract_all, no need to re-read
-                if embeddings.is_some() {
-                    let chunks = create_semantic_chunks(&content, &parsed_symbols);
-                    for chunk in chunks {
-                        if !chunk.content.trim().is_empty() {
-                            pending_chunks.push(PendingChunk {
-                                file_path: relative_path.clone(),
-                                start_line: chunk.start_line as usize,
-                                content: chunk.content,
-                            });
-                        }
-                    }
-
-                    // Flush if we've accumulated enough chunks
-                    if pending_chunks.len() >= CHUNK_FLUSH_THRESHOLD {
-                        let chunks_to_flush = std::mem::replace(pending_chunks, Vec::new());
-                        flush_chunks(
-                            chunks_to_flush,
-                            pool.clone(),
-                            embeddings.clone(),
-                            project_id,
-                            stats,
-                        ).await?;
-                    }
+        // Collect chunks for batch embedding (if embeddings enabled)
+        if embeddings.is_some() {
+            let chunks = create_semantic_chunks(&parsed.content, &parsed_symbols);
+            for chunk in chunks {
+                if !chunk.content.trim().is_empty() {
+                    pending_chunks.push(PendingChunk {
+                        file_path: parsed.relative_path.clone(),
+                        start_line: chunk.start_line as usize,
+                        content: chunk.content,
+                    });
                 }
             }
-            Err(e) => {
-                tracing::warn!("Failed to parse {}: {}", file_path.display(), e);
-                stats.errors += 1;
+
+            // Flush if we've accumulated enough chunks
+            if pending_chunks.len() >= CHUNK_FLUSH_THRESHOLD {
+                let chunks_to_flush = std::mem::take(pending_chunks);
+                flush_chunks(
+                    chunks_to_flush,
+                    pool.clone(),
+                    embeddings.clone(),
+                    project_id,
+                    stats,
+                ).await?;
             }
         }
     }
@@ -218,17 +262,25 @@ pub async fn index_project(
     // Clear existing data for this project
     clear_existing_project_data(pool.clone(), project_id).await?;
 
-    tracing::info!("Processing files...");
+    // Phase 1: Parse all files in parallel (CPU-bound, uses all cores)
+    tracing::info!("Parsing {} files in parallel...", files.len());
+    let parse_start = std::time::Instant::now();
+    let (parsed_files, parse_errors) = parse_files_parallel(&files, path);
+    stats.errors += parse_errors;
+    tracing::info!(
+        "Parallel parsing complete in {:?} ({} files, {} errors)",
+        parse_start.elapsed(),
+        parsed_files.len(),
+        parse_errors
+    );
 
-    // Collect chunks for batch embedding
+    // Phase 2: Process parsed files and batch insert to DB (IO-bound)
+    tracing::info!("Processing parsed files...");
     let mut pending_chunks: Vec<PendingChunk> = Vec::new();
-    // Collect file data for batch database insertion
     let mut pending_batches: Vec<PendingFileBatch> = Vec::new();
 
-    // Index each file (parse and store symbols, collect chunks)
-    process_files_loop(
-        files,
-        path,
+    process_parsed_files(
+        parsed_files,
         &mut pending_batches,
         &mut pending_chunks,
         pool.clone(),
