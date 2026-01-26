@@ -46,30 +46,7 @@ pub fn get_pending_embeddings_sync(
 impl Database {
     /// Fetch pending embeddings from the queue
     pub fn get_pending_embeddings(&self, limit: usize) -> Result<Vec<PendingEmbedding>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, project_id, file_path, chunk_content, start_line
-             FROM pending_embeddings
-             WHERE status = 'pending'
-             ORDER BY created_at ASC
-             LIMIT ?",
-        )?;
-
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(PendingEmbedding {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                file_path: row.get(2)?,
-                chunk_content: row.get(3)?,
-                start_line: row.get(4)?,
-            })
-        })?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
-        Ok(results)
+        get_pending_embeddings_sync(&self.conn(), limit).map_err(Into::into)
     }
 
     /// Store a code embedding in vec_code

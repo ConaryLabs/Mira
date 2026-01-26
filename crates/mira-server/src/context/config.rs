@@ -4,13 +4,14 @@
 use crate::db::pool::DatabasePool;
 use crate::db::{get_server_state_sync, set_server_state_sync};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Configuration key prefix for injection settings
-const CONFIG_PREFIX: &str = "injection_";
+/// Database key for the injection config JSON blob
+const CONFIG_KEY: &str = "injection_config";
 
 /// Configuration for context injection behavior
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectionConfig {
     /// Whether injection is enabled
     pub enabled: bool,
@@ -46,70 +47,24 @@ impl Default for InjectionConfig {
 }
 
 impl InjectionConfig {
-    /// Load configuration from database
+    /// Load configuration from database (stored as JSON)
     pub async fn load(pool: &Arc<DatabasePool>) -> Result<Self> {
         let pool = pool.clone();
         pool.interact(move |conn| {
-            let mut config = Self::default();
-
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enabled", CONFIG_PREFIX)) {
-                config.enabled = v == "true";
-            }
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}max_chars", CONFIG_PREFIX)) {
-                if let Ok(n) = v.parse() {
-                    config.max_chars = n;
-                }
-            }
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}min_message_len", CONFIG_PREFIX)) {
-                if let Ok(n) = v.parse() {
-                    config.min_message_len = n;
-                }
-            }
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}max_message_len", CONFIG_PREFIX)) {
-                if let Ok(n) = v.parse() {
-                    config.max_message_len = n;
-                }
-            }
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}sample_rate", CONFIG_PREFIX)) {
-                if let Ok(n) = v.parse() {
-                    config.sample_rate = n;
-                }
-            }
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enable_semantic", CONFIG_PREFIX)) {
-                config.enable_semantic = v == "true";
-            }
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enable_file_aware", CONFIG_PREFIX)) {
-                config.enable_file_aware = v == "true";
-            }
-            if let Ok(Some(v)) = get_server_state_sync(conn, &format!("{}enable_task_aware", CONFIG_PREFIX)) {
-                config.enable_task_aware = v == "true";
-            }
-
+            let config = match get_server_state_sync(conn, CONFIG_KEY) {
+                Ok(Some(json)) => serde_json::from_str(&json).unwrap_or_default(),
+                _ => Self::default(),
+            };
             Ok(config)
         }).await
     }
 
-    /// Save configuration to database
+    /// Save configuration to database (stored as JSON)
     pub async fn save(&self, pool: &Arc<DatabasePool>) -> Result<()> {
-        let config = self.clone();
+        let json = serde_json::to_string(self)?;
         pool.interact(move |conn| {
-            set_server_state_sync(conn, &format!("{}enabled", CONFIG_PREFIX), &config.enabled.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, &format!("{}max_chars", CONFIG_PREFIX), &config.max_chars.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, &format!("{}min_message_len", CONFIG_PREFIX), &config.min_message_len.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, &format!("{}max_message_len", CONFIG_PREFIX), &config.max_message_len.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, &format!("{}sample_rate", CONFIG_PREFIX), &config.sample_rate.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, &format!("{}enable_semantic", CONFIG_PREFIX), &config.enable_semantic.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, &format!("{}enable_file_aware", CONFIG_PREFIX), &config.enable_file_aware.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, &format!("{}enable_task_aware", CONFIG_PREFIX), &config.enable_task_aware.to_string())
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(())
+            set_server_state_sync(conn, CONFIG_KEY, &json)
+                .map_err(|e| anyhow::anyhow!("{}", e))
         }).await
     }
 
