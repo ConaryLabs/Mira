@@ -79,3 +79,4 @@ test_repos/
 /storage/
 snapshots/
 MCP_DEBUG_STATUS.md
+.ralph/
