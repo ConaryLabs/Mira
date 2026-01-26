@@ -24,10 +24,12 @@ pub async fn configure_expert<C: ToolContext>(
             let role_key = role.as_deref()
                 .ok_or("Role is required for 'set' action")?;
 
-            // Validate role
-            if ExpertRole::from_db_key(role_key).is_none() {
+            // Validate role (expert roles + special system roles like "background")
+            let is_valid_role = ExpertRole::from_db_key(role_key).is_some()
+                || role_key == "background";
+            if !is_valid_role {
                 return Err(format!(
-                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
                     role_key
                 ));
             }
@@ -81,12 +83,15 @@ pub async fn configure_expert<C: ToolContext>(
             let role_key = role.as_deref()
                 .ok_or("Role is required for 'get' action")?;
 
-            // Validate role
-            let expert = ExpertRole::from_db_key(role_key)
-                .ok_or_else(|| format!(
-                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+            // Validate role (expert roles + special system roles like "background")
+            let expert = ExpertRole::from_db_key(role_key);
+            let is_valid_role = expert.is_some() || role_key == "background";
+            if !is_valid_role {
+                return Err(format!(
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
                     role_key
-                ))?;
+                ));
+            }
 
             let role_key_clone = role_key.to_string();
             let config = ctx
@@ -98,7 +103,8 @@ pub async fn configure_expert<C: ToolContext>(
                 .await
                 .map_err(|e| e.to_string())?;
 
-            let mut output = format!("Configuration for '{}' ({}):\n", role_key, expert.name());
+            let role_name = expert.map(|e| e.name()).unwrap_or_else(|| "Background Worker".to_string());
+            let mut output = format!("Configuration for '{}' ({}):\n", role_key, role_name);
             output.push_str(&format!("  Provider: {}\n", config.provider));
             if let Some(ref m) = config.model {
                 output.push_str(&format!("  Model: {}\n", m));
@@ -122,10 +128,12 @@ pub async fn configure_expert<C: ToolContext>(
             let role_key = role.as_deref()
                 .ok_or("Role is required for 'delete' action")?;
 
-            // Validate role
-            if ExpertRole::from_db_key(role_key).is_none() {
+            // Validate role (expert roles + special system roles like "background")
+            let is_valid_role = ExpertRole::from_db_key(role_key).is_some()
+                || role_key == "background";
+            if !is_valid_role {
                 return Err(format!(
-                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security",
+                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
                     role_key
                 ));
             }

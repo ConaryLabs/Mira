@@ -251,3 +251,202 @@ pub fn update_pattern_success(conn: &Connection, pattern_id: i64, outcome_succes
     conn.execute(sql, rusqlite::params![success_delta, pattern_id])?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // extract_keywords Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_extract_keywords_security() {
+        let keywords = extract_keywords("Review the security of this code");
+        assert!(keywords.contains(&"security".to_string()));
+    }
+
+    #[test]
+    fn test_extract_keywords_auth() {
+        let keywords = extract_keywords("Check the authentication flow");
+        assert!(keywords.contains(&"auth".to_string()));
+    }
+
+    #[test]
+    fn test_extract_keywords_multiple() {
+        let keywords = extract_keywords("Fix the security bug in the database query cache");
+        assert!(keywords.contains(&"security".to_string()));
+        assert!(keywords.contains(&"database".to_string()));
+        assert!(keywords.contains(&"query".to_string()));
+        assert!(keywords.contains(&"cache".to_string()));
+        assert!(keywords.contains(&"bug".to_string()));
+        assert!(keywords.contains(&"fix".to_string()));
+    }
+
+    #[test]
+    fn test_extract_keywords_case_insensitive() {
+        let keywords = extract_keywords("SECURITY and Security and security");
+        assert!(keywords.contains(&"security".to_string()));
+        // Should only appear once
+        assert_eq!(keywords.iter().filter(|k| *k == "security").count(), 1);
+    }
+
+    #[test]
+    fn test_extract_keywords_empty() {
+        let keywords = extract_keywords("hello world");
+        assert!(keywords.is_empty());
+    }
+
+    #[test]
+    fn test_extract_keywords_performance() {
+        let keywords = extract_keywords("Optimize memory usage and CPU performance");
+        assert!(keywords.contains(&"memory".to_string()));
+        assert!(keywords.contains(&"cpu".to_string()));
+        assert!(keywords.contains(&"performance".to_string()));
+    }
+
+    #[test]
+    fn test_extract_keywords_testing() {
+        let keywords = extract_keywords("Improve test coverage with mock stubs");
+        assert!(keywords.contains(&"test".to_string()));
+        assert!(keywords.contains(&"coverage".to_string()));
+        assert!(keywords.contains(&"mock".to_string()));
+        assert!(keywords.contains(&"stub".to_string()));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // pattern_matches_context Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_pattern_matches_context_element_match() {
+        let pattern = ProblemPattern {
+            id: Some(1),
+            expert_role: ExpertRole::Security,
+            pattern_signature: "test".to_string(),
+            pattern_description: None,
+            common_context_elements: vec!["authentication".to_string(), "passwords".to_string()],
+            successful_approaches: vec![],
+            recommended_tools: vec![],
+            success_rate: 0.8,
+            occurrence_count: 5,
+            avg_confidence: 0.7,
+            avg_acceptance_rate: 0.9,
+        };
+
+        let keywords = vec!["auth".to_string()];
+        assert!(pattern_matches_context(&pattern, &keywords));
+    }
+
+    #[test]
+    fn test_pattern_matches_context_description_match() {
+        let pattern = ProblemPattern {
+            id: Some(1),
+            expert_role: ExpertRole::Architect,
+            pattern_signature: "test".to_string(),
+            pattern_description: Some("Design patterns for cache optimization".to_string()),
+            common_context_elements: vec![],
+            successful_approaches: vec![],
+            recommended_tools: vec![],
+            success_rate: 0.8,
+            occurrence_count: 5,
+            avg_confidence: 0.7,
+            avg_acceptance_rate: 0.9,
+        };
+
+        let keywords = vec!["cache".to_string()];
+        assert!(pattern_matches_context(&pattern, &keywords));
+    }
+
+    #[test]
+    fn test_pattern_matches_context_no_match() {
+        let pattern = ProblemPattern {
+            id: Some(1),
+            expert_role: ExpertRole::CodeReviewer,
+            pattern_signature: "test".to_string(),
+            pattern_description: Some("Code quality".to_string()),
+            common_context_elements: vec!["lint".to_string()],
+            successful_approaches: vec![],
+            recommended_tools: vec![],
+            success_rate: 0.8,
+            occurrence_count: 5,
+            avg_confidence: 0.7,
+            avg_acceptance_rate: 0.9,
+        };
+
+        let keywords = vec!["security".to_string(), "auth".to_string()];
+        assert!(!pattern_matches_context(&pattern, &keywords));
+    }
+
+    #[test]
+    fn test_pattern_matches_context_empty_keywords() {
+        let pattern = ProblemPattern {
+            id: Some(1),
+            expert_role: ExpertRole::Security,
+            pattern_signature: "test".to_string(),
+            pattern_description: Some("Security patterns".to_string()),
+            common_context_elements: vec!["security".to_string()],
+            successful_approaches: vec![],
+            recommended_tools: vec![],
+            success_rate: 0.8,
+            occurrence_count: 5,
+            avg_confidence: 0.7,
+            avg_acceptance_rate: 0.9,
+        };
+
+        let keywords: Vec<String> = vec![];
+        assert!(!pattern_matches_context(&pattern, &keywords));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // ProblemPattern Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_problem_pattern_serialization() {
+        let pattern = ProblemPattern {
+            id: Some(42),
+            expert_role: ExpertRole::Architect,
+            pattern_signature: "arch:design".to_string(),
+            pattern_description: Some("Architecture patterns".to_string()),
+            common_context_elements: vec!["module".to_string(), "design".to_string()],
+            successful_approaches: vec!["SOLID principles".to_string()],
+            recommended_tools: vec!["consult_architect".to_string()],
+            success_rate: 0.85,
+            occurrence_count: 10,
+            avg_confidence: 0.8,
+            avg_acceptance_rate: 0.9,
+        };
+
+        let json = serde_json::to_string(&pattern).unwrap();
+        let parsed: ProblemPattern = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.id, Some(42));
+        assert_eq!(parsed.expert_role, ExpertRole::Architect);
+        assert_eq!(parsed.pattern_signature, "arch:design");
+        assert_eq!(parsed.success_rate, 0.85);
+        assert_eq!(parsed.occurrence_count, 10);
+    }
+
+    #[test]
+    fn test_problem_pattern_clone() {
+        let pattern = ProblemPattern {
+            id: None,
+            expert_role: ExpertRole::Security,
+            pattern_signature: "test".to_string(),
+            pattern_description: None,
+            common_context_elements: vec!["auth".to_string()],
+            successful_approaches: vec![],
+            recommended_tools: vec![],
+            success_rate: 0.5,
+            occurrence_count: 1,
+            avg_confidence: 0.5,
+            avg_acceptance_rate: 0.5,
+        };
+
+        let cloned = pattern.clone();
+        assert_eq!(pattern.expert_role, cloned.expert_role);
+        assert_eq!(pattern.pattern_signature, cloned.pattern_signature);
+        assert_eq!(pattern.common_context_elements, cloned.common_context_elements);
+    }
+}

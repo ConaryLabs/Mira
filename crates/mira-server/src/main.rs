@@ -1,5 +1,6 @@
 // crates/mira-server/src/main.rs
 // Mira - Memory and Intelligence Layer for AI Agents
+// Mira supports Ralph for autonomous development loops
 
 mod cli;
 

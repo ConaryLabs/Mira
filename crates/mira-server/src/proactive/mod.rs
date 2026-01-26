@@ -209,3 +209,199 @@ pub fn get_proactive_config(conn: &Connection, user_id: Option<&str>, project_id
 
     Ok(config)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // EventType Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_event_type_as_str() {
+        assert_eq!(EventType::FileAccess.as_str(), "file_access");
+        assert_eq!(EventType::ToolUse.as_str(), "tool_use");
+        assert_eq!(EventType::Query.as_str(), "query");
+        assert_eq!(EventType::ContextSwitch.as_str(), "context_switch");
+        assert_eq!(EventType::GoalUpdate.as_str(), "goal_update");
+        assert_eq!(EventType::MemoryRecall.as_str(), "memory_recall");
+    }
+
+    #[test]
+    fn test_event_type_from_str() {
+        assert_eq!(EventType::from_str("file_access"), Some(EventType::FileAccess));
+        assert_eq!(EventType::from_str("tool_use"), Some(EventType::ToolUse));
+        assert_eq!(EventType::from_str("query"), Some(EventType::Query));
+        assert_eq!(EventType::from_str("context_switch"), Some(EventType::ContextSwitch));
+        assert_eq!(EventType::from_str("goal_update"), Some(EventType::GoalUpdate));
+        assert_eq!(EventType::from_str("memory_recall"), Some(EventType::MemoryRecall));
+        assert_eq!(EventType::from_str("invalid"), None);
+        assert_eq!(EventType::from_str(""), None);
+    }
+
+    #[test]
+    fn test_event_type_roundtrip() {
+        let events = [
+            EventType::FileAccess,
+            EventType::ToolUse,
+            EventType::Query,
+            EventType::ContextSwitch,
+            EventType::GoalUpdate,
+            EventType::MemoryRecall,
+        ];
+        for event in &events {
+            let s = event.as_str();
+            let parsed = EventType::from_str(s);
+            assert_eq!(parsed, Some(event.clone()), "Roundtrip failed for {:?}", event);
+        }
+    }
+
+    #[test]
+    fn test_event_type_serialization() {
+        let event = EventType::ToolUse;
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(json, "\"tool_use\"");
+
+        let parsed: EventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, event);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PatternType Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_pattern_type_as_str() {
+        assert_eq!(PatternType::FileSequence.as_str(), "file_sequence");
+        assert_eq!(PatternType::ToolChain.as_str(), "tool_chain");
+        assert_eq!(PatternType::SessionFlow.as_str(), "session_flow");
+        assert_eq!(PatternType::QueryPattern.as_str(), "query_pattern");
+    }
+
+    #[test]
+    fn test_pattern_type_from_str() {
+        assert_eq!(PatternType::from_str("file_sequence"), Some(PatternType::FileSequence));
+        assert_eq!(PatternType::from_str("tool_chain"), Some(PatternType::ToolChain));
+        assert_eq!(PatternType::from_str("session_flow"), Some(PatternType::SessionFlow));
+        assert_eq!(PatternType::from_str("query_pattern"), Some(PatternType::QueryPattern));
+        assert_eq!(PatternType::from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_pattern_type_roundtrip() {
+        let patterns = [
+            PatternType::FileSequence,
+            PatternType::ToolChain,
+            PatternType::SessionFlow,
+            PatternType::QueryPattern,
+        ];
+        for pattern in &patterns {
+            let s = pattern.as_str();
+            let parsed = PatternType::from_str(s);
+            assert_eq!(parsed, Some(pattern.clone()), "Roundtrip failed for {:?}", pattern);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // InterventionType Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_intervention_type_as_str() {
+        assert_eq!(InterventionType::ContextPrediction.as_str(), "context_prediction");
+        assert_eq!(InterventionType::SecurityAlert.as_str(), "security_alert");
+        assert_eq!(InterventionType::BugWarning.as_str(), "bug_warning");
+        assert_eq!(InterventionType::ResourceSuggestion.as_str(), "resource_suggestion");
+    }
+
+    #[test]
+    fn test_intervention_type_serialization() {
+        let intervention = InterventionType::SecurityAlert;
+        let json = serde_json::to_string(&intervention).unwrap();
+        assert_eq!(json, "\"security_alert\"");
+
+        let parsed: InterventionType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, intervention);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // UserResponse Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_user_response_as_str() {
+        assert_eq!(UserResponse::Accepted.as_str(), "accepted");
+        assert_eq!(UserResponse::Dismissed.as_str(), "dismissed");
+        assert_eq!(UserResponse::ActedUpon.as_str(), "acted_upon");
+        assert_eq!(UserResponse::Ignored.as_str(), "ignored");
+    }
+
+    #[test]
+    fn test_user_response_from_str() {
+        assert_eq!(UserResponse::from_str("accepted"), Some(UserResponse::Accepted));
+        assert_eq!(UserResponse::from_str("dismissed"), Some(UserResponse::Dismissed));
+        assert_eq!(UserResponse::from_str("acted_upon"), Some(UserResponse::ActedUpon));
+        assert_eq!(UserResponse::from_str("ignored"), Some(UserResponse::Ignored));
+        assert_eq!(UserResponse::from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_user_response_effectiveness_multiplier() {
+        assert_eq!(UserResponse::Accepted.effectiveness_multiplier(), 1.0);
+        assert_eq!(UserResponse::ActedUpon.effectiveness_multiplier(), 0.8);
+        assert_eq!(UserResponse::Ignored.effectiveness_multiplier(), 0.0);
+        assert_eq!(UserResponse::Dismissed.effectiveness_multiplier(), -0.5);
+    }
+
+    #[test]
+    fn test_user_response_multiplier_ordering() {
+        // Accepted should be most positive
+        assert!(UserResponse::Accepted.effectiveness_multiplier() > UserResponse::ActedUpon.effectiveness_multiplier());
+        // ActedUpon should be positive
+        assert!(UserResponse::ActedUpon.effectiveness_multiplier() > UserResponse::Ignored.effectiveness_multiplier());
+        // Ignored should be neutral
+        assert!(UserResponse::Ignored.effectiveness_multiplier() > UserResponse::Dismissed.effectiveness_multiplier());
+        // Dismissed should be negative
+        assert!(UserResponse::Dismissed.effectiveness_multiplier() < 0.0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // ProactiveConfig Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_proactive_config_default() {
+        let config = ProactiveConfig::default();
+        assert_eq!(config.min_confidence, 0.7);
+        assert_eq!(config.max_interventions_per_hour, 10);
+        assert!(config.enabled);
+        assert_eq!(config.cooldown_seconds, 300);
+    }
+
+    #[test]
+    fn test_proactive_config_serialization() {
+        let config = ProactiveConfig {
+            min_confidence: 0.8,
+            max_interventions_per_hour: 5,
+            enabled: false,
+            cooldown_seconds: 600,
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: ProactiveConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.min_confidence, 0.8);
+        assert_eq!(parsed.max_interventions_per_hour, 5);
+        assert!(!parsed.enabled);
+        assert_eq!(parsed.cooldown_seconds, 600);
+    }
+
+    #[test]
+    fn test_proactive_config_clone() {
+        let config = ProactiveConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.min_confidence, cloned.min_confidence);
+        assert_eq!(config.enabled, cloned.enabled);
+    }
+}

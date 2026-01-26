@@ -92,46 +92,50 @@ impl BackgroundWorker {
         }
 
         // Process LLM-dependent tasks (summaries, briefings, capabilities)
-        // Uses background_provider from config (fallback to expert_provider, then DeepSeek)
-        if let Some(client) = self.llm_factory.client_for_background() {
-            // Process summaries one at a time (rate limited)
-            let count = self.process_summary_queue(&client).await?;
-            if count > 0 {
-                tracing::info!("Background: processed {} summaries", count);
-            }
-            processed += count;
-
-            // Process project briefings (What's New since last session)
-            let count = self.process_briefings(&client).await?;
-            if count > 0 {
-                tracing::info!("Background: processed {} briefings", count);
-            }
-            processed += count;
-
-            // Process capabilities inventory (periodic codebase scan)
-            let count = self.process_capabilities(&client).await?;
-            if count > 0 {
-                tracing::info!("Background: processed {} capabilities", count);
-            }
-            processed += count;
-
-            // Process documentation tasks (lower priority - run every 3rd cycle)
-            if self.cycle_count % 3 == 0 {
-                let count = self.process_documentation(&self.llm_factory).await?;
+        // Uses "background" role config (configure via configure_expert tool)
+        // Supports custom models like gemini-3-flash-preview for cost/speed optimization
+        match self.llm_factory.client_for_role("background", &self.pool).await {
+            Ok(client) => {
+                // Process summaries one at a time (rate limited)
+                let count = self.process_summary_queue(&client).await?;
                 if count > 0 {
-                    tracing::info!("Background: processed {} documentation tasks", count);
+                    tracing::info!("Background: processed {} summaries", count);
+                }
+                processed += count;
+
+                // Process project briefings (What's New since last session)
+                let count = self.process_briefings(&client).await?;
+                if count > 0 {
+                    tracing::info!("Background: processed {} briefings", count);
+                }
+                processed += count;
+
+                // Process capabilities inventory (periodic codebase scan)
+                let count = self.process_capabilities(&client).await?;
+                if count > 0 {
+                    tracing::info!("Background: processed {} capabilities", count);
+                }
+                processed += count;
+
+                // Process documentation tasks (lower priority - run every 3rd cycle)
+                if self.cycle_count % 3 == 0 {
+                    let count = self.process_documentation(&self.llm_factory).await?;
+                    if count > 0 {
+                        tracing::info!("Background: processed {} documentation tasks", count);
+                    }
+                    processed += count;
+                }
+
+                // Process code health (cargo warnings, TODOs, unused functions)
+                let count = self.process_code_health(&client).await?;
+                if count > 0 {
+                    tracing::info!("Background: processed {} health issues", count);
                 }
                 processed += count;
             }
-
-            // Process code health (cargo warnings, TODOs, unused functions)
-            let count = self.process_code_health(&client).await?;
-            if count > 0 {
-                tracing::info!("Background: processed {} health issues", count);
+            Err(e) => {
+                tracing::debug!("Background: no LLM provider available: {}", e);
             }
-            processed += count;
-        } else {
-            tracing::debug!("Background: no LLM provider available for background tasks");
         }
 
         Ok(processed)

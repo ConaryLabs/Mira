@@ -213,3 +213,277 @@ pub fn clear_documentation_scan_marker_sync(
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // calculate_source_signature_hash Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_calculate_source_signature_hash_empty() {
+        let symbols: Vec<CodeSymbol> = vec![];
+        assert!(calculate_source_signature_hash(&symbols).is_none());
+    }
+
+    #[test]
+    fn test_calculate_source_signature_hash_no_signatures() {
+        let symbols = vec![
+            CodeSymbol {
+                id: 1,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "foo".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: Some(1),
+                end_line: Some(10),
+                signature: None,
+                indexed_at: "2024-01-01".to_string(),
+            },
+        ];
+        assert!(calculate_source_signature_hash(&symbols).is_none());
+    }
+
+    #[test]
+    fn test_calculate_source_signature_hash_with_signatures() {
+        let symbols = vec![
+            CodeSymbol {
+                id: 1,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "foo".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: Some(1),
+                end_line: Some(10),
+                signature: Some("fn foo() -> bool".to_string()),
+                indexed_at: "2024-01-01".to_string(),
+            },
+            CodeSymbol {
+                id: 2,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "bar".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: Some(12),
+                end_line: Some(20),
+                signature: Some("fn bar(x: i32) -> String".to_string()),
+                indexed_at: "2024-01-01".to_string(),
+            },
+        ];
+        let hash = calculate_source_signature_hash(&symbols);
+        assert!(hash.is_some());
+        assert!(!hash.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_calculate_source_signature_hash_deterministic() {
+        let symbols = vec![
+            CodeSymbol {
+                id: 1,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "foo".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: Some(1),
+                end_line: Some(10),
+                signature: Some("fn foo() -> bool".to_string()),
+                indexed_at: "2024-01-01".to_string(),
+            },
+        ];
+        let hash1 = calculate_source_signature_hash(&symbols);
+        let hash2 = calculate_source_signature_hash(&symbols);
+        assert_eq!(hash1, hash2, "Hash should be deterministic");
+    }
+
+    #[test]
+    fn test_calculate_source_signature_hash_order_independent() {
+        let symbols1 = vec![
+            CodeSymbol {
+                id: 1,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "foo".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: None,
+                end_line: None,
+                signature: Some("fn foo()".to_string()),
+                indexed_at: "".to_string(),
+            },
+            CodeSymbol {
+                id: 2,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "bar".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: None,
+                end_line: None,
+                signature: Some("fn bar()".to_string()),
+                indexed_at: "".to_string(),
+            },
+        ];
+        let symbols2 = vec![
+            CodeSymbol {
+                id: 2,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "bar".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: None,
+                end_line: None,
+                signature: Some("fn bar()".to_string()),
+                indexed_at: "".to_string(),
+            },
+            CodeSymbol {
+                id: 1,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "foo".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: None,
+                end_line: None,
+                signature: Some("fn foo()".to_string()),
+                indexed_at: "".to_string(),
+            },
+        ];
+        let hash1 = calculate_source_signature_hash(&symbols1);
+        let hash2 = calculate_source_signature_hash(&symbols2);
+        assert_eq!(hash1, hash2, "Hash should be order-independent (sorted internally)");
+    }
+
+    #[test]
+    fn test_calculate_source_signature_hash_whitespace_normalization() {
+        let symbols1 = vec![
+            CodeSymbol {
+                id: 1,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "foo".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: None,
+                end_line: None,
+                signature: Some("fn foo() -> bool".to_string()),
+                indexed_at: "".to_string(),
+            },
+        ];
+        let symbols2 = vec![
+            CodeSymbol {
+                id: 1,
+                project_id: 1,
+                file_path: "test.rs".to_string(),
+                name: "foo".to_string(),
+                symbol_type: "function".to_string(),
+                start_line: None,
+                end_line: None,
+                signature: Some("fn   foo()   ->   bool".to_string()),
+                indexed_at: "".to_string(),
+            },
+        ];
+        let hash1 = calculate_source_signature_hash(&symbols1);
+        let hash2 = calculate_source_signature_hash(&symbols2);
+        assert_eq!(hash1, hash2, "Hash should normalize whitespace");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // file_checksum Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_file_checksum_nonexistent() {
+        let path = std::path::Path::new("/nonexistent/path/file.txt");
+        assert!(file_checksum(path).is_none());
+    }
+
+    #[test]
+    fn test_file_checksum_temp_file() {
+        use std::io::Write;
+
+        // Create a temp file
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        temp_file.write_all(b"hello world").unwrap();
+        temp_file.flush().unwrap();
+
+        let checksum = file_checksum(temp_file.path());
+        assert!(checksum.is_some());
+        assert!(!checksum.as_ref().unwrap().is_empty());
+
+        // Checksum should be deterministic
+        let checksum2 = file_checksum(temp_file.path());
+        assert_eq!(checksum, checksum2);
+    }
+
+    #[test]
+    fn test_file_checksum_different_content() {
+        use std::io::Write;
+
+        let mut temp1 = tempfile::NamedTempFile::new().unwrap();
+        temp1.write_all(b"content A").unwrap();
+        temp1.flush().unwrap();
+
+        let mut temp2 = tempfile::NamedTempFile::new().unwrap();
+        temp2.write_all(b"content B").unwrap();
+        temp2.flush().unwrap();
+
+        let checksum1 = file_checksum(temp1.path());
+        let checksum2 = file_checksum(temp2.path());
+
+        assert_ne!(checksum1, checksum2, "Different content should have different checksums");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // read_file_content Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_read_file_content_nonexistent() {
+        let path = std::path::Path::new("/nonexistent/path/file.txt");
+        assert!(read_file_content(path).is_err());
+    }
+
+    #[test]
+    fn test_read_file_content_temp_file() {
+        use std::io::Write;
+
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        temp_file.write_all(b"test content").unwrap();
+        temp_file.flush().unwrap();
+
+        let content = read_file_content(temp_file.path()).unwrap();
+        assert_eq!(content, "test content");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // CodeSymbol Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_code_symbol_clone() {
+        let symbol = CodeSymbol {
+            id: 1,
+            project_id: 42,
+            file_path: "src/main.rs".to_string(),
+            name: "main".to_string(),
+            symbol_type: "function".to_string(),
+            start_line: Some(1),
+            end_line: Some(10),
+            signature: Some("fn main()".to_string()),
+            indexed_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        let cloned = symbol.clone();
+        assert_eq!(symbol.id, cloned.id);
+        assert_eq!(symbol.name, cloned.name);
+        assert_eq!(symbol.signature, cloned.signature);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Constants Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_doc_scan_marker_key_constant() {
+        assert_eq!(DOC_SCAN_MARKER_KEY, "documentation_last_scan");
+        assert!(!DOC_SCAN_MARKER_KEY.is_empty());
+    }
+}

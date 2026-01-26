@@ -329,3 +329,162 @@ pub fn run_pattern_mining(conn: &Connection, project_id: i64) -> Result<usize> {
 
     Ok(patterns_stored)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PatternData Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_pattern_data_file_sequence_json_roundtrip() {
+        let data = PatternData::FileSequence {
+            files: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
+            transitions: vec![("src/main.rs".to_string(), "src/lib.rs".to_string())],
+        };
+
+        let json = data.to_json();
+        assert!(json.contains("file_sequence"));
+        assert!(json.contains("src/main.rs"));
+
+        let parsed = PatternData::from_json(&json).unwrap();
+        if let PatternData::FileSequence { files, transitions } = parsed {
+            assert_eq!(files.len(), 2);
+            assert_eq!(transitions.len(), 1);
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_pattern_data_tool_chain_json_roundtrip() {
+        let mut typical_args = HashMap::new();
+        typical_args.insert("verbose".to_string(), "true".to_string());
+
+        let data = PatternData::ToolChain {
+            tools: vec!["cargo".to_string(), "rustfmt".to_string()],
+            typical_args,
+        };
+
+        let json = data.to_json();
+        assert!(json.contains("tool_chain"));
+        assert!(json.contains("cargo"));
+
+        let parsed = PatternData::from_json(&json).unwrap();
+        if let PatternData::ToolChain { tools, typical_args } = parsed {
+            assert_eq!(tools.len(), 2);
+            assert_eq!(typical_args.get("verbose"), Some(&"true".to_string()));
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_pattern_data_session_flow_json_roundtrip() {
+        let data = PatternData::SessionFlow {
+            stages: vec!["init".to_string(), "work".to_string(), "commit".to_string()],
+            typical_duration_ms: Some(3600000),
+        };
+
+        let json = data.to_json();
+        assert!(json.contains("session_flow"));
+
+        let parsed = PatternData::from_json(&json).unwrap();
+        if let PatternData::SessionFlow { stages, typical_duration_ms } = parsed {
+            assert_eq!(stages.len(), 3);
+            assert_eq!(typical_duration_ms, Some(3600000));
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_pattern_data_query_pattern_json_roundtrip() {
+        let data = PatternData::QueryPattern {
+            keywords: vec!["error".to_string(), "handling".to_string()],
+            query_type: "search".to_string(),
+            typical_context: Some("debugging session".to_string()),
+        };
+
+        let json = data.to_json();
+        assert!(json.contains("query_pattern"));
+
+        let parsed = PatternData::from_json(&json).unwrap();
+        if let PatternData::QueryPattern { keywords, query_type, typical_context } = parsed {
+            assert_eq!(keywords.len(), 2);
+            assert_eq!(query_type, "search");
+            assert_eq!(typical_context, Some("debugging session".to_string()));
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_pattern_data_from_json_invalid() {
+        assert!(PatternData::from_json("not valid json").is_none());
+        assert!(PatternData::from_json("{}").is_none()); // Missing type tag
+        assert!(PatternData::from_json("").is_none());
+    }
+
+    #[test]
+    fn test_pattern_data_to_json_empty() {
+        let data = PatternData::FileSequence {
+            files: vec![],
+            transitions: vec![],
+        };
+        let json = data.to_json();
+        assert!(!json.is_empty());
+        assert!(json.contains("file_sequence"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // BehaviorPattern Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_behavior_pattern_serialization() {
+        let pattern = BehaviorPattern {
+            id: Some(1),
+            project_id: 42,
+            pattern_type: PatternType::FileSequence,
+            pattern_key: "test_key".to_string(),
+            pattern_data: PatternData::FileSequence {
+                files: vec!["a.rs".to_string()],
+                transitions: vec![],
+            },
+            confidence: 0.85,
+            occurrence_count: 10,
+        };
+
+        let json = serde_json::to_string(&pattern).unwrap();
+        let parsed: BehaviorPattern = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.id, Some(1));
+        assert_eq!(parsed.project_id, 42);
+        assert_eq!(parsed.confidence, 0.85);
+        assert_eq!(parsed.occurrence_count, 10);
+    }
+
+    #[test]
+    fn test_behavior_pattern_clone() {
+        let pattern = BehaviorPattern {
+            id: None,
+            project_id: 1,
+            pattern_type: PatternType::ToolChain,
+            pattern_key: "key".to_string(),
+            pattern_data: PatternData::ToolChain {
+                tools: vec!["tool".to_string()],
+                typical_args: HashMap::new(),
+            },
+            confidence: 0.5,
+            occurrence_count: 5,
+        };
+
+        let cloned = pattern.clone();
+        assert_eq!(pattern.project_id, cloned.project_id);
+        assert_eq!(pattern.pattern_key, cloned.pattern_key);
+        assert_eq!(pattern.confidence, cloned.confidence);
+    }
+}
