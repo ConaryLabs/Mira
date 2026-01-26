@@ -7,13 +7,14 @@ use std::process::Command;
 
 use crate::cartographer;
 use crate::db::{
-    get_or_create_project_sync, update_project_name_sync, upsert_session_sync,
+    get_or_create_project_sync, update_project_name_sync, upsert_session_with_branch_sync,
     search_memories_text_sync, get_preferences_sync, get_health_alerts_sync,
     set_server_state_sync, get_project_briefing_sync, mark_session_for_briefing_sync,
     save_active_project_sync, get_recent_sessions_sync, get_session_stats_sync,
     store_memory_sync, StoreMemoryParams,
 };
 use crate::db::documentation::count_doc_tasks_by_status;
+use crate::git::get_git_branch;
 use crate::tools::core::claude_local;
 use crate::tools::core::ToolContext;
 
@@ -188,16 +189,20 @@ pub async fn session_start<C: ToolContext>(
     // Set session ID (use provided, or generate new)
     let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+    // Detect git branch for branch-aware context
+    let branch = get_git_branch(&project_path);
+
     // Gather system context content (synchronous, no DB needed)
     let system_context = gather_system_context_content();
 
     // Create session, persist state, store system context, and get briefing in one pool call
     let sid_for_db = sid.clone();
+    let branch_for_db = branch.clone();
     let briefing_text: Option<String> = ctx
         .pool()
         .interact(move |conn| {
-            // Create/update session
-            upsert_session_sync(conn, &sid_for_db, Some(project_id))?;
+            // Create/update session with branch
+            upsert_session_with_branch_sync(conn, &sid_for_db, Some(project_id), branch_for_db.as_deref())?;
 
             // Persist active session ID for restart recovery
             set_server_state_sync(conn, "active_session_id", &sid_for_db)?;
@@ -214,6 +219,7 @@ pub async fn session_start<C: ToolContext>(
                     session_id: None,
                     user_id: None,
                     scope: "project",
+                    branch: None,
                 });
             }
 
@@ -232,6 +238,9 @@ pub async fn session_start<C: ToolContext>(
         .map_err(|e| e.to_string())?;
 
     ctx.set_session_id(sid.clone()).await;
+
+    // Set branch in context
+    ctx.set_branch(branch.clone()).await;
 
     // Import CLAUDE.local.md entries as memories (if file exists)
     let imported_count = claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)

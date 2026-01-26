@@ -41,6 +41,8 @@ pub struct MiraServer {
     pub project: Arc<RwLock<Option<ProjectContext>>>,
     /// Current session ID (generated on first tool call or session_start)
     pub session_id: Arc<RwLock<Option<String>>>,
+    /// Current git branch (detected from project path)
+    pub branch: Arc<RwLock<Option<String>>>,
     /// WebSocket broadcaster (unused in MCP-only mode)
     pub ws_tx: Option<tokio::sync::broadcast::Sender<mira_types::WsEvent>>,
     /// File watcher handle for registering projects
@@ -72,6 +74,7 @@ impl MiraServer {
             llm_factory,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
+            branch: Arc::new(RwLock::new(None)),
             ws_tx: None,
             watcher: None,
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
@@ -96,6 +99,7 @@ impl MiraServer {
             llm_factory,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
+            branch: Arc::new(RwLock::new(None)),
             ws_tx: None,
             watcher: Some(watcher),
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
@@ -124,6 +128,7 @@ impl MiraServer {
             llm_factory,
             project,
             session_id,
+            branch: Arc::new(RwLock::new(None)),
             ws_tx: Some(ws_tx),
             watcher,
             pending_responses,

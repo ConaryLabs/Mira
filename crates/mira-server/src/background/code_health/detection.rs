@@ -92,6 +92,7 @@ pub fn scan_todo_comments(
                     session_id: None,
                     user_id: None,
                     scope: "project",
+                    branch: None,
                 }).map_err(|e| e.to_string())?;
 
                 stored += 1;
@@ -148,6 +149,7 @@ pub fn scan_unimplemented(
                     session_id: None,
                     user_id: None,
                     scope: "project",
+                    branch: None,
                 }).map_err(|e| e.to_string())?;
 
                 stored += 1;
@@ -186,6 +188,7 @@ pub fn scan_unused_functions(conn: &Connection, project_id: i64) -> Result<usize
             session_id: None,
             user_id: None,
             scope: "project",
+            branch: None,
         }).map_err(|e| e.to_string())?;
 
         stored += 1;
@@ -289,6 +292,7 @@ pub fn scan_unwrap_usage(
                     session_id: None,
                     user_id: None,
                     scope: "project",
+                    branch: None,
                 }).map_err(|e| e.to_string())?;
 
                 stored += 1;
@@ -425,6 +429,7 @@ pub fn scan_error_handling(
                     session_id: None,
                     user_id: None,
                     scope: "project",
+                    branch: None,
                 }).map_err(|e| e.to_string())?;
 
                 stored += 1;

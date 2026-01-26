@@ -8,6 +8,38 @@ use rusqlite::params;
 use super::Database;
 use crate::search::embedding_to_bytes;
 
+// Branch-aware boosting constants (tunable)
+// Lower multiplier = better score (distances are minimized)
+
+/// Boost factor for memories on the same branch (15% boost)
+const SAME_BRANCH_BOOST: f32 = 0.85;
+
+/// Boost factor for memories on main/master branch (5% boost)
+const MAIN_BRANCH_BOOST: f32 = 0.95;
+
+/// Apply branch-aware boosting to a distance score
+///
+/// Returns a boosted (lower) distance for:
+/// - Same branch: 15% reduction (multiply by 0.85)
+/// - main/master: 5% reduction (multiply by 0.95)
+/// - NULL branch (legacy data): no change
+/// - Different branch: no change (keeps cross-branch knowledge accessible)
+pub fn apply_branch_boost(
+    distance: f32,
+    memory_branch: Option<&str>,
+    current_branch: Option<&str>,
+) -> f32 {
+    match (memory_branch, current_branch) {
+        // Same branch: strongest boost
+        (Some(m), Some(c)) if m == c => distance * SAME_BRANCH_BOOST,
+        // main/master memories get a small boost (stable/shared knowledge)
+        (Some(m), _) if m == "main" || m == "master" => distance * MAIN_BRANCH_BOOST,
+        // NULL branch (legacy data) or different branch: no boost
+        // Cross-branch knowledge remains accessible, just not prioritized
+        _ => distance,
+    }
+}
+
 /// Parse MemoryFact from a rusqlite Row with standard column order:
 /// (id, project_id, key, content, fact_type, category, confidence, created_at,
 ///  session_count, first_session_id, last_session_id, status, user_id, scope, team_id)
@@ -500,6 +532,7 @@ pub struct StoreMemoryParams<'a> {
     pub session_id: Option<&'a str>,
     pub user_id: Option<&'a str>,
     pub scope: &'a str,
+    pub branch: Option<&'a str>,
 }
 
 /// Store a memory with full scope/user support (sync version for pool.interact())
@@ -555,11 +588,12 @@ pub fn store_memory_sync(conn: &rusqlite::Connection, params: StoreMemoryParams)
     let initial_confidence = if params.confidence < 1.0 { params.confidence } else { 0.5 };
     conn.execute(
         "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-         session_count, first_session_id, last_session_id, status, user_id, scope)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?)",
+         session_count, first_session_id, last_session_id, status, user_id, scope, branch)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?, ?)",
         rusqlite::params![
             params.project_id, params.key, params.content, params.fact_type, params.category,
-            initial_confidence, params.session_id, params.session_id, params.user_id, params.scope
+            initial_confidence, params.session_id, params.session_id, params.user_id, params.scope,
+            params.branch
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -658,8 +692,28 @@ pub fn recall_semantic_sync(
     user_id: Option<&str>,
     limit: usize,
 ) -> rusqlite::Result<Vec<(i64, String, f32)>> {
+    // Delegate to branch-aware version with no branch (no boosting)
+    recall_semantic_with_branch_sync(conn, embedding_bytes, project_id, user_id, None, limit)
+}
+
+/// Branch-aware semantic recall with boosting
+///
+/// Returns (fact_id, content, boosted_distance, branch) tuples.
+/// When current_branch is provided, memories on the same branch get boosted,
+/// and main/master memories get a smaller boost.
+pub fn recall_semantic_with_branch_sync(
+    conn: &rusqlite::Connection,
+    embedding_bytes: &[u8],
+    project_id: Option<i64>,
+    user_id: Option<&str>,
+    current_branch: Option<&str>,
+    limit: usize,
+) -> rusqlite::Result<Vec<(i64, String, f32)>> {
+    // Fetch more results than needed to allow for re-ranking after boosting
+    let fetch_limit = (limit * 2).min(100);
+
     let mut stmt = conn.prepare(
-        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance
+        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
          FROM vec_memory v
          JOIN memory_facts f ON v.fact_id = f.id
          WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
@@ -673,14 +727,83 @@ pub fn recall_semantic_sync(
          LIMIT ?3",
     )?;
 
-    let results = stmt
-        .query_map(rusqlite::params![embedding_bytes, project_id, limit as i64, user_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    let results: Vec<(i64, String, f32, Option<String>)> = stmt
+        .query_map(rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
         .filter_map(|r| r.ok())
         .collect();
 
-    Ok(results)
+    // Apply branch boosting and re-sort
+    let mut boosted: Vec<(i64, String, f32)> = results
+        .into_iter()
+        .map(|(id, content, distance, branch)| {
+            let boosted_distance = apply_branch_boost(distance, branch.as_deref(), current_branch);
+            (id, content, boosted_distance)
+        })
+        .collect();
+
+    // Re-sort by boosted distance (ascending - lower is better)
+    boosted.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Truncate to requested limit
+    boosted.truncate(limit);
+
+    Ok(boosted)
+}
+
+/// Branch-aware semantic recall that also returns the branch for display
+///
+/// Returns (fact_id, content, boosted_distance, branch) tuples.
+pub fn recall_semantic_with_branch_info_sync(
+    conn: &rusqlite::Connection,
+    embedding_bytes: &[u8],
+    project_id: Option<i64>,
+    user_id: Option<&str>,
+    current_branch: Option<&str>,
+    limit: usize,
+) -> rusqlite::Result<Vec<(i64, String, f32, Option<String>)>> {
+    // Fetch more results than needed to allow for re-ranking after boosting
+    let fetch_limit = (limit * 2).min(100);
+
+    let mut stmt = conn.prepare(
+        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
+         FROM vec_memory v
+         JOIN memory_facts f ON v.fact_id = f.id
+         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+           AND (
+             f.scope = 'project'
+             OR f.scope IS NULL
+             OR (f.scope = 'personal' AND f.user_id = ?4)
+             OR f.user_id IS NULL
+           )
+         ORDER BY distance
+         LIMIT ?3",
+    )?;
+
+    let results: Vec<(i64, String, f32, Option<String>)> = stmt
+        .query_map(rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Apply branch boosting and re-sort
+    let mut boosted: Vec<(i64, String, f32, Option<String>)> = results
+        .into_iter()
+        .map(|(id, content, distance, branch)| {
+            let boosted_distance = apply_branch_boost(distance, branch.as_deref(), current_branch);
+            (id, content, boosted_distance, branch)
+        })
+        .collect();
+
+    // Re-sort by boosted distance (ascending - lower is better)
+    boosted.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Truncate to requested limit
+    boosted.truncate(limit);
+
+    Ok(boosted)
 }
 
 /// Search memories by text with scope filtering (sync version for pool.interact())
@@ -765,4 +888,91 @@ pub fn delete_memory_sync(conn: &rusqlite::Connection, id: i64) -> rusqlite::Res
     // Delete from facts table
     let deleted = conn.execute("DELETE FROM memory_facts WHERE id = ?", rusqlite::params![id])? > 0;
     Ok(deleted)
+}
+
+#[cfg(test)]
+mod branch_boost_tests {
+    use super::*;
+
+    #[test]
+    fn test_same_branch_boost() {
+        // Same branch should get 15% boost (multiply by 0.85)
+        let distance = 1.0;
+        let boosted = apply_branch_boost(distance, Some("feature-x"), Some("feature-x"));
+        assert!((boosted - 0.85).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_main_branch_boost() {
+        // main branch should get 5% boost (multiply by 0.95)
+        let distance = 1.0;
+        let boosted = apply_branch_boost(distance, Some("main"), Some("feature-x"));
+        assert!((boosted - 0.95).abs() < 0.001);
+
+        // master branch should also get 5% boost
+        let boosted_master = apply_branch_boost(distance, Some("master"), Some("feature-x"));
+        assert!((boosted_master - 0.95).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_different_branch_no_boost() {
+        // Different branch should get no boost
+        let distance = 1.0;
+        let boosted = apply_branch_boost(distance, Some("feature-y"), Some("feature-x"));
+        assert!((boosted - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_null_branch_no_boost() {
+        // NULL branch (legacy data) should get no boost
+        let distance = 1.0;
+
+        // Memory has no branch
+        let boosted1 = apply_branch_boost(distance, None, Some("feature-x"));
+        assert!((boosted1 - 1.0).abs() < 0.001);
+
+        // Current context has no branch
+        let boosted2 = apply_branch_boost(distance, Some("feature-x"), None);
+        assert!((boosted2 - 1.0).abs() < 0.001);
+
+        // Both have no branch
+        let boosted3 = apply_branch_boost(distance, None, None);
+        assert!((boosted3 - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_boost_preserves_ordering() {
+        // Boosting should improve relative ranking of same-branch memories
+        let base_distance = 0.5;
+
+        let same_branch = apply_branch_boost(base_distance, Some("feature-x"), Some("feature-x"));
+        let different_branch = apply_branch_boost(base_distance, Some("feature-y"), Some("feature-x"));
+
+        // Same branch should have lower (better) distance
+        assert!(same_branch < different_branch);
+    }
+
+    #[test]
+    fn test_main_branch_beats_different_branch() {
+        // main/master branch should rank better than different branch
+        let base_distance = 0.5;
+
+        let main_branch = apply_branch_boost(base_distance, Some("main"), Some("feature-x"));
+        let different_branch = apply_branch_boost(base_distance, Some("feature-y"), Some("feature-x"));
+
+        // main should have lower (better) distance
+        assert!(main_branch < different_branch);
+    }
+
+    #[test]
+    fn test_same_branch_beats_main() {
+        // Same branch should rank better than main
+        let base_distance = 0.5;
+
+        let same_branch = apply_branch_boost(base_distance, Some("feature-x"), Some("feature-x"));
+        let main_branch = apply_branch_boost(base_distance, Some("main"), Some("feature-x"));
+
+        // Same branch should have lower (better) distance
+        assert!(same_branch < main_branch);
+    }
 }

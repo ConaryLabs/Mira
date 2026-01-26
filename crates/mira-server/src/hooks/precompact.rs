@@ -99,6 +99,7 @@ async fn save_pre_compaction_state(
                 session_id: None,
                 user_id: None,
                 scope: "project",
+                branch: None,
             }).map_err(|e| anyhow::anyhow!("{}", e))
         }).await?
     };
@@ -178,6 +179,7 @@ async fn extract_and_save_context(
                 session_id: Some(&session_id_clone),
                 user_id: None,
                 scope: "project",
+                branch: None,
             }).map_err(|e| anyhow::anyhow!("{}", e))
         }).await?;
     }

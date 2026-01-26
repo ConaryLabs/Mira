@@ -14,6 +14,7 @@ pub struct TestContext {
     llm_factory: Arc<ProviderFactory>,
     project_state: Arc<RwLock<Option<ProjectContext>>>,
     session_state: Arc<RwLock<Option<String>>>,
+    branch_state: Arc<RwLock<Option<String>>>,
 }
 
 #[allow(dead_code)]
@@ -31,6 +32,7 @@ impl TestContext {
             llm_factory,
             project_state: Arc::new(RwLock::new(None)),
             session_state: Arc::new(RwLock::new(None)),
+            branch_state: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -97,6 +99,14 @@ impl mira::tools::core::ToolContext for TestContext {
         let new_id = Uuid::new_v4().to_string();
         self.set_session_id(new_id.clone()).await;
         new_id
+    }
+
+    async fn get_branch(&self) -> Option<String> {
+        self.branch_state.read().await.clone()
+    }
+
+    async fn set_branch(&self, branch: Option<String>) {
+        *self.branch_state.write().await = branch;
     }
 
     fn broadcast(&self, _event: WsEvent) {

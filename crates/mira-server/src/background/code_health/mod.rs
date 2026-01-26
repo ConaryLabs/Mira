@@ -117,6 +117,7 @@ pub fn mark_health_scan_needed_sync(conn: &rusqlite::Connection, project_id: i64
         session_id: None,
         user_id: None,
         scope: "project",
+        branch: None,
     }).map_err(|e| e.to_string())?;
     tracing::debug!("Marked project {} for health rescan", project_id);
     Ok(())

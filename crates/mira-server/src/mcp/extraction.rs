@@ -131,6 +131,7 @@ async fn extract_and_store(
                 session_id: None,
                 user_id: None,
                 scope: "project",
+                branch: None,
             }).map_err(|e| anyhow::anyhow!("{}", e))
         }).await?;
 

@@ -62,6 +62,15 @@ pub trait ToolContext: Send + Sync {
     /// Get or create a session ID for the current project
     async fn get_or_create_session(&self) -> String;
 
+    // === Branch Context ===
+
+    /// Get the current git branch (cached, refreshes every ~5 seconds)
+    /// Returns None if not in a git repository or branch cannot be determined
+    async fn get_branch(&self) -> Option<String>;
+
+    /// Set the current branch (typically called during session_start)
+    async fn set_branch(&self, branch: Option<String>);
+
     // === User Identity ===
 
     /// Get the current user's identity (for multi-user memory scoping)

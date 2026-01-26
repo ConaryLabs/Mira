@@ -162,6 +162,7 @@ async fn mark_capabilities_scanned(pool: &Arc<DatabasePool>, project_id: i64, pr
             session_id: None,
             user_id: None,
             scope: "project",
+            branch: None,
         }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
     }).await.map_err(|e| e.to_string())?;
     Ok(())
@@ -347,6 +348,7 @@ async fn parse_and_store_capabilities(
                 session_id: None,
                 user_id: None,
                 scope: "project",
+                branch: None,
             }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
         }).await.map_err(|e| e.to_string())?;
 

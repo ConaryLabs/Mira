@@ -210,6 +210,27 @@ pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate memory_facts to add branch column for branch-aware context
+pub fn migrate_memory_facts_branch(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "memory_facts") {
+        return Ok(());
+    }
+
+    if !column_exists(conn, "memory_facts", "branch") {
+        tracing::info!("Adding branch column to memory_facts for branch-aware memory");
+        conn.execute(
+            "ALTER TABLE memory_facts ADD COLUMN branch TEXT",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_branch ON memory_facts(branch)",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Migrate to add teams tables for team-based memory sharing
 pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
     create_table_if_missing(conn, "teams", r#"

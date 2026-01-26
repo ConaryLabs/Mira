@@ -62,6 +62,10 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add cross-project intelligence tables for pattern sharing
     intelligence::migrate_cross_project_intelligence_tables(conn)?;
 
+    // Add branch column for branch-aware context switching
+    memory::migrate_memory_facts_branch(conn)?;
+    session::migrate_sessions_branch(conn)?;
+
     Ok(())
 }
 

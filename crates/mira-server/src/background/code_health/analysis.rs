@@ -150,6 +150,7 @@ where
                             session_id: None,
                             user_id: None,
                             scope: "project",
+                            branch: None,
                         }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
                     }).await.map_err(|e| e.to_string())?;
 

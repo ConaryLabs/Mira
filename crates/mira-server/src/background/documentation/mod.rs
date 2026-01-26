@@ -200,6 +200,7 @@ pub fn mark_documentation_scanned_sync(
         session_id: None,
         user_id: None,
         scope: "project",
+        branch: None,
     }).map_err(|e| e.to_string())?;
     Ok(())
 }

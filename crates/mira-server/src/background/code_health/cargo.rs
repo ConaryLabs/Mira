@@ -83,6 +83,7 @@ pub fn scan_cargo_warnings(conn: &Connection, project_id: i64, project_path: &st
                             session_id: None,
                             user_id: None,
                             scope: "project",
+                            branch: None,
                         }).map_err(|e| e.to_string())?;
 
                         stored += 1;

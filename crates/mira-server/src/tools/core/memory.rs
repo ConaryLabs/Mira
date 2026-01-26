@@ -1,6 +1,6 @@
 //! Unified memory tools (recall, remember, forget)
 
-use crate::db::{store_memory_sync, store_embedding_sync, StoreMemoryParams};
+use crate::db::{store_memory_sync, store_embedding_sync, StoreMemoryParams, recall_semantic_with_branch_info_sync};
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
@@ -34,6 +34,9 @@ pub async fn remember<C: ToolContext>(
         return Err("Cannot create personal memory: user identity not available".to_string());
     }
 
+    // Get current branch for branch-aware memory
+    let branch = ctx.get_branch().await;
+
     // Store in SQL with session tracking via connection pool
     let content_for_store = content.clone();
     let key_for_store = key.clone();
@@ -42,6 +45,7 @@ pub async fn remember<C: ToolContext>(
     let session_id_for_store = session_id.clone();
     let user_id_for_store = user_id.clone();
     let scope_for_store = scope.clone();
+    let branch_for_store = branch.clone();
     let id: i64 = ctx
         .pool()
         .interact(move |conn| {
@@ -55,6 +59,7 @@ pub async fn remember<C: ToolContext>(
                 session_id: session_id_for_store.as_deref(),
                 user_id: user_id_for_store.as_deref(),
                 scope: &scope_for_store,
+                branch: branch_for_store.as_deref(),
             };
             store_memory_sync(conn, params).map_err(|e| anyhow::anyhow!(e))
         })
@@ -99,28 +104,37 @@ pub async fn recall<C: ToolContext>(
     _category: Option<String>,
     _fact_type: Option<String>,
 ) -> Result<String, String> {
-    use crate::db::{recall_semantic_sync, search_memories_sync, record_memory_access_sync};
+    use crate::db::{search_memories_sync, record_memory_access_sync};
 
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_session_id().await;
     let project = ctx.get_project().await;
     let user_id = ctx.get_user_identity();
+    let current_branch = ctx.get_branch().await;
     let context_header = format_project_header(project.as_ref());
 
     let limit = limit.unwrap_or(10) as usize;
 
-    // Try semantic search first if embeddings available
+    // Try semantic search first if embeddings available (with branch-aware boosting)
     if let Some(embeddings) = ctx.embeddings() {
         if let Ok(query_embedding) = embeddings.embed(&query).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
             let user_id_for_query = user_id.clone();
+            let branch_for_query = current_branch.clone();
 
-            // Run vector search via connection pool with scope filtering
-            let results: Vec<(i64, String, f32)> = ctx
+            // Run vector search via connection pool with branch boosting
+            let results: Vec<(i64, String, f32, Option<String>)> = ctx
                 .pool()
                 .interact(move |conn| {
-                    recall_semantic_sync(conn, &embedding_bytes, project_id, user_id_for_query.as_deref(), limit)
-                        .map_err(|e| anyhow::anyhow!(e))
+                    recall_semantic_with_branch_info_sync(
+                        conn,
+                        &embedding_bytes,
+                        project_id,
+                        user_id_for_query.as_deref(),
+                        branch_for_query.as_deref(),
+                        limit,
+                    )
+                    .map_err(|e| anyhow::anyhow!(e))
                 })
                 .await
                 .map_err(|e| e.to_string())?;
@@ -128,7 +142,7 @@ pub async fn recall<C: ToolContext>(
             if !results.is_empty() {
                 // Record memory access for evidence-based tracking
                 if let Some(ref sid) = session_id {
-                    let ids: Vec<i64> = results.iter().map(|(id, _, _)| *id).collect();
+                    let ids: Vec<i64> = results.iter().map(|(id, _, _, _)| *id).collect();
                     let pool_clone = ctx.pool().clone();
                     let sid_clone = sid.clone();
                     // Fire and forget - don't block on this
@@ -151,14 +165,18 @@ pub async fn recall<C: ToolContext>(
 
                 let mut response =
                     format!("{}Found {} memories:\n", context_header, results.len());
-                for (id, content, distance) in results {
+                for (id, content, distance, branch) in results {
                     let score = 1.0 - distance; // Convert distance to similarity
                     let preview = if content.len() > 100 {
                         format!("{}...", &content[..100])
                     } else {
                         content
                     };
-                    response.push_str(&format!("  [{}] (score: {:.2}) {}\n", id, score, preview));
+                    // Show branch tag if present
+                    let branch_tag = branch
+                        .map(|b| format!(" [{}]", b))
+                        .unwrap_or_default();
+                    response.push_str(&format!("  [{}] (score: {:.2}){} {}\n", id, score, branch_tag, preview));
                 }
                 return Ok(response);
             }

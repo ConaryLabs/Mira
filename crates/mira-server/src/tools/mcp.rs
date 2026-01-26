@@ -49,6 +49,29 @@ impl ToolContext for MiraServer {
         *self.session_id.write().await = Some(session_id);
     }
 
+    async fn get_branch(&self) -> Option<String> {
+        // First check cached value
+        let cached = self.branch.read().await.clone();
+        if cached.is_some() {
+            return cached;
+        }
+
+        // If not cached, try to detect from project path
+        if let Some(project) = self.get_project().await {
+            let branch = crate::git::get_git_branch(&project.path);
+            if branch.is_some() {
+                *self.branch.write().await = branch.clone();
+            }
+            return branch;
+        }
+
+        None
+    }
+
+    async fn set_branch(&self, branch: Option<String>) {
+        *self.branch.write().await = branch;
+    }
+
     async fn get_or_create_session(&self) -> String {
         match ensure_session(self).await {
             Ok(id) => id,

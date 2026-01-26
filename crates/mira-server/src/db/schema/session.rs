@@ -62,3 +62,24 @@ pub fn migrate_chat_summaries_project_id(conn: &Connection) -> Result<()> {
 
     Ok(())
 }
+
+/// Migrate sessions to add branch column for branch-aware context
+pub fn migrate_sessions_branch(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "sessions") {
+        return Ok(());
+    }
+
+    if !column_exists(conn, "sessions", "branch") {
+        tracing::info!("Adding branch column to sessions for branch-aware context");
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN branch TEXT",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_branch ON sessions(branch)",
+            [],
+        )?;
+    }
+
+    Ok(())
+}

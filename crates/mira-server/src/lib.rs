@@ -27,5 +27,6 @@ pub mod error;
 pub mod proactive;
 pub mod experts;
 pub mod cross_project;
+pub mod git;
 pub mod utils;
 pub use error::{MiraError, Result};

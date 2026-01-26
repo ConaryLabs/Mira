@@ -74,6 +74,24 @@ pub fn upsert_session_sync(
     Ok(())
 }
 
+/// Create or update a session with branch - sync version for pool.interact()
+pub fn upsert_session_with_branch_sync(
+    conn: &Connection,
+    session_id: &str,
+    project_id: Option<i64>,
+    branch: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO sessions (id, project_id, branch, status, started_at, last_activity)
+         VALUES (?1, ?2, ?3, 'active', datetime('now'), datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET
+            last_activity = datetime('now'),
+            branch = COALESCE(?3, sessions.branch)",
+        params![session_id, project_id, branch],
+    )?;
+    Ok(())
+}
+
 /// Get indexed projects (projects with codebase_modules) - sync version
 pub fn get_indexed_projects_sync(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
     let mut stmt = conn.prepare(
