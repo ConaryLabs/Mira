@@ -32,9 +32,6 @@ pub(crate) const PARALLEL_EXPERT_TIMEOUT: Duration = Duration::from_secs(900); /
 
 // Public API exports
 pub use config::configure_expert;
-pub use execution::{
-    consult_architect, consult_code_reviewer, consult_expert, consult_experts,
-    consult_plan_reviewer, consult_scope_analyst, consult_security,
-};
+pub use execution::{consult_expert, consult_experts};
 pub use findings::ParsedFinding;
 pub use role::ExpertRole;

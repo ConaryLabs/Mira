@@ -5,7 +5,7 @@ This project uses **Mira** for persistent memory and code intelligence.
 ## Session Start
 
 ```
-session_start(project_path="/home/peter/Mira")
+project(action="start", project_path="/home/peter/Mira")
 ```
 
 Then `recall("preferences")` before writing code.
@@ -353,21 +353,27 @@ The assistant gathered context first because:
 
 ## Expert Consultation
 
-Use experts for second opinions before major decisions:
+Use the unified `consult_experts` tool for second opinions before major decisions:
 
-- `consult_architect` - system design, patterns, tradeoffs
-- `consult_plan_reviewer` - validate plans before coding
-- `consult_code_reviewer` - find bugs, quality issues
-- `consult_security` - vulnerabilities, hardening
-- `consult_scope_analyst` - missing requirements, edge cases
+```
+consult_experts(roles=["architect"], context="...", question="...")
+consult_experts(roles=["code_reviewer", "security"], context="...", question="...")  # Multiple experts
+```
+
+**Available expert roles:**
+- `architect` - system design, patterns, tradeoffs
+- `plan_reviewer` - validate plans before coding
+- `code_reviewer` - find bugs, quality issues
+- `security` - vulnerabilities, hardening
+- `scope_analyst` - missing requirements, edge cases
 
 ### When to Consult Experts
 
-1. **Before major refactoring** - Get architectural review
-2. **After writing implementation plan** - Validate with plan_reviewer
-3. **Before merging significant changes** - Code review
-4. **When handling user input or auth** - Security review
-5. **When requirements seem incomplete** - Scope analysis
+1. **Before major refactoring** - `consult_experts(roles=["architect"], ...)`
+2. **After writing implementation plan** - `consult_experts(roles=["plan_reviewer"], ...)`
+3. **Before merging significant changes** - `consult_experts(roles=["code_reviewer"], ...)`
+4. **When handling user input or auth** - `consult_experts(roles=["security"], ...)`
+5. **When requirements seem incomplete** - `consult_experts(roles=["scope_analyst"], ...)`
 
 ---
 
@@ -381,10 +387,49 @@ Use experts for second opinions before major decisions:
 | What does X call? | `find_callees` |
 | Past decisions | `recall` |
 | Feature exists? | `check_capability` |
-| Codebase overview | `session_start` output |
+| Codebase overview | `project(action="start")` output |
 | External library API | Context7: `resolve-library-id` → `query-docs` |
 | Literal string search | `Grep` (OK for this) |
 | Exact filename pattern | `Glob` (OK for this) |
+
+---
+
+## Consolidated Tools Reference
+
+Mira uses action-based tools to reduce cognitive load. Here are the consolidated tools:
+
+### `project` - Project/Session Management
+```
+project(action="start", project_path="...", name="...")  # Initialize session
+project(action="set", project_path="...", name="...")    # Change active project
+project(action="get")                                     # Show current project
+```
+
+### `finding` - Code Review Findings
+```
+finding(action="list", status="pending")                  # List findings
+finding(action="get", finding_id=123)                     # Get finding details
+finding(action="review", finding_id=123, status="accepted", feedback="...")  # Review single
+finding(action="review", finding_ids=[1,2,3], status="rejected")  # Bulk review
+finding(action="stats")                                   # Get statistics
+finding(action="patterns")                                # Get learned patterns
+finding(action="extract")                                 # Extract patterns from accepted findings
+```
+
+### `documentation` - Documentation Tasks
+```
+documentation(action="list", status="pending")            # List doc tasks
+documentation(action="skip", task_id=123, reason="...")   # Skip a task
+documentation(action="inventory")                         # Show doc inventory
+documentation(action="scan")                              # Trigger doc scan
+documentation(action="write", task_id=123)                # Generate docs for task
+```
+
+### `consult_experts` - Expert Consultation
+```
+consult_experts(roles=["architect"], context="...", question="...")
+consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple
+```
 
 ---
 
@@ -486,7 +531,7 @@ The binary is at `target/release/mira`. Claude Code spawns it via MCP (configure
 ## Debugging
 
 ```bash
-mira debug-session   # Debug session_start output
+mira debug-session   # Debug project(action="start") output
 mira debug-carto     # Debug cartographer module detection
 ```
 

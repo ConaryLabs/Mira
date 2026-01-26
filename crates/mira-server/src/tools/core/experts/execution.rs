@@ -213,48 +213,6 @@ pub async fn consult_expert<C: ToolContext>(
     Ok(format_expert_response(expert, final_result, tool_calls, iters))
 }
 
-// Convenience functions for each expert role
-
-pub async fn consult_architect<C: ToolContext>(
-    ctx: &C,
-    context: String,
-    question: Option<String>,
-) -> Result<String, String> {
-    consult_expert(ctx, ExpertRole::Architect, context, question).await
-}
-
-pub async fn consult_plan_reviewer<C: ToolContext>(
-    ctx: &C,
-    context: String,
-    question: Option<String>,
-) -> Result<String, String> {
-    consult_expert(ctx, ExpertRole::PlanReviewer, context, question).await
-}
-
-pub async fn consult_scope_analyst<C: ToolContext>(
-    ctx: &C,
-    context: String,
-    question: Option<String>,
-) -> Result<String, String> {
-    consult_expert(ctx, ExpertRole::ScopeAnalyst, context, question).await
-}
-
-pub async fn consult_code_reviewer<C: ToolContext>(
-    ctx: &C,
-    context: String,
-    question: Option<String>,
-) -> Result<String, String> {
-    consult_expert(ctx, ExpertRole::CodeReviewer, context, question).await
-}
-
-pub async fn consult_security<C: ToolContext>(
-    ctx: &C,
-    context: String,
-    question: Option<String>,
-) -> Result<String, String> {
-    consult_expert(ctx, ExpertRole::Security, context, question).await
-}
-
 /// Consult multiple experts in parallel
 /// Takes a list of role names and runs all consultations concurrently
 pub async fn consult_experts<C: ToolContext + Clone + 'static>(

@@ -359,3 +359,45 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<String, String
     ))
 }
 
+/// Unified finding tool with action parameter
+/// Actions: list, get, review, stats, patterns, extract
+#[allow(clippy::too_many_arguments)]
+pub async fn finding<C: ToolContext>(
+    ctx: &C,
+    action: String,
+    finding_id: Option<i64>,
+    finding_ids: Option<Vec<i64>>,
+    status: Option<String>,
+    feedback: Option<String>,
+    file_path: Option<String>,
+    expert_role: Option<String>,
+    correction_type: Option<String>,
+    limit: Option<i64>,
+) -> Result<String, String> {
+    match action.as_str() {
+        "list" => list_findings(ctx, status, file_path, expert_role, limit).await,
+        "get" => {
+            let id = finding_id.ok_or("finding_id is required for action 'get'")?;
+            get_finding(ctx, id).await
+        }
+        "review" => {
+            let new_status = status.ok_or("status is required for action 'review'")?;
+            // Check if bulk review (finding_ids) or single review (finding_id)
+            if let Some(ids) = finding_ids {
+                if !ids.is_empty() {
+                    return bulk_review_findings(ctx, ids, new_status).await;
+                }
+            }
+            let id = finding_id.ok_or("finding_id (or finding_ids for bulk) is required for action 'review'")?;
+            review_finding(ctx, id, new_status, feedback).await
+        }
+        "stats" => get_finding_stats(ctx).await,
+        "patterns" => get_learned_patterns(ctx, correction_type, limit).await,
+        "extract" => extract_patterns(ctx).await,
+        _ => Err(format!(
+            "Unknown action '{}'. Valid actions: list, get, review, stats, patterns, extract",
+            action
+        )),
+    }
+}
+

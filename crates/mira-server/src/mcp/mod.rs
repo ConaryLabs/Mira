@@ -154,27 +154,14 @@ impl MiraServer {
 
 #[tool_router]
 impl MiraServer {
-    #[tool(description = "Initialize session with project and context.")]
-    async fn session_start(
+    #[tool(description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current).")]
+    async fn project(
         &self,
-        Parameters(req): Parameters<SessionStartRequest>,
+        Parameters(req): Parameters<ProjectRequest>,
     ) -> Result<String, String> {
-        // Use provided session ID, or fall back to Claude's hook-generated ID
+        // For start action, use provided session ID or fall back to Claude's hook-generated ID
         let session_id = req.session_id.or_else(read_claude_session_id);
-        tools::session_start(self, req.project_path, req.name, session_id).await
-    }
-
-    #[tool(description = "Set active project.")]
-    async fn set_project(
-        &self,
-        Parameters(req): Parameters<SetProjectRequest>,
-    ) -> Result<String, String> {
-        tools::set_project(self, req.project_path, req.name).await
-    }
-
-    #[tool(description = "Get currently active project.")]
-    async fn get_project(&self) -> Result<String, String> {
-        tools::get_project(self).await
+        tools::project(self, req.action, req.project_path, req.name, session_id).await
     }
 
     #[tool(description = "Store a fact for future recall. Scope controls visibility: personal (only you), project (default), team.")]
@@ -353,49 +340,7 @@ impl MiraServer {
         }
     }
 
-    // Expert consultation tools - delegate to DeepSeek Reasoner
-
-    #[tool(description = "Consult the Architect expert for system design and architectural decisions.")]
-    async fn consult_architect(
-        &self,
-        Parameters(req): Parameters<ConsultArchitectRequest>,
-    ) -> Result<String, String> {
-        tools::consult_architect(self, req.context, req.question).await
-    }
-
-    #[tool(description = "Consult the Plan Reviewer expert to validate implementation plans.")]
-    async fn consult_plan_reviewer(
-        &self,
-        Parameters(req): Parameters<ConsultPlanReviewerRequest>,
-    ) -> Result<String, String> {
-        tools::consult_plan_reviewer(self, req.context, req.question).await
-    }
-
-    #[tool(description = "Consult the Scope Analyst expert to find missing requirements and edge cases.")]
-    async fn consult_scope_analyst(
-        &self,
-        Parameters(req): Parameters<ConsultScopeAnalystRequest>,
-    ) -> Result<String, String> {
-        tools::consult_scope_analyst(self, req.context, req.question).await
-    }
-
-    #[tool(description = "Consult the Code Reviewer expert to find bugs and quality issues.")]
-    async fn consult_code_reviewer(
-        &self,
-        Parameters(req): Parameters<ConsultCodeReviewerRequest>,
-    ) -> Result<String, String> {
-        tools::consult_code_reviewer(self, req.context, req.question).await
-    }
-
-    #[tool(description = "Consult the Security Analyst expert to identify vulnerabilities.")]
-    async fn consult_security(
-        &self,
-        Parameters(req): Parameters<ConsultSecurityRequest>,
-    ) -> Result<String, String> {
-        tools::consult_security(self, req.context, req.question).await
-    }
-
-    #[tool(description = "Consult multiple experts in parallel (combined results).")]
+    #[tool(description = "Consult one or more experts in parallel. Roles: architect, plan_reviewer, scope_analyst, code_reviewer, security.")]
     async fn consult_experts(
         &self,
         Parameters(req): Parameters<ConsultExpertsRequest>,
@@ -416,40 +361,21 @@ impl MiraServer {
         tools::export_claude_local(self).await
     }
 
-    // Documentation tools
-
-    #[tool(description = "List documentation that needs to be written or updated.")]
-    async fn list_doc_tasks(
+    #[tool(description = "Manage documentation tasks. Actions: list (show needed docs), skip (mark not needed), inventory (show all docs), scan (trigger scan), write (generate docs for task_id).")]
+    async fn documentation(
         &self,
-        Parameters(req): Parameters<ListDocTasksRequest>,
+        Parameters(req): Parameters<DocumentationRequest>,
     ) -> Result<String, String> {
-        tools::list_doc_tasks(self, req.status, req.doc_type, req.priority).await
-    }
-
-    #[tool(description = "Skip a documentation task (mark as not needed).")]
-    async fn skip_doc_task(
-        &self,
-        Parameters(req): Parameters<SkipDocTaskRequest>,
-    ) -> Result<String, String> {
-        tools::skip_doc_task(self, req.task_id, req.reason).await
-    }
-
-    #[tool(description = "Show documentation inventory with staleness indicators.")]
-    async fn show_doc_inventory(&self) -> Result<String, String> {
-        tools::show_doc_inventory(self).await
-    }
-
-    #[tool(description = "Trigger manual documentation scan.")]
-    async fn scan_documentation(&self) -> Result<String, String> {
-        tools::scan_documentation(self).await
-    }
-
-    #[tool(description = "Write documentation for a detected gap. Expert generates and writes directly to file.")]
-    async fn write_documentation(
-        &self,
-        Parameters(req): Parameters<WriteDocumentationRequest>,
-    ) -> Result<String, String> {
-        tools::write_documentation(self, req.task_id).await
+        tools::documentation(
+            self,
+            req.action,
+            req.task_id,
+            req.reason,
+            req.doc_type,
+            req.priority,
+            req.status,
+        )
+        .await
     }
 
     #[tool(description = "Manage teams for shared memory (create, invite, remove, list, members).")]
@@ -469,56 +395,24 @@ impl MiraServer {
         .await
     }
 
-    // Code Review Learning Loop tools
-
-    #[tool(description = "List code review findings with optional filters. Shows findings from expert consultations.")]
-    async fn list_findings(
+    #[tool(description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract.")]
+    async fn finding(
         &self,
-        Parameters(req): Parameters<ListFindingsRequest>,
+        Parameters(req): Parameters<FindingRequest>,
     ) -> Result<String, String> {
-        tools::list_findings(self, req.status, req.file_path, req.expert_role, req.limit).await
-    }
-
-    #[tool(description = "Review a finding (accept/reject/fixed). Feedback helps improve future suggestions.")]
-    async fn review_finding(
-        &self,
-        Parameters(req): Parameters<ReviewFindingRequest>,
-    ) -> Result<String, String> {
-        tools::review_finding(self, req.finding_id, req.status, req.feedback).await
-    }
-
-    #[tool(description = "Bulk review multiple findings at once.")]
-    async fn bulk_review_findings(
-        &self,
-        Parameters(req): Parameters<BulkReviewFindingsRequest>,
-    ) -> Result<String, String> {
-        tools::bulk_review_findings(self, req.finding_ids, req.status).await
-    }
-
-    #[tool(description = "Get detailed information about a specific finding.")]
-    async fn get_finding(
-        &self,
-        Parameters(req): Parameters<GetFindingRequest>,
-    ) -> Result<String, String> {
-        tools::get_finding(self, req.finding_id).await
-    }
-
-    #[tool(description = "Get learned correction patterns from reviewed findings.")]
-    async fn get_learned_patterns(
-        &self,
-        Parameters(req): Parameters<GetLearnedPatternsRequest>,
-    ) -> Result<String, String> {
-        tools::get_learned_patterns(self, req.correction_type, req.limit).await
-    }
-
-    #[tool(description = "Get statistics about review findings (pending, accepted, rejected, fixed).")]
-    async fn get_finding_stats(&self) -> Result<String, String> {
-        tools::get_finding_stats(self).await
-    }
-
-    #[tool(description = "Extract patterns from accepted findings to improve future reviews.")]
-    async fn extract_patterns(&self) -> Result<String, String> {
-        tools::extract_patterns(self).await
+        tools::finding(
+            self,
+            req.action,
+            req.finding_id,
+            req.finding_ids,
+            req.status,
+            req.feedback,
+            req.file_path,
+            req.expert_role,
+            req.correction_type,
+            req.limit,
+        )
+        .await
     }
 
     // Semantic diff analysis tool

@@ -5,13 +5,11 @@ use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    SessionStartRequest, SetProjectRequest, RememberRequest, RecallRequest,
+    ProjectRequest, RememberRequest, RecallRequest,
     ForgetRequest, GetSymbolsRequest, SemanticCodeSearchRequest,
     FindCallersRequest, FindCalleesRequest, CheckCapabilityRequest,
     GoalRequest, IndexRequest, SessionHistoryRequest,
-    ConsultArchitectRequest, ConsultCodeReviewerRequest,
-    ConsultPlanReviewerRequest, ConsultScopeAnalystRequest,
-    ConsultSecurityRequest, ConsultExpertsRequest, ConfigureExpertRequest,
+    ConsultExpertsRequest, ConfigureExpertRequest,
     ReplyToMiraRequest,
 };
 
@@ -22,18 +20,11 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
 
     // Execute tool
     let res = match name.as_str() {
-        "session_start" => {
-            let req: SessionStartRequest = serde_json::from_str(&args)?;
-            // Use provided session ID, or fall back to Claude's hook-generated ID
+        "project" => {
+            let req: ProjectRequest = serde_json::from_str(&args)?;
+            // For start action, use provided session ID or fall back to Claude's hook-generated ID
             let session_id = req.session_id.or_else(read_claude_session_id);
-            mira::tools::session_start(&server, req.project_path, req.name, session_id).await
-        }
-        "set_project" => {
-            let req: SetProjectRequest = serde_json::from_str(&args)?;
-            mira::tools::set_project(&server, req.project_path, req.name).await
-        }
-        "get_project" => {
-             mira::tools::get_project(&server).await
+            mira::tools::project(&server, req.action, req.project_path, req.name, session_id).await
         }
         "remember" => {
              let req: RememberRequest = serde_json::from_str(&args)?;
@@ -84,26 +75,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         "session_history" => {
             let req: SessionHistoryRequest = serde_json::from_str(&args)?;
             mira::tools::session_history(&server, req.action, req.session_id, req.limit).await
-        }
-        "consult_architect" => {
-            let req: ConsultArchitectRequest = serde_json::from_str(&args)?;
-            mira::tools::consult_architect(&server, req.context, req.question).await
-        }
-        "consult_code_reviewer" => {
-             let req: ConsultCodeReviewerRequest = serde_json::from_str(&args)?;
-             mira::tools::consult_code_reviewer(&server, req.context, req.question).await
-        }
-        "consult_plan_reviewer" => {
-             let req: ConsultPlanReviewerRequest = serde_json::from_str(&args)?;
-             mira::tools::consult_plan_reviewer(&server, req.context, req.question).await
-        }
-        "consult_scope_analyst" => {
-             let req: ConsultScopeAnalystRequest = serde_json::from_str(&args)?;
-             mira::tools::consult_scope_analyst(&server, req.context, req.question).await
-        }
-        "consult_security" => {
-             let req: ConsultSecurityRequest = serde_json::from_str(&args)?;
-             mira::tools::consult_security(&server, req.context, req.question).await
         }
         "consult_experts" => {
              let req: ConsultExpertsRequest = serde_json::from_str(&args)?;

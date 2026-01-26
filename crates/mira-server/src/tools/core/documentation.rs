@@ -443,3 +443,33 @@ fn extract_markdown_from_response(response: &str) -> String {
     // Fallback: return cleaned content
     content.trim().to_string()
 }
+
+/// Unified documentation tool with action parameter
+/// Actions: list, skip, inventory, scan, write
+pub async fn documentation<C: ToolContext>(
+    ctx: &C,
+    action: String,
+    task_id: Option<i64>,
+    reason: Option<String>,
+    doc_type: Option<String>,
+    priority: Option<String>,
+    status: Option<String>,
+) -> Result<String, String> {
+    match action.as_str() {
+        "list" => list_doc_tasks(ctx, status, doc_type, priority).await,
+        "skip" => {
+            let id = task_id.ok_or("task_id is required for action 'skip'")?;
+            skip_doc_task(ctx, id, reason).await
+        }
+        "inventory" => show_doc_inventory(ctx).await,
+        "scan" => scan_documentation(ctx).await,
+        "write" => {
+            let id = task_id.ok_or("task_id is required for action 'write'")?;
+            write_documentation(ctx, id).await
+        }
+        _ => Err(format!(
+            "Unknown action '{}'. Valid actions: list, skip, inventory, scan, write",
+            action
+        )),
+    }
+}

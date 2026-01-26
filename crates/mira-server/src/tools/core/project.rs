@@ -503,6 +503,32 @@ fn gather_system_context_content() -> Option<String> {
     }
 }
 
+/// Unified project tool with action parameter
+/// Actions: start (session_start), set (set_project), get (get_project)
+pub async fn project<C: ToolContext>(
+    ctx: &C,
+    action: String,
+    project_path: Option<String>,
+    name: Option<String>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    match action.as_str() {
+        "start" => {
+            let path = project_path.ok_or("project_path is required for action 'start'")?;
+            session_start(ctx, path, name, session_id).await
+        }
+        "set" => {
+            let path = project_path.ok_or("project_path is required for action 'set'")?;
+            set_project(ctx, path, name).await
+        }
+        "get" => get_project(ctx).await,
+        _ => Err(format!(
+            "Unknown action '{}'. Valid actions: start, set, get",
+            action
+        )),
+    }
+}
+
 /// Detect project type from path
 pub fn detect_project_type(path: &str) -> &'static str {
     let p = Path::new(path);

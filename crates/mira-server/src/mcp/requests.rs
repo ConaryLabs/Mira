@@ -5,21 +5,15 @@ use rmcp::schemars;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SessionStartRequest {
-    #[schemars(description = "Project root path")]
-    pub project_path: String,
+pub struct ProjectRequest {
+    #[schemars(description = "Action: start (initialize session), set (change project), get (show current)")]
+    pub action: String,
+    #[schemars(description = "Project root path (required for start/set)")]
+    pub project_path: Option<String>,
     #[schemars(description = "Project name")]
     pub name: Option<String>,
-    #[schemars(description = "Optional session ID")]
+    #[schemars(description = "Optional session ID (for start action)")]
     pub session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SetProjectRequest {
-    #[schemars(description = "Project root path")]
-    pub project_path: String,
-    #[schemars(description = "Project name")]
-    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -178,48 +172,6 @@ pub struct ReplyToMiraRequest {
     pub complete: Option<bool>,
 }
 
-// Expert consultation request types
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConsultArchitectRequest {
-    #[schemars(description = "Code, design, or situation to analyze")]
-    pub context: String,
-    #[schemars(description = "Specific question to answer (optional)")]
-    pub question: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConsultPlanReviewerRequest {
-    #[schemars(description = "Implementation plan to review")]
-    pub context: String,
-    #[schemars(description = "Specific concern to address (optional)")]
-    pub question: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConsultScopeAnalystRequest {
-    #[schemars(description = "Requirements or plan to analyze for gaps")]
-    pub context: String,
-    #[schemars(description = "Specific area to focus on (optional)")]
-    pub question: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConsultCodeReviewerRequest {
-    #[schemars(description = "Code to review")]
-    pub context: String,
-    #[schemars(description = "Specific aspect to focus on (optional)")]
-    pub question: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConsultSecurityRequest {
-    #[schemars(description = "Code or design to analyze for security")]
-    pub context: String,
-    #[schemars(description = "Specific security concern (optional)")]
-    pub question: Option<String>,
-}
-
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConsultExpertsRequest {
     #[schemars(description = "List of expert roles to consult in parallel: architect, plan_reviewer, scope_analyst, code_reviewer, security")]
@@ -247,27 +199,19 @@ pub struct ConfigureExpertRequest {
 // Documentation request types
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ListDocTasksRequest {
-    #[schemars(description = "Filter by status")]
-    pub status: Option<String>,
+pub struct DocumentationRequest {
+    #[schemars(description = "Action: list, skip, inventory, scan, write")]
+    pub action: String,
+    #[schemars(description = "Task ID (for skip/write actions)")]
+    pub task_id: Option<i64>,
+    #[schemars(description = "Reason for skipping (for skip action)")]
+    pub reason: Option<String>,
     #[schemars(description = "Filter by documentation type")]
     pub doc_type: Option<String>,
     #[schemars(description = "Filter by priority")]
     pub priority: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SkipDocTaskRequest {
-    #[schemars(description = "Task ID to skip")]
-    pub task_id: i64,
-    #[schemars(description = "Reason for skipping")]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct WriteDocumentationRequest {
-    #[schemars(description = "Task ID from list_doc_tasks. Expert will generate and write the documentation directly.")]
-    pub task_id: i64,
+    #[schemars(description = "Filter by status")]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -286,47 +230,25 @@ pub struct TeamRequest {
     pub role: Option<String>,
 }
 
-// Review findings request types
+// Review findings request type (unified)
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ListFindingsRequest {
-    #[schemars(description = "Filter by status: pending/accepted/rejected/fixed")]
+pub struct FindingRequest {
+    #[schemars(description = "Action: list, get, review, stats, patterns, extract")]
+    pub action: String,
+    #[schemars(description = "Finding ID (for get/review single)")]
+    pub finding_id: Option<i64>,
+    #[schemars(description = "Finding IDs for bulk review")]
+    pub finding_ids: Option<Vec<i64>>,
+    #[schemars(description = "Status filter (for list) or new status (for review): pending/accepted/rejected/fixed")]
     pub status: Option<String>,
+    #[schemars(description = "Feedback explaining review decision (helps learning)")]
+    pub feedback: Option<String>,
     #[schemars(description = "Filter by file path")]
     pub file_path: Option<String>,
     #[schemars(description = "Filter by expert role: code_reviewer/security/architect/etc.")]
     pub expert_role: Option<String>,
-    #[schemars(description = "Max results (default: 20)")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ReviewFindingRequest {
-    #[schemars(description = "Finding ID to review")]
-    pub finding_id: i64,
-    #[schemars(description = "New status: accepted/rejected/fixed")]
-    pub status: String,
-    #[schemars(description = "Optional feedback explaining why (helps learning)")]
-    pub feedback: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct BulkReviewFindingsRequest {
-    #[schemars(description = "List of finding IDs to update")]
-    pub finding_ids: Vec<i64>,
-    #[schemars(description = "New status: accepted/rejected/fixed")]
-    pub status: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetFindingRequest {
-    #[schemars(description = "Finding ID to retrieve")]
-    pub finding_id: i64,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetLearnedPatternsRequest {
-    #[schemars(description = "Filter by correction type: bug/style/security/performance")]
+    #[schemars(description = "Filter by correction type: bug/style/security/performance (for patterns)")]
     pub correction_type: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
     pub limit: Option<i64>,
