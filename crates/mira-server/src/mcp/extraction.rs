@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use crate::db::pool::DatabasePool;
 use crate::db::{store_memory_sync, store_fact_embedding_sync, StoreMemoryParams};
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{DeepSeekClient, PromptBuilder};
+use crate::llm::{record_llm_usage, DeepSeekClient, LlmClient, PromptBuilder};
 use crate::search::embedding_to_bytes;
 
 /// Tools that produce outcomes worth remembering
@@ -68,7 +68,7 @@ pub fn spawn_tool_extraction(
 
 /// Perform extraction and store results
 async fn extract_and_store(
-    pool: &DatabasePool,
+    pool: &Arc<DatabasePool>,
     embeddings: Option<&Arc<EmbeddingClient>>,
     deepseek: &DeepSeekClient,
     project_id: Option<i64>,
@@ -90,6 +90,17 @@ async fn extract_and_store(
 
     // Call DeepSeek for extraction
     let response = deepseek.chat(messages, None).await?;
+
+    // Record usage
+    record_llm_usage(
+        pool,
+        deepseek.provider_type(),
+        &deepseek.model_name(),
+        "background:extraction",
+        &response,
+        project_id,
+        None,
+    ).await;
 
     let content = response.content
         .ok_or_else(|| anyhow::anyhow!("No content in extraction response"))?;

@@ -151,6 +151,17 @@ pub enum FindingAction {
     Extract,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageAction {
+    /// Get usage summary
+    Summary,
+    /// Get usage stats grouped by dimension
+    Stats,
+    /// List recent usage records
+    List,
+}
+
 // ============================================================================
 // Request Structs
 // ============================================================================
@@ -413,4 +424,16 @@ pub struct AnalyzeDiffRequest {
     pub to_ref: Option<String>,
     #[schemars(description = "Include impact analysis (find affected callers). Default: true")]
     pub include_impact: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UsageRequest {
+    #[schemars(description = "Action: summary (totals), stats (grouped by dimension), list (recent records)")]
+    pub action: UsageAction,
+    #[schemars(description = "Group by: role, provider, model, or provider_model (for stats action)")]
+    pub group_by: Option<String>,
+    #[schemars(description = "Filter to last N days (default: 30)")]
+    pub since_days: Option<u32>,
+    #[schemars(description = "Max results for list action (default: 50)")]
+    pub limit: Option<i64>,
 }

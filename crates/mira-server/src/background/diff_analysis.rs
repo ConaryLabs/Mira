@@ -3,7 +3,7 @@
 
 use crate::db::{map_files_to_symbols_sync, get_cached_diff_analysis_sync, store_diff_analysis_sync};
 use crate::db::pool::DatabasePool;
-use crate::llm::{DeepSeekClient, PromptBuilder};
+use crate::llm::{record_llm_usage, DeepSeekClient, LlmClient, PromptBuilder};
 use crate::search::find_callers;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -229,6 +229,8 @@ struct LlmDiffResponse {
 pub async fn analyze_diff_semantic(
     diff_content: &str,
     deepseek: &Arc<DeepSeekClient>,
+    pool: &Arc<DatabasePool>,
+    project_id: Option<i64>,
 ) -> Result<(Vec<SemanticChange>, String, Vec<String>), String> {
     if diff_content.is_empty() {
         return Ok((Vec::new(), "No changes".to_string(), Vec::new()));
@@ -256,6 +258,17 @@ pub async fn analyze_diff_semantic(
         .chat(messages, None)
         .await
         .map_err(|e| format!("LLM request failed: {}", e))?;
+
+    // Record usage
+    record_llm_usage(
+        pool,
+        deepseek.provider_type(),
+        &deepseek.model_name(),
+        "background:diff_analysis",
+        &result,
+        project_id,
+        None,
+    ).await;
 
     let content = result.content.ok_or("No content in LLM response")?;
 
@@ -371,7 +384,7 @@ pub async fn analyze_diff(
     }
 
     // Semantic analysis via LLM
-    let (changes, summary, risk_flags) = analyze_diff_semantic(&diff_content, deepseek).await?;
+    let (changes, summary, risk_flags) = analyze_diff_semantic(&diff_content, deepseek, pool, project_id).await?;
 
     // Build impact analysis if requested
     let impact = if include_impact && !changes.is_empty() {

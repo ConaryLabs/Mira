@@ -123,6 +123,7 @@ pub mod reviews;
 pub mod session;
 pub mod session_notes;
 pub mod teams;
+pub mod usage;
 
 // Re-export commonly used functions
 pub use claude_local::export_claude_local;
@@ -138,3 +139,4 @@ pub use reviews::*;
 pub use session::*;
 pub use goals::*;
 pub use teams::*;
+pub use usage::*;

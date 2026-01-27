@@ -117,7 +117,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
     }
 
     // Semantic analysis
-    let (changes, summary, risk_flags) = analyze_diff_semantic(diff_content, deepseek).await?;
+    let (changes, summary, risk_flags) = analyze_diff_semantic(diff_content, deepseek, ctx.pool(), project_id).await?;
 
     // Build impact if requested
     let impact = if include_impact && !changes.is_empty() {

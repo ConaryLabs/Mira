@@ -359,6 +359,14 @@ impl MiraServer {
     ) -> Result<String, String> {
         tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await
     }
+
+    #[tool(description = "Query LLM usage and cost analytics. Actions: summary (totals), stats (grouped by role/provider/model), list (recent).")]
+    async fn usage(
+        &self,
+        Parameters(req): Parameters<UsageRequest>,
+    ) -> Result<String, String> {
+        tools::usage(self, req.action, req.group_by, req.since_days, req.limit).await
+    }
 }
 
 impl MiraServer {

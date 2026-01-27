@@ -3,7 +3,7 @@
 
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
-use crate::llm::{LlmClient, PromptBuilder};
+use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -48,6 +48,8 @@ pub async fn process_briefings(
             last_known_commit.as_deref(),
             &current_commit,
             client,
+            pool,
+            project_id,
         )
         .await;
 
@@ -195,6 +197,8 @@ async fn generate_briefing(
     from_commit: Option<&str>,
     _to_commit: &str,
     client: &Arc<dyn LlmClient>,
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
 ) -> Option<String> {
 
     // Get git log
@@ -227,6 +231,17 @@ Summary:"#,
     // Use configured background provider
     match client.chat(messages, None).await {
         Ok(result) => {
+            // Record usage
+            record_llm_usage(
+                pool,
+                client.provider_type(),
+                &client.model_name(),
+                "background:briefing",
+                &result,
+                Some(project_id),
+                None,
+            ).await;
+
             let summary = result.content.as_deref().unwrap_or("").trim().to_string();
             if summary.is_empty() {
                 None

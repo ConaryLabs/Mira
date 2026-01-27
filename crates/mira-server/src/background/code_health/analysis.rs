@@ -3,7 +3,7 @@
 
 use crate::db::{get_large_functions_sync, get_error_heavy_functions_sync, store_memory_sync, StoreMemoryParams};
 use crate::db::pool::DatabasePool;
-use crate::llm::{LlmClient, PromptBuilder};
+use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -123,6 +123,17 @@ where
 
         match client.chat(messages, None).await {
             Ok(result) => {
+                // Record usage
+                record_llm_usage(
+                    pool,
+                    client.provider_type(),
+                    &client.model_name(),
+                    &format!("background:code_health:{}", category),
+                    &result,
+                    Some(project_id),
+                    None,
+                ).await;
+
                 if let Some(content) = result.content {
                     let content = content.trim();
 

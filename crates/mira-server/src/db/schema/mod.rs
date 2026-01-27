@@ -53,6 +53,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add diff analyses table for semantic diff analysis
     reviews::migrate_diff_analyses_table(conn)?;
 
+    // Add LLM usage tracking table for cost analytics
+    reviews::migrate_llm_usage_table(conn)?;
+
     // Add proactive intelligence tables for behavior tracking
     intelligence::migrate_proactive_intelligence_tables(conn)?;
 

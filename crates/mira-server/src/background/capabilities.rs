@@ -8,7 +8,7 @@ use crate::db::{
 };
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{LlmClient, PromptBuilder};
+use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
 use crate::search::embedding_to_bytes;
 use std::path::Path;
 use std::process::Command;
@@ -274,6 +274,17 @@ Only list working, implemented capabilities. Do NOT list problems, issues, or in
         .chat(messages, None)
         .await
         .map_err(|e| format!("LLM request failed: {}", e))?;
+
+    // Record usage
+    record_llm_usage(
+        pool,
+        client.provider_type(),
+        &client.model_name(),
+        "background:capabilities",
+        &result,
+        Some(project_id),
+        None,
+    ).await;
 
     let content = result
         .content

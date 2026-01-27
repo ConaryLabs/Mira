@@ -72,7 +72,11 @@ pub use search::{
     semantic_code_search_sync,
 };
 pub use diff_analysis::{DiffAnalysis, store_diff_analysis_sync, get_cached_diff_analysis_sync, get_recent_diff_analyses_sync};
-pub use usage::{EmbeddingUsageRecord, insert_embedding_usage_sync};
+pub use usage::{
+    EmbeddingUsageRecord, insert_embedding_usage_sync,
+    LlmUsageRecord, insert_llm_usage_sync,
+    UsageStats, query_llm_usage_stats, get_llm_usage_summary,
+};
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
 pub use memory::{

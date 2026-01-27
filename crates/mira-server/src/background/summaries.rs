@@ -4,7 +4,7 @@
 use crate::cartographer;
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_with_pending_summaries_sync, get_modules_needing_summaries_sync, update_module_purposes_sync};
-use crate::llm::{LlmClient, PromptBuilder};
+use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,6 +59,17 @@ pub async fn process_queue(pool: &Arc<DatabasePool>, client: &Arc<dyn LlmClient>
             .build_messages(prompt);
         match client.chat(messages, None).await {
             Ok(result) => {
+                // Record usage
+                record_llm_usage(
+                    pool,
+                    client.provider_type(),
+                    &client.model_name(),
+                    "background:summaries",
+                    &result,
+                    Some(project_id),
+                    None,
+                ).await;
+
                 if let Some(content) = result.content {
                     let summaries = cartographer::parse_summary_response(&content);
                     if !summaries.is_empty() {

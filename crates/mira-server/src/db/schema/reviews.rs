@@ -93,3 +93,30 @@ pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_diff_created ON diff_analyses(project_id, created_at DESC);
     "#)
 }
+
+/// Migrate to add llm_usage table for LLM cost/token tracking
+pub fn migrate_llm_usage_table(conn: &Connection) -> Result<()> {
+    create_table_if_missing(conn, "llm_usage", r#"
+        CREATE TABLE IF NOT EXISTS llm_usage (
+            id INTEGER PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            role TEXT NOT NULL,
+            prompt_tokens INTEGER NOT NULL,
+            completion_tokens INTEGER NOT NULL,
+            total_tokens INTEGER NOT NULL,
+            cache_hit_tokens INTEGER DEFAULT 0,
+            cache_miss_tokens INTEGER DEFAULT 0,
+            cost_estimate REAL,
+            duration_ms INTEGER,
+            project_id INTEGER REFERENCES projects(id),
+            session_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider, model, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_role ON llm_usage(role, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_project ON llm_usage(project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_session ON llm_usage(session_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_created ON llm_usage(created_at DESC);
+    "#)
+}

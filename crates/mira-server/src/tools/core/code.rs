@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::cartographer;
 use crate::db::search_capabilities_sync;
 use crate::indexer;
-use crate::llm::Message;
+use crate::llm::{record_llm_usage, LlmClient, Message};
 use crate::mcp::requests::IndexAction;
 use crate::search::{
     crossref_search, embedding_to_bytes, expand_context_with_conn, find_callers, find_callees,
@@ -436,6 +436,17 @@ async fn auto_summarize_modules(
         .await
         .map_err(|e| format!("DeepSeek request failed: {}", e))?;
 
+    // Record usage
+    record_llm_usage(
+        pool,
+        deepseek.provider_type(),
+        &deepseek.model_name(),
+        "tool:auto_summarize",
+        &result,
+        Some(project_id),
+        None,
+    ).await;
+
     let content = result.content.ok_or("No content in DeepSeek response")?;
 
     // Parse and update
@@ -490,6 +501,17 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         .chat(messages, None)
         .await
         .map_err(|e| format!("DeepSeek request failed: {}", e))?;
+
+    // Record usage
+    record_llm_usage(
+        ctx.pool(),
+        deepseek.provider_type(),
+        &deepseek.model_name(),
+        "tool:summarize_codebase",
+        &result,
+        Some(project_id),
+        None,
+    ).await;
 
     let content = result
         .content

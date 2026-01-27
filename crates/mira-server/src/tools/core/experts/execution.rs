@@ -9,7 +9,7 @@ use super::{
     ToolContext, EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
     PARALLEL_EXPERT_TIMEOUT,
 };
-use crate::llm::Message;
+use crate::llm::{record_llm_usage, Message};
 use std::sync::Arc;
 use tokio::time::timeout;
 
@@ -108,6 +108,18 @@ pub async fn consult_expert<C: ToolContext>(
             .map_err(|_| format!("LLM call timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
             .map_err(|e| format!("Expert consultation failed: {}", e))?;
 
+            // Record usage for this LLM call
+            let role_for_usage = format!("expert:{}", expert_key);
+            record_llm_usage(
+                ctx.pool(),
+                chat_client.provider_type(),
+                &chat_client.model_name(),
+                &role_for_usage,
+                &result,
+                ctx.project_id().await,
+                ctx.get_session_id().await,
+            ).await;
+
             // Store response ID for next iteration (enables reasoning context preservation)
             previous_response_id = Some(result.request_id.clone());
 
@@ -177,6 +189,18 @@ pub async fn consult_expert<C: ToolContext>(
                     )
                     .await
                     .map_err(|e| format!("Reasoner synthesis failed: {}", e))?;
+
+                // Record usage for reasoner synthesis call
+                let role_for_usage = format!("expert:{}:reasoner", expert_key);
+                record_llm_usage(
+                    ctx.pool(),
+                    reasoner.provider_type(),
+                    &reasoner.model_name(),
+                    &role_for_usage,
+                    &final_result,
+                    ctx.project_id().await,
+                    ctx.get_session_id().await,
+                ).await;
 
                 return Ok((final_result, total_tool_calls, iterations));
             }

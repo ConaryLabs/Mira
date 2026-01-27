@@ -10,7 +10,7 @@ use mira::mcp::requests::{
     FindCalleesRequest, FindCallersRequest, FindingRequest, ForgetRequest,
     GetSymbolsRequest, GoalRequest, IndexRequest, ProjectRequest, RecallRequest,
     RememberRequest, ReplyToMiraRequest, SemanticCodeSearchRequest,
-    SessionHistoryRequest, TeamRequest,
+    SessionHistoryRequest, TeamRequest, UsageRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -111,6 +111,10 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             let req: AnalyzeDiffRequest = serde_json::from_str(&args)?;
             mira::tools::analyze_diff_tool(&server, req.from_ref, req.to_ref, req.include_impact).await
         }
+        "usage" => {
+            let req: UsageRequest = serde_json::from_str(&args)?;
+            mira::tools::usage(&server, req.action, req.group_by, req.since_days, req.limit).await
+        }
         _ => Err(format!("Unknown tool: {}", name).into()),
     };
 
@@ -148,6 +152,7 @@ pub fn list_cli_tool_names() -> Vec<&'static str> {
         "team",
         "finding",
         "analyze_diff",
+        "usage",
     ]
 }
 
