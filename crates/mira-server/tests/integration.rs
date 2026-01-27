@@ -7,7 +7,7 @@ mod test_utils;
 
 use test_utils::TestContext;
 #[allow(unused_imports)]
-use mira::tools::core::{ToolContext, session_start, set_project, get_project, remember, recall, forget, search_code, find_function_callers, find_function_callees, check_capability, get_symbols, index, summarize_codebase, session_history, ensure_session, goal, configure_expert, get_session_recap};
+use mira::tools::core::{ToolContext, session_start, set_project, get_project, remember, recall, forget, search_code, find_function_callers, find_function_callees, check_capability, get_symbols, index, summarize_codebase, session_history, ensure_session, goal, configure_expert, get_session_recap, reply_to_mira};
 use mira::mcp::requests::{IndexAction, SessionHistoryAction, GoalAction, ExpertConfigAction};
 
 #[tokio::test]
@@ -881,4 +881,56 @@ async fn test_context_injection_analytics() {
     // Check recent events
     let recent = analytics.recent_events(5).await;
     assert_eq!(recent.len(), 2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Reply to Mira Tests (Centralized Session Collaboration)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_reply_to_mira_no_frontend() {
+    // TestContext returns None for pending_responses() - simulates CLI mode
+    let ctx = TestContext::new().await;
+
+    let result = reply_to_mira(
+        &ctx,
+        "msg-123".to_string(),
+        "Test response content".to_string(),
+        true,
+    )
+    .await;
+
+    // Should succeed with "no frontend" message
+    assert!(result.is_ok(), "reply_to_mira should succeed in CLI mode");
+    let output = result.unwrap();
+    assert!(
+        output.contains("no frontend connected"),
+        "Output should indicate no frontend: {}",
+        output
+    );
+    assert!(
+        output.contains("Test response content"),
+        "Output should contain the content: {}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_reply_to_mira_not_collaborative() {
+    // TestContext is not collaborative (is_collaborative returns false)
+    let ctx = TestContext::new().await;
+
+    // Even with a non-existent message_id, should succeed in non-collaborative mode
+    let result = reply_to_mira(
+        &ctx,
+        "non-existent-id".to_string(),
+        "Some content".to_string(),
+        false,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "Non-collaborative mode should not error on missing request"
+    );
 }

@@ -86,6 +86,12 @@ pub trait ToolContext: Send + Sync {
 
     // === Optional Services ===
 
+    /// Check if the context supports real-time collaboration (WebSocket active)
+    /// Returns true for MCP server with connected frontend, false for CLI
+    fn is_collaborative(&self) -> bool {
+        false
+    }
+
     /// Pending responses for agent collaboration
     fn pending_responses(&self) -> Option<&Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>> {
         None

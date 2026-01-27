@@ -15,7 +15,7 @@ use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::session::read_claude_session_id;
 use crate::llm::{DeepSeekClient, ProviderFactory};
-use mira_types::{AgentRole, ProjectContext, WsEvent};
+use mira_types::ProjectContext;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::{
@@ -279,36 +279,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ReplyToMiraRequest>,
     ) -> Result<String, String> {
-        let complete = req.complete.unwrap_or(true);
-
-        // Try to find and fulfill the pending response
-        let sender = {
-            let mut pending = self.pending_responses.write().await;
-            pending.remove(&req.in_reply_to)
-        };
-
-        match sender {
-            Some(tx) => {
-                // Send response through the channel
-                if tx.send(req.content.clone()).is_err() {
-                    return Err("Response channel was closed".to_string());
-                }
-
-                // Broadcast AgentResponse event for frontend
-                self.broadcast(WsEvent::AgentResponse {
-                    in_reply_to: req.in_reply_to.clone(),
-                    from: AgentRole::Claude,
-                    content: req.content,
-                    complete,
-                });
-
-                Ok("Response sent to Mira".to_string())
-            }
-            None => {
-                // No pending request found - might be stale or wrong ID
-                Err(format!("No pending request found for message_id: {}. It may have timed out or been answered already.", req.in_reply_to))
-            }
-        }
+        tools::reply_to_mira(self, req.in_reply_to, req.content, req.complete.unwrap_or(true)).await
     }
 
     #[tool(description = "Consult one or more experts in parallel. Roles: architect, plan_reviewer, scope_analyst, code_reviewer, security.")]

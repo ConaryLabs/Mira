@@ -86,8 +86,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "reply_to_mira" => {
              let req: ReplyToMiraRequest = serde_json::from_str(&args)?;
-             // Just print locally since we don't have a collaborative frontend connected
-             Ok(format!("(Reply not sent - no frontend connected) Content: {}", req.content))
+             mira::tools::reply_to_mira(&server, req.in_reply_to, req.content, req.complete.unwrap_or(true)).await
         }
         "cross_project" => {
             let req: CrossProjectRequest = serde_json::from_str(&args)?;

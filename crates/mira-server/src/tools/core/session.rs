@@ -1,9 +1,10 @@
 // crates/mira-server/src/tools/core/session.rs
-// Unified session management tools
+// Unified session management and collaboration tools
 
 use crate::db::{create_session_sync, get_recent_sessions_sync, get_session_history_sync};
 use crate::mcp::requests::SessionHistoryAction;
 use crate::tools::core::ToolContext;
+use mira_types::{AgentRole, WsEvent};
 use uuid::Uuid;
 
 /// Query session history
@@ -122,4 +123,67 @@ pub async fn ensure_session<C: ToolContext>(ctx: &C) -> Result<String, String> {
     ctx.set_session_id(new_id.clone()).await;
 
     Ok(new_id)
+}
+
+/// Send a response back to Mira during collaboration.
+///
+/// In MCP mode with WebSocket: Sends the response through the pending channel
+/// and broadcasts an AgentResponse event to the frontend.
+///
+/// In CLI mode: Returns a message indicating no frontend is connected.
+pub async fn reply_to_mira<C: ToolContext>(
+    ctx: &C,
+    in_reply_to: String,
+    content: String,
+    complete: bool,
+) -> Result<String, String> {
+    // Check if we have pending_responses (MCP with active collaboration)
+    let Some(pending) = ctx.pending_responses() else {
+        // CLI mode or no collaboration active - just acknowledge
+        return Ok(format!(
+            "(Reply not sent - no frontend connected) Content: {}",
+            content
+        ));
+    };
+
+    // Try to find and fulfill the pending response
+    let sender = {
+        let mut pending_map = pending.write().await;
+        pending_map.remove(&in_reply_to)
+    };
+
+    match sender {
+        Some(tx) => {
+            // Send response through the channel
+            if tx.send(content.clone()).is_err() {
+                return Err("Response channel was closed".to_string());
+            }
+
+            // Broadcast AgentResponse event for frontend
+            ctx.broadcast(WsEvent::AgentResponse {
+                in_reply_to,
+                from: AgentRole::Claude,
+                content,
+                complete,
+            });
+
+            Ok("Response sent to Mira".to_string())
+        }
+        None => {
+            // No pending request found
+            if ctx.is_collaborative() {
+                // Server mode: This is an error (request timed out or invalid ID)
+                Err(format!(
+                    "No pending request found for message_id: {}. It may have timed out or been answered already.",
+                    in_reply_to
+                ))
+            } else {
+                // CLI/Offline mode: Log it and succeed
+                Ok(format!(
+                    "(Reply not sent - no pending request) Content: {}",
+                    content
+                ))
+            }
+        }
+    }
 }

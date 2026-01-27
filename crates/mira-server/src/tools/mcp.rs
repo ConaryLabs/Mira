@@ -99,6 +99,10 @@ impl ToolContext for MiraServer {
         }
     }
 
+    fn is_collaborative(&self) -> bool {
+        self.ws_tx.is_some()
+    }
+
     fn pending_responses(&self) -> Option<&Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>> {
         Some(&self.pending_responses)
     }
