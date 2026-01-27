@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn test_model_dimensions() {
         let model = GoogleEmbeddingModel::GeminiEmbedding001;
-        assert_eq!(model.default_dimensions(), 768);
+        assert_eq!(model.default_dimensions(), 1536);
         assert_eq!(model.cost_per_million(), 0.15);
     }
 
