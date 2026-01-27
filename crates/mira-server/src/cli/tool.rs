@@ -5,12 +5,12 @@ use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    ProjectRequest, RememberRequest, RecallRequest,
-    ForgetRequest, GetSymbolsRequest, SemanticCodeSearchRequest,
-    FindCallersRequest, FindCalleesRequest, CheckCapabilityRequest,
-    GoalRequest, IndexRequest, SessionHistoryRequest,
-    ConsultExpertsRequest, ConfigureExpertRequest,
-    ReplyToMiraRequest,
+    AnalyzeDiffRequest, CheckCapabilityRequest, ConfigureExpertRequest,
+    ConsultExpertsRequest, CrossProjectRequest, DocumentationRequest,
+    FindCalleesRequest, FindCallersRequest, FindingRequest, ForgetRequest,
+    GetSymbolsRequest, GoalRequest, IndexRequest, ProjectRequest, RecallRequest,
+    RememberRequest, ReplyToMiraRequest, SemanticCodeSearchRequest,
+    SessionHistoryRequest, TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -89,6 +89,29 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
              // Just print locally since we don't have a collaborative frontend connected
              Ok(format!("(Reply not sent - no frontend connected) Content: {}", req.content))
         }
+        "cross_project" => {
+            let req: CrossProjectRequest = serde_json::from_str(&args)?;
+            mira::tools::cross_project(&server, req.action, req.export, req.import, req.min_confidence, req.epsilon).await
+        }
+        "export_claude_local" => {
+            mira::tools::export_claude_local(&server).await
+        }
+        "documentation" => {
+            let req: DocumentationRequest = serde_json::from_str(&args)?;
+            mira::tools::documentation(&server, req.action, req.task_id, req.reason, req.doc_type, req.priority, req.status).await
+        }
+        "team" => {
+            let req: TeamRequest = serde_json::from_str(&args)?;
+            mira::tools::team(&server, req.action, req.team_id, req.name, req.description, req.user_identity, req.role).await
+        }
+        "finding" => {
+            let req: FindingRequest = serde_json::from_str(&args)?;
+            mira::tools::finding(&server, req.action, req.finding_id, req.finding_ids, req.status, req.feedback, req.file_path, req.expert_role, req.correction_type, req.limit).await
+        }
+        "analyze_diff" => {
+            let req: AnalyzeDiffRequest = serde_json::from_str(&args)?;
+            mira::tools::analyze_diff_tool(&server, req.from_ref, req.to_ref, req.include_impact).await
+        }
         _ => Err(format!("Unknown tool: {}", name).into()),
     };
 
@@ -97,4 +120,84 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         Err(e) => eprintln!("Error: {}", e),
     }
     Ok(())
+}
+
+/// Returns the list of tool names supported by the CLI dispatcher.
+/// Used for verification against MCP router.
+pub fn list_cli_tool_names() -> Vec<&'static str> {
+    vec![
+        "project",
+        "remember",
+        "recall",
+        "forget",
+        "get_symbols",
+        "search_code",
+        "find_callers",
+        "find_callees",
+        "check_capability",
+        "goal",
+        "index",
+        "summarize_codebase",
+        "get_session_recap",
+        "session_history",
+        "consult_experts",
+        "configure_expert",
+        "reply_to_mira",
+        "cross_project",
+        "export_claude_local",
+        "documentation",
+        "team",
+        "finding",
+        "analyze_diff",
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mira::db::pool::DatabasePool;
+    use mira::mcp::MiraServer;
+    use std::sync::Arc;
+
+    /// Verifies CLI dispatcher supports all MCP tools.
+    /// This test catches drift between the two implementations.
+    #[tokio::test]
+    async fn cli_tools_match_mcp_tools() {
+        // Create a minimal server to get tool list
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let server = MiraServer::new(pool, None);
+
+        let mcp_tools: std::collections::HashSet<String> = server
+            .list_tool_names()
+            .into_iter()
+            .collect();
+
+        let cli_tools: std::collections::HashSet<&str> = list_cli_tool_names()
+            .into_iter()
+            .collect();
+
+        // Check for tools in MCP but missing from CLI
+        let missing_from_cli: Vec<_> = mcp_tools
+            .iter()
+            .filter(|t| !cli_tools.contains(t.as_str()))
+            .collect();
+
+        // Check for tools in CLI but missing from MCP (shouldn't happen but good to check)
+        let missing_from_mcp: Vec<_> = cli_tools
+            .iter()
+            .filter(|t| !mcp_tools.contains(&t.to_string()))
+            .collect();
+
+        assert!(
+            missing_from_cli.is_empty(),
+            "CLI dispatcher is missing MCP tools: {:?}",
+            missing_from_cli
+        );
+
+        assert!(
+            missing_from_mcp.is_empty(),
+            "CLI has tools not in MCP (should not happen): {:?}",
+            missing_from_mcp
+        );
+    }
 }
