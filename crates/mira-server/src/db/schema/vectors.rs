@@ -7,32 +7,35 @@ use crate::db::migration_helpers::{table_exists, add_column_if_missing};
 
 /// Migrate vector tables if dimensions changed
 pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
-    // Check if vec_memory exists and has wrong dimensions
-    let needs_migration: bool = conn
+    // Check if vec_memory exists by examining its SQL definition
+    let current_dim: Option<i64> = conn
         .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_memory_info'",
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_memory'",
             [],
-            |_| Ok(true),
+            |row| {
+                let sql: String = row.get(0)?;
+                // Parse dimension from SQL like "embedding float[1536]"
+                if let Some(start) = sql.find("float[") {
+                    let rest = &sql[start + 6..];
+                    if let Some(end) = rest.find(']') {
+                        if let Ok(dim) = rest[..end].parse::<i64>() {
+                            return Ok(Some(dim));
+                        }
+                    }
+                }
+                Ok(None)
+            },
         )
-        .unwrap_or(false);
+        .unwrap_or(None);
 
-    if needs_migration {
-        // Check current dimension by looking at chunk info
-        let current_dim: Result<i64, _> = conn.query_row(
-            "SELECT vector_column_size FROM vec_memory_info WHERE vector_column_name='embedding'",
-            [],
-            |row| row.get(0),
-        );
-
-        if let Ok(dim) = current_dim {
-            if dim != 1536 {
-                tracing::info!("Migrating vector tables from {} to 1536 dimensions", dim);
-                // Drop old tables - CASCADE not supported, drop in order
-                conn.execute_batch(
-                    "DROP TABLE IF EXISTS vec_memory;
-                     DROP TABLE IF EXISTS vec_code;"
-                )?;
-            }
+    if let Some(dim) = current_dim {
+        if dim != 1536 {
+            tracing::info!("Migrating vector tables from {} to 1536 dimensions", dim);
+            // Drop old tables - CASCADE not supported, drop in order
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS vec_memory;
+                 DROP TABLE IF EXISTS vec_code;"
+            )?;
         }
     }
 
@@ -67,12 +70,16 @@ pub fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
         return Ok(());
     }
 
-    // Check if start_line column exists by checking vec_code_info
+    // Check if start_line column exists by examining the table's SQL definition
+    // (vec0 virtual tables don't expose column metadata in their _info tables)
     let has_start_line: bool = conn
         .query_row(
-            "SELECT 1 FROM vec_code_info WHERE auxiliary_column_name = 'start_line'",
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_code'",
             [],
-            |_| Ok(true),
+            |row| {
+                let sql: String = row.get(0)?;
+                Ok(sql.contains("start_line"))
+            },
         )
         .unwrap_or(false);
 
