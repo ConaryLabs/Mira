@@ -1,10 +1,11 @@
 // crates/mira-server/src/cli/serve.rs
 // MCP server initialization and main loop
 
-use super::clients::get_embeddings_with_pool;
+use super::clients::get_embeddings_from_config;
 use super::get_db_path;
 use anyhow::Result;
 use mira::background;
+use mira::config::EnvConfig;
 use mira::db::pool::DatabasePool;
 use mira::http::create_shared_client;
 use mira::mcp::MiraServer;
@@ -12,20 +13,36 @@ use mira::tools::core::ToolContext;
 use mira_types::ProjectContext;
 use std::sync::Arc;
 use tokio::sync::watch;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Setup server context with database, embeddings, and restored project/session state
 pub async fn setup_server_context() -> Result<MiraServer> {
+    // Load configuration once (single source of truth)
+    let env_config = EnvConfig::load();
+
+    // Validate and log warnings
+    let validation = env_config.validate();
+    for warning in &validation.warnings {
+        warn!("{}", warning);
+    }
+
     // Create shared HTTP client for all network operations
     let http_client = create_shared_client();
 
     // Open database pool
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
-    let embeddings = get_embeddings_with_pool(Some(pool.clone()), http_client.clone());
 
-    // Create server context
-    let server = MiraServer::new(pool.clone(), embeddings);
+    // Create embeddings from centralized config
+    let embeddings = get_embeddings_from_config(
+        &env_config.api_keys,
+        &env_config.embeddings,
+        Some(pool.clone()),
+        http_client.clone(),
+    );
+
+    // Create server context from centralized config
+    let server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
 
     // Restore context (Project & Session)
     let restored_project = pool.interact(|conn| {
@@ -62,6 +79,15 @@ pub async fn setup_server_context() -> Result<MiraServer> {
 
 /// Run the MCP server with stdio transport
 pub async fn run_mcp_server() -> Result<()> {
+    // Load configuration once (single source of truth)
+    let env_config = EnvConfig::load();
+
+    // Validate and log warnings
+    let validation = env_config.validate();
+    for warning in &validation.warnings {
+        warn!("{}", warning);
+    }
+
     // Create shared HTTP client for all network operations
     let http_client = create_shared_client();
 
@@ -69,8 +95,13 @@ pub async fn run_mcp_server() -> Result<()> {
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
-    // Initialize embeddings if API key available (with usage tracking)
-    let embeddings = get_embeddings_with_pool(Some(pool.clone()), http_client.clone());
+    // Initialize embeddings from centralized config
+    let embeddings = get_embeddings_from_config(
+        &env_config.api_keys,
+        &env_config.embeddings,
+        Some(pool.clone()),
+        http_client.clone(),
+    );
 
     if embeddings.is_some() {
         info!("Semantic search enabled (Google embeddings)");
@@ -78,8 +109,8 @@ pub async fn run_mcp_server() -> Result<()> {
         info!("Semantic search disabled (no GEMINI_API_KEY)");
     }
 
-    // Initialize LLM provider factory (handles DeepSeek, GLM, Gemini with fallback)
-    let llm_factory = Arc::new(mira::llm::ProviderFactory::new());
+    // Initialize LLM provider factory from centralized config
+    let llm_factory = Arc::new(mira::llm::ProviderFactory::from_api_keys(env_config.api_keys.clone()));
 
     if llm_factory.has_providers() {
         let providers: Vec<_> = llm_factory.available_providers().iter().map(|p| p.to_string()).collect();
@@ -99,8 +130,9 @@ pub async fn run_mcp_server() -> Result<()> {
     let watcher_handle = background::watcher::spawn(pool.clone(), watcher_shutdown_rx);
     info!("File watcher started");
 
-    // Create MCP server with watcher
-    let server = MiraServer::with_watcher(pool.clone(), embeddings, watcher_handle);
+    // Create MCP server with watcher from centralized config
+    let mut server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
+    server.watcher = Some(watcher_handle);
 
     // Restore context (Project & Session)
     let restore_pool = pool.clone();

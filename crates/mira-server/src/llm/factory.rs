@@ -1,7 +1,7 @@
 // crates/mira-server/src/llm/factory.rs
 // Provider factory for managing multiple LLM clients
 
-use crate::config::MiraConfig;
+use crate::config::{ApiKeys, MiraConfig};
 use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::gemini::GeminiClient;
@@ -26,14 +26,14 @@ pub struct ProviderFactory {
 impl ProviderFactory {
     /// Create a new factory, initializing clients from environment variables
     pub fn new() -> Self {
+        Self::from_api_keys(ApiKeys::from_env())
+    }
+
+    /// Create a factory from pre-loaded API keys (avoids duplicate env var reads)
+    pub fn from_api_keys(api_keys: ApiKeys) -> Self {
         let mut clients: HashMap<Provider, Arc<dyn LlmClient>> = HashMap::new();
 
-        // Load API keys
-        let deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok().filter(|k| !k.trim().is_empty());
-        let gemini_key = std::env::var("GEMINI_API_KEY").ok().filter(|k| !k.trim().is_empty());
-        let glm_key = std::env::var("ZAI_API_KEY").ok().filter(|k| !k.trim().is_empty());
-
-        // Load config file
+        // Load config file for provider preferences
         let config = MiraConfig::load();
 
         // Check for expert provider: config file first, then env var
@@ -54,19 +54,19 @@ impl ProviderFactory {
         }
 
         // Initialize DeepSeek client
-        if let Some(ref key) = deepseek_key {
+        if let Some(ref key) = api_keys.deepseek {
             info!("DeepSeek client initialized");
             clients.insert(Provider::DeepSeek, Arc::new(DeepSeekClient::new(key.clone())));
         }
 
         // Initialize GLM client
-        if let Some(ref key) = glm_key {
+        if let Some(ref key) = api_keys.glm {
             info!("GLM client initialized");
             clients.insert(Provider::Glm, Arc::new(GlmClient::new(key.clone())));
         }
 
         // Initialize Gemini client
-        if let Some(ref key) = gemini_key {
+        if let Some(ref key) = api_keys.gemini {
             info!("Gemini client initialized");
             clients.insert(Provider::Gemini, Arc::new(GeminiClient::new(key.clone())));
         }
@@ -83,9 +83,9 @@ impl ProviderFactory {
             default_provider,
             background_provider,
             fallback_order,
-            deepseek_key,
-            gemini_key,
-            glm_key,
+            deepseek_key: api_keys.deepseek,
+            gemini_key: api_keys.gemini,
+            glm_key: api_keys.glm,
         }
     }
 

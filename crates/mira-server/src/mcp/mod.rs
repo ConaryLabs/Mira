@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use tokio::sync::oneshot;
 
 use crate::background::watcher::WatcherHandle;
+use crate::config::ApiKeys;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::session::read_claude_session_id;
@@ -53,19 +54,20 @@ pub struct MiraServer {
 }
 
 impl MiraServer {
-    fn create_deepseek_client() -> Option<Arc<DeepSeekClient>> {
-        std::env::var("DEEPSEEK_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .map(|key| Arc::new(DeepSeekClient::new(key)))
-    }
+    /// Create a new server from pre-loaded API keys (avoids duplicate env reads)
+    pub fn from_api_keys(
+        pool: Arc<DatabasePool>,
+        embeddings: Option<Arc<EmbeddingClient>>,
+        api_keys: &ApiKeys,
+    ) -> Self {
+        // Create DeepSeek client from pre-loaded keys
+        let deepseek = api_keys
+            .deepseek
+            .as_ref()
+            .map(|key| Arc::new(DeepSeekClient::new(key.clone())));
 
-    pub fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
-        // Try to create DeepSeek client from env (kept for backward compatibility)
-        let deepseek = Self::create_deepseek_client();
-
-        // Create provider factory with all available LLM clients
-        let llm_factory = Arc::new(ProviderFactory::new());
+        // Create provider factory from pre-loaded keys
+        let llm_factory = Arc::new(ProviderFactory::from_api_keys(api_keys.clone()));
 
         Self {
             pool,
@@ -82,29 +84,20 @@ impl MiraServer {
         }
     }
 
+    pub fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
+        Self::from_api_keys(pool, embeddings, &ApiKeys::from_env())
+    }
+
     /// Create with a file watcher for incremental indexing
     pub fn with_watcher(
         pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         watcher: WatcherHandle,
     ) -> Self {
-        let deepseek = Self::create_deepseek_client();
-
-        let llm_factory = Arc::new(ProviderFactory::new());
-
-        Self {
-            pool,
-            embeddings,
-            deepseek,
-            llm_factory,
-            project: Arc::new(RwLock::new(None)),
-            session_id: Arc::new(RwLock::new(None)),
-            branch: Arc::new(RwLock::new(None)),
-            ws_tx: None,
-            watcher: Some(watcher),
-            pending_responses: Arc::new(RwLock::new(HashMap::new())),
-            tool_router: Self::tool_router(),
-        }
+        let api_keys = ApiKeys::from_env();
+        let mut server = Self::from_api_keys(pool, embeddings, &api_keys);
+        server.watcher = Some(watcher);
+        server
     }
 
 
