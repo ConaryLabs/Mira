@@ -95,12 +95,8 @@ async fn init_project<C: ToolContext>(
     let name_owned = name.map(|s| s.to_string());
     let (project_id, stored_name) = ctx
         .pool()
-        .interact(move |conn| {
-            get_or_create_project_sync(conn, &path_owned, name_owned.as_deref())
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| get_or_create_project_sync(conn, &path_owned, name_owned.as_deref()))
+        .await?;
 
     // If we have a stored name, use it; otherwise detect from files
     let project_name = if stored_name.is_some() {
@@ -111,12 +107,8 @@ async fn init_project<C: ToolContext>(
             // Update the project with the detected name
             let name_clone = name.clone();
             ctx.pool()
-                .interact(move |conn| {
-                    update_project_name_sync(conn, project_id, &name_clone)
-                        .map_err(|e| anyhow::anyhow!(e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| update_project_name_sync(conn, project_id, &name_clone))
+                .await?;
         }
         detected
     };
@@ -140,7 +132,7 @@ async fn init_project<C: ToolContext>(
     let path_for_save = project_path.to_string();
     if let Err(e) = ctx
         .pool()
-        .interact(move |conn| save_active_project_sync(conn, &path_for_save).map_err(|e| anyhow::anyhow!(e)))
+        .run(move |conn| save_active_project_sync(conn, &path_for_save))
         .await
     {
         tracing::warn!("Failed to persist active project: {}", e);
@@ -200,12 +192,14 @@ pub async fn session_start<C: ToolContext>(
     let branch_for_db = branch.clone();
     let briefing_text: Option<String> = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             // Create/update session with branch
-            upsert_session_with_branch_sync(conn, &sid_for_db, Some(project_id), branch_for_db.as_deref())?;
+            upsert_session_with_branch_sync(conn, &sid_for_db, Some(project_id), branch_for_db.as_deref())
+                .map_err(|e| e.to_string())?;
 
             // Persist active session ID for restart recovery
-            set_server_state_sync(conn, "active_session_id", &sid_for_db)?;
+            set_server_state_sync(conn, "active_session_id", &sid_for_db)
+                .map_err(|e| e.to_string())?;
 
             // Store system context as memory
             if let Some(ref content) = system_context {
@@ -232,10 +226,9 @@ pub async fn session_start<C: ToolContext>(
             // Mark session for briefing (clears briefing for next time)
             let _ = mark_session_for_briefing_sync(conn, project_id);
 
-            Ok(briefing)
+            Ok::<_, String>(briefing)
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     ctx.set_session_id(sid.clone()).await;
 
@@ -271,17 +264,16 @@ pub async fn session_start<C: ToolContext>(
     let sid_for_filter = sid.clone();
     let recent_session_data: Vec<(String, String, Option<String>, usize, Vec<String>)> = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             let sessions = get_recent_sessions_sync(conn, project_id, 4).unwrap_or_default();
             let mut result = Vec::new();
             for sess in sessions.into_iter().filter(|s| s.id != sid_for_filter).take(3) {
                 let (tool_count, tools) = get_session_stats_sync(conn, &sess.id).unwrap_or((0, vec![]));
                 result.push((sess.id, sess.last_activity, sess.summary, tool_count, tools));
             }
-            Ok(result)
+            Ok::<_, String>(result)
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     if !recent_session_data.is_empty() {
         response.push_str("\nRecent sessions:\n");
@@ -314,7 +306,7 @@ pub async fn session_start<C: ToolContext>(
         Vec<(String, i64)>,
     ) = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             // Get preferences
             let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
 
@@ -327,10 +319,9 @@ pub async fn session_start<C: ToolContext>(
             // Get documentation task counts
             let doc_task_counts = count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
 
-            Ok((preferences, memories, health_alerts, doc_task_counts))
+            Ok::<_, String>((preferences, memories, health_alerts, doc_task_counts))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     if !preferences.is_empty() {
         response.push_str("\nPreferences:\n");
@@ -503,29 +494,27 @@ fn gather_system_context_content() -> Option<String> {
     }
 }
 
+use crate::mcp::requests::ProjectAction;
+
 /// Unified project tool with action parameter
 /// Actions: start (session_start), set (set_project), get (get_project)
 pub async fn project<C: ToolContext>(
     ctx: &C,
-    action: String,
+    action: ProjectAction,
     project_path: Option<String>,
     name: Option<String>,
     session_id: Option<String>,
 ) -> Result<String, String> {
-    match action.as_str() {
-        "start" => {
+    match action {
+        ProjectAction::Start => {
             let path = project_path.ok_or("project_path is required for action 'start'")?;
             session_start(ctx, path, name, session_id).await
         }
-        "set" => {
+        ProjectAction::Set => {
             let path = project_path.ok_or("project_path is required for action 'set'")?;
             set_project(ctx, path, name).await
         }
-        "get" => get_project(ctx).await,
-        _ => Err(format!(
-            "Unknown action '{}'. Valid actions: start, set, get",
-            action
-        )),
+        ProjectAction::Get => get_project(ctx).await,
     }
 }
 

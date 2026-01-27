@@ -7,6 +7,7 @@ use crate::cartographer;
 use crate::db::search_capabilities_sync;
 use crate::indexer;
 use crate::llm::Message;
+use crate::mcp::requests::IndexAction;
 use crate::search::{
     crossref_search, embedding_to_bytes, expand_context_with_conn, find_callers, find_callees,
     format_crossref_results, format_project_header, hybrid_search, CrossRefType,
@@ -30,9 +31,8 @@ pub async fn search_code<C: ToolContext>(
     let query_clone = query.clone();
     let crossref_result = ctx
         .pool()
-        .interact(move |conn| Ok(crossref_search(conn, &query_clone, project_id, limit)))
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| Ok::<_, String>(crossref_search(conn, &query_clone, project_id, limit)))
+        .await?;
 
     if let Some((target, ref_type, results)) = crossref_result {
         return Ok(format!(
@@ -75,7 +75,7 @@ pub async fn search_code<C: ToolContext>(
     type ExpandedResult = (String, String, f32, Option<(Option<String>, String)>);
     let expanded_results: Vec<ExpandedResult> = ctx
         .pool()
-        .interact(move |conn| -> Result<Vec<ExpandedResult>, anyhow::Error> {
+        .run(move |conn| -> Result<Vec<ExpandedResult>, String> {
             Ok(results_data.iter()
                 .map(|(file_path, content, score)| {
                     let expanded = expand_context_with_conn(
@@ -89,8 +89,7 @@ pub async fn search_code<C: ToolContext>(
                 })
                 .collect())
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     for (file_path, content, score, expanded) in expanded_results {
         response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", file_path, score));
@@ -136,9 +135,8 @@ pub async fn find_function_callers<C: ToolContext>(
     let fn_name = function_name.clone();
     let results = ctx
         .pool()
-        .interact(move |conn| Ok(find_callers(conn, project_id, &fn_name, limit)))
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| Ok::<_, String>(find_callers(conn, project_id, &fn_name, limit)))
+        .await?;
 
     if results.is_empty() {
         return Ok(format!(
@@ -172,9 +170,8 @@ pub async fn find_function_callees<C: ToolContext>(
     let fn_name = function_name.clone();
     let results = ctx
         .pool()
-        .interact(move |conn| Ok(find_callees(conn, project_id, &fn_name, limit)))
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| Ok::<_, String>(find_callees(conn, project_id, &fn_name, limit)))
+        .await?;
 
     if results.is_empty() {
         return Ok(format!(
@@ -213,12 +210,8 @@ pub async fn check_capability<C: ToolContext>(
             // Run vector search via connection pool
             let capability_results: Result<Vec<(i64, String, String, f32)>, String> = ctx
                 .pool()
-                .interact(move |conn| {
-                    search_capabilities_sync(conn, &embedding_bytes, project_id, 5)
-                        .map_err(|e| anyhow::anyhow!(e))
-                })
-                .await
-                .map_err(|e| e.to_string());
+                .run(move |conn| search_capabilities_sync(conn, &embedding_bytes, project_id, 5))
+                .await;
 
             if let Ok(capability_results) = capability_results {
                 // Check if we have good matches (similarity > 0.6)
@@ -347,12 +340,12 @@ pub fn get_symbols(
 /// Index project
 pub async fn index<C: ToolContext>(
     ctx: &C,
-    action: String,
+    action: IndexAction,
     path: Option<String>,
     skip_embed: bool,
 ) -> Result<String, String> {
-    match action.as_str() {
-        "project" | "file" => {
+    match action {
+        IndexAction::Project | IndexAction::File => {
             let project = ctx.get_project().await;
             let project_path = path
                 .or_else(|| project.as_ref().map(|p| p.path.clone()))
@@ -393,7 +386,7 @@ pub async fn index<C: ToolContext>(
 
             Ok(response)
         }
-        "status" => {
+        IndexAction::Status => {
             use crate::db::{count_symbols_sync, count_embedded_chunks_sync};
 
             let project = ctx.get_project().await;
@@ -401,17 +394,15 @@ pub async fn index<C: ToolContext>(
 
             let (symbols, embedded) = ctx
                 .pool()
-                .interact(move |conn| {
+                .run(move |conn| {
                     let symbols = count_symbols_sync(conn, project_id);
                     let embedded = count_embedded_chunks_sync(conn, project_id);
-                    Ok::<_, anyhow::Error>((symbols, embedded))
+                    Ok::<_, String>((symbols, embedded))
                 })
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
 
             Ok(format!("Index status: {} symbols, {} embedded chunks", symbols, embedded))
         }
-        _ => Err(format!("Unknown action: {}. Use: project, file, status", action)),
     }
 }
 
@@ -424,12 +415,8 @@ async fn auto_summarize_modules(
 ) -> Result<usize, String> {
     // Get modules needing summaries
     let mut modules = pool
-        .interact(move |conn| {
-            cartographer::get_modules_needing_summaries(conn, project_id)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| cartographer::get_modules_needing_summaries(conn, project_id))
+        .await?;
 
     if modules.is_empty() {
         return Ok(0);
@@ -458,12 +445,8 @@ async fn auto_summarize_modules(
     }
 
     let updated = pool
-        .interact(move |conn| {
-            cartographer::update_module_purposes(conn, project_id, &summaries)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| cartographer::update_module_purposes(conn, project_id, &summaries))
+        .await?;
 
     Ok(updated)
 }
@@ -485,12 +468,8 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
     // Get modules needing summaries
     let mut modules = ctx
         .pool()
-        .interact(move |conn| {
-            cartographer::get_modules_needing_summaries(conn, project_id)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| cartographer::get_modules_needing_summaries(conn, project_id))
+        .await?;
 
     if modules.is_empty() {
         return Ok("All modules already have summaries.".to_string());
@@ -530,19 +509,19 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
     use crate::db::clear_modules_without_purpose_sync;
 
     let summaries_clone = summaries.clone();
-    let updated = ctx
+    let updated: usize = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             let count = cartographer::update_module_purposes(conn, project_id, &summaries_clone)
-                .map_err(|e| anyhow::anyhow!(e))?;
+                .map_err(|e| e.to_string())?;
 
             // Clear cached modules to force regeneration
-            clear_modules_without_purpose_sync(conn, project_id)?;
+            clear_modules_without_purpose_sync(conn, project_id)
+                .map_err(|e| e.to_string())?;
 
-            Ok(count)
+            Ok::<_, String>(count)
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     Ok(format!(
         "Summarized {} modules:\n{}",

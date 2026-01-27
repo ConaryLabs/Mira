@@ -1,13 +1,14 @@
 // crates/mira-server/src/tools/core/experts/config.rs
 // Expert configuration management
 
+use crate::mcp::requests::ExpertConfigAction;
 use super::role::ExpertRole;
 use super::ToolContext;
 
 /// Configure expert system prompts and LLM providers (set, get, delete, list, providers)
 pub async fn configure_expert<C: ToolContext>(
     ctx: &C,
-    action: String,
+    action: ExpertConfigAction,
     role: Option<String>,
     prompt: Option<String>,
     provider: Option<String>,
@@ -19,8 +20,8 @@ pub async fn configure_expert<C: ToolContext>(
     };
     use crate::llm::Provider;
 
-    match action.as_str() {
-        "set" => {
+    match action {
+        ExpertConfigAction::Set => {
             let role_key = role.as_deref()
                 .ok_or("Role is required for 'set' action")?;
 
@@ -53,7 +54,7 @@ pub async fn configure_expert<C: ToolContext>(
             let model_clone = model.clone();
 
             ctx.pool()
-                .interact(move |conn| {
+                .run(move |conn| {
                     set_expert_config_sync(
                         conn,
                         &role_key_clone,
@@ -61,10 +62,8 @@ pub async fn configure_expert<C: ToolContext>(
                         parsed_provider,
                         model_clone.as_deref(),
                     )
-                    .map_err(|e| anyhow::anyhow!("{}", e))
                 })
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
 
             let mut msg = format!("Configuration updated for '{}' expert:", role_key);
             if prompt.is_some() {
@@ -79,7 +78,7 @@ pub async fn configure_expert<C: ToolContext>(
             Ok(msg)
         }
 
-        "get" => {
+        ExpertConfigAction::Get => {
             let role_key = role.as_deref()
                 .ok_or("Role is required for 'get' action")?;
 
@@ -96,12 +95,8 @@ pub async fn configure_expert<C: ToolContext>(
             let role_key_clone = role_key.to_string();
             let config = ctx
                 .pool()
-                .interact(move |conn| {
-                    get_expert_config_sync(conn, &role_key_clone)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| get_expert_config_sync(conn, &role_key_clone))
+                .await?;
 
             let role_name = expert.map(|e| e.name()).unwrap_or_else(|| "Background Worker".to_string());
             let mut output = format!("Configuration for '{}' ({}):\n", role_key, role_name);
@@ -124,7 +119,7 @@ pub async fn configure_expert<C: ToolContext>(
             Ok(output)
         }
 
-        "delete" => {
+        ExpertConfigAction::Delete => {
             let role_key = role.as_deref()
                 .ok_or("Role is required for 'delete' action")?;
 
@@ -141,12 +136,8 @@ pub async fn configure_expert<C: ToolContext>(
             let role_key_clone = role_key.to_string();
             let deleted = ctx
                 .pool()
-                .interact(move |conn| {
-                    delete_custom_prompt_sync(conn, &role_key_clone)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| delete_custom_prompt_sync(conn, &role_key_clone))
+                .await?;
 
             if deleted {
                 Ok(format!("Configuration deleted for '{}'. Reverted to defaults.", role_key))
@@ -155,14 +146,11 @@ pub async fn configure_expert<C: ToolContext>(
             }
         }
 
-        "list" => {
+        ExpertConfigAction::List => {
             let configs = ctx
                 .pool()
-                .interact(move |conn| {
-                    list_custom_prompts_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| list_custom_prompts_sync(conn))
+                .await?;
 
             if configs.is_empty() {
                 Ok("No custom configurations. All experts use default settings.".to_string())
@@ -186,7 +174,7 @@ pub async fn configure_expert<C: ToolContext>(
             }
         }
 
-        "providers" => {
+        ExpertConfigAction::Providers => {
             // List available LLM providers
             let factory = ctx.llm_factory();
             let available = factory.available_providers();
@@ -207,10 +195,5 @@ pub async fn configure_expert<C: ToolContext>(
                 Ok(output)
             }
         }
-
-        _ => Err(format!(
-            "Invalid action '{}'. Valid actions: set, get, delete, list, providers",
-            action
-        )),
     }
 }

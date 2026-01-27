@@ -4,13 +4,14 @@
 use crate::cross_project::{
     self, CrossProjectConfig, SharingPreferences,
 };
+use crate::mcp::requests::CrossProjectAction;
 use crate::tools::core::ToolContext;
 
 /// Unified cross-project tool with actions: get_preferences, enable_sharing, disable_sharing,
 /// reset_budget, get_stats, extract_patterns, sync
 pub async fn cross_project<C: ToolContext>(
     ctx: &C,
-    action: String,
+    action: CrossProjectAction,
     export: Option<bool>,
     import: Option<bool>,
     min_confidence: Option<f64>,
@@ -21,40 +22,28 @@ pub async fn cross_project<C: ToolContext>(
         .await
         .ok_or("No project set. Call session_start first.")?;
 
-    match action.as_str() {
-        "get_preferences" | "status" => {
+    match action {
+        CrossProjectAction::GetPreferences | CrossProjectAction::Status => {
             let prefs = ctx
                 .pool()
-                .interact(move |conn| {
-                    cross_project::get_preferences(conn, project_id)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::get_preferences(conn, project_id))
+                .await?;
 
             let stats = ctx
                 .pool()
-                .interact(move |conn| {
-                    cross_project::get_sharing_stats(conn, project_id)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::get_sharing_stats(conn, project_id))
+                .await?;
 
             Ok(format_preferences(&prefs, &stats))
         }
 
-        "enable_sharing" => {
+        CrossProjectAction::EnableSharing => {
             let export_val = export.unwrap_or(true);
             let import_val = import.unwrap_or(true);
 
             ctx.pool()
-                .interact(move |conn| {
-                    cross_project::enable_sharing(conn, project_id, export_val, import_val)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::enable_sharing(conn, project_id, export_val, import_val))
+                .await?;
 
             Ok(format!(
                 "Enabled cross-project sharing for this project.\n  Export patterns: {}\n  Import patterns: {}",
@@ -62,39 +51,27 @@ pub async fn cross_project<C: ToolContext>(
             ))
         }
 
-        "disable_sharing" => {
+        CrossProjectAction::DisableSharing => {
             ctx.pool()
-                .interact(move |conn| {
-                    cross_project::disable_sharing(conn, project_id)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::disable_sharing(conn, project_id))
+                .await?;
 
             Ok("Disabled cross-project sharing for this project.".to_string())
         }
 
-        "reset_budget" => {
+        CrossProjectAction::ResetBudget => {
             ctx.pool()
-                .interact(move |conn| {
-                    cross_project::reset_privacy_budget(conn, project_id)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::reset_privacy_budget(conn, project_id))
+                .await?;
 
             Ok("Privacy budget reset to 0. Full budget is now available.".to_string())
         }
 
-        "get_stats" => {
+        CrossProjectAction::GetStats => {
             let stats = ctx
                 .pool()
-                .interact(move |conn| {
-                    cross_project::get_sharing_stats(conn, project_id)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::get_sharing_stats(conn, project_id))
+                .await?;
 
             Ok(format!(
                 "Sharing statistics:\n  Exports: {}\n  Imports: {}\n  Privacy budget spent: {:.2}",
@@ -102,7 +79,7 @@ pub async fn cross_project<C: ToolContext>(
             ))
         }
 
-        "extract_patterns" => {
+        CrossProjectAction::ExtractPatterns => {
             let config = CrossProjectConfig {
                 min_confidence: min_confidence.unwrap_or(0.6),
                 epsilon: epsilon.unwrap_or(1.0),
@@ -111,12 +88,8 @@ pub async fn cross_project<C: ToolContext>(
 
             let count = ctx
                 .pool()
-                .interact(move |conn| {
-                    cross_project::extract_and_store_patterns(conn, project_id, &config)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::extract_and_store_patterns(conn, project_id, &config))
+                .await?;
 
             if count == 0 {
                 Ok("No patterns extracted. Either sharing is disabled, privacy budget exhausted, or no qualifying patterns found.".to_string())
@@ -125,7 +98,7 @@ pub async fn cross_project<C: ToolContext>(
             }
         }
 
-        "sync" => {
+        CrossProjectAction::Sync => {
             // First extract patterns
             let config = CrossProjectConfig {
                 min_confidence: min_confidence.unwrap_or(0.6),
@@ -135,26 +108,23 @@ pub async fn cross_project<C: ToolContext>(
 
             let exported = ctx
                 .pool()
-                .interact(move |conn| {
-                    cross_project::extract_and_store_patterns(conn, project_id, &config)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| cross_project::extract_and_store_patterns(conn, project_id, &config))
+                .await?;
 
             // Then get shareable patterns from network
             let min_conf = min_confidence.unwrap_or(0.6);
-            let imported = ctx
+            let imported: usize = ctx
                 .pool()
-                .interact(move |conn| {
-                    let prefs = cross_project::get_preferences(conn, project_id)?;
+                .run(move |conn| {
+                    let prefs = cross_project::get_preferences(conn, project_id)
+                        .map_err(|e| e.to_string())?;
                     if !prefs.sharing_enabled || !prefs.import_patterns {
-                        return Ok(0usize);
+                        return Ok::<_, String>(0);
                     }
 
                     let patterns = cross_project::get_shareable_patterns(
                         conn, None, None, min_conf, 50
-                    )?;
+                    ).map_err(|e| e.to_string())?;
                     let mut count = 0;
                     for pattern in &patterns {
                         if cross_project::import_pattern(conn, project_id, pattern).is_ok() {
@@ -163,19 +133,13 @@ pub async fn cross_project<C: ToolContext>(
                     }
                     Ok(count)
                 })
-                .await
-                .map_err(|e: anyhow::Error| e.to_string())?;
+                .await?;
 
             Ok(format!(
                 "Sync complete.\n  Exported: {} patterns\n  Imported: {} patterns",
                 exported, imported
             ))
         }
-
-        _ => Err(format!(
-            "Unknown action: {}. Valid actions: get_preferences, status, enable_sharing, disable_sharing, reset_budget, get_stats, extract_patterns, sync",
-            action
-        )),
     }
 }
 

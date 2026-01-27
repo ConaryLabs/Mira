@@ -124,7 +124,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
         let pool = ctx.pool().clone();
         let files = stats.files.clone();
         let changes_clone = changes.clone();
-        pool.interact(move |conn| {
+        pool.run(move |conn| {
             let symbols = map_to_symbols(conn, project_id, &files);
             let result = if symbols.is_empty() {
                 let pseudo_symbols: Vec<(String, String, String)> = changes_clone
@@ -139,7 +139,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
             } else {
                 build_impact_graph(conn, project_id, &symbols, 2)
             };
-            Ok::<_, anyhow::Error>(result)
+            Ok::<_, String>(result)
         })
         .await
         .ok()
@@ -299,12 +299,8 @@ pub async fn list_diff_analyses<C: ToolContext>(
 
     let analyses = ctx
         .pool()
-        .interact(move |conn| {
-            get_recent_diff_analyses_sync(conn, project_id, limit)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| get_recent_diff_analyses_sync(conn, project_id, limit))
+        .await?;
 
     if analyses.is_empty() {
         return Ok(format!("{}No diff analyses found.", context_header));

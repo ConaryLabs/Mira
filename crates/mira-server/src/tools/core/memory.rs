@@ -48,7 +48,7 @@ pub async fn remember<C: ToolContext>(
     let branch_for_store = branch.clone();
     let id: i64 = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             let params = StoreMemoryParams {
                 project_id,
                 key: key_for_store.as_deref(),
@@ -61,10 +61,9 @@ pub async fn remember<C: ToolContext>(
                 scope: &scope_for_store,
                 branch: branch_for_store.as_deref(),
             };
-            store_memory_sync(conn, params).map_err(|e| anyhow::anyhow!(e))
+            store_memory_sync(conn, params)
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     // Store embedding if available
     if let Some(embeddings) = ctx.embeddings() {
@@ -74,10 +73,7 @@ pub async fn remember<C: ToolContext>(
                 let content_clone = content.clone();
                 let result = ctx
                     .pool()
-                    .interact(move |conn| {
-                        store_embedding_sync(conn, id, &content_clone, &embedding_bytes)
-                            .map_err(|e| anyhow::anyhow!(e))
-                    })
+                    .run(move |conn| store_embedding_sync(conn, id, &content_clone, &embedding_bytes))
                     .await;
                 if let Err(e) = result {
                     tracing::warn!("Failed to store embedding: {}", e);
@@ -125,7 +121,7 @@ pub async fn recall<C: ToolContext>(
             // Run vector search via connection pool with branch boosting
             let results: Vec<(i64, String, f32, Option<String>)> = ctx
                 .pool()
-                .interact(move |conn| {
+                .run(move |conn| {
                     recall_semantic_with_branch_info_sync(
                         conn,
                         &embedding_bytes,
@@ -134,10 +130,8 @@ pub async fn recall<C: ToolContext>(
                         branch_for_query.as_deref(),
                         limit,
                     )
-                    .map_err(|e| anyhow::anyhow!(e))
                 })
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
 
             if !results.is_empty() {
                 // Record memory access for evidence-based tracking
@@ -188,12 +182,10 @@ pub async fn recall<C: ToolContext>(
     let user_id_clone = user_id.clone();
     let results: Vec<MemoryFact> = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             search_memories_sync(conn, project_id, &query_clone, user_id_clone.as_deref(), limit)
-                .map_err(|e| anyhow::anyhow!(e))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     if results.is_empty() {
         return Ok(format!("{}No memories found.", context_header));
@@ -252,11 +244,8 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, Strin
     // Delete from both SQL and vector table via connection pool
     let deleted = ctx
         .pool()
-        .interact(move |conn| {
-            delete_memory_sync(conn, id).map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| delete_memory_sync(conn, id))
+        .await?;
 
     if deleted {
         Ok(format!("Memory {} deleted.", id))

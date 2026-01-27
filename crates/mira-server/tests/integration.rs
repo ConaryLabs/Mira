@@ -8,6 +8,7 @@ mod test_utils;
 use test_utils::TestContext;
 #[allow(unused_imports)]
 use mira::tools::core::{ToolContext, session_start, set_project, get_project, remember, recall, forget, search_code, find_function_callers, find_function_callees, check_capability, get_symbols, index, summarize_codebase, session_history, ensure_session, goal, configure_expert, get_session_recap};
+use mira::mcp::requests::{IndexAction, SessionHistoryAction, GoalAction, ExpertConfigAction};
 
 #[tokio::test]
 async fn test_session_start_basic() {
@@ -284,7 +285,7 @@ async fn test_index_status() {
         .await
         .expect("session_start failed");
 
-    let result = index(&ctx, "status".to_string(), None, false).await;
+    let result = index(&ctx, IndexAction::Status, None, false).await;
     assert!(result.is_ok(), "index status failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(output.contains("Index status"), "Output: {}", output);
@@ -370,7 +371,7 @@ async fn test_session_history_current() {
     let ctx = TestContext::new().await;
 
     // No active session
-    let result = session_history(&ctx, "current".to_string(), None, None).await;
+    let result = session_history(&ctx, SessionHistoryAction::Current, None, None).await;
     assert!(result.is_ok(), "session_history current failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(output.contains("No active session"), "Output: {}", output);
@@ -381,7 +382,7 @@ async fn test_session_history_current() {
         .await
         .expect("session_start failed");
 
-    let result = session_history(&ctx, "current".to_string(), None, None).await;
+    let result = session_history(&ctx, SessionHistoryAction::Current, None, None).await;
     assert!(result.is_ok(), "session_history current failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(output.contains("Current session:"), "Output: {}", output);
@@ -396,7 +397,7 @@ async fn test_session_history_list_sessions() {
         .await
         .expect("session_start failed");
 
-    let result = session_history(&ctx, "list_sessions".to_string(), None, Some(10)).await;
+    let result = session_history(&ctx, SessionHistoryAction::ListSessions, None, Some(10)).await;
     // Should succeed even if no sessions in database (maybe there is one now)
     assert!(result.is_ok(), "session_history list_sessions failed: {:?}", result.err());
     let output = result.unwrap();
@@ -416,7 +417,7 @@ async fn test_goal_create_and_list() {
     // Create a goal
     let result = goal(
         &ctx,
-        "create".to_string(),
+        GoalAction::Create,
         None, // goal_id
         Some("Implement new feature".to_string()), // title
         Some("Add user authentication".to_string()), // description
@@ -439,7 +440,7 @@ async fn test_goal_create_and_list() {
     // List goals
     let result = goal(
         &ctx,
-        "list".to_string(),
+        GoalAction::List,
         None, // goal_id
         None, // title
         None, // description
@@ -470,7 +471,7 @@ async fn test_configure_expert_providers() {
         .expect("session_start failed");
 
     // providers action should list available LLM providers (none in test)
-    let result = configure_expert(&ctx, "providers".to_string(), None, None, None, None).await;
+    let result = configure_expert(&ctx, ExpertConfigAction::Providers, None, None, None, None).await;
     assert!(result.is_ok(), "configure_expert providers failed: {:?}", result.err());
     let output = result.unwrap();
     // Should indicate no providers available
@@ -487,7 +488,7 @@ async fn test_configure_expert_list() {
         .expect("session_start failed");
 
     // list action should show no custom configurations
-    let result = configure_expert(&ctx, "list".to_string(), None, None, None, None).await;
+    let result = configure_expert(&ctx, ExpertConfigAction::List, None, None, None, None).await;
     assert!(result.is_ok(), "configure_expert list failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(output.contains("No custom configurations") || output.contains("expert configurations"), "Output: {}", output);
@@ -506,7 +507,7 @@ async fn test_configure_expert_set_get_delete() {
     let custom_prompt = "You are a test architect. Provide simple answers.";
     let result = configure_expert(
         &ctx,
-        "set".to_string(),
+        ExpertConfigAction::Set,
         Some("architect".to_string()),
         Some(custom_prompt.to_string()),
         None,
@@ -520,7 +521,7 @@ async fn test_configure_expert_set_get_delete() {
     // Get the configuration
     let result = configure_expert(
         &ctx,
-        "get".to_string(),
+        ExpertConfigAction::Get,
         Some("architect".to_string()),
         None,
         None,
@@ -535,7 +536,7 @@ async fn test_configure_expert_set_get_delete() {
     // Delete the configuration
     let result = configure_expert(
         &ctx,
-        "delete".to_string(),
+        ExpertConfigAction::Delete,
         Some("architect".to_string()),
         None,
         None,
@@ -800,7 +801,7 @@ async fn test_context_injection_with_goals() {
     // Create a goal
     goal(
         &ctx,
-        "create".to_string(),
+        GoalAction::Create,
         None, // goal_id
         Some("Fix authentication bug".to_string()), // title
         Some("High priority security issue".to_string()), // description

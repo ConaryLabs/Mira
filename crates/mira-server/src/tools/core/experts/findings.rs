@@ -162,7 +162,7 @@ pub async fn store_findings<C: ToolContext>(
 
         let result = ctx
             .pool()
-            .interact(move |conn| {
+            .run(move |conn| {
                 store_review_finding_sync(
                     conn,
                     project_id,
@@ -177,7 +177,6 @@ pub async fn store_findings<C: ToolContext>(
                     user_id_clone.as_deref(),
                     Some(&session_id_clone),
                 )
-                .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await;
 

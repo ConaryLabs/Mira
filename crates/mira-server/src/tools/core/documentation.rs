@@ -6,6 +6,7 @@ use crate::db::documentation::{
     get_doc_inventory, get_doc_task, mark_doc_task_applied, mark_doc_task_skipped, DocInventory,
     DocTask,
 };
+use crate::mcp::requests::DocumentationAction;
 use crate::tools::core::ToolContext;
 use std::path::Path;
 
@@ -20,7 +21,7 @@ pub async fn list_doc_tasks(
 
     let tasks = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             list_db_doc_tasks(
                 conn,
                 project_id_opt,
@@ -28,10 +29,8 @@ pub async fn list_doc_tasks(
                 doc_type.as_deref(),
                 priority.as_deref(),
             )
-            .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     if tasks.is_empty() {
         return Ok("No documentation tasks found.".to_string());
@@ -88,12 +87,8 @@ pub async fn skip_doc_task(
     let skip_reason_clone = skip_reason.clone();
 
     ctx.pool()
-        .interact(move |conn| {
-            mark_doc_task_skipped(conn, task_id, &skip_reason_clone)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| mark_doc_task_skipped(conn, task_id, &skip_reason_clone))
+        .await?;
 
     Ok(format!("Task {} skipped: {}", task_id, skip_reason))
 }
@@ -105,11 +100,8 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
 
     let inventory = ctx
         .pool()
-        .interact(move |conn| {
-            get_doc_inventory(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| get_doc_inventory(conn, project_id))
+        .await?;
 
     if inventory.is_empty() {
         return Ok("No documentation inventory found. Run scan to build inventory.".to_string());
@@ -161,12 +153,8 @@ pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
 
     // Clear the scan marker to force new scan
     ctx.pool()
-        .interact(move |conn| -> Result<(), anyhow::Error> {
-            clear_documentation_scan_marker_sync(conn, project_id)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| clear_documentation_scan_marker_sync(conn, project_id))
+        .await?;
 
     Ok(
         "Documentation scan triggered. Check `list_doc_tasks()` for results after scan completes."
@@ -184,11 +172,8 @@ pub async fn write_documentation<C: ToolContext>(
     // Get task details
     let task = ctx
         .pool()
-        .interact(move |conn| {
-            get_doc_task(conn, task_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        .run(move |conn| get_doc_task(conn, task_id))
+        .await?
         .ok_or(format!("Task {} not found", task_id))?;
 
     // Only allow writing for pending tasks
@@ -203,16 +188,14 @@ pub async fn write_documentation<C: ToolContext>(
     let project_id = task.project_id.ok_or("No project_id on task")?;
     let project_path = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             conn.query_row(
                 "SELECT path FROM projects WHERE id = ?",
                 [project_id],
                 |row| row.get::<_, String>(0),
             )
-            .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     // Build context for the expert
     let context = build_expert_context(ctx, &task, &project_path).await?;
@@ -255,11 +238,8 @@ pub async fn write_documentation<C: ToolContext>(
 
     // Mark task as applied
     ctx.pool()
-        .interact(move |conn| {
-            mark_doc_task_applied(conn, task_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| mark_doc_task_applied(conn, task_id))
+        .await?;
 
     Ok(format!(
         "Documentation written to `{}`\nTask {} marked complete.",
@@ -448,28 +428,24 @@ fn extract_markdown_from_response(response: &str) -> String {
 /// Actions: list, skip, inventory, scan, write
 pub async fn documentation<C: ToolContext>(
     ctx: &C,
-    action: String,
+    action: DocumentationAction,
     task_id: Option<i64>,
     reason: Option<String>,
     doc_type: Option<String>,
     priority: Option<String>,
     status: Option<String>,
 ) -> Result<String, String> {
-    match action.as_str() {
-        "list" => list_doc_tasks(ctx, status, doc_type, priority).await,
-        "skip" => {
+    match action {
+        DocumentationAction::List => list_doc_tasks(ctx, status, doc_type, priority).await,
+        DocumentationAction::Skip => {
             let id = task_id.ok_or("task_id is required for action 'skip'")?;
             skip_doc_task(ctx, id, reason).await
         }
-        "inventory" => show_doc_inventory(ctx).await,
-        "scan" => scan_documentation(ctx).await,
-        "write" => {
+        DocumentationAction::Inventory => show_doc_inventory(ctx).await,
+        DocumentationAction::Scan => scan_documentation(ctx).await,
+        DocumentationAction::Write => {
             let id = task_id.ok_or("task_id is required for action 'write'")?;
             write_documentation(ctx, id).await
         }
-        _ => Err(format!(
-            "Unknown action '{}'. Valid actions: list, skip, inventory, scan, write",
-            action
-        )),
     }
 }

@@ -2,38 +2,35 @@
 // Unified session management tools
 
 use crate::db::{create_session_sync, get_recent_sessions_sync, get_session_history_sync};
+use crate::mcp::requests::SessionHistoryAction;
 use crate::tools::core::ToolContext;
 use uuid::Uuid;
 
 /// Query session history
 pub async fn session_history<C: ToolContext>(
     ctx: &C,
-    action: String,
+    action: SessionHistoryAction,
     session_id: Option<String>,
     limit: Option<i64>,
 ) -> Result<String, String> {
     let limit = limit.unwrap_or(20) as usize;
 
-    match action.as_str() {
-        "current" => {
+    match action {
+        SessionHistoryAction::Current => {
             let session_id = ctx.get_session_id().await;
             match session_id {
                 Some(id) => Ok(format!("Current session: {}", id)),
                 None => Ok("No active session".to_string()),
             }
         }
-        "list_sessions" => {
+        SessionHistoryAction::ListSessions => {
             let project = ctx.get_project().await;
             let project_id = project.as_ref().map(|p| p.id).ok_or("No active project")?;
 
             let sessions = ctx
                 .pool()
-                .interact(move |conn| {
-                    get_recent_sessions_sync(conn, project_id, limit)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| get_recent_sessions_sync(conn, project_id, limit))
+                .await?;
 
             if sessions.is_empty() {
                 return Ok("No sessions found.".to_string());
@@ -51,7 +48,7 @@ pub async fn session_history<C: ToolContext>(
             }
             Ok(output)
         }
-        "get_history" => {
+        SessionHistoryAction::GetHistory => {
             // Use provided session_id or fall back to current session
             let target_session_id = match session_id {
                 Some(id) => id,
@@ -64,12 +61,8 @@ pub async fn session_history<C: ToolContext>(
             let session_id_clone = target_session_id.clone();
             let history = ctx
                 .pool()
-                .interact(move |conn| {
-                    get_session_history_sync(conn, &session_id_clone, limit)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                .run(move |conn| get_session_history_sync(conn, &session_id_clone, limit))
+                .await?;
 
             if history.is_empty() {
                 return Ok(format!(
@@ -103,10 +96,6 @@ pub async fn session_history<C: ToolContext>(
             }
             Ok(output)
         }
-        _ => Err(format!(
-            "Unknown action: {}. Use: list_sessions, get_history, current",
-            action
-        )),
     }
 }
 
@@ -126,12 +115,8 @@ pub async fn ensure_session<C: ToolContext>(ctx: &C) -> Result<String, String> {
     // Create session in database
     let new_id_clone = new_id.clone();
     ctx.pool()
-        .interact(move |conn| {
-            create_session_sync(conn, &new_id_clone, project_id)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| create_session_sync(conn, &new_id_clone, project_id))
+        .await?;
 
     // Set session ID in context
     ctx.set_session_id(new_id.clone()).await;

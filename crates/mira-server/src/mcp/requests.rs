@@ -4,10 +4,161 @@
 use rmcp::schemars;
 use serde::Deserialize;
 
+// ============================================================================
+// Action Enums - typed alternatives to stringly-typed action parameters
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectAction {
+    /// Initialize session with project context
+    Start,
+    /// Change active project
+    Set,
+    /// Show current project
+    Get,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalAction {
+    /// Get a goal by ID
+    Get,
+    /// Create a new goal
+    Create,
+    /// Create multiple goals at once
+    BulkCreate,
+    /// List goals
+    List,
+    /// Update a goal
+    Update,
+    /// Update goal progress
+    Progress,
+    /// Delete a goal
+    Delete,
+    /// Add a milestone to a goal
+    AddMilestone,
+    /// Mark a milestone as complete
+    CompleteMilestone,
+    /// Delete a milestone
+    DeleteMilestone,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionHistoryAction {
+    /// Show current session
+    Current,
+    /// List recent sessions
+    ListSessions,
+    /// Get history for a session
+    GetHistory,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexAction {
+    /// Index entire project
+    Project,
+    /// Index a single file
+    File,
+    /// Show index status
+    Status,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamAction {
+    /// Create a new team
+    Create,
+    /// Invite a user to a team
+    Invite,
+    /// Alias for invite
+    Add,
+    /// Remove a user from a team
+    Remove,
+    /// List teams
+    List,
+    /// List team members
+    Members,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossProjectAction {
+    /// Get sharing preferences
+    GetPreferences,
+    /// Alias for get_preferences
+    Status,
+    /// Enable pattern sharing
+    EnableSharing,
+    /// Disable pattern sharing
+    DisableSharing,
+    /// Reset privacy budget
+    ResetBudget,
+    /// Get sharing statistics
+    GetStats,
+    /// Extract patterns from project
+    ExtractPatterns,
+    /// Sync patterns with network
+    Sync,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpertConfigAction {
+    /// Set expert configuration
+    Set,
+    /// Get expert configuration
+    Get,
+    /// Delete expert configuration
+    Delete,
+    /// List all configurations
+    List,
+    /// List available providers
+    Providers,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentationAction {
+    /// List documentation tasks
+    List,
+    /// Skip a documentation task
+    Skip,
+    /// Show documentation inventory
+    Inventory,
+    /// Trigger documentation scan
+    Scan,
+    /// Write documentation for a task
+    Write,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingAction {
+    /// List findings
+    List,
+    /// Get a finding by ID
+    Get,
+    /// Review a finding
+    Review,
+    /// Get finding statistics
+    Stats,
+    /// Get learned patterns
+    Patterns,
+    /// Extract patterns from findings
+    Extract,
+}
+
+// ============================================================================
+// Request Structs
+// ============================================================================
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ProjectRequest {
     #[schemars(description = "Action: start (initialize session), set (change project), get (show current)")]
-    pub action: String,
+    pub action: ProjectAction,
     #[schemars(description = "Project root path (required for start/set)")]
     pub project_path: Option<String>,
     #[schemars(description = "Project name")]
@@ -93,7 +244,7 @@ pub struct CheckCapabilityRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoalRequest {
     #[schemars(description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress")]
-    pub action: String,
+    pub action: GoalAction,
     #[schemars(description = "Goal ID")]
     pub goal_id: Option<String>,
     #[schemars(description = "Title")]
@@ -125,7 +276,7 @@ pub struct GoalRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CrossProjectRequest {
     #[schemars(description = "Action: get_preferences/status/enable_sharing/disable_sharing/reset_budget/get_stats/extract_patterns/sync")]
-    pub action: String,
+    pub action: CrossProjectAction,
     #[schemars(description = "Enable pattern export (for enable_sharing)")]
     pub export: Option<bool>,
     #[schemars(description = "Enable pattern import (for enable_sharing)")]
@@ -139,7 +290,7 @@ pub struct CrossProjectRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
     #[schemars(description = "Action: project/file/status")]
-    pub action: String,
+    pub action: IndexAction,
     #[schemars(description = "Path")]
     pub path: Option<String>,
     #[schemars(description = "Commit limit")]
@@ -155,7 +306,7 @@ pub struct IndexRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionHistoryRequest {
     #[schemars(description = "Action: list_sessions/get_history/current")]
-    pub action: String,
+    pub action: SessionHistoryAction,
     #[schemars(description = "Session ID (for get_history)")]
     pub session_id: Option<String>,
     #[schemars(description = "Max results")]
@@ -185,7 +336,7 @@ pub struct ConsultExpertsRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConfigureExpertRequest {
     #[schemars(description = "Action: set/get/delete/list/providers")]
-    pub action: String,
+    pub action: ExpertConfigAction,
     #[schemars(description = "Expert role: architect/plan_reviewer/scope_analyst/code_reviewer/security")]
     pub role: Option<String>,
     #[schemars(description = "Custom system prompt (for 'set' action)")]
@@ -201,7 +352,7 @@ pub struct ConfigureExpertRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DocumentationRequest {
     #[schemars(description = "Action: list, skip, inventory, scan, write")]
-    pub action: String,
+    pub action: DocumentationAction,
     #[schemars(description = "Task ID (for skip/write actions)")]
     pub task_id: Option<i64>,
     #[schemars(description = "Reason for skipping (for skip action)")]
@@ -217,7 +368,7 @@ pub struct DocumentationRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TeamRequest {
     #[schemars(description = "Action: create/invite/remove/list/members")]
-    pub action: String,
+    pub action: TeamAction,
     #[schemars(description = "Team ID (for invite/remove/members actions)")]
     pub team_id: Option<i64>,
     #[schemars(description = "Team name (for create action)")]
@@ -235,7 +386,7 @@ pub struct TeamRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FindingRequest {
     #[schemars(description = "Action: list, get, review, stats, patterns, extract")]
-    pub action: String,
+    pub action: FindingAction,
     #[schemars(description = "Finding ID (for get/review single)")]
     pub finding_id: Option<i64>,
     #[schemars(description = "Finding IDs for bulk review")]

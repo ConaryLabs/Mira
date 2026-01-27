@@ -7,6 +7,7 @@ use crate::db::{
     update_finding_status_sync, bulk_update_finding_status_sync,
     get_relevant_corrections_sync, extract_patterns_from_findings_sync,
 };
+use crate::mcp::requests::FindingAction;
 use crate::utils::truncate;
 
 /// List review findings with optional filters
@@ -25,7 +26,7 @@ pub async fn list_findings<C: ToolContext>(
     let expert_role_clone = expert_role.clone();
     let findings = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             get_findings_sync(
                 conn,
                 project_id,
@@ -34,10 +35,8 @@ pub async fn list_findings<C: ToolContext>(
                 file_path_clone.as_deref(),
                 limit,
             )
-            .map_err(|e| anyhow::anyhow!(e))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     if findings.is_empty() {
         let mut msg = "No findings found".to_string();
@@ -56,10 +55,7 @@ pub async fn list_findings<C: ToolContext>(
     // Get stats for context
     let (pending, accepted, rejected, fixed) = ctx
         .pool()
-        .interact(move |conn| {
-            get_finding_stats_sync(conn, project_id)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
+        .run(move |conn| get_finding_stats_sync(conn, project_id))
         .await
         .unwrap_or((0, 0, 0, 0));
 
@@ -120,12 +116,8 @@ pub async fn review_finding<C: ToolContext>(
     // Get the finding first to verify it exists
     let finding = ctx
         .pool()
-        .interact(move |conn| {
-            get_finding_sync(conn, finding_id)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        .run(move |conn| get_finding_sync(conn, finding_id))
+        .await?
         .ok_or_else(|| format!("Finding {} not found", finding_id))?;
 
     if finding.status != "pending" {
@@ -144,7 +136,7 @@ pub async fn review_finding<C: ToolContext>(
     let reviewed_by_clone = reviewed_by.clone();
     let updated = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             update_finding_status_sync(
                 conn,
                 finding_id,
@@ -152,10 +144,8 @@ pub async fn review_finding<C: ToolContext>(
                 feedback_clone.as_deref(),
                 reviewed_by_clone.as_deref(),
             )
-            .map_err(|e| anyhow::anyhow!(e))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     if !updated {
         return Err(format!("Failed to update finding {}", finding_id));
@@ -204,12 +194,10 @@ pub async fn bulk_review_findings<C: ToolContext>(
 
     let updated = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             bulk_update_finding_status_sync(conn, &finding_ids, &status_clone, reviewed_by.as_deref())
-                .map_err(|e| anyhow::anyhow!(e))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     Ok(format!(
         "Updated {} of {} findings to '{}'",
@@ -226,12 +214,8 @@ pub async fn get_finding<C: ToolContext>(
 ) -> Result<String, String> {
     let finding = ctx
         .pool()
-        .interact(move |conn| {
-            get_finding_sync(conn, finding_id)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        .run(move |conn| get_finding_sync(conn, finding_id))
+        .await?
         .ok_or_else(|| format!("Finding {} not found", finding_id))?;
 
     let mut output = format!("Finding #{} ({})\n", finding.id, finding.status);
@@ -280,12 +264,10 @@ pub async fn get_learned_patterns<C: ToolContext>(
 
     let corrections = ctx
         .pool()
-        .interact(move |conn| {
+        .run(move |conn| {
             get_relevant_corrections_sync(conn, project_id, correction_type.as_deref(), limit)
-                .map_err(|e| anyhow::anyhow!(e))
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     if corrections.is_empty() {
         return Ok("No learned patterns yet. Review findings to build up patterns.".to_string());
@@ -315,12 +297,8 @@ pub async fn extract_patterns<C: ToolContext>(ctx: &C) -> Result<String, String>
 
     let created = ctx
         .pool()
-        .interact(move |conn| {
-            extract_patterns_from_findings_sync(conn, project_id)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| extract_patterns_from_findings_sync(conn, project_id))
+        .await?;
 
     if created == 0 {
         Ok("No new patterns extracted. Need more accepted findings with suggestions.".to_string())
@@ -335,12 +313,8 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<String, String
 
     let (pending, accepted, rejected, fixed) = ctx
         .pool()
-        .interact(move |conn| {
-            get_finding_stats_sync(conn, project_id)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| get_finding_stats_sync(conn, project_id))
+        .await?;
 
     let total = pending + accepted + rejected + fixed;
     if total == 0 {
@@ -364,7 +338,7 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<String, String
 #[allow(clippy::too_many_arguments)]
 pub async fn finding<C: ToolContext>(
     ctx: &C,
-    action: String,
+    action: FindingAction,
     finding_id: Option<i64>,
     finding_ids: Option<Vec<i64>>,
     status: Option<String>,
@@ -374,13 +348,13 @@ pub async fn finding<C: ToolContext>(
     correction_type: Option<String>,
     limit: Option<i64>,
 ) -> Result<String, String> {
-    match action.as_str() {
-        "list" => list_findings(ctx, status, file_path, expert_role, limit).await,
-        "get" => {
+    match action {
+        FindingAction::List => list_findings(ctx, status, file_path, expert_role, limit).await,
+        FindingAction::Get => {
             let id = finding_id.ok_or("finding_id is required for action 'get'")?;
             get_finding(ctx, id).await
         }
-        "review" => {
+        FindingAction::Review => {
             let new_status = status.ok_or("status is required for action 'review'")?;
             // Check if bulk review (finding_ids) or single review (finding_id)
             if let Some(ids) = finding_ids {
@@ -391,13 +365,8 @@ pub async fn finding<C: ToolContext>(
             let id = finding_id.ok_or("finding_id (or finding_ids for bulk) is required for action 'review'")?;
             review_finding(ctx, id, new_status, feedback).await
         }
-        "stats" => get_finding_stats(ctx).await,
-        "patterns" => get_learned_patterns(ctx, correction_type, limit).await,
-        "extract" => extract_patterns(ctx).await,
-        _ => Err(format!(
-            "Unknown action '{}'. Valid actions: list, get, review, stats, patterns, extract",
-            action
-        )),
+        FindingAction::Stats => get_finding_stats(ctx).await,
+        FindingAction::Patterns => get_learned_patterns(ctx, correction_type, limit).await,
+        FindingAction::Extract => extract_patterns(ctx).await,
     }
 }
-

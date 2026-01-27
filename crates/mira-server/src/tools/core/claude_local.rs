@@ -18,12 +18,8 @@ pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, Stri
     let project_path = project.path.clone();
     let count = ctx
         .pool()
-        .interact(move |conn| {
-            write_claude_local_md_sync(conn, project_id, &project_path)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| write_claude_local_md_sync(conn, project_id, &project_path))
+        .await?;
 
     if count == 0 {
         Ok("No memories to export (or all memories are low-confidence).".to_string())
@@ -42,12 +38,8 @@ pub async fn import_claude_local_md_async(
     project_path: &str,
 ) -> Result<usize, String> {
     let project_path = project_path.to_string();
-    pool.interact(move |conn| {
-        import_claude_local_md_sync(conn, project_id, &project_path)
-            .map_err(|e| anyhow::anyhow!(e))
-    })
-    .await
-    .map_err(|e| e.to_string())
+    pool.run(move |conn| import_claude_local_md_sync(conn, project_id, &project_path))
+        .await
 }
 
 /// Parse CLAUDE.local.md and extract memory entries

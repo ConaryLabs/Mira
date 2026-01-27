@@ -307,7 +307,7 @@ async fn execute_find_callers<C: ToolContext>(ctx: &C, function_name: &str, limi
 
     let callers = ctx
         .pool()
-        .interact(move |conn| Ok(find_callers(conn, project_id, &fn_name, limit)))
+        .run(move |conn| Ok::<_, String>(find_callers(conn, project_id, &fn_name, limit)))
         .await
         .unwrap_or_default();
 
@@ -331,7 +331,7 @@ async fn execute_find_callees<C: ToolContext>(ctx: &C, function_name: &str, limi
 
     let callees = ctx
         .pool()
-        .interact(move |conn| Ok(find_callees(conn, project_id, &fn_name, limit)))
+        .run(move |conn| Ok::<_, String>(find_callees(conn, project_id, &fn_name, limit)))
         .await
         .unwrap_or_default();
 
@@ -357,12 +357,8 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
             // Run vector search via connection pool
             let results: Result<Vec<(i64, String, f32)>, String> = ctx
                 .pool()
-                .interact(move |conn| {
-                    recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit)
-                        .map_err(|e| anyhow::anyhow!(e))
-                })
-                .await
-                .map_err(|e| e.to_string());
+                .run(move |conn| recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit))
+                .await;
 
             if let Ok(results) = results {
                 if !results.is_empty() {
@@ -386,12 +382,8 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
     let query_owned = query.to_string();
     let result = ctx
         .pool()
-        .interact(move |conn| {
-            search_memories_sync(conn, project_id, &query_owned, None, limit)
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-        .map_err(|e| e.to_string());
+        .run(move |conn| search_memories_sync(conn, project_id, &query_owned, None, limit))
+        .await;
 
     match result {
         Ok(memories) => {

@@ -13,9 +13,8 @@ pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, String
 
     let mut recap = ctx
         .pool()
-        .interact(move |conn| Ok(build_session_recap_sync(conn, project_id)))
-        .await
-        .map_err(|e| e.to_string())?;
+        .run(move |conn| Ok::<_, String>(build_session_recap_sync(conn, project_id)))
+        .await?;
 
     // Add Claude Code session notes if available
     if let Some(proj) = &project {
