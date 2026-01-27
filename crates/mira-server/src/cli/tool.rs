@@ -127,7 +127,8 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
 
 /// Returns the list of tool names supported by the CLI dispatcher.
 /// Used for verification against MCP router.
-pub fn list_cli_tool_names() -> Vec<&'static str> {
+#[cfg(test)]
+fn list_cli_tool_names() -> Vec<&'static str> {
     vec![
         "project",
         "remember",
