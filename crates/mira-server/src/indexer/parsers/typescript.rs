@@ -4,36 +4,51 @@
 #![allow(clippy::too_many_arguments)]
 
 use anyhow::{anyhow, Result};
-use tree_sitter::{Parser, Node};
+use tree_sitter::{Node, Parser};
 
-use super::{Symbol, Import, FunctionCall, ParseResult, node_text};
+use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
 
-/// Parse TypeScript source code
-pub fn parse(parser: &mut Parser, content: &str) -> Result<ParseResult> {
-    let tree = parser.parse(content, None)
-        .ok_or_else(|| anyhow!("Failed to parse TypeScript code"))?;
+/// TypeScript/JavaScript language parser
+/// Handles .ts, .tsx, .js, .jsx files using the TypeScript grammar
+pub struct TypeScriptParser;
 
-    let mut symbols = Vec::new();
-    let mut imports = Vec::new();
-    let mut calls = Vec::new();
-    let bytes = content.as_bytes();
+impl LanguageParser for TypeScriptParser {
+    fn language_id(&self) -> &'static str {
+        "typescript"
+    }
 
-    walk(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None, "typescript");
-    Ok((symbols, imports, calls))
-}
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ts", "tsx", "js", "jsx"]
+    }
 
-/// Parse JavaScript source code (same logic, different language tag)
-pub fn parse_javascript(parser: &mut Parser, content: &str) -> Result<ParseResult> {
-    let tree = parser.parse(content, None)
-        .ok_or_else(|| anyhow!("Failed to parse JavaScript code"))?;
+    fn configure_parser(&self, parser: &mut Parser) -> Result<()> {
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .map_err(|e| anyhow!("Failed to set TypeScript language: {}", e))
+    }
 
-    let mut symbols = Vec::new();
-    let mut imports = Vec::new();
-    let mut calls = Vec::new();
-    let bytes = content.as_bytes();
+    fn parse(&self, parser: &mut Parser, content: &str) -> Result<ParseResult> {
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| anyhow!("Failed to parse TypeScript/JavaScript code"))?;
 
-    walk(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None, "javascript");
-    Ok((symbols, imports, calls))
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut calls = Vec::new();
+        let bytes = content.as_bytes();
+
+        walk(
+            tree.root_node(),
+            bytes,
+            &mut symbols,
+            &mut imports,
+            &mut calls,
+            None,
+            None,
+            "typescript",
+        );
+        Ok((symbols, imports, calls))
+    }
 }
 
 /// Walk the AST and extract symbols, imports, and calls
@@ -271,15 +286,18 @@ mod tests {
     use super::*;
 
     fn parse_ts(code: &str) -> ParseResult {
+        let ts_parser = TypeScriptParser;
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()).unwrap();
-        parse(&mut parser, code).unwrap()
+        ts_parser.configure_parser(&mut parser).unwrap();
+        ts_parser.parse(&mut parser, code).unwrap()
     }
 
     fn parse_js(code: &str) -> ParseResult {
+        // TypeScript grammar handles JavaScript too
+        let ts_parser = TypeScriptParser;
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_javascript::LANGUAGE.into()).unwrap();
-        parse_javascript(&mut parser, code).unwrap()
+        ts_parser.configure_parser(&mut parser).unwrap();
+        ts_parser.parse(&mut parser, code).unwrap()
     }
 
     #[test]
@@ -429,6 +447,7 @@ describe('MyModule', () => {
 
     #[test]
     fn test_parse_javascript() {
+        // JavaScript is parsed using the TypeScript grammar (TS is a superset of JS)
         let code = r#"
 function helloWorld() {
     console.log("Hello");
@@ -446,6 +465,7 @@ class MyClass {
         assert!(symbols.iter().any(|s| s.name == "MyClass"));
 
         let func_sym = symbols.iter().find(|s| s.name == "helloWorld").unwrap();
-        assert_eq!(func_sym.language, "javascript");
+        // All JS/TS files use "typescript" as the language since TS grammar handles both
+        assert_eq!(func_sym.language, "typescript");
     }
 }

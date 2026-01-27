@@ -2,22 +2,49 @@
 // Go language parser using tree-sitter
 
 use anyhow::{anyhow, Result};
-use tree_sitter::{Parser, Node};
+use tree_sitter::{Node, Parser};
 
-use super::{Symbol, Import, FunctionCall, ParseResult, node_text};
+use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
 
-/// Parse Go source code
-pub fn parse(parser: &mut Parser, content: &str) -> Result<ParseResult> {
-    let tree = parser.parse(content, None)
-        .ok_or_else(|| anyhow!("Failed to parse Go code"))?;
+/// Go language parser
+pub struct GoParser;
 
-    let mut symbols = Vec::new();
-    let mut imports = Vec::new();
-    let mut calls = Vec::new();
-    let bytes = content.as_bytes();
+impl LanguageParser for GoParser {
+    fn language_id(&self) -> &'static str {
+        "go"
+    }
 
-    walk(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
-    Ok((symbols, imports, calls))
+    fn extensions(&self) -> &'static [&'static str] {
+        &["go"]
+    }
+
+    fn configure_parser(&self, parser: &mut Parser) -> Result<()> {
+        parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .map_err(|e| anyhow!("Failed to set Go language: {}", e))
+    }
+
+    fn parse(&self, parser: &mut Parser, content: &str) -> Result<ParseResult> {
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| anyhow!("Failed to parse Go code"))?;
+
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut calls = Vec::new();
+        let bytes = content.as_bytes();
+
+        walk(
+            tree.root_node(),
+            bytes,
+            &mut symbols,
+            &mut imports,
+            &mut calls,
+            None,
+            None,
+        );
+        Ok((symbols, imports, calls))
+    }
 }
 
 /// Walk the AST and extract symbols, imports, and calls
@@ -260,9 +287,10 @@ mod tests {
     use super::*;
 
     fn parse_go(code: &str) -> ParseResult {
+        let go_parser = GoParser;
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_go::LANGUAGE.into()).unwrap();
-        parse(&mut parser, code).unwrap()
+        go_parser.configure_parser(&mut parser).unwrap();
+        go_parser.parse(&mut parser, code).unwrap()
     }
 
     #[test]
