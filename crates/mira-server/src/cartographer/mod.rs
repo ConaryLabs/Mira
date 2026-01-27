@@ -13,7 +13,7 @@ pub use detection::{
     detect_modules, detect_rust_modules, find_entry_points as detect_entry_points,
     is_workspace, parse_crate_name,
 };
-pub use map::{get_modules_with_purposes, get_modules_with_purposes_pool, get_or_generate_map, get_or_generate_map_pool};
+pub use map::{get_modules_with_purposes_pool, get_or_generate_map_pool};
 pub use summaries::{
     build_summary_prompt, get_module_code_preview, get_module_full_code,
     get_modules_needing_summaries, parse_summary_response, update_module_purposes,

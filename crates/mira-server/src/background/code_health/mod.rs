@@ -123,12 +123,6 @@ pub fn mark_health_scan_needed_sync(conn: &rusqlite::Connection, project_id: i64
     Ok(())
 }
 
-/// Mark project as needing a health scan (called by file watcher)
-/// Convenience wrapper for callers that still use Database
-pub fn mark_health_scan_needed(db: &crate::db::Database, project_id: i64) -> Result<(), String> {
-    let conn = db.conn();
-    mark_health_scan_needed_sync(&conn, project_id)
-}
 
 /// Scan a project for health issues
 async fn scan_project_health(
