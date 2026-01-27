@@ -65,9 +65,9 @@ pub async fn remember<C: ToolContext>(
         })
         .await?;
 
-    // Store embedding if available
+    // Store embedding if available (using RETRIEVAL_DOCUMENT task type for storage)
     if let Some(embeddings) = ctx.embeddings() {
-        match embeddings.embed(&content).await {
+        match embeddings.embed_for_storage(&content).await {
             Ok(embedding) => {
                 let embedding_bytes = embedding_to_bytes(&embedding);
                 let content_clone = content.clone();
@@ -112,8 +112,9 @@ pub async fn recall<C: ToolContext>(
     let limit = limit.unwrap_or(10) as usize;
 
     // Try semantic search first if embeddings available (with branch-aware boosting)
+    // Uses RETRIEVAL_QUERY task type for optimal search results
     if let Some(embeddings) = ctx.embeddings() {
-        if let Ok(query_embedding) = embeddings.embed(&query).await {
+        if let Ok(query_embedding) = embeddings.embed_for_query(&query).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
             let user_id_for_query = user_id.clone();
             let branch_for_query = current_branch.clone();

@@ -363,9 +363,9 @@ async fn parse_and_store_capabilities(
             }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
         }).await.map_err(|e| e.to_string())?;
 
-        // Generate and store embedding
+        // Generate and store embedding (RETRIEVAL_DOCUMENT for storage)
         if let Some(emb_client) = embeddings {
-            if let Ok(embedding) = emb_client.embed(&content).await {
+            if let Ok(embedding) = emb_client.embed_for_storage(&content).await {
                 let pool_clone = pool.clone();
                 pool_clone.interact(move |conn| {
                     store_embedding(conn, id, &content, &embedding)

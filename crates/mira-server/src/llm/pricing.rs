@@ -69,7 +69,6 @@ pub fn get_pricing(provider: Provider, model: &str) -> Option<ModelPricing> {
     match provider {
         Provider::DeepSeek => get_deepseek_pricing(model),
         Provider::Gemini => get_gemini_pricing(model),
-        Provider::Glm => get_glm_pricing(model),
         Provider::Ollama => Some(ModelPricing::new(0.0, 0.0)), // Local, no cost
     }
 }
@@ -100,27 +99,6 @@ fn get_gemini_pricing(model: &str) -> Option<ModelPricing> {
         // Gemini 3 Flash: $0.50/$3.00
         "gemini-3-flash" | "gemini-3-flash-preview" => {
             Some(ModelPricing::new(0.50, 3.00))
-        }
-        _ => None,
-    }
-}
-
-/// GLM (Z.AI) pricing (as of 2026-01-26)
-fn get_glm_pricing(model: &str) -> Option<ModelPricing> {
-    match model {
-        // GLM-4.7: $0.60/$2.20
-        "glm-4.7" => Some(ModelPricing::new(0.60, 2.20)),
-        // GLM-4.7-FlashX: $0.07/$0.40
-        "glm-4.7-flashx" => Some(ModelPricing::new(0.07, 0.40)),
-        // GLM-4.7-Flash: Free
-        "glm-4.7-flash" => Some(ModelPricing::new(0.0, 0.0)),
-        // GLM-4.6: $0.60/$2.20
-        "glm-4.6" => Some(ModelPricing::new(0.60, 2.20)),
-        // GLM-4.5: $0.60/$2.20
-        "glm-4.5" => Some(ModelPricing::new(0.60, 2.20)),
-        // Default for unknown GLM models
-        _ if model.starts_with("glm") => {
-            Some(ModelPricing::new(0.60, 2.20))
         }
         _ => None,
     }
@@ -194,15 +172,6 @@ mod tests {
         // 1M tokens each direction
         let cost = pricing.calculate_cost(1_000_000, 1_000_000, None);
         assert!((cost - 14.0).abs() < 0.01); // $2 input + $12 output
-    }
-
-    #[test]
-    fn test_glm_pricing() {
-        let pricing = get_pricing(Provider::Glm, "glm-4.7").unwrap();
-
-        // 1M tokens each direction
-        let cost = pricing.calculate_cost(1_000_000, 1_000_000, None);
-        assert!((cost - 2.80).abs() < 0.01); // $0.60 input + $2.20 output
     }
 
     #[test]

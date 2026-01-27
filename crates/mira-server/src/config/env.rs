@@ -11,8 +11,6 @@ pub struct ApiKeys {
     pub deepseek: Option<String>,
     /// Gemini/Google API key (GEMINI_API_KEY or GOOGLE_API_KEY)
     pub gemini: Option<String>,
-    /// GLM/ZhipuAI API key (ZAI_API_KEY)
-    pub glm: Option<String>,
 }
 
 impl ApiKeys {
@@ -21,9 +19,8 @@ impl ApiKeys {
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
         let gemini = Self::read_key("GEMINI_API_KEY")
             .or_else(|| Self::read_key("GOOGLE_API_KEY"));
-        let glm = Self::read_key("ZAI_API_KEY");
 
-        let keys = Self { deepseek, gemini, glm };
+        let keys = Self { deepseek, gemini };
         keys.log_status();
         keys
     }
@@ -44,9 +41,6 @@ impl ApiKeys {
         if self.gemini.is_some() {
             available.push("Gemini");
         }
-        if self.glm.is_some() {
-            available.push("GLM");
-        }
 
         if available.is_empty() {
             warn!("No API keys configured - LLM features will be unavailable");
@@ -57,7 +51,7 @@ impl ApiKeys {
 
     /// Check if any LLM provider is available
     pub fn has_llm_provider(&self) -> bool {
-        self.deepseek.is_some() || self.gemini.is_some() || self.glm.is_some()
+        self.deepseek.is_some() || self.gemini.is_some()
     }
 
     /// Check if embeddings are available (requires Gemini key)
@@ -73,9 +67,6 @@ impl ApiKeys {
         }
         if self.gemini.is_some() {
             providers.push("Gemini");
-        }
-        if self.glm.is_some() {
-            providers.push("GLM");
         }
         if providers.is_empty() {
             "None".to_string()
@@ -229,7 +220,7 @@ impl EnvConfig {
         // Check for LLM providers
         if !self.api_keys.has_llm_provider() {
             validation.add_warning(
-                "No LLM API keys configured. Set DEEPSEEK_API_KEY, GEMINI_API_KEY, or ZAI_API_KEY."
+                "No LLM API keys configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY."
             );
         }
 
@@ -242,10 +233,10 @@ impl EnvConfig {
 
         // Validate default provider if set
         if let Some(ref provider) = self.default_provider {
-            let valid_providers = ["deepseek", "gemini", "glm"];
+            let valid_providers = ["deepseek", "gemini"];
             if !valid_providers.contains(&provider.to_lowercase().as_str()) {
                 validation.add_warning(format!(
-                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, gemini, glm",
+                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, gemini",
                     provider
                 ));
             }
@@ -273,7 +264,6 @@ mod tests {
         let keys = ApiKeys {
             deepseek: Some("test-key".to_string()),
             gemini: None,
-            glm: None,
         };
         assert!(keys.has_llm_provider());
         assert!(!keys.has_embeddings());

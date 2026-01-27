@@ -202,9 +202,9 @@ pub async fn check_capability<C: ToolContext>(
     let context_header = format_project_header(project.as_ref());
     let project_path = project.as_ref().map(|p| p.path.clone());
 
-    // Step 1: Search capability memories
+    // Step 1: Search capability memories (using RETRIEVAL_QUERY for optimal search)
     if let Some(embeddings) = ctx.embeddings() {
-        if let Ok(query_embedding) = embeddings.embed(&description).await {
+        if let Ok(query_embedding) = embeddings.embed_for_query(&description).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
 
             // Run vector search via connection pool

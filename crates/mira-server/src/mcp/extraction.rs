@@ -146,9 +146,9 @@ async fn extract_and_store(
             }).map_err(|e| anyhow::anyhow!("{}", e))
         }).await?;
 
-        // Store embedding if available (also marks fact as having embedding)
+        // Store embedding if available (RETRIEVAL_DOCUMENT for storage)
         if let Some(embeddings) = embeddings {
-            if let Ok(embedding) = embeddings.embed(&outcome.content).await {
+            if let Ok(embedding) = embeddings.embed_for_storage(&outcome.content).await {
                 let embedding_bytes = embedding_to_bytes(&embedding);
                 let content_for_embed = outcome.content.clone();
                 if let Err(e) = pool.interact(move |conn| {

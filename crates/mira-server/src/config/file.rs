@@ -80,11 +80,11 @@ mod tests {
     fn test_parse_config() {
         let toml = r#"
 [llm]
-expert_provider = "glm"
+expert_provider = "deepseek"
 background_provider = "deepseek"
 "#;
         let config: MiraConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.expert_provider(), Some(Provider::Glm));
+        assert_eq!(config.expert_provider(), Some(Provider::DeepSeek));
         assert_eq!(config.background_provider(), Some(Provider::DeepSeek));
     }
 

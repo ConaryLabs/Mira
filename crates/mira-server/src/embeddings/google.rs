@@ -52,7 +52,7 @@ impl GoogleEmbeddingModel {
     /// Google supports flexible dimensions: 768, 1536, or 3072 recommended
     pub fn default_dimensions(&self) -> usize {
         match self {
-            Self::GeminiEmbedding001 => 768, // Use 768 for efficiency, can be configured
+            Self::GeminiEmbedding001 => 1536, // Match existing vec table schema
         }
     }
 
@@ -238,8 +238,28 @@ impl GoogleEmbeddings {
         format!("{}/{}:batchEmbedContents", API_URL, self.model.model_name())
     }
 
-    /// Embed a single text
+    /// Embed a single text using the default task type
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed_with_task(text, self.task_type).await
+    }
+
+    /// Embed text optimized for document storage (RETRIEVAL_DOCUMENT)
+    pub async fn embed_for_storage(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed_with_task(text, TaskType::RetrievalDocument).await
+    }
+
+    /// Embed text optimized for search queries (RETRIEVAL_QUERY)
+    pub async fn embed_for_query(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed_with_task(text, TaskType::RetrievalQuery).await
+    }
+
+    /// Embed code content (CODE_RETRIEVAL_QUERY)
+    pub async fn embed_code(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed_with_task(text, TaskType::CodeRetrievalQuery).await
+    }
+
+    /// Embed a single text with a specific task type
+    pub async fn embed_with_task(&self, text: &str, task_type: TaskType) -> Result<Vec<f32>> {
         // Truncate if too long
         let text = if text.len() > MAX_TEXT_CHARS {
             debug!("Truncating text from {} to {} chars", text.len(), MAX_TEXT_CHARS);
@@ -253,7 +273,7 @@ impl GoogleEmbeddings {
             "content": {
                 "parts": [{"text": text}]
             },
-            "taskType": self.task_type.as_str(),
+            "taskType": task_type.as_str(),
             "outputDimensionality": self.dimensions
         });
 
@@ -314,8 +334,23 @@ impl GoogleEmbeddings {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error")))
     }
 
-    /// Embed multiple texts in batch
+    /// Embed multiple texts in batch using the default task type
     pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch_with_task(texts, self.task_type).await
+    }
+
+    /// Embed multiple texts optimized for document storage (RETRIEVAL_DOCUMENT)
+    pub async fn embed_batch_for_storage(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch_with_task(texts, TaskType::RetrievalDocument).await
+    }
+
+    /// Embed multiple texts optimized for code (CODE_RETRIEVAL_QUERY)
+    pub async fn embed_batch_code(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch_with_task(texts, TaskType::CodeRetrievalQuery).await
+    }
+
+    /// Embed multiple texts with a specific task type
+    pub async fn embed_batch_with_task(&self, texts: &[String], task_type: TaskType) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
         }
@@ -324,7 +359,7 @@ impl GoogleEmbeddings {
         if texts.len() <= 2 {
             let mut results = Vec::with_capacity(texts.len());
             for text in texts {
-                results.push(self.embed(text).await?);
+                results.push(self.embed_with_task(text, task_type).await?);
             }
             return Ok(results);
         }
@@ -337,7 +372,7 @@ impl GoogleEmbeddings {
         let num_batches = chunks.len();
 
         if num_batches == 1 {
-            return self.embed_batch_inner(&chunks[0]).await;
+            return self.embed_batch_inner(&chunks[0], task_type).await;
         }
 
         debug!("Embedding {} texts in {} parallel batches", texts.len(), num_batches);
@@ -345,7 +380,7 @@ impl GoogleEmbeddings {
         // Process batches in parallel
         let futures: Vec<_> = chunks
             .iter()
-            .map(|chunk| self.embed_batch_inner(chunk))
+            .map(|chunk| self.embed_batch_inner(chunk, task_type))
             .collect();
 
         let results = futures::future::join_all(futures).await;
@@ -360,7 +395,7 @@ impl GoogleEmbeddings {
     }
 
     /// Internal batch embedding using Google's batchEmbedContents
-    async fn embed_batch_inner(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    async fn embed_batch_inner(&self, texts: &[String], task_type: TaskType) -> Result<Vec<Vec<f32>>> {
         // Build requests array
         let requests: Vec<serde_json::Value> = texts
             .iter()
@@ -375,7 +410,7 @@ impl GoogleEmbeddings {
                     "content": {
                         "parts": [{"text": truncated}]
                     },
-                    "taskType": self.task_type.as_str(),
+                    "taskType": task_type.as_str(),
                     "outputDimensionality": self.dimensions
                 })
             })

@@ -35,8 +35,8 @@ pub async fn process_pending_embeddings(
     // Extract texts for batch embedding
     let texts: Vec<String> = pending.iter().map(|p| p.chunk_content.clone()).collect();
 
-    // Generate embeddings in batch
-    let embeddings_result = emb.embed_batch(&texts).await
+    // Generate embeddings in batch (RETRIEVAL_DOCUMENT for storage)
+    let embeddings_result = emb.embed_batch_for_storage(&texts).await
         .map_err(|e| format!("Embedding generation failed: {}", e))?;
 
     // Store embeddings and cleanup pending queue

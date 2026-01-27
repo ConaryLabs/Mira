@@ -93,14 +93,42 @@ impl EmbeddingClient {
         self.inner.set_project_id(project_id).await;
     }
 
-    /// Embed a single text
+    /// Embed a single text using the default task type
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         self.inner.embed(text).await
     }
 
-    /// Embed multiple texts in batch
+    /// Embed text optimized for document storage (RETRIEVAL_DOCUMENT)
+    /// Use this when storing memories for later retrieval
+    pub async fn embed_for_storage(&self, text: &str) -> Result<Vec<f32>> {
+        self.inner.embed_for_storage(text).await
+    }
+
+    /// Embed text optimized for search queries (RETRIEVAL_QUERY)
+    /// Use this when searching/recalling memories
+    pub async fn embed_for_query(&self, text: &str) -> Result<Vec<f32>> {
+        self.inner.embed_for_query(text).await
+    }
+
+    /// Embed code content (CODE_RETRIEVAL_QUERY)
+    /// Use this for code indexing and semantic code search
+    pub async fn embed_code(&self, text: &str) -> Result<Vec<f32>> {
+        self.inner.embed_code(text).await
+    }
+
+    /// Embed multiple texts in batch using the default task type
     pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         self.inner.embed_batch(texts).await
+    }
+
+    /// Embed multiple texts optimized for document storage (RETRIEVAL_DOCUMENT)
+    pub async fn embed_batch_for_storage(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.inner.embed_batch_for_storage(texts).await
+    }
+
+    /// Embed multiple texts optimized for code (CODE_RETRIEVAL_QUERY)
+    pub async fn embed_batch_code(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.inner.embed_batch_code(texts).await
     }
 
     /// Get the inner Google embeddings client

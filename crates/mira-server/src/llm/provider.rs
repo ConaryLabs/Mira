@@ -14,7 +14,6 @@ use super::{ChatResult, Message, Tool};
 pub enum Provider {
     DeepSeek,
     Gemini,
-    Glm,    // GLM 4.7 (Z.AI) with thinking mode
     Ollama, // Reserved for local sovereignty - not implemented yet
 }
 
@@ -24,7 +23,6 @@ impl Provider {
         match s.to_lowercase().as_str() {
             "deepseek" => Some(Self::DeepSeek),
             "gemini" => Some(Self::Gemini),
-            "glm" | "zai" => Some(Self::Glm),
             "ollama" => Some(Self::Ollama),
             _ => None,
         }
@@ -35,7 +33,6 @@ impl Provider {
         match self {
             Self::DeepSeek => "DEEPSEEK_API_KEY",
             Self::Gemini => "GEMINI_API_KEY",
-            Self::Glm => "ZAI_API_KEY",
             Self::Ollama => "OLLAMA_HOST", // Ollama uses host, not API key
         }
     }
@@ -45,7 +42,6 @@ impl Provider {
         match self {
             Self::DeepSeek => "deepseek-reasoner",
             Self::Gemini => "gemini-3-pro-preview",
-            Self::Glm => "glm-4.7",
             Self::Ollama => "llama3.3",
         }
     }
@@ -56,7 +52,6 @@ impl fmt::Display for Provider {
         match self {
             Self::DeepSeek => write!(f, "deepseek"),
             Self::Gemini => write!(f, "gemini"),
-            Self::Glm => write!(f, "glm"),
             Self::Ollama => write!(f, "ollama"),
         }
     }
@@ -159,14 +154,6 @@ mod tests {
     }
 
     #[test]
-    fn test_provider_from_str_glm() {
-        assert_eq!(Provider::from_str("glm"), Some(Provider::Glm));
-        assert_eq!(Provider::from_str("GLM"), Some(Provider::Glm));
-        assert_eq!(Provider::from_str("zai"), Some(Provider::Glm));
-        assert_eq!(Provider::from_str("ZAI"), Some(Provider::Glm));
-    }
-
-    #[test]
     fn test_provider_from_str_ollama() {
         assert_eq!(Provider::from_str("ollama"), Some(Provider::Ollama));
         assert_eq!(Provider::from_str("Ollama"), Some(Provider::Ollama));
@@ -188,7 +175,6 @@ mod tests {
     fn test_provider_api_key_env_var() {
         assert_eq!(Provider::DeepSeek.api_key_env_var(), "DEEPSEEK_API_KEY");
         assert_eq!(Provider::Gemini.api_key_env_var(), "GEMINI_API_KEY");
-        assert_eq!(Provider::Glm.api_key_env_var(), "ZAI_API_KEY");
         assert_eq!(Provider::Ollama.api_key_env_var(), "OLLAMA_HOST");
     }
 
@@ -200,7 +186,6 @@ mod tests {
     fn test_provider_default_model() {
         assert_eq!(Provider::DeepSeek.default_model(), "deepseek-reasoner");
         assert_eq!(Provider::Gemini.default_model(), "gemini-3-pro-preview");
-        assert_eq!(Provider::Glm.default_model(), "glm-4.7");
         assert_eq!(Provider::Ollama.default_model(), "llama3.3");
     }
 
@@ -212,7 +197,6 @@ mod tests {
     fn test_provider_display() {
         assert_eq!(format!("{}", Provider::DeepSeek), "deepseek");
         assert_eq!(format!("{}", Provider::Gemini), "gemini");
-        assert_eq!(format!("{}", Provider::Glm), "glm");
         assert_eq!(format!("{}", Provider::Ollama), "ollama");
     }
 
@@ -246,9 +230,6 @@ mod tests {
 
         let json = serde_json::to_string(&Provider::Gemini).unwrap();
         assert_eq!(json, "\"gemini\"");
-
-        let json = serde_json::to_string(&Provider::Glm).unwrap();
-        assert_eq!(json, "\"glm\"");
     }
 
     #[test]
@@ -258,9 +239,6 @@ mod tests {
 
         let provider: Provider = serde_json::from_str("\"gemini\"").unwrap();
         assert_eq!(provider, Provider::Gemini);
-
-        let provider: Provider = serde_json::from_str("\"glm\"").unwrap();
-        assert_eq!(provider, Provider::Glm);
     }
 
     // ============================================================================

@@ -116,7 +116,7 @@ pub async fn run_mcp_server() -> Result<()> {
         let providers: Vec<_> = llm_factory.available_providers().iter().map(|p| p.to_string()).collect();
         info!("LLM providers available: {}", providers.join(", "));
     } else {
-        info!("No LLM providers configured (set DEEPSEEK_API_KEY, ZAI_API_KEY, or GEMINI_API_KEY)");
+        info!("No LLM providers configured (set DEEPSEEK_API_KEY or GEMINI_API_KEY)");
     }
 
     // Spawn background worker for batch processing
