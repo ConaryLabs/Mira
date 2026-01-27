@@ -6,6 +6,7 @@ mod capabilities;
 pub mod diff_analysis;
 pub mod documentation;
 mod embeddings;
+mod pondering;
 mod summaries;
 pub mod code_health;
 pub mod watcher;
@@ -132,6 +133,15 @@ impl BackgroundWorker {
                     tracing::info!("Background: processed {} health issues", count);
                 }
                 processed += count;
+
+                // Process pondering (active reasoning loops) - run every 10th cycle
+                if self.cycle_count % 10 == 0 {
+                    let count = self.process_pondering(&client).await?;
+                    if count > 0 {
+                        tracing::info!("Background: generated {} pondering insights", count);
+                    }
+                    processed += count;
+                }
             }
             Err(e) => {
                 tracing::debug!("Background: no LLM provider available: {}", e);
@@ -173,6 +183,11 @@ impl BackgroundWorker {
     /// Process pending embeddings from file watcher queue
     async fn process_pending_embeddings(&self, client: &Arc<EmbeddingClient>) -> Result<usize, String> {
         embeddings::process_pending_embeddings(&self.pool, Some(client)).await
+    }
+
+    /// Process pondering (active reasoning loops)
+    async fn process_pondering(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+        pondering::process_pondering(&self.pool, client).await
     }
 }
 

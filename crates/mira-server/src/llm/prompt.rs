@@ -134,6 +134,20 @@ You are advisory - analyze and recommend, not implement."#
         Self::new(instructions)
     }
 
+    /// Factory method for background pondering/reasoning
+    pub fn for_background() -> Self {
+        let instructions = r#"You are an observant analyst studying developer behavior patterns and project evolution.
+
+Your role:
+- Identify meaningful patterns in tool usage and workflows
+- Spot friction points and inefficiencies
+- Notice recurring themes in project decisions
+- Suggest workflow improvements
+
+Be concise and data-driven. Only report insights with clear supporting evidence."#;
+        Self::new(instructions)
+    }
+
     /// Factory method for documentation generation
     pub fn for_documentation() -> Self {
         let instructions = r#"You are a technical writer creating documentation for software projects.

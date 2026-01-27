@@ -68,6 +68,26 @@ pub fn get_session_history_sync(conn: &Connection, session_id: &str, limit: usiz
     rows.collect()
 }
 
+/// Get recent pondering insights for a project
+pub fn get_recent_insights_sync(conn: &Connection, project_id: i64, limit: usize) -> rusqlite::Result<Vec<(String, String, f64)>> {
+    let mut stmt = conn.prepare(
+        r#"SELECT pattern_type, pattern_data, confidence
+           FROM behavior_patterns
+           WHERE project_id = ?
+             AND last_triggered_at > datetime('now', '-7 days')
+           ORDER BY last_triggered_at DESC
+           LIMIT ?"#,
+    )?;
+    let rows = stmt.query_map(params![project_id, limit as i64], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
+    })?;
+    rows.collect()
+}
+
 /// Build session recap - sync version for pool.interact()
 pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> String {
     use super::project::get_project_info_sync;
@@ -153,6 +173,34 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
                 .map(|g| format!("• {} ({}%) - {}", g.title, g.progress_percent, g.status))
                 .collect();
             recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
+        }
+    }
+
+    // Pondering insights (from active reasoning)
+    if let Some(pid) = project_id {
+        if let Ok(insights) = get_recent_insights_sync(conn, pid, 3) {
+            if !insights.is_empty() {
+                let insight_lines: Vec<String> = insights
+                    .iter()
+                    .filter_map(|(pattern_type, pattern_data, confidence)| {
+                        // Extract description from pattern_data JSON
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(pattern_data) {
+                            if let Some(desc) = data.get("description").and_then(|d| d.as_str()) {
+                                return Some(format!(
+                                    "• [{}] {} ({:.0}%)",
+                                    pattern_type,
+                                    desc,
+                                    confidence * 100.0
+                                ));
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+                if !insight_lines.is_empty() {
+                    recap_parts.push(format!("Recent insights:\n{}", insight_lines.join("\n")));
+                }
+            }
         }
     }
 
