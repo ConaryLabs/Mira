@@ -14,6 +14,7 @@ use crate::db::{
     store_memory_sync, StoreMemoryParams,
 };
 use crate::db::documentation::count_doc_tasks_by_status;
+use crate::proactive::{interventions, ProactiveConfig};
 use crate::git::get_git_branch;
 use crate::tools::core::claude_local;
 use crate::tools::core::ToolContext;
@@ -298,12 +299,13 @@ pub async fn session_start<C: ToolContext>(
         );
     }
 
-    // Load preferences, memories, health alerts, and doc task counts in a single pool call
-    let (preferences, memories, health_alerts, doc_task_counts): (
+    // Load preferences, memories, health alerts, doc task counts, and interventions in a single pool call
+    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions): (
         Vec<MemoryFact>,
         Vec<MemoryFact>,
         Vec<MemoryFact>,
         Vec<(String, i64)>,
+        Vec<interventions::PendingIntervention>,
     ) = ctx
         .pool()
         .run(move |conn| {
@@ -319,7 +321,12 @@ pub async fn session_start<C: ToolContext>(
             // Get documentation task counts
             let doc_task_counts = count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
 
-            Ok::<_, String>((preferences, memories, health_alerts, doc_task_counts))
+            // Get pending proactive interventions
+            let config = ProactiveConfig::default();
+            let interventions_list = interventions::get_pending_interventions_sync(conn, project_id, &config)
+                .unwrap_or_default();
+
+            Ok::<_, String>((preferences, memories, health_alerts, doc_task_counts, interventions_list))
         })
         .await?;
 
@@ -360,6 +367,32 @@ pub async fn session_start<C: ToolContext>(
             };
             response.push_str(&format!("  [{}] {}\n", category, preview));
         }
+    }
+
+    // Show proactive interventions from pondering insights
+    if !pending_interventions.is_empty() {
+        response.push_str("\nInsights (from background analysis):\n");
+        for intervention in &pending_interventions {
+            response.push_str(&format!("  {}\n", intervention.format()));
+        }
+
+        // Record that these interventions were shown
+        let interventions_to_record = pending_interventions.clone();
+        let sid_for_record = sid.clone();
+        let _ = ctx
+            .pool()
+            .run(move |conn| {
+                for intervention in &interventions_to_record {
+                    let _ = interventions::record_intervention_sync(
+                        conn,
+                        project_id,
+                        Some(&sid_for_record),
+                        intervention,
+                    );
+                }
+                Ok::<_, String>(())
+            })
+            .await;
     }
 
     // Show documentation task notifications (pending tasks that need docs written)

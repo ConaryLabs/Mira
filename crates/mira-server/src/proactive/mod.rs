@@ -3,6 +3,7 @@
 
 pub mod behavior;
 pub mod feedback;
+pub mod interventions;
 pub mod patterns;
 pub mod predictor;
 
