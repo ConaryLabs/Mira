@@ -122,12 +122,12 @@ pub async fn run_mcp_server() -> Result<()> {
     // Spawn background worker for batch processing
     let bg_pool = pool.clone();
     let bg_embeddings = embeddings.clone();
-    let _shutdown_tx = background::spawn(bg_pool, bg_embeddings, llm_factory.clone());
+    let (_shutdown_tx, fast_lane_notify) = background::spawn(bg_pool, bg_embeddings, llm_factory.clone());
     info!("Background worker started");
 
     // Spawn file watcher for incremental indexing
     let (_watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
-    let watcher_handle = background::watcher::spawn(pool.clone(), watcher_shutdown_rx);
+    let watcher_handle = background::watcher::spawn(pool.clone(), watcher_shutdown_rx, Some(fast_lane_notify));
     info!("File watcher started");
 
     // Create MCP server with watcher from centralized config

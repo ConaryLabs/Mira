@@ -2,6 +2,7 @@
 // File system watcher for automatic incremental indexing
 
 use super::code_health;
+use super::FastLaneNotify;
 use crate::config::ignore;
 use crate::db::{
     SymbolInsert, ImportInsert,
@@ -31,6 +32,8 @@ pub struct FileWatcher {
     /// Pending file changes (debounced)
     pending_changes: Arc<RwLock<HashMap<PathBuf, (ChangeType, Instant)>>>,
     shutdown: watch::Receiver<bool>,
+    /// Notify handle to wake fast lane worker after queuing embeddings
+    fast_lane_notify: Option<FastLaneNotify>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,12 +47,14 @@ impl FileWatcher {
     pub fn new(
         pool: Arc<DatabasePool>,
         shutdown: watch::Receiver<bool>,
+        fast_lane_notify: Option<FastLaneNotify>,
     ) -> Self {
         Self {
             pool,
             watched_projects: Arc::new(RwLock::new(HashMap::new())),
             pending_changes: Arc::new(RwLock::new(HashMap::new())),
             shutdown,
+            fast_lane_notify,
         }
     }
 
@@ -356,7 +361,10 @@ impl FileWatcher {
             Ok(())
         }).await.map_err(|e| e.to_string())?;
 
-        // Embeddings queued in pending_embeddings - background worker will process
+        // Wake fast lane worker to process new embeddings immediately
+        if let Some(ref notify) = self.fast_lane_notify {
+            notify.wake();
+        }
 
         tracing::debug!(
             "Updated file {} in project {}: {} symbols, {} chunks queued",
@@ -394,6 +402,7 @@ impl WatcherHandle {
 pub fn spawn(
     pool: Arc<DatabasePool>,
     shutdown: watch::Receiver<bool>,
+    fast_lane_notify: Option<FastLaneNotify>,
 ) -> WatcherHandle {
     let watched_projects = Arc::new(RwLock::new(HashMap::new()));
     let handle = WatcherHandle {
@@ -405,6 +414,7 @@ pub fn spawn(
         watched_projects,
         pending_changes: Arc::new(RwLock::new(HashMap::new())),
         shutdown,
+        fast_lane_notify,
     };
 
     tokio::spawn(async move {
