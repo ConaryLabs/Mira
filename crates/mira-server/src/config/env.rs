@@ -74,15 +74,13 @@ impl ApiKeys {
 }
 
 /// Embeddings configuration from environment variables
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EmbeddingsConfig {
     /// Custom embedding dimensions (MIRA_EMBEDDING_DIMENSIONS)
     pub dimensions: Option<usize>,
     /// Task type for embeddings (MIRA_EMBEDDING_TASK_TYPE)
     pub task_type: TaskType,
 }
-
 
 impl EmbeddingsConfig {
     /// Load embeddings configuration from environment variables
@@ -201,8 +199,6 @@ impl EnvConfig {
     /// Load all environment configuration (call once at startup)
     pub fn load() -> Self {
         info!("Loading environment configuration");
-
-        
 
         Self {
             api_keys: ApiKeys::from_env(),

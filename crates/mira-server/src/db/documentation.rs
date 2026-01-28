@@ -442,7 +442,6 @@ pub fn count_doc_tasks_by_status(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
 ) -> Result<Vec<(String, i64)>, String> {
-    
     match project_id {
         Some(pid) => {
             let mut stmt = conn

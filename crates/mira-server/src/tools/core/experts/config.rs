@@ -163,10 +163,7 @@ pub async fn configure_expert<C: ToolContext>(
         }
 
         ExpertConfigAction::List => {
-            let configs = ctx
-                .pool()
-                .run(list_custom_prompts_sync)
-                .await?;
+            let configs = ctx.pool().run(list_custom_prompts_sync).await?;
 
             if configs.is_empty() {
                 Ok("No custom configurations. All experts use default settings.".to_string())

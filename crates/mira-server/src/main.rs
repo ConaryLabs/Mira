@@ -15,9 +15,10 @@ use cli::{Cli, Commands, HookAction};
 async fn main() -> Result<()> {
     // Load .env files (global first, then project - project overrides)
     if let Some(home) = dirs::home_dir()
-        && let Err(e) = dotenvy::from_path(home.join(".mira/.env")) {
-            tracing::debug!("Failed to load global .env file: {}", e);
-        }
+        && let Err(e) = dotenvy::from_path(home.join(".mira/.env"))
+    {
+        tracing::debug!("Failed to load global .env file: {}", e);
+    }
     if let Err(e) = dotenvy::dotenv() {
         tracing::debug!("Failed to load local .env file: {}", e);
     } // Load .env from current directory
