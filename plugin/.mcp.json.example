@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "mira": {
-      "command": "/path/to/mira/target/release/mira",
+      "command": "mira",
       "args": ["serve"],
       "env": {
         "MIRA_DB": "${HOME}/.mira/mira.db"

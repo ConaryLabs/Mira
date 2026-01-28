@@ -1,8 +1,8 @@
 # Mira
 
 [![CI](https://github.com/ConaryLabs/Mira/actions/workflows/ci.yml/badge.svg)](https://github.com/ConaryLabs/Mira/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ConaryLabs/Mira)](https://github.com/ConaryLabs/Mira/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.2-green.svg)](CHANGELOG.md)
 
 **A second brain for Claude Code**
 
@@ -37,31 +37,31 @@ Mira runs as an MCP server alongside Claude Code, providing:
 
 ## Installation
 
-### Option 1: Install as Claude Code Plugin (Recommended)
+### Option 1: Download Binary + Install Plugin (Recommended)
 
-The easiest way to install Mira is via the Claude Code plugin system:
+1. **Download the latest release** from [GitHub Releases](https://github.com/ConaryLabs/Mira/releases):
 
 ```bash
-# First, add the Mira marketplace
-claude marketplace add ConaryLabs/Mira
+# Linux (x86_64)
+curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv mira /usr/local/bin/
 
-# Then install the plugin
-claude plugin install mira@mira
+# macOS (Apple Silicon)
+curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv mira /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv mira /usr/local/bin/
+```
+
+2. **Install the plugin** (go to Plugins tab in Claude Code, or run):
+
+```bash
+claude plugin install ConaryLabs/Mira
 ```
 
 This installs Mira as a plugin with full features including hooks for proactive context injection.
-
-**Updating:** To update to the latest version:
-```bash
-claude plugin update mira@mira
-```
-
-If updates aren't working, force a fresh install:
-```bash
-rm -rf ~/.claude/plugins/marketplaces/mira
-claude marketplace add ConaryLabs/Mira
-claude plugin install mira@mira
-```
 
 ### Option 2: Install via Cargo (MCP Server Only)
 

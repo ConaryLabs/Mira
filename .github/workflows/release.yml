@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.target }}-cargo-release-
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czvf ../../../mira-${{ matrix.target }}.tar.gz mira
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-${{ matrix.target }}
+          path: mira-${{ matrix.target }}.tar.gz
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display artifacts
+        run: ls -la artifacts/*/
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Mira v${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/mira-x86_64-unknown-linux-gnu/mira-x86_64-unknown-linux-gnu.tar.gz
+            artifacts/mira-x86_64-apple-darwin/mira-x86_64-apple-darwin.tar.gz
+            artifacts/mira-aarch64-apple-darwin/mira-aarch64-apple-darwin.tar.gz

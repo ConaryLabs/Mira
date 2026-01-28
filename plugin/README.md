@@ -12,13 +12,31 @@ Semantic memory and code intelligence for Claude Code. Provides persistent memor
 
 ## Installation
 
-### Option 1: Install from Marketplace (Recommended)
+### Option 1: Download Binary + Install Plugin (Recommended)
+
+1. **Download the latest release** from [GitHub Releases](https://github.com/ConaryLabs/Mira/releases):
+
+```bash
+# Linux (x86_64)
+curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv mira /usr/local/bin/
+
+# macOS (Apple Silicon)
+curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv mira /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv mira /usr/local/bin/
+```
+
+2. **Install the plugin**:
 
 ```bash
 claude plugin install ConaryLabs/Mira
 ```
 
-Then set your API keys in `~/.mira/.env`:
+3. **Set your API keys** in `~/.mira/.env`:
 
 ```bash
 mkdir -p ~/.mira
@@ -32,21 +50,25 @@ Get your keys from:
 - DeepSeek: https://platform.deepseek.com/api_keys
 - Gemini: https://aistudio.google.com/app/apikey
 
-### Option 2: Install from Source
+### Option 2: Build from Source
 
 #### 1. Build Mira
 
 ```bash
-cd /path/to/mira
+git clone https://github.com/ConaryLabs/Mira.git
+cd Mira
 cargo build --release
+
+# Add to PATH
+sudo cp target/release/mira /usr/local/bin/
 ```
 
 #### 2. Configure Plugin Files
 
-Copy the example config files and update paths to your mira binary:
+Copy the example config files:
 
 ```bash
-cd /path/to/mira/plugin
+cd plugin
 
 # MCP server config
 cp .mcp.json.example .mcp.json
@@ -55,12 +77,7 @@ cp .mcp.json.example .mcp.json
 cp hooks/hooks.json.example hooks/hooks.json
 ```
 
-Edit both files and replace `/path/to/mira` with your actual path:
-
-```bash
-# Example: if mira is at /home/user/mira
-sed -i 's|/path/to/mira|/home/user/mira|g' .mcp.json hooks/hooks.json
-```
+The config files expect `mira` to be in your PATH. If you installed to a different location, edit both files to use the full path.
 
 #### 3. Set Environment Variables
 
@@ -149,25 +166,23 @@ auto_continue_goals = false  # Don't auto-continue incomplete goals
 
 ## Testing
 
-Verify hooks work correctly (replace `/path/to/mira` with your actual path):
+Verify hooks work correctly:
 
 ```bash
-MIRA=/path/to/mira/target/release/mira
-
 # Test session-start hook
-echo '{}' | $MIRA hook session-start
+echo '{}' | mira hook session-start
 
 # Test user-prompt hook
-echo '{"prompt": "test"}' | $MIRA hook user-prompt
+echo '{"prompt": "test"}' | mira hook user-prompt
 
 # Test post-tool hook
-echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/test.rs"}}' | $MIRA hook post-tool
+echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/test.rs"}}' | mira hook post-tool
 
 # Test pre-compact hook
-echo '{}' | $MIRA hook pre-compact
+echo '{}' | mira hook pre-compact
 
 # Test stop hook
-echo '{}' | $MIRA hook stop
+echo '{}' | mira hook stop
 ```
 
 ## License
