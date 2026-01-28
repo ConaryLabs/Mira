@@ -18,7 +18,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: x86_64-apple-darwin
-            os: macos-13  # Intel runner for Intel builds
+            os: macos-15-intel  # Intel runner for Intel builds
           - target: aarch64-apple-darwin
             os: macos-latest  # ARM runner for ARM builds
           - target: x86_64-pc-windows-msvc
