@@ -14,13 +14,9 @@ pub async fn team_create<C: ToolContext>(
     name: String,
     description: Option<String>,
 ) -> Result<String, String> {
-    let user_id = ctx.get_user_identity();
-
-    if user_id.is_none() {
+    let Some(user_id) = ctx.get_user_identity() else {
         return Err("Cannot create team: user identity not available".to_string());
-    }
-
-    let user_id = user_id.unwrap();
+    };
 
     // Check if team with same name already exists
     let name_clone = name.clone();
@@ -66,13 +62,9 @@ pub async fn team_invite<C: ToolContext>(
     user_identity: String,
     role: Option<String>,
 ) -> Result<String, String> {
-    let current_user = ctx.get_user_identity();
-
-    if current_user.is_none() {
+    let Some(current_user) = ctx.get_user_identity() else {
         return Err("Cannot invite: your identity not available".to_string());
-    }
-
-    let current_user = current_user.unwrap();
+    };
 
     // Verify the team exists
     let team = ctx
@@ -117,13 +109,9 @@ pub async fn team_remove<C: ToolContext>(
     team_id: i64,
     user_identity: String,
 ) -> Result<String, String> {
-    let current_user = ctx.get_user_identity();
-
-    if current_user.is_none() {
+    let Some(current_user) = ctx.get_user_identity() else {
         return Err("Cannot remove: your identity not available".to_string());
-    }
-
-    let current_user = current_user.unwrap();
+    };
 
     // Verify the team exists
     let team = ctx
@@ -170,13 +158,9 @@ pub async fn team_remove<C: ToolContext>(
 
 /// List teams the current user belongs to
 pub async fn team_list<C: ToolContext>(ctx: &C) -> Result<String, String> {
-    let user_id = ctx.get_user_identity();
-
-    if user_id.is_none() {
+    let Some(user_id) = ctx.get_user_identity() else {
         return Err("Cannot list teams: user identity not available".to_string());
-    }
-
-    let user_id = user_id.unwrap();
+    };
 
     let teams = ctx
         .pool()

@@ -310,7 +310,10 @@ pub async fn hybrid_search(
                 ))
             })
             .await
-            .expect("keyword search pool.interact failed")
+            .unwrap_or_else(|e| {
+                tracing::warn!("Keyword search pool interaction failed: {}", e);
+                Vec::new()
+            })
     };
 
     // Run searches in parallel

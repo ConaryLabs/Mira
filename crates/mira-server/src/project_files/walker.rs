@@ -26,10 +26,10 @@ impl Entry {
         }
     }
 
-    pub fn file_type(&self) -> std::fs::FileType {
+    pub fn file_type(&self) -> Option<std::fs::FileType> {
         match self {
-            Entry::Ignore(e) => e.file_type().unwrap(),
-            Entry::WalkDir(e) => e.file_type(),
+            Entry::Ignore(e) => e.file_type(),
+            Entry::WalkDir(e) => Some(e.file_type()),
         }
     }
 }
@@ -135,8 +135,8 @@ impl FileWalker {
                 Err(e) => return Some(Err(anyhow!("Walk error: {}", e))),
             };
 
-            // Skip directories
-            if !entry.file_type().is_file() {
+            // Skip directories (and entries without file type, e.g. stdin)
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
                 return None;
             }
 

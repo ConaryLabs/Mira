@@ -15,6 +15,7 @@ impl FileAwareInjector {
     pub fn new(pool: Arc<DatabasePool>) -> Self {
         // Match file paths with common extensions
         // Handles: src/main.rs, ./config.toml, /absolute/path.json, crates/foo/bar.rs
+        #[allow(clippy::expect_used)] // Constant regex pattern - compile-time validated
         let file_pattern = Regex::new(
             r#"(?:^|[\s`'"(])(\.?/?(?:[\w-]+/)*[\w-]+\.(?:rs|toml|json|md|txt|py|js|ts|tsx|jsx|go|yaml|yml|sh|sql|html|css|scss|vue|svelte))\b"#
         ).expect("Invalid regex");
