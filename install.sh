@@ -89,11 +89,21 @@ install_binary() {
 # Install Claude Code plugin
 install_plugin() {
     if command -v claude &> /dev/null; then
+        info "Adding Mira marketplace..."
+        claude plugin marketplace add "$REPO" 2>/dev/null || true
+
         info "Installing Claude Code plugin..."
-        claude plugin install "$REPO" || warn "Plugin install failed - you may need to install it manually"
+        if claude plugin install "mira@mira" 2>/dev/null; then
+            info "Plugin installed successfully"
+        else
+            warn "Plugin install failed - you may need to install it manually:"
+            echo "    claude plugin marketplace add $REPO"
+            echo "    claude plugin install mira@mira"
+        fi
     else
         warn "Claude Code CLI not found. Install the plugin manually with:"
-        echo "  claude plugin install $REPO"
+        echo "    claude plugin marketplace add $REPO"
+        echo "    claude plugin install mira@mira"
     fi
 }
 
