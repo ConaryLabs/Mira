@@ -103,7 +103,7 @@ impl SlowLaneWorker {
         processed += self.process_capabilities(&client).await?;
 
         // Process documentation tasks (every 3rd cycle)
-        if self.cycle_count % 3 == 0 {
+        if self.cycle_count.is_multiple_of(3) {
             processed += self.process_documentation().await?;
         }
 
@@ -111,7 +111,7 @@ impl SlowLaneWorker {
         processed += self.process_code_health(&client).await?;
 
         // Process pondering (every 10th cycle)
-        if self.cycle_count % 10 == 0 {
+        if self.cycle_count.is_multiple_of(10) {
             processed += self.process_pondering(&client).await?;
         }
 

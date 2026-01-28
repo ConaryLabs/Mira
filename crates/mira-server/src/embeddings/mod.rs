@@ -29,7 +29,7 @@ impl EmbeddingClient {
                 api_key.clone(),
                 GoogleEmbeddingModel::default(),
                 config.dimensions,
-                config.task_type.clone(),
+                config.task_type,
                 pool,
             ),
         })
@@ -49,7 +49,7 @@ impl EmbeddingClient {
                 api_key.clone(),
                 GoogleEmbeddingModel::default(),
                 config.dimensions,
-                config.task_type.clone(),
+                config.task_type,
                 pool,
                 http_client,
             ),

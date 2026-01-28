@@ -170,7 +170,7 @@ fn format_preferences(prefs: &SharingPreferences, stats: &cross_project::Sharing
         prefs.privacy_epsilon_budget,
         (prefs.remaining_privacy_budget() / prefs.privacy_epsilon_budget) * 100.0
     ));
-    response.push_str(&format!("\nActivity:\n"));
+    response.push_str("\nActivity:\n");
     response.push_str(&format!("  Patterns exported: {}\n", stats.exports));
     response.push_str(&format!("  Patterns imported: {}\n", stats.imports));
 

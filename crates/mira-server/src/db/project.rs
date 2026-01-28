@@ -156,7 +156,7 @@ pub fn get_preferences_sync(
     )?;
 
     let rows = stmt
-        .query_map(params![project_id], |row| parse_memory_fact_row(row))?
+        .query_map(params![project_id], parse_memory_fact_row)?
         .filter_map(|r| r.ok())
         .collect();
 

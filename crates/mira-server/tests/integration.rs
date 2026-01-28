@@ -243,11 +243,10 @@ async fn test_remember_with_key() {
         .split("id:")
         .nth(1)
         .unwrap()
-        .trim()
         .split_whitespace()
         .next()
         .unwrap()
-        .trim_matches(|c: char| !c.is_digit(10));
+        .trim_matches(|c: char| !c.is_ascii_digit());
     let memory_id: i64 = id_str.parse().expect("Failed to parse memory ID");
 
     // Try to forget the memory

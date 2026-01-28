@@ -165,7 +165,7 @@ pub async fn configure_expert<C: ToolContext>(
         ExpertConfigAction::List => {
             let configs = ctx
                 .pool()
-                .run(move |conn| list_custom_prompts_sync(conn))
+                .run(list_custom_prompts_sync)
                 .await?;
 
             if configs.is_empty() {

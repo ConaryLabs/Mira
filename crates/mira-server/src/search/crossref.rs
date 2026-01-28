@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn test_crossref_type_clone_copy() {
         let t = CrossRefType::Caller;
-        let cloned = t.clone();
+        let cloned = t;
         let copied = t;
         assert_eq!(t, cloned);
         assert_eq!(t, copied);

@@ -19,6 +19,7 @@ pub enum Provider {
 
 impl Provider {
     /// Parse provider from string
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "deepseek" => Some(Self::DeepSeek),
@@ -209,7 +210,7 @@ mod tests {
     #[test]
     fn test_provider_clone_copy() {
         let provider = Provider::DeepSeek;
-        let cloned = provider.clone();
+        let cloned = provider;
         let copied = provider;
         assert_eq!(provider, cloned);
         assert_eq!(provider, copied);

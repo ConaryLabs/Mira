@@ -306,7 +306,7 @@ impl GoogleEmbeddings {
 
             match self
                 .http_client
-                .post(&self.api_url())
+                .post(self.api_url())
                 .header("x-goog-api-key", &self.api_key)
                 .header("Content-Type", "application/json")
                 .json(&body)
@@ -453,7 +453,7 @@ impl GoogleEmbeddings {
 
         let response = self
             .http_client
-            .post(&self.batch_api_url())
+            .post(self.batch_api_url())
             .header("x-goog-api-key", &self.api_key)
             .header("Content-Type", "application/json")
             .json(&body)

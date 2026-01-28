@@ -187,8 +187,8 @@ async fn extract_title(file_path: &Path) -> Option<String> {
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            return Some(trimmed[2..].trim().to_string());
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            return Some(title.trim().to_string());
         }
     }
 

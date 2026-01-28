@@ -35,6 +35,7 @@ impl EventType {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "file_access" => Some(EventType::FileAccess),
@@ -68,6 +69,7 @@ impl PatternType {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "file_sequence" => Some(PatternType::FileSequence),
@@ -120,6 +122,7 @@ impl UserResponse {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "accepted" => Some(UserResponse::Accepted),

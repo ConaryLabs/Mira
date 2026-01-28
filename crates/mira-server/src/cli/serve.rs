@@ -48,11 +48,10 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     let restored_project = pool
         .interact(|conn| {
             // Try to get last active project
-            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
-                if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
+            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn)
+                && let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
                     return Ok(Some(ProjectContext { id, path, name }));
                 }
-            }
             // Fallback: Check if CWD is a project
             if let Ok(cwd) = std::env::current_dir() {
                 let path_str = cwd.to_string_lossy().to_string();
@@ -157,11 +156,10 @@ pub async fn run_mcp_server() -> Result<()> {
     let restored = restore_pool
         .interact(|conn| {
             // Try to get last active project
-            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
-                if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
+            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn)
+                && let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
                     return Ok(Some((ProjectContext { id, path, name }, true)));
                 }
-            }
             // Fallback: Check if CWD is a project
             if let Ok(cwd) = std::env::current_dir() {
                 let path_str = cwd.to_string_lossy().to_string();

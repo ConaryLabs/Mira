@@ -331,7 +331,7 @@ async fn detect_module_doc_gaps(
         let doc_path = format!("docs/modules/{}.md", module_id);
 
         // Skip if no purpose defined (likely internal module)
-        if purpose.is_none() || purpose.as_ref().map_or(true, |p| p.is_empty()) {
+        if purpose.is_none() || purpose.as_ref().is_none_or(|p| p.is_empty()) {
             continue;
         }
 

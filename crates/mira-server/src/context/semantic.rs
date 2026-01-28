@@ -50,13 +50,13 @@ impl SemanticInjector {
 
                 for (i, search_result) in hybrid_result.results.iter().enumerate() {
                     if i > 0 {
-                        context.push_str("\n");
+                        context.push('\n');
                     }
                     // Extract filename from path
                     let filename = search_result
                         .file_path
                         .split('/')
-                        .last()
+                        .next_back()
                         .unwrap_or(&search_result.file_path);
                     // Truncate content appropriately
                     let content = if search_result.content.len() > 200 {

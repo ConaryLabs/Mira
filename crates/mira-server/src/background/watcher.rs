@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn test_change_type_clone() {
         let ct = ChangeType::Created;
-        let cloned = ct.clone();
+        let cloned = ct;
         assert_eq!(ct, cloned);
     }
 

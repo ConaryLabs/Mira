@@ -54,7 +54,7 @@ pub async fn run() -> Result<()> {
     // Get project ID for proactive features
     let project_id: Option<i64> = {
         let pool_clone = pool.clone();
-        match pool_clone
+        pool_clone
             .interact(move |conn| {
                 let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
                 let result = if let Some(path) = path {
@@ -67,10 +67,7 @@ pub async fn run() -> Result<()> {
                 Ok::<_, anyhow::Error>(result)
             })
             .await
-        {
-            Ok(id) => id,
-            Err(_) => None,
-        }
+            .unwrap_or_default()
     };
 
     // Log query event for behavior tracking (background, non-blocking)
@@ -95,7 +92,7 @@ pub async fn run() -> Result<()> {
     // Get proactive predictions if enabled
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
         let pool_clone = pool.clone();
-        match pool_clone
+        pool_clone
             .interact(move |conn| {
                 let config = crate::proactive::get_proactive_config(conn, None, project_id)
                     .unwrap_or_default();
@@ -144,10 +141,7 @@ pub async fn run() -> Result<()> {
                 }
             })
             .await
-        {
-            Ok(ctx) => ctx,
-            Err(_) => None,
-        }
+            .unwrap_or_default()
     } else {
         None
     };

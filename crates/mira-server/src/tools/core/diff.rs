@@ -249,6 +249,51 @@ fn parse_numstat_output(stdout: &str) -> Result<DiffStats, String> {
     Ok(stats)
 }
 
+/// List recent diff analyses for the project
+pub async fn list_diff_analyses<C: ToolContext>(
+    ctx: &C,
+    limit: Option<i64>,
+) -> Result<String, String> {
+    let project = ctx.get_project().await;
+    let project_id = project.as_ref().map(|p| p.id);
+    let context_header = format_project_header(project.as_ref());
+
+    let limit = limit.unwrap_or(10) as usize;
+
+    let analyses = ctx
+        .pool()
+        .run(move |conn| get_recent_diff_analyses_sync(conn, project_id, limit))
+        .await?;
+
+    if analyses.is_empty() {
+        return Ok(format!("{}No diff analyses found.", context_header));
+    }
+
+    let mut output = format!("{}## Recent Diff Analyses\n\n", context_header);
+
+    for analysis in analyses {
+        let summary = analysis.summary.as_deref().unwrap_or("No summary");
+        let truncated = if summary.len() > 100 {
+            format!("{}...", &summary[..100])
+        } else {
+            summary.to_string()
+        };
+
+        output.push_str(&format!(
+            "- **{}..{}** ({})\n  {} files, +{} -{}\n  {}\n\n",
+            analysis.from_commit,
+            analysis.to_commit,
+            analysis.created_at,
+            analysis.files_changed.unwrap_or(0),
+            analysis.lines_added.unwrap_or(0),
+            analysis.lines_removed.unwrap_or(0),
+            truncated
+        ));
+    }
+
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,49 +357,4 @@ mod tests {
         assert_eq!(result.files_changed, 1);
         assert_eq!(result.files[0], "valid.rs");
     }
-}
-
-/// List recent diff analyses for the project
-pub async fn list_diff_analyses<C: ToolContext>(
-    ctx: &C,
-    limit: Option<i64>,
-) -> Result<String, String> {
-    let project = ctx.get_project().await;
-    let project_id = project.as_ref().map(|p| p.id);
-    let context_header = format_project_header(project.as_ref());
-
-    let limit = limit.unwrap_or(10) as usize;
-
-    let analyses = ctx
-        .pool()
-        .run(move |conn| get_recent_diff_analyses_sync(conn, project_id, limit))
-        .await?;
-
-    if analyses.is_empty() {
-        return Ok(format!("{}No diff analyses found.", context_header));
-    }
-
-    let mut output = format!("{}## Recent Diff Analyses\n\n", context_header);
-
-    for analysis in analyses {
-        let summary = analysis.summary.as_deref().unwrap_or("No summary");
-        let truncated = if summary.len() > 100 {
-            format!("{}...", &summary[..100])
-        } else {
-            summary.to_string()
-        };
-
-        output.push_str(&format!(
-            "- **{}..{}** ({})\n  {} files, +{} -{}\n  {}\n\n",
-            analysis.from_commit,
-            analysis.to_commit,
-            analysis.created_at,
-            analysis.files_changed.unwrap_or(0),
-            analysis.lines_added.unwrap_or(0),
-            analysis.lines_removed.unwrap_or(0),
-            truncated
-        ));
-    }
-
-    Ok(output)
 }

@@ -140,8 +140,7 @@ impl ContextInjectionManager {
     /// Get project ID and path for the current session (if any)
     async fn get_project_info(&self) -> (Option<i64>, Option<String>) {
         let pool = self.pool.clone();
-        match pool
-            .interact(move |conn| {
+        pool.interact(move |conn| {
                 // Get last active project path from server state
                 let path = get_server_state_sync(conn, "active_project_path")
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -155,10 +154,7 @@ impl ContextInjectionManager {
                 }
             })
             .await
-        {
-            Ok(result) => result,
-            Err(_) => (None, None),
-        }
+            .unwrap_or_default()
     }
 
     /// Check if message is a simple command that doesn't need context injection

@@ -75,6 +75,7 @@ impl ApiKeys {
 
 /// Embeddings configuration from environment variables
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct EmbeddingsConfig {
     /// Custom embedding dimensions (MIRA_EMBEDDING_DIMENSIONS)
     pub dimensions: Option<usize>,
@@ -82,14 +83,6 @@ pub struct EmbeddingsConfig {
     pub task_type: TaskType,
 }
 
-impl Default for EmbeddingsConfig {
-    fn default() -> Self {
-        Self {
-            dimensions: None,
-            task_type: TaskType::default(),
-        }
-    }
-}
 
 impl EmbeddingsConfig {
     /// Load embeddings configuration from environment variables
@@ -137,6 +130,12 @@ impl EmbeddingsConfig {
 pub struct ConfigValidation {
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+}
+
+impl Default for ConfigValidation {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConfigValidation {
@@ -203,16 +202,16 @@ impl EnvConfig {
     pub fn load() -> Self {
         info!("Loading environment configuration");
 
-        let config = Self {
+        
+
+        Self {
             api_keys: ApiKeys::from_env(),
             embeddings: EmbeddingsConfig::from_env(),
             default_provider: std::env::var("DEFAULT_LLM_PROVIDER")
                 .ok()
                 .filter(|s| !s.is_empty()),
             user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
-        };
-
-        config
+        }
     }
 
     /// Validate the configuration

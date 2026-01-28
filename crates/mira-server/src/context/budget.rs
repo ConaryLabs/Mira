@@ -5,6 +5,12 @@ pub struct BudgetManager {
     max_chars: usize,
 }
 
+impl Default for BudgetManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BudgetManager {
     pub fn new() -> Self {
         Self {

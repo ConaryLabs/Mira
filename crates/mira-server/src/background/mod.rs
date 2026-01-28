@@ -174,7 +174,7 @@ impl BackgroundWorker {
                 }
                 processed += count;
 
-                if self.cycle_count % 3 == 0 {
+                if self.cycle_count.is_multiple_of(3) {
                     let count = self.process_documentation(&self.llm_factory).await?;
                     if count > 0 {
                         tracing::info!("Background: processed {} documentation tasks", count);
@@ -188,7 +188,7 @@ impl BackgroundWorker {
                 }
                 processed += count;
 
-                if self.cycle_count % 10 == 0 {
+                if self.cycle_count.is_multiple_of(10) {
                     let count = self.process_pondering(&client).await?;
                     if count > 0 {
                         tracing::info!("Background: generated {} pondering insights", count);

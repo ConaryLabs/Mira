@@ -39,7 +39,7 @@ impl ExpertRole {
                 ExpertRole::DocumentationWriter => DOCUMENTATION_WRITER_PROMPT,
                 ExpertRole::Custom(_name, description) => {
                     // For custom roles, build from the description
-                    &description
+                    description
                 }
             }
             .to_string()

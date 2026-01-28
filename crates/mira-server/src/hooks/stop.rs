@@ -91,13 +91,10 @@ pub async fn run() -> Result<()> {
     // Check for in-progress goals
     let goals: Vec<GoalInfo> = {
         let pool_clone = pool.clone();
-        match pool_clone
+        pool_clone
             .interact(move |conn| Ok::<_, anyhow::Error>(get_in_progress_goals(conn, project_id)))
             .await
-        {
-            Ok(g) => g,
-            Err(_) => Vec::new(),
-        }
+            .unwrap_or_default()
     };
 
     // Build output

@@ -192,7 +192,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             let req: UsageRequest = serde_json::from_str(&args)?;
             mira::tools::usage(&server, req.action, req.group_by, req.since_days, req.limit).await
         }
-        _ => Err(format!("Unknown tool: {}", name).into()),
+        _ => Err(format!("Unknown tool: {}", name)),
     };
 
     match res {
@@ -264,7 +264,7 @@ mod tests {
         // Check for tools in CLI but missing from MCP (shouldn't happen but good to check)
         let missing_from_mcp: Vec<_> = cli_tools
             .iter()
-            .filter(|t| !mcp_tools.contains(&t.to_string()))
+            .filter(|t| !mcp_tools.contains::<str>(t))
             .collect();
 
         assert!(

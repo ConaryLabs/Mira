@@ -193,7 +193,7 @@ pub fn get_doc_task(conn: &rusqlite::Connection, task_id: i64) -> Result<Option<
     conn.query_row(
         "SELECT * FROM documentation_tasks WHERE id = ?",
         [task_id],
-        |row| parse_doc_task(row),
+        parse_doc_task,
     )
     .optional()
     .map_err(|e| e.to_string())
@@ -442,7 +442,8 @@ pub fn count_doc_tasks_by_status(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
 ) -> Result<Vec<(String, i64)>, String> {
-    let sql = match project_id {
+    
+    match project_id {
         Some(pid) => {
             let mut stmt = conn
                 .prepare(
@@ -472,6 +473,5 @@ pub fn count_doc_tasks_by_status(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
         }
-    };
-    sql
+    }
 }

@@ -135,7 +135,6 @@ pub async fn consult_expert<C: ToolContext>(
 
                     // Execute tools in parallel for better performance
                     let tool_futures = tool_calls.iter().map(|tc| {
-                        let ctx = ctx; // ctx is already &C, just copy the reference
                         let tc = tc.clone();
                         async move {
                             let result = execute_tool(ctx, &tc).await;
@@ -268,7 +267,7 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
 
     // Use Arc for efficient sharing across concurrent tasks (avoids cloning large context)
     let context: Arc<str> = Arc::from(context);
-    let question: Option<Arc<str>> = question.map(|q| Arc::from(q));
+    let question: Option<Arc<str>> = question.map(Arc::from);
 
     // Run consultations with bounded concurrency and overall timeout
     let consultation_future = stream::iter(expert_roles)
