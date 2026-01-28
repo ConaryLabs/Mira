@@ -50,7 +50,11 @@ async fn main() -> Result<()> {
         Some(Commands::Tool { name, args }) => {
             cli::run_tool(name, args).await?;
         }
-        Some(Commands::Index { path, no_embed, quiet }) => {
+        Some(Commands::Index {
+            path,
+            no_embed,
+            quiet,
+        }) => {
             cli::run_index(path, no_embed, quiet).await?;
         }
         Some(Commands::Hook { action }) => match action {
