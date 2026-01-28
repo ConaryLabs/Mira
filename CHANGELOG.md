@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-01-28
+
+### Added
+- GitHub Actions CI pipeline (test, clippy, format, build for Linux/macOS)
+- CHANGELOG.md for version tracking
+- CONTRIBUTING.md with development guidelines
+- Issue templates for bug reports and feature requests
+- CI status badge in README
+
+### Changed
+- Cleaned up .env.example (removed deprecated GLM references)
+- Code formatted with cargo fmt for consistency
+
 ## [0.2.0] - 2026-01-27
 
 ### Added
