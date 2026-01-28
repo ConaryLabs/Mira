@@ -80,11 +80,13 @@ The plugin bundles the Mira MCP server with these tools:
 - `check_capability` - Check if a feature exists in codebase
 
 ### Expert Consultation
-- `consult_architect` - System design advice
-- `consult_code_reviewer` - Code quality review
-- `consult_security` - Security analysis
-- `consult_plan_reviewer` - Validate implementation plans
-- `consult_scope_analyst` - Find missing requirements
+- `consult_experts` - Get advice from specialized experts:
+  - `architect` - System design advice
+  - `code_reviewer` - Code quality review
+  - `security` - Security analysis
+  - `plan_reviewer` - Validate implementation plans
+  - `scope_analyst` - Find missing requirements
+  - `documentation_writer` - Documentation generation
 
 ### Goals
 - `goal` - Create, list, update goals and milestones
@@ -148,4 +150,4 @@ echo '{}' | $MIRA hook stop
 
 ## License
 
-MIT
+Apache-2.0
