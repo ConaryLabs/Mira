@@ -17,13 +17,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            archive: tar.gz
           - target: x86_64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
+            os: macos-13  # Intel runner for Intel builds
           - target: aarch64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
+            os: macos-latest  # ARM runner for ARM builds
 
     steps:
       - uses: actions/checkout@v4
