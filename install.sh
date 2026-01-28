@@ -109,15 +109,18 @@ setup_config() {
     if [ ! -f "$config_dir/.env" ]; then
         info "Creating .env template at $config_dir/.env"
         cat > "$config_dir/.env" << 'EOF'
-# Mira API Keys
-# Get your keys from:
-#   DeepSeek: https://platform.deepseek.com/api_keys
-#   Gemini: https://aistudio.google.com/app/apikey
+# ============================================
+# MIRA API KEYS - Replace the values below
+# ============================================
 
-DEEPSEEK_API_KEY=your-key-here
-GEMINI_API_KEY=your-key-here
+# DeepSeek (for expert consultations)
+# Get your key: https://platform.deepseek.com/api_keys
+DEEPSEEK_API_KEY=PASTE_YOUR_DEEPSEEK_KEY_HERE
+
+# Google Gemini (for embeddings/semantic search)
+# Get your key: https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=PASTE_YOUR_GEMINI_KEY_HERE
 EOF
-        warn "Don't forget to add your API keys to ~/.mira/.env"
     fi
 }
 
@@ -146,18 +149,23 @@ main() {
     echo ""
     echo "  Next steps:"
     echo ""
-    echo "    1. Add your API keys to ~/.mira/.env"
+    echo "    1. Add your API keys:"
+    echo ""
+    echo "       Open ~/.mira/.env in your editor and replace:"
+    echo "         PASTE_YOUR_DEEPSEEK_KEY_HERE  ->  your actual DeepSeek key"
+    echo "         PASTE_YOUR_GEMINI_KEY_HERE    ->  your actual Gemini key"
+    echo ""
+    echo "       Get keys from:"
+    echo "         DeepSeek: https://platform.deepseek.com/api_keys"
+    echo "         Gemini:   https://aistudio.google.com/app/apikey"
     echo ""
     echo "    2. Add Mira instructions to your project's CLAUDE.md:"
     echo ""
     echo "       curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/docs/CLAUDE_TEMPLATE.md >> CLAUDE.md"
     echo ""
-    echo "       Or copy from: https://github.com/ConaryLabs/Mira/blob/main/docs/CLAUDE_TEMPLATE.md"
-    echo ""
     echo "    3. Start Claude Code in your project directory"
     echo ""
-    echo "  Verify installation:"
-    echo "    mira --version"
+    echo "  Verify: mira --version"
     echo ""
 }
 
