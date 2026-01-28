@@ -22,9 +22,29 @@ Thanks for your interest in contributing to Mira!
 
 4. Set up API keys for full functionality:
    ```bash
+   mkdir -p ~/.mira
    cp .env.example ~/.mira/.env
    # Edit ~/.mira/.env with your API keys
    ```
+
+## Project Structure
+
+```
+crates/
+  mira-server/       # Main server crate
+    src/
+      background/    # Background workers (embeddings, summaries, etc.)
+      cli/           # Command-line interface
+      db/            # Database operations and schema
+      embeddings/    # Google embedding integration
+      indexer/       # Code parsing and symbol extraction
+      llm/           # LLM provider clients (DeepSeek, Gemini)
+      mcp/           # MCP protocol handlers
+      search/        # Semantic and keyword search
+      tools/         # MCP tool implementations
+  mira-types/        # Shared types
+docs/                # Documentation
+```
 
 ## Making Changes
 
@@ -37,6 +57,21 @@ Thanks for your interest in contributing to Mira!
 7. Commit your changes
 8. Push to your fork and submit a pull request
 
+## Testing
+
+```bash
+# Run all tests
+cargo test
+
+# Run specific test
+cargo test test_name
+
+# Run tests with output
+cargo test -- --nocapture
+```
+
+Tests that require API keys are skipped if keys aren't configured.
+
 ## Code Style
 
 - Follow Rust idioms and best practices
@@ -44,6 +79,24 @@ Thanks for your interest in contributing to Mira!
 - Address clippy warnings
 - Add tests for new functionality
 - Keep commits focused and atomic
+
+## Commit Messages
+
+We use conventional commits:
+
+- `feat:` New features
+- `fix:` Bug fixes
+- `docs:` Documentation changes
+- `refactor:` Code refactoring
+- `test:` Test additions/changes
+- `chore:` Maintenance tasks
+
+## Pull Request Guidelines
+
+- Keep PRs focused on a single change
+- Update documentation if needed
+- Add tests for new functionality
+- Ensure CI passes before requesting review
 
 ## Reporting Issues
 
@@ -54,4 +107,4 @@ Thanks for your interest in contributing to Mira!
 
 ## Questions?
 
-Open an issue or start a discussion. We're happy to help!
+Open an issue or start a [discussion](https://github.com/ConaryLabs/Mira/discussions). We're happy to help!
