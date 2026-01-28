@@ -35,7 +35,13 @@ Mira runs as an MCP server alongside Claude Code, providing:
 
 ## Installation
 
-### Build from Source
+### Install via Cargo
+
+```bash
+cargo install --git https://github.com/ConaryLabs/Mira.git
+```
+
+### Or Build from Source
 
 ```bash
 git clone https://github.com/ConaryLabs/Mira.git
@@ -136,6 +142,7 @@ consult_experts(roles=["code_reviewer", "security"], context="...")
 | `security` | Vulnerabilities, attack vectors |
 | `scope_analyst` | Missing requirements, edge cases |
 | `plan_reviewer` | Validate implementation plans |
+| `documentation_writer` | Generate and review documentation |
 
 Experts have tool access - they can search code, trace call graphs, and explore the codebase to give informed answers.
 
