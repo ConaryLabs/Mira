@@ -92,6 +92,12 @@ project(action="start", project_path="/path/to/your/project")
 Then recall("preferences") before writing code.
 ```
 
+### Advanced: Plugin Mode
+
+For proactive context injection (auto-recall on every prompt, hooks for file changes), Mira can run as a Claude Code plugin instead of just an MCP server.
+
+See [plugin/README.md](plugin/README.md) for setup instructions.
+
 ## Features
 
 ### Memory System
