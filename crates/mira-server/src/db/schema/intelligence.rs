@@ -1,14 +1,17 @@
 // crates/mira-server/src/db/schema/intelligence.rs
 // Proactive intelligence, expert system, and cross-project migrations
 
+use crate::db::migration_helpers::create_table_if_missing;
 use anyhow::Result;
 use rusqlite::Connection;
-use crate::db::migration_helpers::create_table_if_missing;
 
 /// Migrate to add proactive intelligence tables for behavior tracking and predictions
 pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
     // Behavior patterns table - tracks file sequences, tool chains, session flows
-    create_table_if_missing(conn, "behavior_patterns", r#"
+    create_table_if_missing(
+        conn,
+        "behavior_patterns",
+        r#"
         CREATE TABLE IF NOT EXISTS behavior_patterns (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -25,10 +28,14 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_behavior_patterns_project ON behavior_patterns(project_id, pattern_type);
         CREATE INDEX IF NOT EXISTS idx_behavior_patterns_confidence ON behavior_patterns(confidence DESC);
         CREATE INDEX IF NOT EXISTS idx_behavior_patterns_recent ON behavior_patterns(last_triggered_at DESC);
-    "#)?;
+    "#,
+    )?;
 
     // Proactive interventions table - tracks what we suggested and user response
-    create_table_if_missing(conn, "proactive_interventions", r#"
+    create_table_if_missing(
+        conn,
+        "proactive_interventions",
+        r#"
         CREATE TABLE IF NOT EXISTS proactive_interventions (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -48,10 +55,14 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_interventions_type ON proactive_interventions(intervention_type, user_response);
         CREATE INDEX IF NOT EXISTS idx_interventions_pattern ON proactive_interventions(trigger_pattern_id);
         CREATE INDEX IF NOT EXISTS idx_interventions_pending ON proactive_interventions(user_response) WHERE user_response IS NULL;
-    "#)?;
+    "#,
+    )?;
 
     // Session behavior log - raw events for pattern mining
-    create_table_if_missing(conn, "session_behavior_log", r#"
+    create_table_if_missing(
+        conn,
+        "session_behavior_log",
+        r#"
         CREATE TABLE IF NOT EXISTS session_behavior_log (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -65,10 +76,14 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_behavior_log_session ON session_behavior_log(session_id, sequence_position);
         CREATE INDEX IF NOT EXISTS idx_behavior_log_project ON session_behavior_log(project_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_behavior_log_type ON session_behavior_log(event_type, created_at DESC);
-    "#)?;
+    "#,
+    )?;
 
     // User preferences for proactive features
-    create_table_if_missing(conn, "proactive_preferences", r#"
+    create_table_if_missing(
+        conn,
+        "proactive_preferences",
+        r#"
         CREATE TABLE IF NOT EXISTS proactive_preferences (
             id INTEGER PRIMARY KEY,
             user_id TEXT,
@@ -79,7 +94,8 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
             UNIQUE(user_id, project_id, preference_key)
         );
         CREATE INDEX IF NOT EXISTS idx_proactive_prefs_user ON proactive_preferences(user_id, project_id);
-    "#)?;
+    "#,
+    )?;
 
     Ok(())
 }
@@ -87,7 +103,10 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
 /// Migrate to add evolutionary expert system tables
 pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
     // Expert consultations - detailed history of each consultation
-    create_table_if_missing(conn, "expert_consultations", r#"
+    create_table_if_missing(
+        conn,
+        "expert_consultations",
+        r#"
         CREATE TABLE IF NOT EXISTS expert_consultations (
             id INTEGER PRIMARY KEY,
             expert_role TEXT NOT NULL,
@@ -107,10 +126,14 @@ pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_expert_consultations_role ON expert_consultations(expert_role, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_expert_consultations_project ON expert_consultations(project_id, expert_role);
         CREATE INDEX IF NOT EXISTS idx_expert_consultations_category ON expert_consultations(problem_category);
-    "#)?;
+    "#,
+    )?;
 
     // Problem patterns - recurring problem signatures per expert
-    create_table_if_missing(conn, "problem_patterns", r#"
+    create_table_if_missing(
+        conn,
+        "problem_patterns",
+        r#"
         CREATE TABLE IF NOT EXISTS problem_patterns (
             id INTEGER PRIMARY KEY,
             expert_role TEXT NOT NULL,
@@ -128,10 +151,14 @@ pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
             UNIQUE(expert_role, pattern_signature)
         );
         CREATE INDEX IF NOT EXISTS idx_problem_patterns_role ON problem_patterns(expert_role, success_rate DESC);
-    "#)?;
+    "#,
+    )?;
 
     // Expert outcomes - track whether advice led to good results
-    create_table_if_missing(conn, "expert_outcomes", r#"
+    create_table_if_missing(
+        conn,
+        "expert_outcomes",
+        r#"
         CREATE TABLE IF NOT EXISTS expert_outcomes (
             id INTEGER PRIMARY KEY,
             consultation_id INTEGER REFERENCES expert_consultations(id),
@@ -149,10 +176,14 @@ pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_expert_outcomes_consultation ON expert_outcomes(consultation_id);
         CREATE INDEX IF NOT EXISTS idx_expert_outcomes_finding ON expert_outcomes(finding_id);
-    "#)?;
+    "#,
+    )?;
 
     // Expert prompt evolution - track prompt versions and their performance
-    create_table_if_missing(conn, "expert_prompt_versions", r#"
+    create_table_if_missing(
+        conn,
+        "expert_prompt_versions",
+        r#"
         CREATE TABLE IF NOT EXISTS expert_prompt_versions (
             id INTEGER PRIMARY KEY,
             expert_role TEXT NOT NULL,
@@ -167,10 +198,14 @@ pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
             UNIQUE(expert_role, version)
         );
         CREATE INDEX IF NOT EXISTS idx_expert_prompts_active ON expert_prompt_versions(expert_role, is_active);
-    "#)?;
+    "#,
+    )?;
 
     // Expert collaboration patterns - when experts should work together
-    create_table_if_missing(conn, "collaboration_patterns", r#"
+    create_table_if_missing(
+        conn,
+        "collaboration_patterns",
+        r#"
         CREATE TABLE IF NOT EXISTS collaboration_patterns (
             id INTEGER PRIMARY KEY,
             problem_domains TEXT NOT NULL,    -- JSON: which expertise domains involved
@@ -185,7 +220,8 @@ pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_collab_patterns_domains ON collaboration_patterns(problem_domains);
-    "#)?;
+    "#,
+    )?;
 
     Ok(())
 }
@@ -193,7 +229,10 @@ pub fn migrate_evolutionary_expert_tables(conn: &Connection) -> Result<()> {
 /// Migrate to add cross-project intelligence tables for pattern sharing
 pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()> {
     // Cross-project patterns - anonymized patterns that can be shared
-    create_table_if_missing(conn, "cross_project_patterns", r#"
+    create_table_if_missing(
+        conn,
+        "cross_project_patterns",
+        r#"
         CREATE TABLE IF NOT EXISTS cross_project_patterns (
             id INTEGER PRIMARY KEY,
             pattern_type TEXT NOT NULL,           -- 'file_sequence', 'tool_chain', 'problem_pattern', 'collaboration'
@@ -211,10 +250,14 @@ pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()
         CREATE INDEX IF NOT EXISTS idx_cross_patterns_type ON cross_project_patterns(pattern_type, confidence DESC);
         CREATE INDEX IF NOT EXISTS idx_cross_patterns_category ON cross_project_patterns(category);
         CREATE INDEX IF NOT EXISTS idx_cross_patterns_hash ON cross_project_patterns(pattern_hash);
-    "#)?;
+    "#,
+    )?;
 
     // Pattern sharing log - tracks what patterns were shared and when
-    create_table_if_missing(conn, "pattern_sharing_log", r#"
+    create_table_if_missing(
+        conn,
+        "pattern_sharing_log",
+        r#"
         CREATE TABLE IF NOT EXISTS pattern_sharing_log (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -227,10 +270,14 @@ pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()
         );
         CREATE INDEX IF NOT EXISTS idx_sharing_log_project ON pattern_sharing_log(project_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_sharing_log_direction ON pattern_sharing_log(direction, pattern_type);
-    "#)?;
+    "#,
+    )?;
 
     // Cross-project sharing preferences per project
-    create_table_if_missing(conn, "cross_project_preferences", r#"
+    create_table_if_missing(
+        conn,
+        "cross_project_preferences",
+        r#"
         CREATE TABLE IF NOT EXISTS cross_project_preferences (
             id INTEGER PRIMARY KEY,
             project_id INTEGER UNIQUE REFERENCES projects(id),
@@ -245,10 +292,14 @@ pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_cross_prefs_enabled ON cross_project_preferences(sharing_enabled);
-    "#)?;
+    "#,
+    )?;
 
     // Pattern provenance - tracks which projects contributed (without identifying them)
-    create_table_if_missing(conn, "pattern_provenance", r#"
+    create_table_if_missing(
+        conn,
+        "pattern_provenance",
+        r#"
         CREATE TABLE IF NOT EXISTS pattern_provenance (
             id INTEGER PRIMARY KEY,
             pattern_id INTEGER REFERENCES cross_project_patterns(id),
@@ -258,7 +309,8 @@ pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()
             UNIQUE(pattern_id, contribution_hash)
         );
         CREATE INDEX IF NOT EXISTS idx_provenance_pattern ON pattern_provenance(pattern_id);
-    "#)?;
+    "#,
+    )?;
 
     Ok(())
 }

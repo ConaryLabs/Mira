@@ -1,7 +1,7 @@
 // src/indexer/parsers/python.rs
 // Python language parser using tree-sitter
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
 use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
@@ -60,11 +60,22 @@ pub fn walk(
     match node.kind() {
         "function_definition" => {
             if let Some(sym) = extract_function(node, source, parent_name) {
-                let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                let func_name = sym
+                    .qualified_name
+                    .clone()
+                    .unwrap_or_else(|| sym.name.clone());
                 symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                        walk(
+                            child,
+                            source,
+                            symbols,
+                            imports,
+                            calls,
+                            parent_name,
+                            Some(&func_name),
+                        );
                     }
                 }
                 return;
@@ -76,7 +87,15 @@ pub fn walk(
                 symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(child, source, symbols, imports, calls, Some(&name), current_function);
+                        walk(
+                            child,
+                            source,
+                            symbols,
+                            imports,
+                            calls,
+                            Some(&name),
+                            current_function,
+                        );
                     }
                 }
                 return;
@@ -98,7 +117,15 @@ pub fn walk(
     }
 
     for child in node.children(&mut node.walk()) {
-        walk(child, source, symbols, imports, calls, parent_name, current_function);
+        walk(
+            child,
+            source,
+            symbols,
+            imports,
+            calls,
+            parent_name,
+            current_function,
+        );
     }
 }
 
@@ -111,11 +138,11 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         None => name.clone(),
     };
 
-    let signature = node.child_by_field_name("parameters")
+    let signature = node
+        .child_by_field_name("parameters")
         .map(|n| node_text(n, source));
 
-    let is_async = node.children(&mut node.walk())
-        .any(|n| n.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
 
     let is_test = name.starts_with("test_") || name.starts_with("test");
 
@@ -139,7 +166,8 @@ fn extract_class(node: Node, source: &[u8]) -> Option<Symbol> {
     let name = node_text(name_node, source);
 
     // Get base classes for signature
-    let superclasses = node.child_by_field_name("superclasses")
+    let superclasses = node
+        .child_by_field_name("superclasses")
         .map(|n| node_text(n, source));
 
     Some(Symbol {
@@ -181,18 +209,41 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     let function_node = node.child_by_field_name("function")?;
     let callee_name = match function_node.kind() {
         "identifier" => node_text(function_node, source),
-        "attribute" => {
-            function_node.child_by_field_name("attribute")
-                .map(|n| node_text(n, source))?
-        }
+        "attribute" => function_node
+            .child_by_field_name("attribute")
+            .map(|n| node_text(n, source))?,
         _ => return None,
     };
 
     // Skip common builtins
-    if matches!(callee_name.as_str(), "print" | "len" | "str" | "int" | "float" |
-                "list" | "dict" | "set" | "tuple" | "range" | "enumerate" | "zip" |
-                "open" | "type" | "isinstance" | "hasattr" | "getattr" | "setattr" |
-                "super" | "sorted" | "reversed" | "map" | "filter" | "any" | "all") {
+    if matches!(
+        callee_name.as_str(),
+        "print"
+            | "len"
+            | "str"
+            | "int"
+            | "float"
+            | "list"
+            | "dict"
+            | "set"
+            | "tuple"
+            | "range"
+            | "enumerate"
+            | "zip"
+            | "open"
+            | "type"
+            | "isinstance"
+            | "hasattr"
+            | "getattr"
+            | "setattr"
+            | "super"
+            | "sorted"
+            | "reversed"
+            | "map"
+            | "filter"
+            | "any"
+            | "all"
+    ) {
         return None;
     }
 
@@ -265,7 +316,10 @@ class MyClass:
         assert_eq!(class_sym.symbol_type, "class");
 
         let init_sym = symbols.iter().find(|s| s.name == "__init__").unwrap();
-        assert_eq!(init_sym.qualified_name, Some("MyClass.__init__".to_string()));
+        assert_eq!(
+            init_sym.qualified_name,
+            Some("MyClass.__init__".to_string())
+        );
 
         let async_sym = symbols.iter().find(|s| s.name == "async_method").unwrap();
         assert!(async_sym.is_async);
@@ -287,7 +341,9 @@ from ..parent import util
         let os_import = imports.iter().find(|i| i.import_path == "os").unwrap();
         assert!(os_import.is_external);
 
-        let local_import = imports.iter().find(|i| i.import_path.contains("local_module"));
+        let local_import = imports
+            .iter()
+            .find(|i| i.import_path.contains("local_module"));
         assert!(local_import.is_some());
     }
 
@@ -305,7 +361,10 @@ async def test_async_feature():
         let test_sym = symbols.iter().find(|s| s.name == "test_something").unwrap();
         assert!(test_sym.is_test);
 
-        let async_test = symbols.iter().find(|s| s.name == "test_async_feature").unwrap();
+        let async_test = symbols
+            .iter()
+            .find(|s| s.name == "test_async_feature")
+            .unwrap();
         assert!(async_test.is_test);
         assert!(async_test.is_async);
     }

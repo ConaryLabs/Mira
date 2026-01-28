@@ -2,7 +2,9 @@
 // Background processing of pending embeddings queue
 
 use crate::db::pool::DatabasePool;
-use crate::db::{get_pending_embeddings_sync, insert_chunk_embedding_sync, delete_pending_embedding_sync};
+use crate::db::{
+    delete_pending_embedding_sync, get_pending_embeddings_sync, insert_chunk_embedding_sync,
+};
 use crate::embeddings::EmbeddingClient;
 use crate::search::embedding_to_bytes;
 use std::sync::Arc;
@@ -21,10 +23,13 @@ pub async fn process_pending_embeddings(
     };
 
     // Fetch pending chunks
-    let pending = pool.interact(move |conn| {
-        get_pending_embeddings_sync(conn, BATCH_SIZE)
-            .map_err(|e| anyhow::anyhow!("Failed to get pending embeddings: {}", e))
-    }).await.map_err(|e| e.to_string())?;
+    let pending = pool
+        .interact(move |conn| {
+            get_pending_embeddings_sync(conn, BATCH_SIZE)
+                .map_err(|e| anyhow::anyhow!("Failed to get pending embeddings: {}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if pending.is_empty() {
         return Ok(0);
@@ -36,37 +41,44 @@ pub async fn process_pending_embeddings(
     let texts: Vec<String> = pending.iter().map(|p| p.chunk_content.clone()).collect();
 
     // Generate embeddings in batch (RETRIEVAL_DOCUMENT for storage)
-    let embeddings_result = emb.embed_batch_for_storage(&texts).await
+    let embeddings_result = emb
+        .embed_batch_for_storage(&texts)
+        .await
         .map_err(|e| format!("Embedding generation failed: {}", e))?;
 
     // Store embeddings and cleanup pending queue
-    let count = pool.interact(move |conn| {
-        let tx = conn.unchecked_transaction()?;
-        let mut stored = 0;
+    let count = pool
+        .interact(move |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut stored = 0;
 
-        for (chunk, embedding) in pending.iter().zip(embeddings_result.iter()) {
-            let embedding_bytes = embedding_to_bytes(embedding);
+            for (chunk, embedding) in pending.iter().zip(embeddings_result.iter()) {
+                let embedding_bytes = embedding_to_bytes(embedding);
 
-            // Insert into vec_code
-            insert_chunk_embedding_sync(
-                &tx,
-                &embedding_bytes,
-                &chunk.file_path,
-                &chunk.chunk_content,
-                chunk.project_id,
-                chunk.start_line as usize,
-            ).map_err(|e| anyhow::anyhow!("Insert failed: {}", e))?;
+                // Insert into vec_code
+                insert_chunk_embedding_sync(
+                    &tx,
+                    &embedding_bytes,
+                    &chunk.file_path,
+                    &chunk.chunk_content,
+                    chunk.project_id,
+                    chunk.start_line as usize,
+                )
+                .map_err(|e| anyhow::anyhow!("Insert failed: {}", e))?;
 
-            // Remove from pending queue
-            delete_pending_embedding_sync(&tx, chunk.id)
-                .map_err(|e| anyhow::anyhow!("Delete failed: {}", e))?;
+                // Remove from pending queue
+                delete_pending_embedding_sync(&tx, chunk.id)
+                    .map_err(|e| anyhow::anyhow!("Delete failed: {}", e))?;
 
-            stored += 1;
-        }
+                stored += 1;
+            }
 
-        tx.commit().map_err(|e| anyhow::anyhow!("Commit failed: {}", e))?;
-        Ok(stored)
-    }).await.map_err(|e| e.to_string())?;
+            tx.commit()
+                .map_err(|e| anyhow::anyhow!("Commit failed: {}", e))?;
+            Ok(stored)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     tracing::info!("Stored {} embeddings from pending queue", count);
     Ok(count)

@@ -168,7 +168,9 @@ pub enum UsageAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ProjectRequest {
-    #[schemars(description = "Action: start (initialize session), set (change project), get (show current)")]
+    #[schemars(
+        description = "Action: start (initialize session), set (change project), get (show current)"
+    )]
     pub action: ProjectAction,
     #[schemars(description = "Project root path (required for start/set)")]
     pub project_path: Option<String>,
@@ -190,7 +192,9 @@ pub struct RememberRequest {
     pub category: Option<String>,
     #[schemars(description = "Confidence score (0.0-1.0)")]
     pub confidence: Option<f64>,
-    #[schemars(description = "Visibility scope: personal (only creator), project (default, anyone with project access), team (team members only)")]
+    #[schemars(
+        description = "Visibility scope: personal (only creator), project (default, anyone with project access), team (team members only)"
+    )]
     pub scope: Option<String>,
 }
 
@@ -254,7 +258,9 @@ pub struct CheckCapabilityRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoalRequest {
-    #[schemars(description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress")]
+    #[schemars(
+        description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress"
+    )]
     pub action: GoalAction,
     #[schemars(description = "Goal ID")]
     pub goal_id: Option<String>,
@@ -280,13 +286,17 @@ pub struct GoalRequest {
     pub weight: Option<i32>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
-    #[schemars(description = "For bulk_create: JSON array of goals [{title, description?, priority?}, ...]")]
+    #[schemars(
+        description = "For bulk_create: JSON array of goals [{title, description?, priority?}, ...]"
+    )]
     pub goals: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CrossProjectRequest {
-    #[schemars(description = "Action: get_preferences/status/enable_sharing/disable_sharing/reset_budget/get_stats/extract_patterns/sync")]
+    #[schemars(
+        description = "Action: get_preferences/status/enable_sharing/disable_sharing/reset_budget/get_stats/extract_patterns/sync"
+    )]
     pub action: CrossProjectAction,
     #[schemars(description = "Enable pattern export (for enable_sharing)")]
     pub export: Option<bool>,
@@ -330,13 +340,17 @@ pub struct ReplyToMiraRequest {
     pub in_reply_to: String,
     #[schemars(description = "Your response content")]
     pub content: String,
-    #[schemars(description = "Is your response complete? Set to false if you need more information.")]
+    #[schemars(
+        description = "Is your response complete? Set to false if you need more information."
+    )]
     pub complete: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConsultExpertsRequest {
-    #[schemars(description = "List of expert roles to consult in parallel: architect, plan_reviewer, scope_analyst, code_reviewer, security")]
+    #[schemars(
+        description = "List of expert roles to consult in parallel: architect, plan_reviewer, scope_analyst, code_reviewer, security"
+    )]
     pub roles: Vec<String>,
     #[schemars(description = "Code, design, or situation to analyze")]
     pub context: String,
@@ -348,7 +362,9 @@ pub struct ConsultExpertsRequest {
 pub struct ConfigureExpertRequest {
     #[schemars(description = "Action: set/get/delete/list/providers")]
     pub action: ExpertConfigAction,
-    #[schemars(description = "Expert role: architect/plan_reviewer/scope_analyst/code_reviewer/security")]
+    #[schemars(
+        description = "Expert role: architect/plan_reviewer/scope_analyst/code_reviewer/security"
+    )]
     pub role: Option<String>,
     #[schemars(description = "Custom system prompt (for 'set' action)")]
     pub prompt: Option<String>,
@@ -402,7 +418,9 @@ pub struct FindingRequest {
     pub finding_id: Option<i64>,
     #[schemars(description = "Finding IDs for bulk review")]
     pub finding_ids: Option<Vec<i64>>,
-    #[schemars(description = "Status filter (for list) or new status (for review): pending/accepted/rejected/fixed")]
+    #[schemars(
+        description = "Status filter (for list) or new status (for review): pending/accepted/rejected/fixed"
+    )]
     pub status: Option<String>,
     #[schemars(description = "Feedback explaining review decision (helps learning)")]
     pub feedback: Option<String>,
@@ -410,7 +428,9 @@ pub struct FindingRequest {
     pub file_path: Option<String>,
     #[schemars(description = "Filter by expert role: code_reviewer/security/architect/etc.")]
     pub expert_role: Option<String>,
-    #[schemars(description = "Filter by correction type: bug/style/security/performance (for patterns)")]
+    #[schemars(
+        description = "Filter by correction type: bug/style/security/performance (for patterns)"
+    )]
     pub correction_type: Option<String>,
     #[schemars(description = "Max results (default: 20)")]
     pub limit: Option<i64>,
@@ -418,7 +438,9 @@ pub struct FindingRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeDiffRequest {
-    #[schemars(description = "Starting git ref (commit, branch, tag). Default: HEAD~1 for commits, or analyzes staged/working changes if present")]
+    #[schemars(
+        description = "Starting git ref (commit, branch, tag). Default: HEAD~1 for commits, or analyzes staged/working changes if present"
+    )]
     pub from_ref: Option<String>,
     #[schemars(description = "Ending git ref. Default: HEAD")]
     pub to_ref: Option<String>,
@@ -428,9 +450,13 @@ pub struct AnalyzeDiffRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UsageRequest {
-    #[schemars(description = "Action: summary (totals), stats (grouped by dimension), list (recent records)")]
+    #[schemars(
+        description = "Action: summary (totals), stats (grouped by dimension), list (recent records)"
+    )]
     pub action: UsageAction,
-    #[schemars(description = "Group by: role, provider, model, or provider_model (for stats action)")]
+    #[schemars(
+        description = "Group by: role, provider, model, or provider_model (for stats action)"
+    )]
     pub group_by: Option<String>,
     #[schemars(description = "Filter to last N days (default: 30)")]
     pub since_days: Option<u32>,

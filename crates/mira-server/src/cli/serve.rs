@@ -45,32 +45,42 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     let server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
 
     // Restore context (Project & Session)
-    let restored_project = pool.interact(|conn| {
-        // Try to get last active project
-        if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
-            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
-                return Ok(Some(ProjectContext { id, path, name }));
+    let restored_project = pool
+        .interact(|conn| {
+            // Try to get last active project
+            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
+                if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
+                    return Ok(Some(ProjectContext { id, path, name }));
+                }
             }
-        }
-        // Fallback: Check if CWD is a project
-        if let Ok(cwd) = std::env::current_dir() {
-            let path_str = cwd.to_string_lossy().to_string();
-            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None) {
-                return Ok(Some(ProjectContext { id, path: path_str, name }));
+            // Fallback: Check if CWD is a project
+            if let Ok(cwd) = std::env::current_dir() {
+                let path_str = cwd.to_string_lossy().to_string();
+                if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None)
+                {
+                    return Ok(Some(ProjectContext {
+                        id,
+                        path: path_str,
+                        name,
+                    }));
+                }
             }
-        }
-        Ok(None)
-    }).await?;
+            Ok(None)
+        })
+        .await?;
 
     if let Some(project) = restored_project {
         server.set_project(project).await;
     }
 
     // Restore session ID
-    if let Ok(Some(sid)) = pool.interact(|conn| {
-        mira::db::get_server_state_sync(conn, "active_session_id")
-            .map_err(|e| anyhow::anyhow!(e))
-    }).await {
+    if let Ok(Some(sid)) = pool
+        .interact(|conn| {
+            mira::db::get_server_state_sync(conn, "active_session_id")
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+    {
         server.set_session_id(sid).await;
     }
 
@@ -110,10 +120,16 @@ pub async fn run_mcp_server() -> Result<()> {
     }
 
     // Initialize LLM provider factory from centralized config
-    let llm_factory = Arc::new(mira::llm::ProviderFactory::from_api_keys(env_config.api_keys.clone()));
+    let llm_factory = Arc::new(mira::llm::ProviderFactory::from_api_keys(
+        env_config.api_keys.clone(),
+    ));
 
     if llm_factory.has_providers() {
-        let providers: Vec<_> = llm_factory.available_providers().iter().map(|p| p.to_string()).collect();
+        let providers: Vec<_> = llm_factory
+            .available_providers()
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
         info!("LLM providers available: {}", providers.join(", "));
     } else {
         info!("No LLM providers configured (set DEEPSEEK_API_KEY or GEMINI_API_KEY)");
@@ -122,12 +138,14 @@ pub async fn run_mcp_server() -> Result<()> {
     // Spawn background worker for batch processing
     let bg_pool = pool.clone();
     let bg_embeddings = embeddings.clone();
-    let (_shutdown_tx, fast_lane_notify) = background::spawn(bg_pool, bg_embeddings, llm_factory.clone());
+    let (_shutdown_tx, fast_lane_notify) =
+        background::spawn(bg_pool, bg_embeddings, llm_factory.clone());
     info!("Background worker started");
 
     // Spawn file watcher for incremental indexing
     let (_watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
-    let watcher_handle = background::watcher::spawn(pool.clone(), watcher_shutdown_rx, Some(fast_lane_notify));
+    let watcher_handle =
+        background::watcher::spawn(pool.clone(), watcher_shutdown_rx, Some(fast_lane_notify));
     info!("File watcher started");
 
     // Create MCP server with watcher from centralized config
@@ -136,28 +154,41 @@ pub async fn run_mcp_server() -> Result<()> {
 
     // Restore context (Project & Session)
     let restore_pool = pool.clone();
-    let restored = restore_pool.interact(|conn| {
-        // Try to get last active project
-        if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
-            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
-                return Ok(Some((ProjectContext { id, path, name }, true)));
+    let restored = restore_pool
+        .interact(|conn| {
+            // Try to get last active project
+            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn) {
+                if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None) {
+                    return Ok(Some((ProjectContext { id, path, name }, true)));
+                }
             }
-        }
-        // Fallback: Check if CWD is a project
-        if let Ok(cwd) = std::env::current_dir() {
-            let path_str = cwd.to_string_lossy().to_string();
-            if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None) {
-                return Ok(Some((ProjectContext { id, path: path_str, name }, false)));
+            // Fallback: Check if CWD is a project
+            if let Ok(cwd) = std::env::current_dir() {
+                let path_str = cwd.to_string_lossy().to_string();
+                if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None)
+                {
+                    return Ok(Some((
+                        ProjectContext {
+                            id,
+                            path: path_str,
+                            name,
+                        },
+                        false,
+                    )));
+                }
             }
-        }
-        Ok(None)
-    }).await?;
+            Ok(None)
+        })
+        .await?;
 
     if let Some((project, from_stored)) = restored {
         if from_stored {
             info!("Restoring project: {} (id: {})", project.path, project.id);
         } else {
-            info!("Restoring project from CWD: {} (id: {})", project.path, project.id);
+            info!(
+                "Restoring project from CWD: {} (id: {})",
+                project.path, project.id
+            );
         }
         let project_path = project.path.clone();
         let project_id = project.id;
@@ -165,15 +196,20 @@ pub async fn run_mcp_server() -> Result<()> {
 
         // Register with watcher if available
         if let Some(watcher) = server.watcher() {
-            watcher.watch(project_id, std::path::PathBuf::from(project_path)).await;
+            watcher
+                .watch(project_id, std::path::PathBuf::from(project_path))
+                .await;
         }
     }
 
     // Restore session ID
-    if let Ok(Some(sid)) = pool.interact(|conn| {
-        mira::db::get_server_state_sync(conn, "active_session_id")
-            .map_err(|e| anyhow::anyhow!(e))
-    }).await {
+    if let Ok(Some(sid)) = pool
+        .interact(|conn| {
+            mira::db::get_server_state_sync(conn, "active_session_id")
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+    {
         info!("Restoring session: {}", sid);
         server.set_session_id(sid).await;
     }

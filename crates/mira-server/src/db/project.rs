@@ -3,9 +3,9 @@
 
 use anyhow::Result;
 use mira_types::MemoryFact;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
-use super::{parse_memory_fact_row, Database};
+use super::{Database, parse_memory_fact_row};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
@@ -200,11 +200,9 @@ pub fn get_projects_for_briefing_check_sync(
          FROM projects p
          LEFT JOIN project_briefings pb ON p.id = pb.project_id
          WHERE p.path IS NOT NULL
-         ORDER BY p.id"
+         ORDER BY p.id",
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-    })?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     rows.collect()
 }
 
@@ -262,13 +260,15 @@ pub fn get_project_briefing_sync(
         "SELECT project_id, last_known_commit, last_session_at, briefing_text, generated_at
          FROM project_briefings WHERE project_id = ?",
         [project_id],
-        |row| Ok(super::types::ProjectBriefing {
-            project_id: row.get(0)?,
-            last_known_commit: row.get(1)?,
-            last_session_at: row.get(2)?,
-            briefing_text: row.get(3)?,
-            generated_at: row.get(4)?,
-        }),
+        |row| {
+            Ok(super::types::ProjectBriefing {
+                project_id: row.get(0)?,
+                last_known_commit: row.get(1)?,
+                last_session_at: row.get(2)?,
+                briefing_text: row.get(3)?,
+                generated_at: row.get(4)?,
+            })
+        },
     );
 
     match result {
@@ -319,7 +319,11 @@ impl Database {
     ///
     /// Uses UPSERT pattern (INSERT ... ON CONFLICT) to be safe under concurrent access.
     /// If a name is stored, returns it. Otherwise, auto-detects from project files.
-    pub fn get_or_create_project(&self, path: &str, name: Option<&str>) -> Result<(i64, Option<String>)> {
+    pub fn get_or_create_project(
+        &self,
+        path: &str,
+        name: Option<&str>,
+    ) -> Result<(i64, Option<String>)> {
         let conn = self.conn();
 
         // UPSERT: insert or get existing.
@@ -359,7 +363,11 @@ impl Database {
         use std::path::Path;
 
         let path = Path::new(path);
-        let dir_name = || path.file_name().and_then(|n| n.to_str()).map(|s| s.to_string());
+        let dir_name = || {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        };
 
         // Try Cargo.toml for Rust projects
         let cargo_toml = path.join("Cargo.toml");
@@ -424,17 +432,17 @@ impl Database {
     /// List all projects in the database
     pub fn list_projects(&self) -> Result<Vec<(i64, String, Option<String>)>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, path, name FROM projects ORDER BY id DESC"
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        let mut stmt = conn.prepare("SELECT id, path, name FROM projects ORDER BY id DESC")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// Get project briefing (What's New since last session)
-    pub fn get_project_briefing(&self, project_id: i64) -> Result<Option<super::types::ProjectBriefing>> {
+    pub fn get_project_briefing(
+        &self,
+        project_id: i64,
+    ) -> Result<Option<super::types::ProjectBriefing>> {
         get_project_briefing_sync(&self.conn(), project_id).map_err(Into::into)
     }
 

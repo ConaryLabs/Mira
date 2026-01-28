@@ -2,9 +2,9 @@
 // Python package/module detection from project structure
 
 use super::super::types::Module;
+use crate::project_files::walker::FileWalker;
 use std::collections::HashSet;
 use std::path::Path;
-use crate::project_files::walker::FileWalker;
 
 /// Detect Python modules from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {
@@ -72,8 +72,8 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
 
             // Only include top-level .py files (directly under project root or src/)
             let parent = path.parent();
-            let is_top_level = parent == Some(project_path)
-                || parent == Some(&project_path.join("src"));
+            let is_top_level =
+                parent == Some(project_path) || parent == Some(&project_path.join("src"));
 
             if is_top_level {
                 let module_path = relative.to_string_lossy().to_string();
@@ -102,7 +102,13 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     if modules.is_empty() {
         let src_dir = project_path.join("src");
         if src_dir.exists() {
-            detect_in_src(&src_dir, project_path, &project_name, &mut modules, &mut seen_dirs);
+            detect_in_src(
+                &src_dir,
+                project_path,
+                &project_name,
+                &mut modules,
+                &mut seen_dirs,
+            );
         }
     }
 
@@ -246,7 +252,11 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
         .walk_entries()
         .filter_map(|e| e.ok())
     {
-        let name = entry.path().file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = entry
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         if candidates.contains(&name) {
             if let Ok(rel) = entry.path().strip_prefix(project_path) {
                 entries.push(rel.to_string_lossy().to_string());

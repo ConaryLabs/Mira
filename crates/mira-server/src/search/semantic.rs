@@ -4,10 +4,10 @@
 use super::context::expand_context;
 use super::keyword::keyword_search;
 use super::utils::{distance_to_score, embedding_to_bytes};
+use crate::Result;
 use crate::db::pool::DatabasePool;
 use crate::db::semantic_code_search_sync;
 use crate::embeddings::EmbeddingClient;
-use crate::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -57,11 +57,12 @@ pub async fn semantic_search(
     let embedding_bytes = embedding_to_bytes(&query_embedding);
 
     // Run vector search on pool's blocking thread
-    let db_results = pool.interact(move |conn| {
-        semantic_code_search_sync(conn, &embedding_bytes, project_id, limit)
-            .map_err(|e| anyhow::anyhow!("{}", e))
-    })
-    .await?;
+    let db_results = pool
+        .interact(move |conn| {
+            semantic_code_search_sync(conn, &embedding_bytes, project_id, limit)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await?;
 
     let results: Vec<SearchResult> = db_results
         .into_iter()
@@ -219,7 +220,11 @@ fn rerank_results_with_intent(
     }
 
     // Re-sort by adjusted score
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 }
 
 // ============================================================================
@@ -260,7 +265,11 @@ fn merge_results(
 
     // Convert to vec and sort by score descending
     let mut results: Vec<SearchResult> = merged.into_values().collect();
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Determine primary search type based on contribution
     let search_type = if semantic_count >= keyword_count && semantic_count > 0 {
@@ -290,17 +299,18 @@ pub async fn hybrid_search(
     let query_for_keyword = query.to_string();
     let project_path_for_keyword = project_path.map(|s| s.to_string());
     let keyword_future = async move {
-        pool_for_keyword.interact(move |conn| {
-            Ok(keyword_search(
-                conn,
-                &query_for_keyword,
-                project_id,
-                project_path_for_keyword.as_deref(),
-                fetch_limit,
-            ))
-        })
-        .await
-        .expect("keyword search pool.interact failed")
+        pool_for_keyword
+            .interact(move |conn| {
+                Ok(keyword_search(
+                    conn,
+                    &query_for_keyword,
+                    project_id,
+                    project_path_for_keyword.as_deref(),
+                    fetch_limit,
+                ))
+            })
+            .await
+            .expect("keyword search pool.interact failed")
     };
 
     // Run searches in parallel
@@ -310,7 +320,14 @@ pub async fn hybrid_search(
         let query_for_semantic = query.to_string();
 
         let semantic_future = async move {
-            semantic_search(&pool_for_semantic, &emb, &query_for_semantic, project_id, fetch_limit).await
+            semantic_search(
+                &pool_for_semantic,
+                &emb,
+                &query_for_semantic,
+                project_id,
+                fetch_limit,
+            )
+            .await
         };
 
         let (semantic_res, keyword_res) = tokio::join!(semantic_future, keyword_future);
@@ -390,10 +407,7 @@ pub fn format_results(
         } else {
             result.file_path.clone()
         };
-        response.push_str(&format!(
-            "## {} (score: {:.2})\n",
-            location, result.score
-        ));
+        response.push_str(&format!("## {} (score: {:.2})\n", location, result.score));
 
         let display_content = if expand {
             if let Some((symbol_info, expanded)) =
@@ -449,29 +463,74 @@ mod tests {
 
     #[test]
     fn test_detect_intent_documentation() {
-        assert_eq!(detect_query_intent("docs for Database"), QueryIntent::Documentation);
-        assert_eq!(detect_query_intent("documentation for API"), QueryIntent::Documentation);
-        assert_eq!(detect_query_intent("what is SearchResult"), QueryIntent::Documentation);
-        assert_eq!(detect_query_intent("explain the hybrid search"), QueryIntent::Documentation);
+        assert_eq!(
+            detect_query_intent("docs for Database"),
+            QueryIntent::Documentation
+        );
+        assert_eq!(
+            detect_query_intent("documentation for API"),
+            QueryIntent::Documentation
+        );
+        assert_eq!(
+            detect_query_intent("what is SearchResult"),
+            QueryIntent::Documentation
+        );
+        assert_eq!(
+            detect_query_intent("explain the hybrid search"),
+            QueryIntent::Documentation
+        );
     }
 
     #[test]
     fn test_detect_intent_examples() {
-        assert_eq!(detect_query_intent("example of using search"), QueryIntent::Examples);
-        assert_eq!(detect_query_intent("usage of Database"), QueryIntent::Examples);
-        assert_eq!(detect_query_intent("how to use embeddings"), QueryIntent::Examples);
-        assert_eq!(detect_query_intent("where is the config"), QueryIntent::Examples);
-        assert_eq!(detect_query_intent("who calls this function"), QueryIntent::Examples);
-        assert_eq!(detect_query_intent("callers of semantic_search"), QueryIntent::Examples);
+        assert_eq!(
+            detect_query_intent("example of using search"),
+            QueryIntent::Examples
+        );
+        assert_eq!(
+            detect_query_intent("usage of Database"),
+            QueryIntent::Examples
+        );
+        assert_eq!(
+            detect_query_intent("how to use embeddings"),
+            QueryIntent::Examples
+        );
+        assert_eq!(
+            detect_query_intent("where is the config"),
+            QueryIntent::Examples
+        );
+        assert_eq!(
+            detect_query_intent("who calls this function"),
+            QueryIntent::Examples
+        );
+        assert_eq!(
+            detect_query_intent("callers of semantic_search"),
+            QueryIntent::Examples
+        );
     }
 
     #[test]
     fn test_detect_intent_implementation() {
-        assert_eq!(detect_query_intent("how does search work"), QueryIntent::Implementation);
-        assert_eq!(detect_query_intent("implementation of caching"), QueryIntent::Implementation);
-        assert_eq!(detect_query_intent("how is the score calculated"), QueryIntent::Implementation);
-        assert_eq!(detect_query_intent("source of error handling"), QueryIntent::Implementation);
-        assert_eq!(detect_query_intent("definition of SearchResult"), QueryIntent::Implementation);
+        assert_eq!(
+            detect_query_intent("how does search work"),
+            QueryIntent::Implementation
+        );
+        assert_eq!(
+            detect_query_intent("implementation of caching"),
+            QueryIntent::Implementation
+        );
+        assert_eq!(
+            detect_query_intent("how is the score calculated"),
+            QueryIntent::Implementation
+        );
+        assert_eq!(
+            detect_query_intent("source of error handling"),
+            QueryIntent::Implementation
+        );
+        assert_eq!(
+            detect_query_intent("definition of SearchResult"),
+            QueryIntent::Implementation
+        );
     }
 
     #[test]
@@ -494,14 +553,12 @@ mod tests {
 
     #[test]
     fn test_merge_results_semantic_only() {
-        let semantic = vec![
-            SearchResult {
-                file_path: "src/main.rs".to_string(),
-                content: "fn main()".to_string(),
-                score: 0.9,
-                start_line: 1,
-            },
-        ];
+        let semantic = vec![SearchResult {
+            file_path: "src/main.rs".to_string(),
+            content: "fn main()".to_string(),
+            score: 0.9,
+            start_line: 1,
+        }];
         let (results, search_type) = merge_results(semantic, vec![]);
         assert_eq!(results.len(), 1);
         assert_eq!(search_type, SearchType::Semantic);
@@ -509,14 +566,12 @@ mod tests {
 
     #[test]
     fn test_merge_results_keyword_only() {
-        let keyword = vec![
-            SearchResult {
-                file_path: "src/lib.rs".to_string(),
-                content: "pub fn search()".to_string(),
-                score: 0.8,
-                start_line: 10,
-            },
-        ];
+        let keyword = vec![SearchResult {
+            file_path: "src/lib.rs".to_string(),
+            content: "pub fn search()".to_string(),
+            score: 0.8,
+            start_line: 10,
+        }];
         let (results, search_type) = merge_results(vec![], keyword);
         assert_eq!(results.len(), 1);
         assert_eq!(search_type, SearchType::Keyword);
@@ -524,22 +579,18 @@ mod tests {
 
     #[test]
     fn test_merge_results_deduplication() {
-        let semantic = vec![
-            SearchResult {
-                file_path: "src/main.rs".to_string(),
-                content: "fn main()".to_string(),
-                score: 0.9,
-                start_line: 1,
-            },
-        ];
-        let keyword = vec![
-            SearchResult {
-                file_path: "src/main.rs".to_string(),
-                content: "fn main()".to_string(),
-                score: 0.7,
-                start_line: 1,
-            },
-        ];
+        let semantic = vec![SearchResult {
+            file_path: "src/main.rs".to_string(),
+            content: "fn main()".to_string(),
+            score: 0.9,
+            start_line: 1,
+        }];
+        let keyword = vec![SearchResult {
+            file_path: "src/main.rs".to_string(),
+            content: "fn main()".to_string(),
+            score: 0.7,
+            start_line: 1,
+        }];
         let (results, _) = merge_results(semantic, keyword);
         assert_eq!(results.len(), 1);
         // Should keep higher score
@@ -548,22 +599,18 @@ mod tests {
 
     #[test]
     fn test_merge_results_sorted_by_score() {
-        let semantic = vec![
-            SearchResult {
-                file_path: "src/low.rs".to_string(),
-                content: "low score".to_string(),
-                score: 0.5,
-                start_line: 1,
-            },
-        ];
-        let keyword = vec![
-            SearchResult {
-                file_path: "src/high.rs".to_string(),
-                content: "high score".to_string(),
-                score: 0.95,
-                start_line: 1,
-            },
-        ];
+        let semantic = vec![SearchResult {
+            file_path: "src/low.rs".to_string(),
+            content: "low score".to_string(),
+            score: 0.5,
+            start_line: 1,
+        }];
+        let keyword = vec![SearchResult {
+            file_path: "src/high.rs".to_string(),
+            content: "high score".to_string(),
+            score: 0.95,
+            start_line: 1,
+        }];
         let (results, _) = merge_results(semantic, keyword);
         assert_eq!(results.len(), 2);
         assert!(results[0].score > results[1].score);
@@ -583,14 +630,12 @@ mod tests {
 
     #[test]
     fn test_format_results_basic() {
-        let results = vec![
-            SearchResult {
-                file_path: "src/main.rs".to_string(),
-                content: "fn main() { }".to_string(),
-                score: 0.85,
-                start_line: 1,
-            },
-        ];
+        let results = vec![SearchResult {
+            file_path: "src/main.rs".to_string(),
+            content: "fn main() { }".to_string(),
+            score: 0.85,
+            start_line: 1,
+        }];
         let output = format_results(&results, SearchType::Semantic, None, false);
         assert!(output.contains("1 results (semantic search)"));
         assert!(output.contains("src/main.rs:1"));
@@ -600,14 +645,12 @@ mod tests {
 
     #[test]
     fn test_format_results_no_line_number() {
-        let results = vec![
-            SearchResult {
-                file_path: "src/lib.rs".to_string(),
-                content: "pub mod search;".to_string(),
-                score: 0.75,
-                start_line: 0,
-            },
-        ];
+        let results = vec![SearchResult {
+            file_path: "src/lib.rs".to_string(),
+            content: "pub mod search;".to_string(),
+            score: 0.75,
+            start_line: 0,
+        }];
         let output = format_results(&results, SearchType::Keyword, None, false);
         assert!(output.contains("keyword search"));
         // Should not have line number when start_line is 0
@@ -618,14 +661,12 @@ mod tests {
     #[test]
     fn test_format_results_truncates_long_content() {
         let long_content = "x".repeat(600);
-        let results = vec![
-            SearchResult {
-                file_path: "src/big.rs".to_string(),
-                content: long_content,
-                score: 0.9,
-                start_line: 1,
-            },
-        ];
+        let results = vec![SearchResult {
+            file_path: "src/big.rs".to_string(),
+            content: long_content,
+            score: 0.9,
+            start_line: 1,
+        }];
         let output = format_results(&results, SearchType::Semantic, None, false);
         assert!(output.contains("..."));
         // Output should be truncated, not contain all 600 chars

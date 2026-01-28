@@ -81,7 +81,11 @@ impl SlowLaneWorker {
         self.cycle_count += 1;
 
         // Get LLM client for background tasks
-        let client = match self.llm_factory.client_for_role("background", &self.pool).await {
+        let client = match self
+            .llm_factory
+            .client_for_role("background", &self.pool)
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 tracing::debug!("Slow lane: no LLM provider available: {}", e);

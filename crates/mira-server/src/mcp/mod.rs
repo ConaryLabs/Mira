@@ -18,13 +18,14 @@ use crate::hooks::session::read_claude_session_id;
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use mira_types::ProjectContext;
 use rmcp::{
+    ErrorData, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::{
         CallToolRequestParam, CallToolResult, ListToolsResult, PaginatedRequestParam,
         ServerCapabilities, ServerInfo,
     },
     service::{RequestContext, RoleServer},
-    tool, tool_router, ErrorData, ServerHandler,
+    tool, tool_router,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -100,12 +101,14 @@ impl MiraServer {
         server
     }
 
-
     /// Broadcast an event (no-op in MCP-only mode)
     pub fn broadcast(&self, event: mira_types::WsEvent) {
         if let Some(tx) = &self.ws_tx {
             let receiver_count = tx.receiver_count();
-            eprintln!("[BROADCAST] Sending {:?} to {} receivers", event, receiver_count);
+            eprintln!(
+                "[BROADCAST] Sending {:?} to {} receivers",
+                event, receiver_count
+            );
             match tx.send(event) {
                 Ok(n) => eprintln!("[BROADCAST] Sent to {} receivers", n),
                 Err(e) => eprintln!("[BROADCAST] Error: {:?}", e),
@@ -118,17 +121,18 @@ impl MiraServer {
 
 #[tool_router]
 impl MiraServer {
-    #[tool(description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current).")]
-    async fn project(
-        &self,
-        Parameters(req): Parameters<ProjectRequest>,
-    ) -> Result<String, String> {
+    #[tool(
+        description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current)."
+    )]
+    async fn project(&self, Parameters(req): Parameters<ProjectRequest>) -> Result<String, String> {
         // For start action, use provided session ID or fall back to Claude's hook-generated ID
         let session_id = req.session_id.or_else(read_claude_session_id);
         tools::project(self, req.action, req.project_path, req.name, session_id).await
     }
 
-    #[tool(description = "Store a fact for future recall. Scope controls visibility: personal (only you), project (default), team.")]
+    #[tool(
+        description = "Store a fact for future recall. Scope controls visibility: personal (only you), project (default), team."
+    )]
     async fn remember(
         &self,
         Parameters(req): Parameters<RememberRequest>,
@@ -146,18 +150,12 @@ impl MiraServer {
     }
 
     #[tool(description = "Search memories using semantic similarity.")]
-    async fn recall(
-        &self,
-        Parameters(req): Parameters<RecallRequest>,
-    ) -> Result<String, String> {
+    async fn recall(&self, Parameters(req): Parameters<RecallRequest>) -> Result<String, String> {
         tools::recall(self, req.query, req.limit, req.category, req.fact_type).await
     }
 
     #[tool(description = "Delete a memory by ID.")]
-    async fn forget(
-        &self,
-        Parameters(req): Parameters<ForgetRequest>,
-    ) -> Result<String, String> {
+    async fn forget(&self, Parameters(req): Parameters<ForgetRequest>) -> Result<String, String> {
         tools::forget(self, req.id).await
     }
 
@@ -201,11 +199,10 @@ impl MiraServer {
         tools::check_capability(self, req.description).await
     }
 
-    #[tool(description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations.")]
-    async fn goal(
-        &self,
-        Parameters(req): Parameters<GoalRequest>,
-    ) -> Result<String, String> {
+    #[tool(
+        description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations."
+    )]
+    async fn goal(&self, Parameters(req): Parameters<GoalRequest>) -> Result<String, String> {
         tools::goal(
             self,
             req.action,
@@ -225,7 +222,9 @@ impl MiraServer {
         .await
     }
 
-    #[tool(description = "Manage cross-project intelligence sharing (enable/disable sharing, view stats, sync patterns).")]
+    #[tool(
+        description = "Manage cross-project intelligence sharing (enable/disable sharing, view stats, sync patterns)."
+    )]
     async fn cross_project(
         &self,
         Parameters(req): Parameters<CrossProjectRequest>,
@@ -242,10 +241,7 @@ impl MiraServer {
     }
 
     #[tool(description = "Index code and git history. Actions: project/file/status")]
-    async fn index(
-        &self,
-        Parameters(req): Parameters<IndexRequest>,
-    ) -> Result<String, String> {
+    async fn index(&self, Parameters(req): Parameters<IndexRequest>) -> Result<String, String> {
         tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
     }
 
@@ -272,10 +268,18 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ReplyToMiraRequest>,
     ) -> Result<String, String> {
-        tools::reply_to_mira(self, req.in_reply_to, req.content, req.complete.unwrap_or(true)).await
+        tools::reply_to_mira(
+            self,
+            req.in_reply_to,
+            req.content,
+            req.complete.unwrap_or(true),
+        )
+        .await
     }
 
-    #[tool(description = "Consult one or more experts in parallel. Roles: architect, plan_reviewer, scope_analyst, code_reviewer, security.")]
+    #[tool(
+        description = "Consult one or more experts in parallel. Roles: architect, plan_reviewer, scope_analyst, code_reviewer, security."
+    )]
     async fn consult_experts(
         &self,
         Parameters(req): Parameters<ConsultExpertsRequest>,
@@ -288,15 +292,27 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ConfigureExpertRequest>,
     ) -> Result<String, String> {
-        tools::configure_expert(self, req.action, req.role, req.prompt, req.provider, req.model).await
+        tools::configure_expert(
+            self,
+            req.action,
+            req.role,
+            req.prompt,
+            req.provider,
+            req.model,
+        )
+        .await
     }
 
-    #[tool(description = "Export Mira memories to CLAUDE.local.md for persistence across Claude Code sessions.")]
+    #[tool(
+        description = "Export Mira memories to CLAUDE.local.md for persistence across Claude Code sessions."
+    )]
     async fn export_claude_local(&self) -> Result<String, String> {
         tools::export_claude_local(self).await
     }
 
-    #[tool(description = "Manage documentation tasks. Actions: list (show needed docs), skip (mark not needed), inventory (show all docs), scan (trigger scan), write (generate docs for task_id).")]
+    #[tool(
+        description = "Manage documentation tasks. Actions: list (show needed docs), skip (mark not needed), inventory (show all docs), scan (trigger scan), write (generate docs for task_id)."
+    )]
     async fn documentation(
         &self,
         Parameters(req): Parameters<DocumentationRequest>,
@@ -314,10 +330,7 @@ impl MiraServer {
     }
 
     #[tool(description = "Manage teams for shared memory (create, invite, remove, list, members).")]
-    async fn team(
-        &self,
-        Parameters(req): Parameters<TeamRequest>,
-    ) -> Result<String, String> {
+    async fn team(&self, Parameters(req): Parameters<TeamRequest>) -> Result<String, String> {
         tools::team(
             self,
             req.action,
@@ -330,11 +343,10 @@ impl MiraServer {
         .await
     }
 
-    #[tool(description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract.")]
-    async fn finding(
-        &self,
-        Parameters(req): Parameters<FindingRequest>,
-    ) -> Result<String, String> {
+    #[tool(
+        description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract."
+    )]
+    async fn finding(&self, Parameters(req): Parameters<FindingRequest>) -> Result<String, String> {
         tools::finding(
             self,
             req.action,
@@ -352,7 +364,9 @@ impl MiraServer {
 
     // Semantic diff analysis tool
 
-    #[tool(description = "Analyze git diff semantically. Identifies change types, impact, and risks.")]
+    #[tool(
+        description = "Analyze git diff semantically. Identifies change types, impact, and risks."
+    )]
     async fn analyze_diff(
         &self,
         Parameters(req): Parameters<AnalyzeDiffRequest>,
@@ -360,11 +374,10 @@ impl MiraServer {
         tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await
     }
 
-    #[tool(description = "Query LLM usage and cost analytics. Actions: summary (totals), stats (grouped by role/provider/model), list (recent).")]
-    async fn usage(
-        &self,
-        Parameters(req): Parameters<UsageRequest>,
-    ) -> Result<String, String> {
+    #[tool(
+        description = "Query LLM usage and cost analytics. Actions: summary (totals), stats (grouped by role/provider/model), list (recent)."
+    )]
+    async fn usage(&self, Parameters(req): Parameters<UsageRequest>) -> Result<String, String> {
         tools::usage(self, req.action, req.group_by, req.since_days, req.limit).await
     }
 }
@@ -426,7 +439,9 @@ impl ServerHandler for MiraServer {
             let session_id = self.get_or_create_session().await;
 
             // Serialize arguments for storage
-            let args_json = request.arguments.as_ref()
+            let args_json = request
+                .arguments
+                .as_ref()
                 .map(|a| serde_json::to_string(a).unwrap_or_default())
                 .unwrap_or_default();
 
@@ -444,7 +459,9 @@ impl ServerHandler for MiraServer {
             let duration_ms = start.elapsed().as_millis() as u64;
             let (success, result_text) = match &result {
                 Ok(r) => {
-                    let text = r.content.first()
+                    let text = r
+                        .content
+                        .first()
                         .and_then(|c| c.as_text())
                         .map(|t| t.text.to_string())
                         .unwrap_or_default();
@@ -467,22 +484,31 @@ impl ServerHandler for MiraServer {
             } else {
                 result_text.clone()
             };
-            let full_result_str = if result_text.len() > 100 { Some(result_text.clone()) } else { None };
+            let full_result_str = if result_text.len() > 100 {
+                Some(result_text.clone())
+            } else {
+                None
+            };
             let session_id_clone = session_id.clone();
             let tool_name_clone = tool_name.clone();
             let args_json_clone = args_json.clone();
             let summary_clone = summary.clone();
-            if let Err(e) = self.pool.interact(move |conn| {
-                crate::db::log_tool_call_sync(
-                    conn,
-                    &session_id_clone,
-                    &tool_name_clone,
-                    &args_json_clone,
-                    &summary_clone,
-                    full_result_str.as_deref(),
-                    success,
-                ).map_err(|e| anyhow::anyhow!(e))
-            }).await {
+            if let Err(e) = self
+                .pool
+                .interact(move |conn| {
+                    crate::db::log_tool_call_sync(
+                        conn,
+                        &session_id_clone,
+                        &tool_name_clone,
+                        &args_json_clone,
+                        &summary_clone,
+                        full_result_str.as_deref(),
+                        success,
+                    )
+                    .map_err(|e| anyhow::anyhow!(e))
+                })
+                .await
+            {
                 eprintln!("[HISTORY] Failed to log tool call: {}", e);
             }
 

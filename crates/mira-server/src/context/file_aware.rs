@@ -24,7 +24,8 @@ impl FileAwareInjector {
 
     /// Extract file paths from user message using regex
     pub fn extract_file_mentions(&self, user_message: &str) -> Vec<String> {
-        let mut paths: Vec<String> = self.file_pattern
+        let mut paths: Vec<String> = self
+            .file_pattern
             .captures_iter(user_message)
             .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
             .collect();
@@ -51,10 +52,13 @@ impl FileAwareInjector {
 
             // Search memories that mention this file
             let pool = self.pool.clone();
-            if let Ok(memories) = pool.interact(move |conn| {
-                search_memories_sync(conn, None, &filename, None, 3)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            }).await {
+            if let Ok(memories) = pool
+                .interact(move |conn| {
+                    search_memories_sync(conn, None, &filename, None, 3)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+            {
                 for mem in memories {
                     // Skip if it's just a health alert or low confidence
                     if mem.fact_type == "health" || mem.confidence < 0.5 {

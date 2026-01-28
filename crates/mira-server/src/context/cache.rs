@@ -11,9 +11,7 @@ impl InjectionCache {
     pub fn new() -> Self {
         Self {
             // Lock-free concurrent cache with 100 entry capacity
-            cache: Cache::builder()
-                .max_capacity(100)
-                .build(),
+            cache: Cache::builder().max_capacity(100).build(),
         }
     }
 
@@ -94,7 +92,11 @@ mod tests {
                 present += 1;
             }
         }
-        assert!(present <= 100, "Cache should have evicted entries, found {}", present);
+        assert!(
+            present <= 100,
+            "Cache should have evicted entries, found {}",
+            present
+        );
     }
 
     #[tokio::test]

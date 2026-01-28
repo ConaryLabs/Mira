@@ -73,11 +73,7 @@ mod tests {
     #[test]
     fn test_apply_budget_filters_empty_strings() {
         let manager = BudgetManager::new();
-        let contexts = vec![
-            "".to_string(),
-            "valid context".to_string(),
-            "".to_string(),
-        ];
+        let contexts = vec!["".to_string(), "valid context".to_string(), "".to_string()];
         let result = manager.apply_budget(contexts);
         assert_eq!(result, "valid context");
     }
@@ -106,8 +102,8 @@ mod tests {
     fn test_apply_budget_truncation() {
         let manager = BudgetManager::with_limit(50);
         let contexts = vec![
-            "Short".to_string(),                      // 5 chars
-            "Medium length text".to_string(),         // 18 chars, total 25 with separator
+            "Short".to_string(),                                // 5 chars
+            "Medium length text".to_string(),                   // 18 chars, total 25 with separator
             "This won't fit because it's too long".to_string(), // Would exceed limit
         ];
         let result = manager.apply_budget(contexts);
@@ -133,9 +129,9 @@ mod tests {
         // So we need to have at least 11 chars remaining when truncating
         let manager = BudgetManager::with_limit(100);
         let contexts = vec![
-            "First context".to_string(),                     // 13 chars
-            "Second context".to_string(),                    // 14 chars, total = 13 + 2 + 14 = 29
-            "Third".to_string(),                              // 5 chars, total = 29 + 2 + 5 = 36
+            "First context".to_string(),                          // 13 chars
+            "Second context".to_string(), // 14 chars, total = 13 + 2 + 14 = 29
+            "Third".to_string(),          // 5 chars, total = 29 + 2 + 5 = 36
             "This is a very long fourth context".to_string(), // 35 chars, total = 36 + 2 + 35 = 73 > 100? No, fits
             "Fifth really long context that exceeds".to_string(), // 39 chars, total = 73 + 2 + 39 = 114 > 100, truncate
         ];
@@ -154,8 +150,8 @@ mod tests {
         let manager = BudgetManager::with_limit(50);
         let contexts = vec![
             "This is a forty char long context!!!".to_string(), // 36 chars
-            "Second".to_string(),                                // 6 chars, 36 + 2 + 6 = 44, fits
-            "Third exceeds limit".to_string(),                   // 19 chars, 44 + 2 + 19 = 65 > 50, truncate
+            "Second".to_string(),                               // 6 chars, 36 + 2 + 6 = 44, fits
+            "Third exceeds limit".to_string(), // 19 chars, 44 + 2 + 19 = 65 > 50, truncate
         ];
         let result = manager.apply_budget(contexts);
         assert!(result.contains("forty char"));

@@ -6,11 +6,11 @@ use std::path::Path;
 use crate::cartographer;
 use crate::db::search_capabilities_sync;
 use crate::indexer;
-use crate::llm::{record_llm_usage, LlmClient, Message};
+use crate::llm::{LlmClient, Message, record_llm_usage};
 use crate::mcp::requests::IndexAction;
 use crate::search::{
-    crossref_search, embedding_to_bytes, expand_context_with_conn, find_callers, find_callees,
-    format_crossref_results, format_project_header, hybrid_search, CrossRefType,
+    CrossRefType, crossref_search, embedding_to_bytes, expand_context_with_conn, find_callees,
+    find_callers, format_crossref_results, format_project_header, hybrid_search,
 };
 use crate::tools::core::ToolContext;
 
@@ -67,7 +67,9 @@ pub async fn search_code<C: ToolContext>(
     );
 
     // Batch expand results with DB access for symbol bounds
-    let results_data: Vec<_> = result.results.iter()
+    let results_data: Vec<_> = result
+        .results
+        .iter()
         .map(|r| (r.file_path.clone(), r.content.clone(), r.score))
         .collect();
 
@@ -76,7 +78,8 @@ pub async fn search_code<C: ToolContext>(
     let expanded_results: Vec<ExpandedResult> = ctx
         .pool()
         .run(move |conn| -> Result<Vec<ExpandedResult>, String> {
-            Ok(results_data.iter()
+            Ok(results_data
+                .iter()
                 .map(|(file_path, content, score)| {
                     let expanded = expand_context_with_conn(
                         file_path,
@@ -280,7 +283,9 @@ pub async fn check_capability<C: ToolContext>(
         };
         response.push_str(&format!(
             "  - {} (score: {:.2})\n    {}\n\n",
-            r.file_path, r.score, preview.replace('\n', "\n    ")
+            r.file_path,
+            r.score,
+            preview.replace('\n', "\n    ")
         ));
     }
 
@@ -290,10 +295,7 @@ pub async fn check_capability<C: ToolContext>(
 }
 
 /// Get symbols from a file
-pub fn get_symbols(
-    file_path: String,
-    symbol_type: Option<String>,
-) -> Result<String, String> {
+pub fn get_symbols(file_path: String, symbol_type: Option<String>) -> Result<String, String> {
     let path = Path::new(&file_path);
 
     if !path.exists() {
@@ -359,7 +361,11 @@ pub async fn index<C: ToolContext>(
             }
 
             // Index code (skip embeddings if requested for faster indexing)
-            let embeddings = if skip_embed { None } else { ctx.embeddings().cloned() };
+            let embeddings = if skip_embed {
+                None
+            } else {
+                ctx.embeddings().cloned()
+            };
             let stats = indexer::index_project(path, ctx.pool().clone(), embeddings, project_id)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -387,7 +393,7 @@ pub async fn index<C: ToolContext>(
             Ok(response)
         }
         IndexAction::Status => {
-            use crate::db::{count_symbols_sync, count_embedded_chunks_sync};
+            use crate::db::{count_embedded_chunks_sync, count_symbols_sync};
 
             let project = ctx.get_project().await;
             let project_id = project.as_ref().map(|p| p.id);
@@ -401,7 +407,10 @@ pub async fn index<C: ToolContext>(
                 })
                 .await?;
 
-            Ok(format!("Index status: {} symbols, {} embedded chunks", symbols, embedded))
+            Ok(format!(
+                "Index status: {} symbols, {} embedded chunks",
+                symbols, embedded
+            ))
         }
     }
 }
@@ -445,7 +454,8 @@ async fn auto_summarize_modules(
         &result,
         Some(project_id),
         None,
-    ).await;
+    )
+    .await;
 
     let content = result.content.ok_or("No content in DeepSeek response")?;
 
@@ -511,11 +521,10 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         &result,
         Some(project_id),
         None,
-    ).await;
+    )
+    .await;
 
-    let content = result
-        .content
-        .ok_or("No content in DeepSeek response")?;
+    let content = result.content.ok_or("No content in DeepSeek response")?;
 
     // Parse summaries from response
     let summaries = cartographer::parse_summary_response(&content);
@@ -538,8 +547,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
                 .map_err(|e| e.to_string())?;
 
             // Clear cached modules to force regeneration
-            clear_modules_without_purpose_sync(conn, project_id)
-                .map_err(|e| e.to_string())?;
+            clear_modules_without_purpose_sync(conn, project_id).map_err(|e| e.to_string())?;
 
             Ok::<_, String>(count)
         })

@@ -4,8 +4,11 @@
 mod detection;
 mod inventory;
 
-use crate::db::{get_scan_info_sync, is_time_older_than_sync, delete_memory_by_key_sync, store_memory_sync, StoreMemoryParams};
 use crate::db::pool::DatabasePool;
+use crate::db::{
+    StoreMemoryParams, delete_memory_by_key_sync, get_scan_info_sync, is_time_older_than_sync,
+    store_memory_sync,
+};
 use std::process::Command;
 use std::sync::Arc;
 
@@ -27,9 +30,7 @@ pub struct CodeSymbol {
 
 /// Calculate source signature hash (normalized hash of symbol signatures)
 /// This is more stable than raw file checksum for detecting API changes
-pub fn calculate_source_signature_hash(
-    symbols: &[CodeSymbol],
-) -> Option<String> {
+pub fn calculate_source_signature_hash(symbols: &[CodeSymbol]) -> Option<String> {
     use sha2::Digest;
 
     if symbols.is_empty() {
@@ -42,9 +43,7 @@ pub fn calculate_source_signature_hash(
         .filter_map(|s| s.signature.as_ref())
         .map(|sig| {
             // Normalize: remove extra whitespace, keep core signature
-            sig.split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
+            sig.split_whitespace().collect::<Vec<_>>().join(" ")
         })
         .collect();
 
@@ -189,18 +188,22 @@ pub fn mark_documentation_scanned_sync(
 ) -> Result<(), String> {
     let commit = get_git_head(project_path).unwrap_or_else(|| "unknown".to_string());
 
-    store_memory_sync(conn, StoreMemoryParams {
-        project_id: Some(project_id),
-        key: Some(DOC_SCAN_MARKER_KEY),
-        content: &commit,
-        fact_type: "system",
-        category: Some("documentation"),
-        confidence: 1.0,
-        session_id: None,
-        user_id: None,
-        scope: "project",
-        branch: None,
-    }).map_err(|e| e.to_string())?;
+    store_memory_sync(
+        conn,
+        StoreMemoryParams {
+            project_id: Some(project_id),
+            key: Some(DOC_SCAN_MARKER_KEY),
+            content: &commit,
+            fact_type: "system",
+            category: Some("documentation"),
+            confidence: 1.0,
+            session_id: None,
+            user_id: None,
+            scope: "project",
+            branch: None,
+        },
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -230,19 +233,17 @@ mod tests {
 
     #[test]
     fn test_calculate_source_signature_hash_no_signatures() {
-        let symbols = vec![
-            CodeSymbol {
-                id: 1,
-                project_id: 1,
-                file_path: "test.rs".to_string(),
-                name: "foo".to_string(),
-                symbol_type: "function".to_string(),
-                start_line: Some(1),
-                end_line: Some(10),
-                signature: None,
-                indexed_at: "2024-01-01".to_string(),
-            },
-        ];
+        let symbols = vec![CodeSymbol {
+            id: 1,
+            project_id: 1,
+            file_path: "test.rs".to_string(),
+            name: "foo".to_string(),
+            symbol_type: "function".to_string(),
+            start_line: Some(1),
+            end_line: Some(10),
+            signature: None,
+            indexed_at: "2024-01-01".to_string(),
+        }];
         assert!(calculate_source_signature_hash(&symbols).is_none());
     }
 
@@ -279,19 +280,17 @@ mod tests {
 
     #[test]
     fn test_calculate_source_signature_hash_deterministic() {
-        let symbols = vec![
-            CodeSymbol {
-                id: 1,
-                project_id: 1,
-                file_path: "test.rs".to_string(),
-                name: "foo".to_string(),
-                symbol_type: "function".to_string(),
-                start_line: Some(1),
-                end_line: Some(10),
-                signature: Some("fn foo() -> bool".to_string()),
-                indexed_at: "2024-01-01".to_string(),
-            },
-        ];
+        let symbols = vec![CodeSymbol {
+            id: 1,
+            project_id: 1,
+            file_path: "test.rs".to_string(),
+            name: "foo".to_string(),
+            symbol_type: "function".to_string(),
+            start_line: Some(1),
+            end_line: Some(10),
+            signature: Some("fn foo() -> bool".to_string()),
+            indexed_at: "2024-01-01".to_string(),
+        }];
         let hash1 = calculate_source_signature_hash(&symbols);
         let hash2 = calculate_source_signature_hash(&symbols);
         assert_eq!(hash1, hash2, "Hash should be deterministic");
@@ -349,37 +348,36 @@ mod tests {
         ];
         let hash1 = calculate_source_signature_hash(&symbols1);
         let hash2 = calculate_source_signature_hash(&symbols2);
-        assert_eq!(hash1, hash2, "Hash should be order-independent (sorted internally)");
+        assert_eq!(
+            hash1, hash2,
+            "Hash should be order-independent (sorted internally)"
+        );
     }
 
     #[test]
     fn test_calculate_source_signature_hash_whitespace_normalization() {
-        let symbols1 = vec![
-            CodeSymbol {
-                id: 1,
-                project_id: 1,
-                file_path: "test.rs".to_string(),
-                name: "foo".to_string(),
-                symbol_type: "function".to_string(),
-                start_line: None,
-                end_line: None,
-                signature: Some("fn foo() -> bool".to_string()),
-                indexed_at: "".to_string(),
-            },
-        ];
-        let symbols2 = vec![
-            CodeSymbol {
-                id: 1,
-                project_id: 1,
-                file_path: "test.rs".to_string(),
-                name: "foo".to_string(),
-                symbol_type: "function".to_string(),
-                start_line: None,
-                end_line: None,
-                signature: Some("fn   foo()   ->   bool".to_string()),
-                indexed_at: "".to_string(),
-            },
-        ];
+        let symbols1 = vec![CodeSymbol {
+            id: 1,
+            project_id: 1,
+            file_path: "test.rs".to_string(),
+            name: "foo".to_string(),
+            symbol_type: "function".to_string(),
+            start_line: None,
+            end_line: None,
+            signature: Some("fn foo() -> bool".to_string()),
+            indexed_at: "".to_string(),
+        }];
+        let symbols2 = vec![CodeSymbol {
+            id: 1,
+            project_id: 1,
+            file_path: "test.rs".to_string(),
+            name: "foo".to_string(),
+            symbol_type: "function".to_string(),
+            start_line: None,
+            end_line: None,
+            signature: Some("fn   foo()   ->   bool".to_string()),
+            indexed_at: "".to_string(),
+        }];
         let hash1 = calculate_source_signature_hash(&symbols1);
         let hash2 = calculate_source_signature_hash(&symbols2);
         assert_eq!(hash1, hash2, "Hash should normalize whitespace");
@@ -428,7 +426,10 @@ mod tests {
         let checksum1 = file_checksum(temp1.path());
         let checksum2 = file_checksum(temp2.path());
 
-        assert_ne!(checksum1, checksum2, "Different content should have different checksums");
+        assert_ne!(
+            checksum1, checksum2,
+            "Different content should have different checksums"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════

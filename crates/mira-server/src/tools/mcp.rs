@@ -4,12 +4,12 @@
 use crate::mcp::MiraServer;
 use crate::tools::core::ToolContext;
 use crate::tools::core::ensure_session;
-use uuid::Uuid;
 use async_trait::async_trait;
 use mira_types::WsEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{RwLock, oneshot};
+use uuid::Uuid;
 
 #[async_trait]
 impl ToolContext for MiraServer {

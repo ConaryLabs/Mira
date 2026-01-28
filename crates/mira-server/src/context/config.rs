@@ -56,16 +56,17 @@ impl InjectionConfig {
                 _ => Self::default(),
             };
             Ok(config)
-        }).await
+        })
+        .await
     }
 
     /// Save configuration to database (stored as JSON)
     pub async fn save(&self, pool: &Arc<DatabasePool>) -> Result<()> {
         let json = serde_json::to_string(self)?;
         pool.interact(move |conn| {
-            set_server_state_sync(conn, CONFIG_KEY, &json)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        }).await
+            set_server_state_sync(conn, CONFIG_KEY, &json).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
     }
 
     /// Create a builder for fluent configuration

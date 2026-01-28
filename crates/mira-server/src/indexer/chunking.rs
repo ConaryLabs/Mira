@@ -35,7 +35,10 @@ pub fn create_chunks_for_symbol(sym: &ParsedSymbol, lines: &[&str]) -> Vec<CodeC
     if context.len() > 2000 {
         split_large_chunk(context, sym.start_line, &sym.kind, &sym.name)
     } else {
-        vec![CodeChunk { content: context, start_line: sym.start_line }]
+        vec![CodeChunk {
+            content: context,
+            start_line: sym.start_line,
+        }]
     }
 }
 
@@ -47,7 +50,10 @@ pub fn split_large_chunk(chunk: String, start_line: u32, kind: &str, name: &str)
 
     for line in lines {
         if current_chunk.len() + line.len() > 1000 && !current_chunk.is_empty() {
-            result.push(CodeChunk { content: current_chunk, start_line });
+            result.push(CodeChunk {
+                content: current_chunk,
+                start_line,
+            });
             current_chunk = String::with_capacity(1000);
             current_chunk.push_str(&format!("// {} {} (continued)\n", kind, name));
         }
@@ -56,14 +62,20 @@ pub fn split_large_chunk(chunk: String, start_line: u32, kind: &str, name: &str)
     }
 
     if !current_chunk.trim().is_empty() {
-        result.push(CodeChunk { content: current_chunk, start_line });
+        result.push(CodeChunk {
+            content: current_chunk,
+            start_line,
+        });
     }
 
     result
 }
 
 /// Create chunks for orphan code (lines not covered by any symbol)
-pub fn create_chunks_for_orphan_code(lines: &[&str], covered_lines: &HashSet<u32>) -> Vec<CodeChunk> {
+pub fn create_chunks_for_orphan_code(
+    lines: &[&str],
+    covered_lines: &HashSet<u32>,
+) -> Vec<CodeChunk> {
     let total_lines = lines.len() as u32;
     let mut chunks = Vec::new();
     let mut orphan_start: Option<u32> = None;
@@ -79,7 +91,8 @@ pub fn create_chunks_for_orphan_code(lines: &[&str], covered_lines: &HashSet<u32
             let end_idx = (line_num - 1) as usize;
 
             // Check if region has substantial non-whitespace content
-            let has_substantial_content = lines[start_idx..end_idx].iter()
+            let has_substantial_content = lines[start_idx..end_idx]
+                .iter()
                 .any(|line| line.trim().len() > 10);
 
             if has_substantial_content {
@@ -103,8 +116,7 @@ pub fn create_chunks_for_orphan_code(lines: &[&str], covered_lines: &HashSet<u32
         let start_idx = (start - 1) as usize;
 
         // Check if region has substantial non-whitespace content
-        let has_substantial_content = lines[start_idx..].iter()
-            .any(|line| line.trim().len() > 10);
+        let has_substantial_content = lines[start_idx..].iter().any(|line| line.trim().len() > 10);
 
         if has_substantial_content {
             let mut content = String::with_capacity((lines.len() - start_idx) * 20);
@@ -280,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_create_chunks_for_orphan_code_short_lines() {
-        let lines = vec!["x = 1", "y = 2"];  // Less than 10 chars
+        let lines = vec!["x = 1", "y = 2"]; // Less than 10 chars
         let covered = HashSet::new();
         let chunks = create_chunks_for_orphan_code(&lines, &covered);
         // Lines shorter than 10 chars are not substantial

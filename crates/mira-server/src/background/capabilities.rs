@@ -2,13 +2,13 @@
 // Background worker for generating codebase capabilities inventory
 
 use crate::cartographer;
-use crate::db::{
-    get_indexed_projects_sync, get_scan_info_sync, is_time_older_than_sync,
-    clear_old_capabilities_sync,
-};
 use crate::db::pool::DatabasePool;
+use crate::db::{
+    clear_old_capabilities_sync, get_indexed_projects_sync, get_scan_info_sync,
+    is_time_older_than_sync,
+};
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
+use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::embedding_to_bytes;
 use std::path::Path;
 use std::process::Command;
@@ -21,12 +21,15 @@ pub async fn process_capabilities(
     embeddings: Option<&Arc<EmbeddingClient>>,
 ) -> Result<usize, String> {
     // Get projects that need capability scanning
-    let projects = pool.interact(move |conn| {
-        get_projects_needing_scan(conn)
-            .map_err(|e| anyhow::anyhow!("{}", e))
-    }).await.map_err(|e| e.to_string())?;
+    let projects = pool
+        .interact(move |conn| get_projects_needing_scan(conn).map_err(|e| anyhow::anyhow!("{}", e)))
+        .await
+        .map_err(|e| e.to_string())?;
     if !projects.is_empty() {
-        tracing::info!("Capabilities: found {} projects needing scan", projects.len());
+        tracing::info!(
+            "Capabilities: found {} projects needing scan",
+            projects.len()
+        );
     }
 
     let mut processed = 0;
@@ -38,7 +41,9 @@ pub async fn process_capabilities(
         }
 
         // Generate capabilities inventory
-        match generate_capabilities_inventory(pool, client, embeddings, project_id, &project_path).await {
+        match generate_capabilities_inventory(pool, client, embeddings, project_id, &project_path)
+            .await
+        {
             Ok(count) => {
                 tracing::info!(
                     "Generated {} capabilities for project {} ({})",
@@ -52,7 +57,11 @@ pub async fn process_capabilities(
                 mark_capabilities_scanned(pool, project_id, &project_path).await?;
             }
             Err(e) => {
-                tracing::warn!("Failed to generate capabilities for {}: {}", project_path, e);
+                tracing::warn!(
+                    "Failed to generate capabilities for {}: {}",
+                    project_path,
+                    e
+                );
             }
         }
     }
@@ -84,7 +93,11 @@ fn get_projects_needing_scan(conn: &rusqlite::Connection) -> Result<Vec<(i64, St
 }
 
 /// Check if a specific project needs a capabilities scan
-fn needs_capabilities_scan(conn: &rusqlite::Connection, project_id: i64, project_path: &str) -> Result<bool, String> {
+fn needs_capabilities_scan(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    project_path: &str,
+) -> Result<bool, String> {
     // Get last scan info
     let scan_info = get_scan_info_sync(conn, project_id, "capabilities_scan_time");
 
@@ -110,7 +123,9 @@ fn needs_capabilities_scan(conn: &rusqlite::Connection, project_id: i64, project
                 if is_time_older_than_sync(conn, scan_time, "-1 day") {
                     tracing::debug!(
                         "Project {} needs scan: git changed ({} -> {}) and rate limit passed",
-                        project_id, &last[..8.min(last.len())], &current[..8.min(current.len())]
+                        project_id,
+                        &last[..8.min(last.len())],
+                        &current[..8.min(current.len())]
                     );
                     return Ok(true);
                 }
@@ -121,7 +136,10 @@ fn needs_capabilities_scan(conn: &rusqlite::Connection, project_id: i64, project
     // Case 3: Periodic refresh (> 7 days since last scan)
     if let Some(ref scan_time) = last_scan_time {
         if is_time_older_than_sync(conn, scan_time, "-7 days") {
-            tracing::debug!("Project {} needs scan: periodic refresh (> 7 days)", project_id);
+            tracing::debug!(
+                "Project {} needs scan: periodic refresh (> 7 days)",
+                project_id
+            );
             return Ok(true);
         }
     }
@@ -145,26 +163,36 @@ fn get_git_head(project_path: &str) -> Option<String> {
 }
 
 /// Mark that we've scanned a project's capabilities (stores git commit)
-async fn mark_capabilities_scanned(pool: &Arc<DatabasePool>, project_id: i64, project_path: &str) -> Result<(), String> {
-    use crate::db::{store_memory_sync, StoreMemoryParams};
+async fn mark_capabilities_scanned(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+    project_path: &str,
+) -> Result<(), String> {
+    use crate::db::{StoreMemoryParams, store_memory_sync};
 
     // Store the current git commit as the scan marker
     let commit = get_git_head(project_path).unwrap_or_else(|| "unknown".to_string());
 
     pool.interact(move |conn| {
-        store_memory_sync(conn, StoreMemoryParams {
-            project_id: Some(project_id),
-            key: Some("capabilities_scan_time"),
-            content: &commit,
-            fact_type: "system",
-            category: Some("capabilities"),
-            confidence: 1.0,
-            session_id: None,
-            user_id: None,
-            scope: "project",
-            branch: None,
-        }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
-    }).await.map_err(|e| e.to_string())?;
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id: Some(project_id),
+                key: Some("capabilities_scan_time"),
+                content: &commit,
+                fact_type: "system",
+                category: Some("capabilities"),
+                confidence: 1.0,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -217,7 +245,8 @@ async fn generate_capabilities_inventory(
         }
 
         // Get FULL module code (not just preview)
-        let full_code = cartographer::get_module_full_code(path, &module.path, MAX_MODULE_CODE_BYTES);
+        let full_code =
+            cartographer::get_module_full_code(path, &module.path, MAX_MODULE_CODE_BYTES);
         if !full_code.is_empty() {
             module_section.push_str(&format!("\n```rust\n{}\n```\n", full_code));
         }
@@ -236,7 +265,7 @@ async fn generate_capabilities_inventory(
     tracing::info!(
         "Capabilities: sending {} bytes of context to DeepSeek (~{} tokens)",
         module_context.len(),
-        module_context.len() / 4  // Rough estimate: 4 chars per token for code
+        module_context.len() / 4 // Rough estimate: 4 chars per token for code
     );
 
     // Ask Reasoner to extract capabilities (NO issues - that's handled by code_health scanner)
@@ -267,8 +296,7 @@ Only list working, implemented capabilities. Do NOT list problems, issues, or in
         module_context
     );
 
-    let messages = PromptBuilder::for_capabilities()
-        .build_messages(prompt);
+    let messages = PromptBuilder::for_capabilities().build_messages(prompt);
 
     let result = client
         .chat(messages, None)
@@ -284,11 +312,10 @@ Only list working, implemented capabilities. Do NOT list problems, issues, or in
         &result,
         Some(project_id),
         None,
-    ).await;
+    )
+    .await;
 
-    let content = result
-        .content
-        .ok_or("No content in DeepSeek response")?;
+    let content = result.content.ok_or("No content in DeepSeek response")?;
 
     // Parse and store capabilities only
     let stored = parse_and_store_capabilities(pool, embeddings, project_id, &content).await?;
@@ -303,15 +330,16 @@ async fn parse_and_store_capabilities(
     project_id: i64,
     response: &str,
 ) -> Result<usize, String> {
-    use crate::db::{store_memory_sync, StoreMemoryParams};
+    use crate::db::{StoreMemoryParams, store_memory_sync};
 
     let mut stored = 0;
 
     // Clear old capabilities for this project
     pool.interact(move |conn| {
-        clear_old_capabilities(conn, project_id)
-            .map_err(|e| anyhow::anyhow!("{}", e))
-    }).await.map_err(|e| e.to_string())?;
+        clear_old_capabilities(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     // First pass: collect capabilities from response
     let mut capabilities: Vec<(String, String)> = Vec::new(); // (key, content)
@@ -327,8 +355,12 @@ async fn parse_and_store_capabilities(
         }
 
         // Stop if we hit a different section
-        if in_capabilities && (trimmed.starts_with("ISSUES") || trimmed.starts_with("**ISSUES")
-            || trimmed.starts_with("NOTES") || trimmed.starts_with("**NOTES")) {
+        if in_capabilities
+            && (trimmed.starts_with("ISSUES")
+                || trimmed.starts_with("**ISSUES")
+                || trimmed.starts_with("NOTES")
+                || trimmed.starts_with("**NOTES"))
+        {
             break;
         }
 
@@ -348,29 +380,39 @@ async fn parse_and_store_capabilities(
     for (key, content) in capabilities {
         let key_clone = key.clone();
         let content_clone = content.clone();
-        let id = pool.interact(move |conn| {
-            store_memory_sync(conn, StoreMemoryParams {
-                project_id: Some(project_id),
-                key: Some(&key_clone),
-                content: &content_clone,
-                fact_type: "capability",
-                category: Some("codebase"),
-                confidence: 1.0,
-                session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
-            }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
-        }).await.map_err(|e| e.to_string())?;
+        let id = pool
+            .interact(move |conn| {
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: Some(&key_clone),
+                        content: &content_clone,
+                        fact_type: "capability",
+                        category: Some("codebase"),
+                        confidence: 1.0,
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
+            })
+            .await
+            .map_err(|e| e.to_string())?;
 
         // Generate and store embedding (RETRIEVAL_DOCUMENT for storage)
         if let Some(emb_client) = embeddings {
             if let Ok(embedding) = emb_client.embed_for_storage(&content).await {
                 let pool_clone = pool.clone();
-                pool_clone.interact(move |conn| {
-                    store_embedding(conn, id, &content, &embedding)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                }).await.map_err(|e| e.to_string())?;
+                pool_clone
+                    .interact(move |conn| {
+                        store_embedding(conn, id, &content, &embedding)
+                            .map_err(|e| anyhow::anyhow!("{}", e))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
         }
 
@@ -381,7 +423,12 @@ async fn parse_and_store_capabilities(
 }
 
 /// Store embedding for a memory fact
-fn store_embedding(conn: &rusqlite::Connection, fact_id: i64, content: &str, embedding: &[f32]) -> Result<(), String> {
+fn store_embedding(
+    conn: &rusqlite::Connection,
+    fact_id: i64,
+    content: &str,
+    embedding: &[f32],
+) -> Result<(), String> {
     use crate::db::store_embedding_sync;
     let embedding_bytes = embedding_to_bytes(embedding);
     store_embedding_sync(conn, fact_id, content, &embedding_bytes).map_err(|e| e.to_string())

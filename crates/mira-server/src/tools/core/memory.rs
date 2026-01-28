@@ -1,6 +1,9 @@
 //! Unified memory tools (recall, remember, forget)
 
-use crate::db::{store_memory_sync, store_embedding_sync, StoreMemoryParams, recall_semantic_with_branch_info_sync};
+use crate::db::{
+    StoreMemoryParams, recall_semantic_with_branch_info_sync, store_embedding_sync,
+    store_memory_sync,
+};
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
@@ -26,7 +29,10 @@ pub async fn remember<C: ToolContext>(
 
     // Validate scope
     if !["personal", "project", "team"].contains(&scope.as_str()) {
-        return Err(format!("Invalid scope '{}'. Must be one of: personal, project, team", scope));
+        return Err(format!(
+            "Invalid scope '{}'. Must be one of: personal, project, team",
+            scope
+        ));
     }
 
     // Personal scope requires user_id
@@ -73,7 +79,9 @@ pub async fn remember<C: ToolContext>(
                 let content_clone = content.clone();
                 let result = ctx
                     .pool()
-                    .run(move |conn| store_embedding_sync(conn, id, &content_clone, &embedding_bytes))
+                    .run(move |conn| {
+                        store_embedding_sync(conn, id, &content_clone, &embedding_bytes)
+                    })
                     .await;
                 if let Err(e) = result {
                     tracing::warn!("Failed to store embedding: {}", e);
@@ -100,7 +108,7 @@ pub async fn recall<C: ToolContext>(
     _category: Option<String>,
     _fact_type: Option<String>,
 ) -> Result<String, String> {
-    use crate::db::{search_memories_sync, record_memory_access_sync};
+    use crate::db::{record_memory_access_sync, search_memories_sync};
 
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_session_id().await;
@@ -145,7 +153,8 @@ pub async fn recall<C: ToolContext>(
                         if let Err(e) = pool_clone
                             .interact(move |conn| {
                                 for id in ids {
-                                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
+                                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone)
+                                    {
                                         tracing::debug!("Failed to record memory access: {}", e);
                                     }
                                 }
@@ -158,8 +167,7 @@ pub async fn recall<C: ToolContext>(
                     });
                 }
 
-                let mut response =
-                    format!("{}Found {} memories:\n", context_header, results.len());
+                let mut response = format!("{}Found {} memories:\n", context_header, results.len());
                 for (id, content, distance, branch) in results {
                     let score = 1.0 - distance; // Convert distance to similarity
                     let preview = if content.len() > 100 {
@@ -168,10 +176,11 @@ pub async fn recall<C: ToolContext>(
                         content
                     };
                     // Show branch tag if present
-                    let branch_tag = branch
-                        .map(|b| format!(" [{}]", b))
-                        .unwrap_or_default();
-                    response.push_str(&format!("  [{}] (score: {:.2}){} {}\n", id, score, branch_tag, preview));
+                    let branch_tag = branch.map(|b| format!(" [{}]", b)).unwrap_or_default();
+                    response.push_str(&format!(
+                        "  [{}] (score: {:.2}){} {}\n",
+                        id, score, branch_tag, preview
+                    ));
                 }
                 return Ok(response);
             }
@@ -184,7 +193,13 @@ pub async fn recall<C: ToolContext>(
     let results: Vec<MemoryFact> = ctx
         .pool()
         .run(move |conn| {
-            search_memories_sync(conn, project_id, &query_clone, user_id_clone.as_deref(), limit)
+            search_memories_sync(
+                conn,
+                project_id,
+                &query_clone,
+                user_id_clone.as_deref(),
+                limit,
+            )
         })
         .await?;
 
@@ -222,12 +237,7 @@ pub async fn recall<C: ToolContext>(
         } else {
             mem.content.clone()
         };
-        response.push_str(&format!(
-            "  [{}] ({}) {}\n",
-            mem.id,
-            mem.fact_type,
-            preview
-        ));
+        response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
     }
 
     Ok(response)

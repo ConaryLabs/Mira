@@ -2,9 +2,9 @@
 // Rust module detection from project structure
 
 use super::super::types::Module;
+use crate::project_files::walker::FileWalker;
 use std::collections::HashSet;
 use std::path::Path;
-use crate::project_files::walker::FileWalker;
 
 /// Detect Rust modules from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {
@@ -303,10 +303,7 @@ version = "0.1.0"
 serde = "1.0"
 "#,
         );
-        assert_eq!(
-            parse_crate_name(&cargo),
-            Some("workspace-root".to_string())
-        );
+        assert_eq!(parse_crate_name(&cargo), Some("workspace-root".to_string()));
     }
 
     #[test]
@@ -381,27 +378,21 @@ version = "0.1.0"
 
     #[test]
     fn test_resolve_import_super_prefix() {
-        let modules = vec![
-            ("mira/utils".to_string(), "utils".to_string()),
-        ];
+        let modules = vec![("mira/utils".to_string(), "utils".to_string())];
         let result = resolve_import_to_module("super::utils", &modules);
         assert_eq!(result, Some("mira/utils".to_string()));
     }
 
     #[test]
     fn test_resolve_import_direct_match() {
-        let modules = vec![
-            ("mira/config".to_string(), "config".to_string()),
-        ];
+        let modules = vec![("mira/config".to_string(), "config".to_string())];
         let result = resolve_import_to_module("config::Settings", &modules);
         assert_eq!(result, Some("mira/config".to_string()));
     }
 
     #[test]
     fn test_resolve_import_no_match() {
-        let modules = vec![
-            ("mira/search".to_string(), "search".to_string()),
-        ];
+        let modules = vec![("mira/search".to_string(), "search".to_string())];
         let result = resolve_import_to_module("unknown::module", &modules);
         assert_eq!(result, None);
     }

@@ -6,7 +6,7 @@
 // - search/context.rs (symbol bounds lookup)
 // - search/keyword.rs (FTS and LIKE searches)
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// Result from a cross-reference query (caller/callee lookup)
 #[derive(Debug, Clone)]

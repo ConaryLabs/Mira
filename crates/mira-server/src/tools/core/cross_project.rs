@@ -1,9 +1,7 @@
 //! crates/mira-server/src/tools/core/cross_project.rs
 //! Cross-project intelligence sharing tools
 
-use crate::cross_project::{
-    self, CrossProjectConfig, SharingPreferences,
-};
+use crate::cross_project::{self, CrossProjectConfig, SharingPreferences};
 use crate::mcp::requests::CrossProjectAction;
 use crate::tools::core::ToolContext;
 
@@ -42,7 +40,9 @@ pub async fn cross_project<C: ToolContext>(
             let import_val = import.unwrap_or(true);
 
             ctx.pool()
-                .run(move |conn| cross_project::enable_sharing(conn, project_id, export_val, import_val))
+                .run(move |conn| {
+                    cross_project::enable_sharing(conn, project_id, export_val, import_val)
+                })
                 .await?;
 
             Ok(format!(
@@ -88,13 +88,18 @@ pub async fn cross_project<C: ToolContext>(
 
             let count = ctx
                 .pool()
-                .run(move |conn| cross_project::extract_and_store_patterns(conn, project_id, &config))
+                .run(move |conn| {
+                    cross_project::extract_and_store_patterns(conn, project_id, &config)
+                })
                 .await?;
 
             if count == 0 {
                 Ok("No patterns extracted. Either sharing is disabled, privacy budget exhausted, or no qualifying patterns found.".to_string())
             } else {
-                Ok(format!("Extracted and stored {} patterns for cross-project sharing.", count))
+                Ok(format!(
+                    "Extracted and stored {} patterns for cross-project sharing.",
+                    count
+                ))
             }
         }
 
@@ -108,7 +113,9 @@ pub async fn cross_project<C: ToolContext>(
 
             let exported = ctx
                 .pool()
-                .run(move |conn| cross_project::extract_and_store_patterns(conn, project_id, &config))
+                .run(move |conn| {
+                    cross_project::extract_and_store_patterns(conn, project_id, &config)
+                })
                 .await?;
 
             // Then get shareable patterns from network
@@ -122,9 +129,9 @@ pub async fn cross_project<C: ToolContext>(
                         return Ok::<_, String>(0);
                     }
 
-                    let patterns = cross_project::get_shareable_patterns(
-                        conn, None, None, min_conf, 50
-                    ).map_err(|e| e.to_string())?;
+                    let patterns =
+                        cross_project::get_shareable_patterns(conn, None, None, min_conf, 50)
+                            .map_err(|e| e.to_string())?;
                     let mut count = 0;
                     for pattern in &patterns {
                         if cross_project::import_pattern(conn, project_id, pattern).is_ok() {

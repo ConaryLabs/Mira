@@ -1,8 +1,8 @@
 // crates/mira-server/src/tools/core/experts/role.rs
 // ExpertRole enum and related implementations
 
-use super::prompts::*;
 use super::ToolContext;
+use super::prompts::*;
 use crate::llm::PromptBuilder;
 
 /// Expert roles available for consultation
@@ -41,12 +41,16 @@ impl ExpertRole {
                     // For custom roles, build from the description
                     &description
                 }
-            }.to_string()
+            }
+            .to_string()
         };
 
         // Build standardized prompt with static prefix and tool guidance
         // Include current date and MCP tools context
-        let date_context = format!("\n\nCurrent date: {}", chrono::Utc::now().format("%Y-%m-%d"));
+        let date_context = format!(
+            "\n\nCurrent date: {}",
+            chrono::Utc::now().format("%Y-%m-%d")
+        );
         let mcp_context = super::context::get_mcp_tools_context(ctx).await;
 
         let base_prompt = PromptBuilder::new(role_instructions)
@@ -65,7 +69,9 @@ impl ExpertRole {
             ExpertRole::CodeReviewer => "code_reviewer".to_string(),
             ExpertRole::Security => "security".to_string(),
             ExpertRole::DocumentationWriter => "documentation_writer".to_string(),
-            ExpertRole::Custom(name, _) => format!("custom:{}", name.to_lowercase().replace(' ', "_")),
+            ExpertRole::Custom(name, _) => {
+                format!("custom:{}", name.to_lowercase().replace(' ', "_"))
+            }
         }
     }
 

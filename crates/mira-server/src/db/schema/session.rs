@@ -1,9 +1,9 @@
 // crates/mira-server/src/db/schema/session.rs
 // Session and chat-related migrations
 
+use crate::db::migration_helpers::{add_column_if_missing, column_exists, table_exists};
 use anyhow::Result;
 use rusqlite::Connection;
-use crate::db::migration_helpers::{table_exists, column_exists, add_column_if_missing};
 
 /// Migrate tool_history to add full_result column for complete tool output storage
 pub fn migrate_tool_history_full_result(conn: &Connection) -> Result<()> {
@@ -13,12 +13,7 @@ pub fn migrate_tool_history_full_result(conn: &Connection) -> Result<()> {
     }
 
     // Add column if missing
-    add_column_if_missing(
-        conn,
-        "tool_history",
-        "full_result",
-        "TEXT"
-    )
+    add_column_if_missing(conn, "tool_history", "full_result", "TEXT")
 }
 
 /// Migrate chat_messages to add summary_id for reversible summarization
@@ -71,10 +66,7 @@ pub fn migrate_sessions_branch(conn: &Connection) -> Result<()> {
 
     if !column_exists(conn, "sessions", "branch") {
         tracing::info!("Adding branch column to sessions for branch-aware context");
-        conn.execute(
-            "ALTER TABLE sessions ADD COLUMN branch TEXT",
-            [],
-        )?;
+        conn.execute("ALTER TABLE sessions ADD COLUMN branch TEXT", [])?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sessions_branch ON sessions(branch)",
             [],

@@ -2,9 +2,8 @@
 // Team management tools for multi-user memory sharing
 
 use crate::db::{
-    create_team_sync, get_team_sync, get_team_by_name_sync,
-    add_team_member_sync, remove_team_member_sync, is_team_member_sync,
-    list_user_teams_sync, list_team_members_sync,
+    add_team_member_sync, create_team_sync, get_team_by_name_sync, get_team_sync,
+    is_team_member_sync, list_team_members_sync, list_user_teams_sync, remove_team_member_sync,
 };
 use crate::mcp::requests::TeamAction;
 use crate::tools::core::ToolContext;
@@ -40,7 +39,12 @@ pub async fn team_create<C: ToolContext>(
     let team_id = ctx
         .pool()
         .run(move |conn| {
-            create_team_sync(conn, &name_clone2, description.as_deref(), Some(&user_id_for_create))
+            create_team_sync(
+                conn,
+                &name_clone2,
+                description.as_deref(),
+                Some(&user_id_for_create),
+            )
         })
         .await?;
 
@@ -152,9 +156,15 @@ pub async fn team_remove<C: ToolContext>(
         .await?;
 
     if removed {
-        Ok(format!("Removed '{}' from team '{}'", user_identity, team.name))
+        Ok(format!(
+            "Removed '{}' from team '{}'",
+            user_identity, team.name
+        ))
     } else {
-        Ok(format!("'{}' was not a member of team '{}'", user_identity, team.name))
+        Ok(format!(
+            "'{}' was not a member of team '{}'",
+            user_identity, team.name
+        ))
     }
 }
 
@@ -253,12 +263,14 @@ pub async fn team<C: ToolContext>(
         }
         TeamAction::Invite | TeamAction::Add => {
             let team_id = team_id.ok_or("team_id is required for invite action")?;
-            let user_identity = user_identity.ok_or("user_identity is required for invite action")?;
+            let user_identity =
+                user_identity.ok_or("user_identity is required for invite action")?;
             team_invite(ctx, team_id, user_identity, role).await
         }
         TeamAction::Remove => {
             let team_id = team_id.ok_or("team_id is required for remove action")?;
-            let user_identity = user_identity.ok_or("user_identity is required for remove action")?;
+            let user_identity =
+                user_identity.ok_or("user_identity is required for remove action")?;
             team_remove(ctx, team_id, user_identity).await
         }
         TeamAction::List => team_list(ctx).await,

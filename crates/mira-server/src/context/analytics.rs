@@ -75,13 +75,17 @@ impl InjectionAnalytics {
         let total_str = total.to_string();
         let chars_str = chars.to_string();
 
-        if let Err(e) = self.pool.interact(move |conn| {
-            set_server_state_sync(conn, "injection_total_count", &total_str)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            set_server_state_sync(conn, "injection_total_chars", &chars_str)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok::<_, anyhow::Error>(())
-        }).await {
+        if let Err(e) = self
+            .pool
+            .interact(move |conn| {
+                set_server_state_sync(conn, "injection_total_count", &total_str)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                set_server_state_sync(conn, "injection_total_chars", &chars_str)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+        {
             tracing::debug!("Failed to persist injection stats: {}", e);
         }
     }
@@ -142,13 +146,15 @@ mod tests {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
         let analytics = InjectionAnalytics::new(pool);
 
-        analytics.record(InjectionEvent {
-            session_id: "test-session".to_string(),
-            project_id: Some(1),
-            sources: vec![InjectionSource::Semantic],
-            context_len: 100,
-            message_preview: "test message".to_string(),
-        }).await;
+        analytics
+            .record(InjectionEvent {
+                session_id: "test-session".to_string(),
+                project_id: Some(1),
+                sources: vec![InjectionSource::Semantic],
+                context_len: 100,
+                message_preview: "test message".to_string(),
+            })
+            .await;
 
         let summary = analytics.summary(None).await;
         assert!(summary.contains("1 injections"));
@@ -170,13 +176,15 @@ mod tests {
         let analytics = InjectionAnalytics::new(pool);
 
         for i in 0..5 {
-            analytics.record(InjectionEvent {
-                session_id: format!("session-{}", i),
-                project_id: None,
-                sources: vec![],
-                context_len: i * 10,
-                message_preview: format!("message {}", i),
-            }).await;
+            analytics
+                .record(InjectionEvent {
+                    session_id: format!("session-{}", i),
+                    project_id: None,
+                    sources: vec![],
+                    context_len: i * 10,
+                    message_preview: format!("message {}", i),
+                })
+                .await;
         }
 
         let recent = analytics.recent_events(3).await;

@@ -8,12 +8,12 @@ use mira_types::{ProjectContext, WsEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{RwLock, oneshot};
 
+use crate::background::watcher::WatcherHandle;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{DeepSeekClient, ProviderFactory};
-use crate::background::watcher::WatcherHandle;
 
 /// Information about an MCP tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,10 +133,10 @@ pub use dev::*;
 pub use diff::*;
 pub use documentation::*;
 pub use experts::*;
+pub use goals::*;
 pub use memory::*;
 pub use project::*;
 pub use reviews::*;
 pub use session::*;
-pub use goals::*;
 pub use teams::*;
 pub use usage::*;

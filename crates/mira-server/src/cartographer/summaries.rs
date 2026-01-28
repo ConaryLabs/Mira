@@ -2,12 +2,12 @@
 // LLM-powered module summaries
 
 use super::types::ModuleSummaryContext;
+use crate::db::{get_modules_needing_summaries_sync, update_module_purposes_sync};
+use crate::project_files::walker::FileWalker;
 use anyhow::Result;
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::Path;
-use crate::db::{get_modules_needing_summaries_sync, update_module_purposes_sync};
-use crate::project_files::walker::FileWalker;
 
 /// Get modules that need LLM summaries (no purpose or heuristic-only)
 pub fn get_modules_needing_summaries(
@@ -135,7 +135,7 @@ pub fn build_summary_prompt(modules: &[ModuleSummaryContext]) -> String {
         "Summarize each module's purpose in 1-2 sentences. Be specific about what it does and how it fits into the system.\n\n\
          Respond in this exact format (one line per module):\n\
          module_id: summary\n\n\
-         Modules to summarize:\n\n"
+         Modules to summarize:\n\n",
     );
 
     for module in modules {

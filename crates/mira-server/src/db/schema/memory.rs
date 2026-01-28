@@ -1,9 +1,9 @@
 // crates/mira-server/src/db/schema/memory.rs
 // Memory, users, and teams migrations
 
+use crate::db::migration_helpers::{column_exists, create_table_if_missing, table_exists};
 use anyhow::Result;
 use rusqlite::Connection;
-use crate::db::migration_helpers::{table_exists, column_exists, create_table_if_missing};
 
 /// Migrate memory_facts to add has_embedding column for tracking embedding status
 pub fn migrate_memory_facts_has_embedding(conn: &Connection) -> Result<()> {
@@ -84,17 +84,22 @@ pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
              SELECT MIN(id)
              FROM imports
              GROUP BY project_id, file_path, import_path
-         )"
+         )",
     )?;
 
-    conn.execute_batch("CREATE UNIQUE INDEX uniq_imports ON imports(project_id, file_path, import_path)")?;
+    conn.execute_batch(
+        "CREATE UNIQUE INDEX uniq_imports ON imports(project_id, file_path, import_path)",
+    )?;
 
     Ok(())
 }
 
 /// Migrate to add documentation tracking tables
 pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "documentation_tasks", r#"
+    create_table_if_missing(
+        conn,
+        "documentation_tasks",
+        r#"
         CREATE TABLE IF NOT EXISTS documentation_tasks (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -148,12 +153,16 @@ pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
             UNIQUE(project_id, doc_path)
         );
         CREATE INDEX IF NOT EXISTS idx_doc_inventory_stale ON documentation_inventory(project_id, is_stale);
-    "#)
+    "#,
+    )
 }
 
 /// Migrate to add users table for multi-user support
 pub fn migrate_users_table(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "users", r#"
+    create_table_if_missing(
+        conn,
+        "users",
+        r#"
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
             identity TEXT UNIQUE NOT NULL,
@@ -162,7 +171,8 @@ pub fn migrate_users_table(conn: &Connection) -> Result<()> {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_users_identity ON users(identity);
-    "#)
+    "#,
+    )
 }
 
 /// Migrate memory_facts to add user_id and scope columns for multi-user sharing
@@ -173,10 +183,7 @@ pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
 
     if !column_exists(conn, "memory_facts", "user_id") {
         tracing::info!("Adding user_id column to memory_facts for multi-user support");
-        conn.execute(
-            "ALTER TABLE memory_facts ADD COLUMN user_id TEXT",
-            [],
-        )?;
+        conn.execute("ALTER TABLE memory_facts ADD COLUMN user_id TEXT", [])?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_facts(user_id)",
             [],
@@ -197,10 +204,7 @@ pub fn migrate_memory_user_scope(conn: &Connection) -> Result<()> {
 
     if !column_exists(conn, "memory_facts", "team_id") {
         tracing::info!("Adding team_id column to memory_facts for team sharing");
-        conn.execute(
-            "ALTER TABLE memory_facts ADD COLUMN team_id INTEGER",
-            [],
-        )?;
+        conn.execute("ALTER TABLE memory_facts ADD COLUMN team_id INTEGER", [])?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_team ON memory_facts(team_id)",
             [],
@@ -218,10 +222,7 @@ pub fn migrate_memory_facts_branch(conn: &Connection) -> Result<()> {
 
     if !column_exists(conn, "memory_facts", "branch") {
         tracing::info!("Adding branch column to memory_facts for branch-aware memory");
-        conn.execute(
-            "ALTER TABLE memory_facts ADD COLUMN branch TEXT",
-            [],
-        )?;
+        conn.execute("ALTER TABLE memory_facts ADD COLUMN branch TEXT", [])?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_branch ON memory_facts(branch)",
             [],
@@ -233,7 +234,10 @@ pub fn migrate_memory_facts_branch(conn: &Connection) -> Result<()> {
 
 /// Migrate to add teams tables for team-based memory sharing
 pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "teams", r#"
+    create_table_if_missing(
+        conn,
+        "teams",
+        r#"
         CREATE TABLE IF NOT EXISTS teams (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
@@ -253,5 +257,6 @@ pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
         CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_identity);
-    "#)
+    "#,
+    )
 }

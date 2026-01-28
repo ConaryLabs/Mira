@@ -6,7 +6,9 @@ use super::*;
 /// Helper to create a test database with a project
 fn setup_test_db() -> (Database, i64) {
     let db = Database::open_in_memory().expect("Failed to open in-memory db");
-    let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+    let (project_id, _) = db
+        .get_or_create_project("/test/path", Some("test"))
+        .unwrap();
     (db, project_id)
 }
 
@@ -369,9 +371,7 @@ mod tests {
         .unwrap();
 
         // % is a SQL wildcard - should be escaped
-        let results = db
-            .search_memories(Some(project_id), "100%", 10)
-            .unwrap();
+        let results = db.search_memories(Some(project_id), "100%", 10).unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -390,7 +390,9 @@ mod tests {
         .unwrap();
 
         // _ is a SQL wildcard - should be escaped
-        let results = db.search_memories(Some(project_id), "test_value", 10).unwrap();
+        let results = db
+            .search_memories(Some(project_id), "test_value", 10)
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -580,7 +582,11 @@ mod tests {
 
         let profile = db.get_user_profile().unwrap();
         assert_eq!(profile.len(), 2);
-        assert!(profile.iter().all(|p| p.category.as_deref() == Some("profile")));
+        assert!(
+            profile
+                .iter()
+                .all(|p| p.category.as_deref() == Some("profile"))
+        );
     }
 
     // ═══════════════════════════════════════
@@ -603,10 +609,7 @@ mod tests {
     fn test_project_persona() {
         let (db, project_id) = setup_test_db();
 
-        assert!(db
-            .get_project_persona(project_id)
-            .unwrap()
-            .is_none());
+        assert!(db.get_project_persona(project_id).unwrap().is_none());
 
         db.set_project_persona(project_id, "Project-specific persona")
             .unwrap();
@@ -620,17 +623,11 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         db.set_project_persona(project_id, "Persona").unwrap();
-        assert!(db
-            .get_project_persona(project_id)
-            .unwrap()
-            .is_some());
+        assert!(db.get_project_persona(project_id).unwrap().is_some());
 
         let cleared = db.clear_project_persona(project_id).unwrap();
         assert!(cleared);
-        assert!(db
-            .get_project_persona(project_id)
-            .unwrap()
-            .is_none());
+        assert!(db.get_project_persona(project_id).unwrap().is_none());
     }
 
     // ═══════════════════════════════════════
@@ -730,7 +727,9 @@ mod tests {
     #[test]
     fn test_project_isolation() {
         let (db, project1) = setup_test_db();
-        let (project2, _) = db.get_or_create_project("/other/path", Some("other")).unwrap();
+        let (project2, _) = db
+            .get_or_create_project("/other/path", Some("other"))
+            .unwrap();
 
         db.store_memory(
             Some(project1),
@@ -780,7 +779,9 @@ mod tests {
         .unwrap();
 
         // search_memories searches content field, not key
-        let results = db.search_memories(None, "test content for parsing", 1).unwrap();
+        let results = db
+            .search_memories(None, "test content for parsing", 1)
+            .unwrap();
         assert_eq!(results.len(), 1);
 
         let fact = &results[0];

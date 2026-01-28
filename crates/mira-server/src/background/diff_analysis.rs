@@ -1,9 +1,11 @@
 // crates/mira-server/src/background/diff_analysis.rs
 // Core logic for semantic diff analysis
 
-use crate::db::{map_files_to_symbols_sync, get_cached_diff_analysis_sync, store_diff_analysis_sync};
 use crate::db::pool::DatabasePool;
-use crate::llm::{record_llm_usage, DeepSeekClient, LlmClient, PromptBuilder};
+use crate::db::{
+    get_cached_diff_analysis_sync, map_files_to_symbols_sync, store_diff_analysis_sync,
+};
+use crate::llm::{DeepSeekClient, LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::find_callers;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -65,7 +67,11 @@ pub struct DiffStats {
 }
 
 /// Get unified diff between two refs
-pub fn get_unified_diff(project_path: &Path, from_ref: &str, to_ref: &str) -> Result<String, String> {
+pub fn get_unified_diff(
+    project_path: &Path,
+    from_ref: &str,
+    to_ref: &str,
+) -> Result<String, String> {
     let output = Command::new("git")
         .args(["diff", "--unified=3", from_ref, to_ref])
         .current_dir(project_path)
@@ -103,7 +109,11 @@ pub fn get_working_diff(project_path: &Path) -> Result<String, String> {
 }
 
 /// Parse diff statistics using git diff --stat
-pub fn parse_diff_stats(project_path: &Path, from_ref: &str, to_ref: &str) -> Result<DiffStats, String> {
+pub fn parse_diff_stats(
+    project_path: &Path,
+    from_ref: &str,
+    to_ref: &str,
+) -> Result<DiffStats, String> {
     let output = Command::new("git")
         .args(["diff", "--stat", "--numstat", from_ref, to_ref])
         .current_dir(project_path)
@@ -197,7 +207,11 @@ pub fn build_impact_graph(
                 for caller in callers {
                     if !seen.contains(&caller.symbol_name) {
                         seen.insert(caller.symbol_name.clone());
-                        affected_functions.push((caller.symbol_name.clone(), caller.file_path.clone(), depth));
+                        affected_functions.push((
+                            caller.symbol_name.clone(),
+                            caller.file_path.clone(),
+                            depth,
+                        ));
                         affected_files.insert(caller.file_path);
                         next_level.push(caller.symbol_name);
                     }
@@ -268,7 +282,8 @@ pub async fn analyze_diff_semantic(
         &result,
         project_id,
         None,
-    ).await;
+    )
+    .await;
 
     let content = result.content.ok_or("No content in LLM response")?;
 
@@ -341,20 +356,35 @@ pub async fn analyze_diff(
     // Check cache first
     let from_for_cache = from_commit.clone();
     let to_for_cache = to_commit.clone();
-    let cached = pool.interact(move |conn| {
-        get_cached_diff_analysis_sync(conn, project_id, &from_for_cache, &to_for_cache)
-            .map_err(|e| anyhow::anyhow!("{}", e))
-    }).await.map_err(|e| e.to_string())?;
+    let cached = pool
+        .interact(move |conn| {
+            get_cached_diff_analysis_sync(conn, project_id, &from_for_cache, &to_for_cache)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if let Some(cached) = cached {
-        tracing::info!("Using cached diff analysis for {}..{}", from_commit, to_commit);
+        tracing::info!(
+            "Using cached diff analysis for {}..{}",
+            from_commit,
+            to_commit
+        );
         return Ok(DiffAnalysisResult {
             from_ref: from_commit,
             to_ref: to_commit,
-            changes: serde_json::from_str(&cached.changes_json.unwrap_or_default()).unwrap_or_default(),
-            impact: cached.impact_json.and_then(|j| serde_json::from_str(&j).ok()),
-            risk: cached.risk_json.and_then(|j| serde_json::from_str(&j).ok())
-                .unwrap_or(RiskAssessment { overall: "Unknown".to_string(), flags: vec![] }),
+            changes: serde_json::from_str(&cached.changes_json.unwrap_or_default())
+                .unwrap_or_default(),
+            impact: cached
+                .impact_json
+                .and_then(|j| serde_json::from_str(&j).ok()),
+            risk: cached
+                .risk_json
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or(RiskAssessment {
+                    overall: "Unknown".to_string(),
+                    flags: vec![],
+                }),
             summary: cached.summary.unwrap_or_default(),
             files_changed: cached.files_changed.unwrap_or(0),
             lines_added: cached.lines_added.unwrap_or(0),
@@ -384,31 +414,33 @@ pub async fn analyze_diff(
     }
 
     // Semantic analysis via LLM
-    let (changes, summary, risk_flags) = analyze_diff_semantic(&diff_content, deepseek, pool, project_id).await?;
+    let (changes, summary, risk_flags) =
+        analyze_diff_semantic(&diff_content, deepseek, pool, project_id).await?;
 
     // Build impact analysis if requested
     let impact = if include_impact && !changes.is_empty() {
         let files = stats.files.clone();
         let changes_clone = changes.clone();
-        let impact_result = pool.interact(move |conn| -> Result<ImpactAnalysis, anyhow::Error> {
-            let symbols = map_to_symbols(conn, project_id, &files);
-            if symbols.is_empty() {
-                // If no symbols found, use changes from LLM
-                let pseudo_symbols: Vec<(String, String, String)> = changes_clone
-                    .iter()
-                    .filter_map(|c| {
-                        c.symbol_name.as_ref().map(|name| {
-                            (name.clone(), "function".to_string(), c.file_path.clone())
+        let impact_result = pool
+            .interact(move |conn| -> Result<ImpactAnalysis, anyhow::Error> {
+                let symbols = map_to_symbols(conn, project_id, &files);
+                if symbols.is_empty() {
+                    // If no symbols found, use changes from LLM
+                    let pseudo_symbols: Vec<(String, String, String)> = changes_clone
+                        .iter()
+                        .filter_map(|c| {
+                            c.symbol_name.as_ref().map(|name| {
+                                (name.clone(), "function".to_string(), c.file_path.clone())
+                            })
                         })
-                    })
-                    .collect();
-                Ok(build_impact_graph(conn, project_id, &pseudo_symbols, 2))
-            } else {
-                Ok(build_impact_graph(conn, project_id, &symbols, 2))
-            }
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+                        .collect();
+                    Ok(build_impact_graph(conn, project_id, &pseudo_symbols, 2))
+                } else {
+                    Ok(build_impact_graph(conn, project_id, &symbols, 2))
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?;
         Some(impact_result)
     } else {
         None
@@ -433,22 +465,26 @@ pub async fn analyze_diff(
     let lines_added = stats.lines_added;
     let lines_removed = stats.lines_removed;
 
-    if let Err(e) = pool.interact(move |conn| {
-        store_diff_analysis_sync(
-            conn,
-            project_id,
-            &from_for_store,
-            &to_for_store,
-            "commit",
-            changes_json.as_deref(),
-            impact_json.as_deref(),
-            risk_json.as_deref(),
-            Some(&summary_for_store),
-            Some(files_changed),
-            Some(lines_added),
-            Some(lines_removed),
-        ).map_err(|e| anyhow::anyhow!("{}", e))
-    }).await {
+    if let Err(e) = pool
+        .interact(move |conn| {
+            store_diff_analysis_sync(
+                conn,
+                project_id,
+                &from_for_store,
+                &to_for_store,
+                "commit",
+                changes_json.as_deref(),
+                impact_json.as_deref(),
+                risk_json.as_deref(),
+                Some(&summary_for_store),
+                Some(files_changed),
+                Some(lines_added),
+                Some(lines_removed),
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+    {
         tracing::warn!("Failed to cache diff analysis: {}", e);
     }
 
@@ -498,7 +534,9 @@ pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
         for change in &result.changes {
             match change.change_type.as_str() {
                 "NewFunction" | "NewFeature" => new_features.push(change),
-                "ModifiedFunction" | "SignatureChange" | "Refactoring" => modifications.push(change),
+                "ModifiedFunction" | "SignatureChange" | "Refactoring" => {
+                    modifications.push(change)
+                }
                 "DeletedFunction" => deletions.push(change),
                 _ => other.push(change),
             }
@@ -508,7 +546,10 @@ pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
             output.push_str("**New Features**\n");
             for c in new_features {
                 let markers = format_change_markers(c);
-                output.push_str(&format!("- {}: {}{}\n", c.file_path, c.description, markers));
+                output.push_str(&format!(
+                    "- {}: {}{}\n",
+                    c.file_path, c.description, markers
+                ));
             }
             output.push('\n');
         }
@@ -517,7 +558,10 @@ pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
             output.push_str("**Modifications**\n");
             for c in modifications {
                 let markers = format_change_markers(c);
-                output.push_str(&format!("- {}: {}{}\n", c.file_path, c.description, markers));
+                output.push_str(&format!(
+                    "- {}: {}{}\n",
+                    c.file_path, c.description, markers
+                ));
             }
             output.push('\n');
         }
@@ -534,7 +578,10 @@ pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
             output.push_str("**Other Changes**\n");
             for c in other {
                 let markers = format_change_markers(c);
-                output.push_str(&format!("- {}: {}{}\n", c.file_path, c.description, markers));
+                output.push_str(&format!(
+                    "- {}: {}{}\n",
+                    c.file_path, c.description, markers
+                ));
             }
             output.push('\n');
         }
@@ -546,13 +593,24 @@ pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
             output.push_str("### Impact\n");
             output.push_str(&format!(
                 "- Directly affected: {} functions\n",
-                impact.affected_functions.iter().filter(|(_, _, d)| *d == 1).count()
+                impact
+                    .affected_functions
+                    .iter()
+                    .filter(|(_, _, d)| *d == 1)
+                    .count()
             ));
             output.push_str(&format!(
                 "- Transitively affected: {} functions\n",
-                impact.affected_functions.iter().filter(|(_, _, d)| *d > 1).count()
+                impact
+                    .affected_functions
+                    .iter()
+                    .filter(|(_, _, d)| *d > 1)
+                    .count()
             ));
-            output.push_str(&format!("- Affected files: {}\n\n", impact.affected_files.len()));
+            output.push_str(&format!(
+                "- Affected files: {}\n\n",
+                impact.affected_files.len()
+            ));
         }
     }
 

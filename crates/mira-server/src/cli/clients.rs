@@ -40,7 +40,10 @@ pub fn get_embeddings_from_config(
 /// - GOOGLE_API_KEY: Alternative to GEMINI_API_KEY
 ///
 /// Note: Prefer get_embeddings_from_config() to avoid duplicate env reads
-pub fn get_embeddings_with_pool(pool: Option<Arc<DatabasePool>>, http_client: reqwest::Client) -> Option<Arc<EmbeddingClient>> {
+pub fn get_embeddings_with_pool(
+    pool: Option<Arc<DatabasePool>>,
+    http_client: reqwest::Client,
+) -> Option<Arc<EmbeddingClient>> {
     get_embeddings_from_config(
         &ApiKeys::from_env(),
         &EmbeddingsConfig::from_env(),

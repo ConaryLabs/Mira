@@ -1,9 +1,9 @@
 // src/hooks/permission.rs
 // Permission hook for Claude Code auto-approval
 
-use anyhow::Result;
-use crate::db::{pool::DatabasePool, get_permission_rules_sync};
+use crate::db::{get_permission_rules_sync, pool::DatabasePool};
 use crate::hooks::{read_hook_input, write_hook_output};
+use anyhow::Result;
 use std::path::PathBuf;
 
 /// Run permission hook
@@ -20,9 +20,9 @@ pub async fn run() -> Result<()> {
     let pool = DatabasePool::open(&db_path).await?;
 
     // Check for matching permission rules
-    let rules = pool.interact(move |conn| {
-        Ok::<_, anyhow::Error>(get_permission_rules_sync(conn, &tool_name))
-    }).await?;
+    let rules = pool
+        .interact(move |conn| Ok::<_, anyhow::Error>(get_permission_rules_sync(conn, &tool_name)))
+        .await?;
 
     // Check if any rule matches
     for (pattern, match_type) in rules {

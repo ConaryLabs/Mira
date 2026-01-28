@@ -11,7 +11,8 @@ pub fn table_exists(conn: &Connection, table_name: &str) -> bool {
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         [table_name],
         |_| Ok(true),
-    ).unwrap_or(false)
+    )
+    .unwrap_or(false)
 }
 
 /// Check if a column exists in a table
@@ -20,7 +21,8 @@ pub fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> 
         "SELECT 1 FROM pragma_table_info(?) WHERE name=?",
         [table_name, column_name],
         |_| Ok(true),
-    ).unwrap_or(false)
+    )
+    .unwrap_or(false)
 }
 
 /// Add a column to a table if it doesn't already exist
@@ -35,17 +37,16 @@ pub fn add_column_if_missing(
     }
 
     info!("Migrating {} to add {} column", table_name, column_name);
-    let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table_name, column_name, column_def);
+    let sql = format!(
+        "ALTER TABLE {} ADD COLUMN {} {}",
+        table_name, column_name, column_def
+    );
     conn.execute(&sql, [])?;
     Ok(())
 }
 
 /// Create a table if it doesn't exist (with logging)
-pub fn create_table_if_missing(
-    conn: &Connection,
-    table_name: &str,
-    sql: &str,
-) -> Result<()> {
+pub fn create_table_if_missing(conn: &Connection, table_name: &str, sql: &str) -> Result<()> {
     if table_exists(conn, table_name) {
         return Ok(());
     }
@@ -54,7 +55,6 @@ pub fn create_table_if_missing(
     conn.execute_batch(sql)?;
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -68,7 +68,8 @@ mod tests {
         assert!(!table_exists(&conn, "test_table"));
 
         // Create table
-        conn.execute("CREATE TABLE test_table (id INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE test_table (id INTEGER)", [])
+            .unwrap();
 
         // Now it exists
         assert!(table_exists(&conn, "test_table"));
@@ -79,7 +80,8 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
 
         // Create table with specific column
-        conn.execute("CREATE TABLE test_table (id INTEGER, name TEXT)", []).unwrap();
+        conn.execute("CREATE TABLE test_table (id INTEGER, name TEXT)", [])
+            .unwrap();
 
         // Column exists
         assert!(column_exists(&conn, "test_table", "id"));
@@ -94,7 +96,8 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
 
         // Create table without the column
-        conn.execute("CREATE TABLE test_table (id INTEGER)", []).unwrap();
+        conn.execute("CREATE TABLE test_table (id INTEGER)", [])
+            .unwrap();
 
         // Add missing column
         add_column_if_missing(&conn, "test_table", "name", "TEXT").unwrap();

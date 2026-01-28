@@ -1,26 +1,26 @@
 // crates/mira-server/src/context/mod.rs
 // Proactive context injection for Mira
 
-use std::sync::Arc;
 use crate::db::pool::DatabasePool;
-use crate::db::{get_server_state_sync, get_or_create_project_sync};
+use crate::db::{get_or_create_project_sync, get_server_state_sync};
 use crate::embeddings::EmbeddingClient;
+use std::sync::Arc;
 
-mod semantic;
-mod file_aware;
-mod goal_aware;
+mod analytics;
 mod budget;
 mod cache;
 mod config;
-mod analytics;
+mod file_aware;
+mod goal_aware;
+mod semantic;
 
-pub use semantic::SemanticInjector;
-pub use file_aware::FileAwareInjector;
-pub use goal_aware::{GoalAwareInjector, TaskAwareInjector};
+pub use analytics::{InjectionAnalytics, InjectionEvent};
 pub use budget::BudgetManager;
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;
-pub use analytics::{InjectionAnalytics, InjectionEvent};
+pub use file_aware::FileAwareInjector;
+pub use goal_aware::{GoalAwareInjector, TaskAwareInjector};
+pub use semantic::SemanticInjector;
 
 /// Result of context injection with metadata for MCP notification
 #[derive(Debug, Clone, serde::Serialize)]
@@ -140,19 +140,22 @@ impl ContextInjectionManager {
     /// Get project ID and path for the current session (if any)
     async fn get_project_info(&self) -> (Option<i64>, Option<String>) {
         let pool = self.pool.clone();
-        match pool.interact(move |conn| {
-            // Get last active project path from server state
-            let path = get_server_state_sync(conn, "active_project_path")
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-            if let Some(path) = path {
-                let (id, _name) = get_or_create_project_sync(conn, &path, None)
+        match pool
+            .interact(move |conn| {
+                // Get last active project path from server state
+                let path = get_server_state_sync(conn, "active_project_path")
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
-                Ok((Some(id), Some(path)))
-            } else {
-                Ok((None, None))
-            }
-        }).await {
+
+                if let Some(path) = path {
+                    let (id, _name) = get_or_create_project_sync(conn, &path, None)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    Ok((Some(id), Some(path)))
+                } else {
+                    Ok((None, None))
+                }
+            })
+            .await
+        {
             Ok(result) => result,
             Err(_) => (None, None),
         }
@@ -179,23 +182,38 @@ impl ContextInjectionManager {
         }
 
         // File paths (absolute or relative with extensions)
-        if trimmed.contains('/') && (trimmed.ends_with(".rs") || trimmed.ends_with(".toml") ||
-            trimmed.ends_with(".json") || trimmed.ends_with(".md") || trimmed.ends_with(".txt")) {
+        if trimmed.contains('/')
+            && (trimmed.ends_with(".rs")
+                || trimmed.ends_with(".toml")
+                || trimmed.ends_with(".json")
+                || trimmed.ends_with(".md")
+                || trimmed.ends_with(".txt"))
+        {
             return true;
         }
 
         let lower = trimmed.to_lowercase();
 
         // Common command prefixes that don't need context
-        let simple_prefixes = ["git", "cargo", "ls", "cd", "pwd", "echo", "cat", "rm", "mkdir",
-            "touch", "mv", "cp", "npm", "yarn", "docker", "kubectl", "ps", "grep", "find", "which"];
-        if simple_prefixes.iter().any(|&prefix| lower.starts_with(prefix)) {
+        let simple_prefixes = [
+            "git", "cargo", "ls", "cd", "pwd", "echo", "cat", "rm", "mkdir", "touch", "mv", "cp",
+            "npm", "yarn", "docker", "kubectl", "ps", "grep", "find", "which",
+        ];
+        if simple_prefixes
+            .iter()
+            .any(|&prefix| lower.starts_with(prefix))
+        {
             return true;
         }
 
         // Questions about Claude Code itself (not about the codebase)
-        let claude_questions = ["how do i use claude code", "can claude code", "does claude code",
-            "what is claude code", "where is claude code"];
+        let claude_questions = [
+            "how do i use claude code",
+            "can claude code",
+            "does claude code",
+            "what is claude code",
+            "where is claude code",
+        ];
         if claude_questions.iter().any(|&q| lower.contains(q)) {
             return true;
         }
@@ -208,34 +226,105 @@ impl ContextInjectionManager {
         let lower = message.to_lowercase();
         let code_keywords = [
             // Code structure
-            "function", "struct", "class", "module", "import", "export", "variable", "constant",
-            "type", "interface", "trait", "impl", "def", "fn", "method", "property", "attribute",
-            "enum", "const", "let", "var", "field", "member",
+            "function",
+            "struct",
+            "class",
+            "module",
+            "import",
+            "export",
+            "variable",
+            "constant",
+            "type",
+            "interface",
+            "trait",
+            "impl",
+            "def",
+            "fn",
+            "method",
+            "property",
+            "attribute",
+            "enum",
+            "const",
+            "let",
+            "var",
+            "field",
+            "member",
             // Questions
-            "where is", "how does", "show me", "what is", "explain", "find", "search", "look for",
-            "locate", "where are", "how to", "help with",
+            "where is",
+            "how does",
+            "show me",
+            "what is",
+            "explain",
+            "find",
+            "search",
+            "look for",
+            "locate",
+            "where are",
+            "how to",
+            "help with",
             // Implementation
-            "implement", "refactor", "fix", "bug", "error", "issue", "problem", "debug", "test",
-            "optimize", "performance", "memory", "concurrent", "async", "thread", "parallel",
+            "implement",
+            "refactor",
+            "fix",
+            "bug",
+            "error",
+            "issue",
+            "problem",
+            "debug",
+            "test",
+            "optimize",
+            "performance",
+            "memory",
+            "concurrent",
+            "async",
+            "thread",
+            "parallel",
             // Codebase concepts
-            "api", "endpoint", "route", "handler", "controller", "service", "repository", "dao",
-            "middleware", "auth", "authentication", "authorization", "database", "db", "query",
-            "schema", "migration", "config", "configuration", "setting", "environment",
+            "api",
+            "endpoint",
+            "route",
+            "handler",
+            "controller",
+            "service",
+            "repository",
+            "dao",
+            "middleware",
+            "auth",
+            "authentication",
+            "authorization",
+            "database",
+            "db",
+            "query",
+            "schema",
+            "migration",
+            "config",
+            "configuration",
+            "setting",
+            "environment",
         ];
 
         let has_code_keyword = code_keywords.iter().any(|&kw| lower.contains(kw));
 
-        let has_file_mention = lower.contains(".rs") || lower.contains(".toml") ||
-            lower.contains(".json") || lower.contains(".md") || lower.contains(".txt") ||
-            lower.contains(".py") || lower.contains(".js") || lower.contains(".ts") ||
-            (lower.contains('/') && (lower.contains("src/") || lower.contains("crates/")));
+        let has_file_mention = lower.contains(".rs")
+            || lower.contains(".toml")
+            || lower.contains(".json")
+            || lower.contains(".md")
+            || lower.contains(".txt")
+            || lower.contains(".py")
+            || lower.contains(".js")
+            || lower.contains(".ts")
+            || (lower.contains('/') && (lower.contains("src/") || lower.contains("crates/")));
 
         has_code_keyword || has_file_mention
     }
 
     /// Main entry point for proactive context injection
     /// Returns both the context string and metadata about what was injected
-    pub async fn get_context_for_message(&self, user_message: &str, session_id: &str) -> InjectionResult {
+    pub async fn get_context_for_message(
+        &self,
+        user_message: &str,
+        session_id: &str,
+    ) -> InjectionResult {
         // Check if injection is enabled
         if !self.config.enabled {
             return InjectionResult::skipped("disabled");
@@ -257,7 +346,9 @@ impl ContextInjectionManager {
 
         // Probabilistic skip based on sample rate
         if self.config.sample_rate < 1.0 {
-            let hash = user_message.bytes().fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+            let hash = user_message
+                .bytes()
+                .fold(0u32, |acc, b| acc.wrapping_add(b as u32));
             let threshold = (self.config.sample_rate * 100.0) as u32;
             if hash % 100 >= threshold {
                 return InjectionResult::skipped("sampled_out");
@@ -288,12 +379,15 @@ impl ContextInjectionManager {
 
         // Semantic context
         if self.config.enable_semantic {
-            let semantic_context = self.semantic_injector.inject_context(
-                user_message,
-                session_id,
-                project_id,
-                project_path.as_deref(),
-            ).await;
+            let semantic_context = self
+                .semantic_injector
+                .inject_context(
+                    user_message,
+                    session_id,
+                    project_id,
+                    project_path.as_deref(),
+                )
+                .await;
             if !semantic_context.is_empty() {
                 contexts.push(semantic_context);
                 sources.push(InjectionSource::Semantic);
@@ -332,13 +426,15 @@ impl ContextInjectionManager {
 
         // Record analytics
         if !final_context.is_empty() {
-            self.analytics.record(InjectionEvent {
-                session_id: session_id.to_string(),
-                project_id,
-                sources: sources.clone(),
-                context_len: final_context.len(),
-                message_preview: user_message.chars().take(50).collect(),
-            }).await;
+            self.analytics
+                .record(InjectionEvent {
+                    session_id: session_id.to_string(),
+                    project_id,
+                    sources: sources.clone(),
+                    context_len: final_context.len(),
+                    message_preview: user_message.chars().take(50).collect(),
+                })
+                .await;
         }
 
         InjectionResult {
@@ -351,7 +447,9 @@ impl ContextInjectionManager {
 
     /// Legacy method for backwards compatibility - returns just the context string
     pub async fn get_context_string(&self, user_message: &str, session_id: &str) -> String {
-        self.get_context_for_message(user_message, session_id).await.context
+        self.get_context_for_message(user_message, session_id)
+            .await
+            .context
     }
 
     /// Get injection analytics summary

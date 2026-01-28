@@ -1,9 +1,11 @@
 // crates/mira-server/src/background/code_health/analysis.rs
 // LLM-powered code health analysis for complexity and error handling quality
 
-use crate::db::{get_large_functions_sync, get_error_heavy_functions_sync, store_memory_sync, StoreMemoryParams};
 use crate::db::pool::DatabasePool;
-use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
+use crate::db::{
+    StoreMemoryParams, get_error_heavy_functions_sync, get_large_functions_sync, store_memory_sync,
+};
+use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -26,12 +28,20 @@ fn truncate_function_code(code: &str, max_bytes: usize) -> String {
     let truncated = &code[..max_bytes];
     if let Some(last_newline) = truncated.rfind('\n') {
         // Keep everything up to the last newline
-        format!("{}\n// ... [code truncated, {} bytes total -> {} bytes]",
-                &truncated[..last_newline], code.len(), max_bytes)
+        format!(
+            "{}\n// ... [code truncated, {} bytes total -> {} bytes]",
+            &truncated[..last_newline],
+            code.len(),
+            max_bytes
+        )
     } else {
         // No newline found, just truncate
-        format!("{}... [code truncated, {} bytes total -> {} bytes]",
-                truncated, code.len(), max_bytes)
+        format!(
+            "{}... [code truncated, {} bytes total -> {} bytes]",
+            truncated,
+            code.len(),
+            max_bytes
+        )
     }
 }
 
@@ -71,15 +81,20 @@ async fn analyze_functions<F, P>(
     limit: usize,
 ) -> Result<usize, String>
 where
-    F: Fn(&rusqlite::Connection, i64, &str) -> Result<Vec<(String, String, i64, i64)>, String> + Send + Sync + 'static,
+    F: Fn(&rusqlite::Connection, i64, &str) -> Result<Vec<(String, String, i64, i64)>, String>
+        + Send
+        + Sync
+        + 'static,
     P: Fn(&str, &str, i64, i64, &str) -> String + Send + Sync + 'static,
 {
     // Query database for functions to analyze
     let project_path_owned = project_path.to_string();
-    let functions = pool.interact(move |conn| {
-        query_fn(conn, project_id, &project_path_owned)
-            .map_err(|e| anyhow::anyhow!("{}", e))
-    }).await.map_err(|e| e.to_string())?;
+    let functions = pool
+        .interact(move |conn| {
+            query_fn(conn, project_id, &project_path_owned).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if functions.is_empty() {
         return Ok(0);
@@ -95,10 +110,11 @@ where
     // Analyze functions up to the limit
     for (name, file_path, start_line, end_line) in functions.into_iter().take(limit) {
         // Extract the function code
-        let function_code = match extract_function_code(project_path, &file_path, start_line, end_line) {
-            Some(code) => code,
-            None => continue,
-        };
+        let function_code =
+            match extract_function_code(project_path, &file_path, start_line, end_line) {
+                Some(code) => code,
+                None => continue,
+            };
 
         // Skip if too short after extraction
         if function_code.lines().count() < 10 {
@@ -132,7 +148,8 @@ where
                     &result,
                     Some(project_id),
                     None,
-                ).await;
+                )
+                .await;
 
                 if let Some(content) = result.content {
                     let content = content.trim();
@@ -151,26 +168,37 @@ where
                     let key = format!("{}:{}:{}", key_prefix, file_path, name);
 
                     pool.interact(move |conn| {
-                        store_memory_sync(conn, StoreMemoryParams {
-                            project_id: Some(project_id),
-                            key: Some(&key),
-                            content: &issue_content,
-                            fact_type: "health",
-                            category: Some(category),
-                            confidence: 0.75,
-                            session_id: None,
-                            user_id: None,
-                            scope: "project",
-                            branch: None,
-                        }).map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
-                    }).await.map_err(|e| e.to_string())?;
+                        store_memory_sync(
+                            conn,
+                            StoreMemoryParams {
+                                project_id: Some(project_id),
+                                key: Some(&key),
+                                content: &issue_content,
+                                fact_type: "health",
+                                category: Some(category),
+                                confidence: 0.75,
+                                session_id: None,
+                                user_id: None,
+                                scope: "project",
+                                branch: None,
+                            },
+                        )
+                        .map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
 
                     tracing::info!("Code health: {} issue found in {}", category, name);
                     stored += 1;
                 }
             }
             Err(e) => {
-                tracing::warn!("Code health: LLM {} analysis failed for {}: {}", category, name, e);
+                tracing::warn!(
+                    "Code health: LLM {} analysis failed for {}: {}",
+                    category,
+                    name,
+                    e
+                );
             }
         }
 
@@ -230,8 +258,7 @@ fn get_large_functions(
     project_id: i64,
     min_lines: i64,
 ) -> Result<Vec<(String, String, i64, i64)>, String> {
-    get_large_functions_sync(conn, project_id, min_lines)
-        .map_err(|e| e.to_string())
+    get_large_functions_sync(conn, project_id, min_lines).map_err(|e| e.to_string())
 }
 
 /// LLM-powered analysis of error handling quality in complex functions
@@ -290,7 +317,8 @@ SUGGESTION: <what to do>"#,
         "error_quality",
         "error_quality",
         2,
-    ).await
+    )
+    .await
 }
 
 /// Find functions with many ? operators (error-propagation heavy)
@@ -302,8 +330,7 @@ fn get_error_heavy_functions(
     use std::fs;
 
     // Get functions from symbols (uses db function)
-    let functions = get_error_heavy_functions_sync(conn, project_id)
-        .map_err(|e| e.to_string())?;
+    let functions = get_error_heavy_functions_sync(conn, project_id).map_err(|e| e.to_string())?;
 
     // Count ? operators in each function
     let mut results = Vec::new();

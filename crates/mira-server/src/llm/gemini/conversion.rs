@@ -1,11 +1,11 @@
 // crates/mira-server/src/llm/gemini/conversion.rs
 // Message and tool conversion between Mira and Gemini formats
 
-use crate::llm::{Message, Tool};
 use crate::llm::gemini::types::{
     GeminiContent, GeminiFunctionCall, GeminiFunctionDeclaration, GeminiFunctionResponse,
     GeminiFunctionsTool, GeminiPart, GeminiTool, GoogleSearchConfig, GoogleSearchTool,
 };
+use crate::llm::{Message, Tool};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -35,7 +35,13 @@ pub fn convert_message(
                 text: msg.content.clone().unwrap_or_default(),
                 thought: false,
             }];
-            Some((GeminiContent { role: "user".into(), parts }, false))
+            Some((
+                GeminiContent {
+                    role: "user".into(),
+                    parts,
+                },
+                false,
+            ))
         }
         "assistant" => {
             let mut parts = Vec::new();
@@ -53,8 +59,8 @@ pub fn convert_message(
             // Add function calls if present (include thought signatures for Gemini 3)
             if let Some(ref tool_calls) = msg.tool_calls {
                 for tc in tool_calls {
-                    let args: Value =
-                        serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Object(Default::default()));
+                    let args: Value = serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(Value::Object(Default::default()));
                     parts.push(GeminiPart::FunctionCall {
                         function_call: GeminiFunctionCall {
                             name: tc.function.name.clone(),
@@ -72,7 +78,13 @@ pub fn convert_message(
                 });
             }
 
-            Some((GeminiContent { role: "model".into(), parts }, false))
+            Some((
+                GeminiContent {
+                    role: "model".into(),
+                    parts,
+                },
+                false,
+            ))
         }
         "tool" => {
             // Tool responses become function_response parts
@@ -99,7 +111,13 @@ pub fn convert_message(
                 },
             }];
 
-            Some((GeminiContent { role: "user".into(), parts }, false))
+            Some((
+                GeminiContent {
+                    role: "user".into(),
+                    parts,
+                },
+                false,
+            ))
         }
         _ => None,
     }

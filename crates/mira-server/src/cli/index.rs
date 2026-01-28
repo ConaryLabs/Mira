@@ -12,7 +12,8 @@ use tracing::info;
 
 /// Run the index command to index a project
 pub async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
-    let path = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let path =
+        path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     info!("Indexing project at {}", path.display());
 
@@ -22,11 +23,18 @@ pub async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
-    let embeddings = if no_embed { None } else { get_embeddings_with_pool(Some(pool.clone()), http_client) };
+    let embeddings = if no_embed {
+        None
+    } else {
+        get_embeddings_with_pool(Some(pool.clone()), http_client)
+    };
 
     // Get or create project
     let path_str = path.to_string_lossy().to_string();
-    let project_name = path.file_name().and_then(|n| n.to_str()).map(|s| s.to_string());
+    let project_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
     let (project_id, _project_name) = pool
         .interact(move |conn| {
             mira::db::get_or_create_project_sync(conn, &path_str, project_name.as_deref())

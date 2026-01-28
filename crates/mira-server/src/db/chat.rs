@@ -6,8 +6,8 @@ use rusqlite::params;
 
 use rusqlite::Connection;
 
-use super::types::{ChatMessage, ChatSummary};
 use super::Database;
+use super::types::{ChatMessage, ChatSummary};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
@@ -15,11 +15,13 @@ use super::Database;
 
 /// Get timestamp of the most recent chat message (sync version for pool.interact)
 pub fn get_last_chat_time_sync(conn: &Connection) -> rusqlite::Result<Option<String>> {
-    let timestamp: Option<String> = conn.query_row(
-        "SELECT created_at FROM chat_messages ORDER BY id DESC LIMIT 1",
-        [],
-        |row| row.get(0),
-    ).ok();
+    let timestamp: Option<String> = conn
+        .query_row(
+            "SELECT created_at FROM chat_messages ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
     Ok(timestamp)
 }
 
@@ -51,7 +53,7 @@ impl Database {
              FROM chat_messages
              WHERE summarized = 0
              ORDER BY id DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
 
         let rows = stmt.query_map([limit as i64], |row| {
@@ -78,7 +80,7 @@ impl Database {
              FROM chat_messages
              WHERE id < ? AND summarized = 0
              ORDER BY id DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
 
         let rows = stmt.query_map(params![before_id, limit as i64], |row| {
@@ -97,7 +99,12 @@ impl Database {
     }
 
     /// Mark messages as summarized and link to the summary for reversibility
-    pub fn mark_messages_summarized(&self, start_id: i64, end_id: i64, summary_id: i64) -> Result<usize> {
+    pub fn mark_messages_summarized(
+        &self,
+        start_id: i64,
+        end_id: i64,
+        summary_id: i64,
+    ) -> Result<usize> {
         let conn = self.conn();
         let updated = conn.execute(
             "UPDATE chat_messages SET summarized = 1, summary_id = ? WHERE id >= ? AND id <= ?",
@@ -130,7 +137,7 @@ impl Database {
             "SELECT id, role, content, reasoning_content, created_at
              FROM chat_messages
              WHERE summary_id = ?
-             ORDER BY id ASC"
+             ORDER BY id ASC",
         )?;
 
         let rows = stmt.query_map([summary_id], |row| {
@@ -194,17 +201,19 @@ impl Database {
 
         let mut stmt = conn.prepare(sql)?;
         let rows: Box<dyn Iterator<Item = Result<ChatSummary, _>>> = if has_project {
-            Box::new(stmt.query_map(params![project_id, level, limit as i64], |row| {
-                Ok(ChatSummary {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    summary: row.get(2)?,
-                    message_range_start: row.get(3)?,
-                    message_range_end: row.get(4)?,
-                    summary_level: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
-            })?)
+            Box::new(
+                stmt.query_map(params![project_id, level, limit as i64], |row| {
+                    Ok(ChatSummary {
+                        id: row.get(0)?,
+                        project_id: row.get(1)?,
+                        summary: row.get(2)?,
+                        message_range_start: row.get(3)?,
+                        message_range_end: row.get(4)?,
+                        summary_level: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                })?,
+            )
         } else {
             Box::new(stmt.query_map(params![level, limit as i64], |row| {
                 Ok(ChatSummary {
@@ -283,17 +292,19 @@ impl Database {
 
         let mut stmt = conn.prepare(sql)?;
         let rows: Box<dyn Iterator<Item = Result<ChatSummary, _>>> = if has_project {
-            Box::new(stmt.query_map(params![project_id, level, limit as i64], |row| {
-                Ok(ChatSummary {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    summary: row.get(2)?,
-                    message_range_start: row.get(3)?,
-                    message_range_end: row.get(4)?,
-                    summary_level: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
-            })?)
+            Box::new(
+                stmt.query_map(params![project_id, level, limit as i64], |row| {
+                    Ok(ChatSummary {
+                        id: row.get(0)?,
+                        project_id: row.get(1)?,
+                        summary: row.get(2)?,
+                        message_range_start: row.get(3)?,
+                        message_range_end: row.get(4)?,
+                        summary_level: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                })?,
+            )
         } else {
             Box::new(stmt.query_map(params![level, limit as i64], |row| {
                 Ok(ChatSummary {
@@ -323,18 +334,21 @@ impl Database {
             placeholders.join(",")
         );
 
-        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
         let deleted = conn.execute(&sql, params.as_slice())?;
         Ok(deleted)
     }
     /// Get timestamp of the most recent chat message
     pub fn get_last_chat_time(&self) -> Result<Option<String>> {
         let conn = self.conn();
-        let timestamp: Option<String> = conn.query_row(
-            "SELECT created_at FROM chat_messages ORDER BY id DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).ok();
+        let timestamp: Option<String> = conn
+            .query_row(
+                "SELECT created_at FROM chat_messages ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
         Ok(timestamp)
     }
 }

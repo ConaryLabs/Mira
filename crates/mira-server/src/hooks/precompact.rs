@@ -1,12 +1,14 @@
 // crates/mira-server/src/hooks/precompact.rs
 // PreCompact hook handler - preserves context before summarization
 
+use crate::db::pool::DatabasePool;
+use crate::db::{
+    StoreMemoryParams, get_last_active_project_sync, get_or_create_project_sync, store_memory_sync,
+};
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::db::pool::DatabasePool;
-use crate::db::{store_memory_sync, StoreMemoryParams, get_last_active_project_sync, get_or_create_project_sync};
 
 /// Get database path (same as main.rs)
 fn get_db_path() -> PathBuf {
@@ -65,17 +67,21 @@ async fn save_pre_compaction_state(
     // Get current project from last active
     let project_id = {
         let pool_clone = pool.clone();
-        pool_clone.interact(move |conn| {
-            let path = get_last_active_project_sync(conn).ok().flatten();
-            let result = if let Some(path) = path {
-                get_or_create_project_sync(conn, &path, None)
-                    .ok()
-                    .map(|(id, _)| id)
-            } else {
-                None
-            };
-            Ok::<_, anyhow::Error>(result)
-        }).await.ok().flatten()
+        pool_clone
+            .interact(move |conn| {
+                let path = get_last_active_project_sync(conn).ok().flatten();
+                let result = if let Some(path) = path {
+                    get_or_create_project_sync(conn, &path, None)
+                        .ok()
+                        .map(|(id, _)| id)
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>(result)
+            })
+            .await
+            .ok()
+            .flatten()
     };
 
     // Save compaction event as a session note
@@ -88,20 +94,26 @@ async fn save_pre_compaction_state(
     // Store as a session event
     {
         let pool_clone = pool.clone();
-        pool_clone.interact(move |conn| {
-            store_memory_sync(conn, StoreMemoryParams {
-                project_id,
-                key: None,
-                content: &note_content,
-                fact_type: "session_event",
-                category: Some("compaction"),
-                confidence: 0.3, // Low confidence - just a log
-                session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
-            }).map_err(|e| anyhow::anyhow!("{}", e))
-        }).await?
+        pool_clone
+            .interact(move |conn| {
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id,
+                        key: None,
+                        content: &note_content,
+                        fact_type: "session_event",
+                        category: Some("compaction"),
+                        confidence: 0.3, // Low confidence - just a log
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await?
     };
 
     // If we have transcript, extract key information
@@ -169,19 +181,24 @@ async fn extract_and_save_context(
         let category_owned = category.to_string();
         let session_id_clone = session_id_owned.clone();
         pool.interact(move |conn| {
-            store_memory_sync(conn, StoreMemoryParams {
-                project_id,
-                key: None,
-                content: &content,
-                fact_type: "extracted",
-                category: Some(&category_owned),
-                confidence: 0.4, // Moderate confidence - auto-extracted
-                session_id: Some(&session_id_clone),
-                user_id: None,
-                scope: "project",
-                branch: None,
-            }).map_err(|e| anyhow::anyhow!("{}", e))
-        }).await?;
+            store_memory_sync(
+                conn,
+                StoreMemoryParams {
+                    project_id,
+                    key: None,
+                    content: &content,
+                    fact_type: "extracted",
+                    category: Some(&category_owned),
+                    confidence: 0.4, // Moderate confidence - auto-extracted
+                    session_id: Some(&session_id_clone),
+                    user_id: None,
+                    scope: "project",
+                    branch: None,
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await?;
     }
 
     if count > 0 {

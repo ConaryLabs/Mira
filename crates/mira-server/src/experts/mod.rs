@@ -1,10 +1,10 @@
 // crates/mira-server/src/experts/mod.rs
 // Evolutionary Expert System - experts that learn and adapt over time
 
-pub mod consultation;
-pub mod patterns;
 pub mod adaptation;
 pub mod collaboration;
+pub mod consultation;
+pub mod patterns;
 
 use serde::{Deserialize, Serialize};
 
@@ -66,7 +66,7 @@ impl ExpertRole {
 /// Problem complexity assessment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplexityAssessment {
-    pub score: f64,              // 0.0-1.0
+    pub score: f64, // 0.0-1.0
     pub file_count: usize,
     pub domains_involved: Vec<String>,
     pub interdependency_level: f64,
@@ -87,17 +87,23 @@ impl ComplexityAssessment {
     pub fn from_context(context: &str) -> Self {
         // Analyze context to estimate complexity
         let file_count = context.matches("file").count().max(1);
-        let has_security = context.to_lowercase().contains("security")
-            || context.to_lowercase().contains("auth");
+        let has_security =
+            context.to_lowercase().contains("security") || context.to_lowercase().contains("auth");
         let has_architecture = context.to_lowercase().contains("architect")
             || context.to_lowercase().contains("design");
         let has_performance = context.to_lowercase().contains("performance")
             || context.to_lowercase().contains("optim");
 
         let mut domains = vec![];
-        if has_security { domains.push("security".to_string()); }
-        if has_architecture { domains.push("architecture".to_string()); }
-        if has_performance { domains.push("performance".to_string()); }
+        if has_security {
+            domains.push("security".to_string());
+        }
+        if has_architecture {
+            domains.push("architecture".to_string());
+        }
+        if has_performance {
+            domains.push("performance".to_string());
+        }
 
         let domain_count = domains.len();
         let interdependency = (domain_count as f64 * 0.2).min(1.0);
@@ -159,11 +165,23 @@ mod tests {
 
     #[test]
     fn test_expert_role_from_str() {
-        assert_eq!(ExpertRole::from_str("architect"), Some(ExpertRole::Architect));
-        assert_eq!(ExpertRole::from_str("code_reviewer"), Some(ExpertRole::CodeReviewer));
+        assert_eq!(
+            ExpertRole::from_str("architect"),
+            Some(ExpertRole::Architect)
+        );
+        assert_eq!(
+            ExpertRole::from_str("code_reviewer"),
+            Some(ExpertRole::CodeReviewer)
+        );
         assert_eq!(ExpertRole::from_str("security"), Some(ExpertRole::Security));
-        assert_eq!(ExpertRole::from_str("plan_reviewer"), Some(ExpertRole::PlanReviewer));
-        assert_eq!(ExpertRole::from_str("scope_analyst"), Some(ExpertRole::ScopeAnalyst));
+        assert_eq!(
+            ExpertRole::from_str("plan_reviewer"),
+            Some(ExpertRole::PlanReviewer)
+        );
+        assert_eq!(
+            ExpertRole::from_str("scope_analyst"),
+            Some(ExpertRole::ScopeAnalyst)
+        );
         assert_eq!(ExpertRole::from_str("invalid"), None);
         assert_eq!(ExpertRole::from_str(""), None);
     }
@@ -223,27 +241,41 @@ mod tests {
 
     #[test]
     fn test_complexity_assessment_from_context_security() {
-        let assessment = ComplexityAssessment::from_context("Review the security of the authentication module");
-        assert!(assessment.domains_involved.contains(&"security".to_string()));
+        let assessment =
+            ComplexityAssessment::from_context("Review the security of the authentication module");
+        assert!(
+            assessment
+                .domains_involved
+                .contains(&"security".to_string())
+        );
         assert_eq!(assessment.risk_level, 0.7); // Security raises risk
     }
 
     #[test]
     fn test_complexity_assessment_from_context_architecture() {
-        let assessment = ComplexityAssessment::from_context("Design a new architecture for the system");
-        assert!(assessment.domains_involved.contains(&"architecture".to_string()));
+        let assessment =
+            ComplexityAssessment::from_context("Design a new architecture for the system");
+        assert!(
+            assessment
+                .domains_involved
+                .contains(&"architecture".to_string())
+        );
     }
 
     #[test]
     fn test_complexity_assessment_from_context_performance() {
         let assessment = ComplexityAssessment::from_context("Optimize the query performance");
-        assert!(assessment.domains_involved.contains(&"performance".to_string()));
+        assert!(
+            assessment
+                .domains_involved
+                .contains(&"performance".to_string())
+        );
     }
 
     #[test]
     fn test_complexity_assessment_from_context_multiple_domains() {
         let assessment = ComplexityAssessment::from_context(
-            "Design a secure architecture with performance optimization"
+            "Design a secure architecture with performance optimization",
         );
         assert!(assessment.domains_involved.len() >= 2);
         assert!(assessment.interdependency_level > 0.1);
@@ -266,7 +298,7 @@ mod tests {
     fn test_complexity_assessment_score_bounded() {
         // Test that score is capped at 1.0 even with many domains
         let assessment = ComplexityAssessment::from_context(
-            "security auth architecture design performance optimization file file file file file"
+            "security auth architecture design performance optimization file file file file file",
         );
         assert!(assessment.score <= 1.0);
     }

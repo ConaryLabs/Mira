@@ -1,9 +1,9 @@
 // crates/mira-server/src/db/schema/system.rs
 // System configuration migrations
 
+use crate::db::migration_helpers::{column_exists, table_exists};
 use anyhow::Result;
 use rusqlite::Connection;
-use crate::db::migration_helpers::{table_exists, column_exists};
 
 /// Migrate system_prompts to add provider and model columns
 pub fn migrate_system_prompts_provider(conn: &Connection) -> Result<()> {
@@ -39,7 +39,10 @@ pub fn migrate_system_prompts_strip_tool_suffix(conn: &Connection) -> Result<()>
         return Ok(());
     }
 
-    tracing::info!("Migrating {} system prompts to strip old tool usage suffix", rows.len());
+    tracing::info!(
+        "Migrating {} system prompts to strip old tool usage suffix",
+        rows.len()
+    );
 
     for (role, prompt) in rows {
         if let Some(pos) = prompt.find("Use tools to explore codebase before analysis.") {

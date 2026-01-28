@@ -2,7 +2,7 @@
 // OpenAI-compatible chat response parsing
 
 use crate::llm::{ChatResult, FunctionCall, ToolCall, Usage};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 /// Non-streaming chat response (OpenAI-compatible format)
@@ -152,7 +152,10 @@ mod tests {
 
         let result = parse_chat_response(json, "test-789".into(), 300).unwrap();
         assert_eq!(result.content, Some("The answer is 42.".to_string()));
-        assert_eq!(result.reasoning_content, Some("Let me think about this...".to_string()));
+        assert_eq!(
+            result.reasoning_content,
+            Some("Let me think about this...".to_string())
+        );
     }
 
     #[test]

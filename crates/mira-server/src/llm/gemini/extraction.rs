@@ -1,17 +1,21 @@
 // crates/mira-server/src/llm/gemini/extraction.rs
 // Response extraction helpers for Gemini API responses
 
-use crate::llm::{FunctionCall, ToolCall};
-use crate::llm::gemini::types::{GeminiContent, GeminiPart};
 #[cfg(test)]
 use crate::llm::gemini::types::GeminiFunctionCall;
+use crate::llm::gemini::types::{GeminiContent, GeminiPart};
+use crate::llm::{FunctionCall, ToolCall};
 
 /// Extract tool calls from Gemini response
 pub fn extract_tool_calls(content: &GeminiContent) -> Option<Vec<ToolCall>> {
     let mut tool_calls = Vec::new();
 
     for (idx, part) in content.parts.iter().enumerate() {
-        if let GeminiPart::FunctionCall { function_call, thought_signature } = part {
+        if let GeminiPart::FunctionCall {
+            function_call,
+            thought_signature,
+        } = part
+        {
             tool_calls.push(ToolCall {
                 id: format!("call_{}", idx),
                 item_id: None,
@@ -40,11 +44,7 @@ pub fn extract_content(content: &GeminiContent) -> Option<String> {
         .filter_map(|part| {
             if let GeminiPart::Text { text, thought } = part {
                 // Only include non-thought text
-                if !thought {
-                    Some(text.as_str())
-                } else {
-                    None
-                }
+                if !thought { Some(text.as_str()) } else { None }
             } else {
                 None
             }
@@ -66,11 +66,7 @@ pub fn extract_thoughts(content: &GeminiContent) -> Option<String> {
         .filter_map(|part| {
             if let GeminiPart::Text { text, thought } = part {
                 // Only include thought parts
-                if *thought {
-                    Some(text.as_str())
-                } else {
-                    None
-                }
+                if *thought { Some(text.as_str()) } else { None }
             } else {
                 None
             }
@@ -101,10 +97,7 @@ mod tests {
                 thought: false,
             }],
         };
-        assert_eq!(
-            extract_content(&content),
-            Some("Hello world".to_string())
-        );
+        assert_eq!(extract_content(&content), Some("Hello world".to_string()));
     }
 
     #[test]
@@ -122,10 +115,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(
-            extract_content(&content),
-            Some("Hello world".to_string())
-        );
+        assert_eq!(extract_content(&content), Some("Hello world".to_string()));
     }
 
     #[test]
@@ -188,10 +178,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(
-            extract_content(&content),
-            Some("Let me search".to_string())
-        );
+        assert_eq!(extract_content(&content), Some("Let me search".to_string()));
     }
 
     // ============================================================================
@@ -248,10 +235,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(
-            extract_thoughts(&content),
-            Some("Thinking...".to_string())
-        );
+        assert_eq!(extract_thoughts(&content), Some("Thinking...".to_string()));
     }
 
     #[test]

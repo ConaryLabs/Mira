@@ -2,9 +2,9 @@
 // Go package detection from project structure
 
 use super::super::types::Module;
+use crate::project_files::walker::FileWalker;
 use std::collections::HashSet;
 use std::path::Path;
-use crate::project_files::walker::FileWalker;
 
 /// Detect Go packages from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {
@@ -53,10 +53,7 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
         }
         seen_dirs.insert(module_path.clone());
 
-        let package_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("main");
+        let package_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("main");
 
         // Create module ID: module_name/relative_path or just package name for root
         let module_id = if module_path.is_empty() {
@@ -136,7 +133,11 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
 
         // Look for main.go or cmd/ directories
         if path.is_file() {
-            let name = entry.path().file_name().unwrap_or_default().to_string_lossy();
+            let name = entry
+                .path()
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
             if name == "main.go" {
                 if let Ok(rel) = path.strip_prefix(project_path) {
                     entries.push(rel.to_string_lossy().to_string());

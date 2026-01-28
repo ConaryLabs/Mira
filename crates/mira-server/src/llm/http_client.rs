@@ -1,7 +1,7 @@
 // crates/mira-server/src/llm/http_client.rs
 // Shared HTTP client configuration for all LLM providers
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::Client;
 use std::time::Duration;
 use tracing::warn;
@@ -123,10 +123,7 @@ mod tests {
 
     #[test]
     fn test_client_creation() {
-        let client = LlmHttpClient::new(
-            Duration::from_secs(10),
-            Duration::from_secs(5),
-        );
+        let client = LlmHttpClient::new(Duration::from_secs(10), Duration::from_secs(5));
 
         assert_eq!(client.max_attempts, 3);
         assert_eq!(client.base_backoff, Duration::from_secs(1));
@@ -143,10 +140,7 @@ mod tests {
 
     #[test]
     fn test_inner_returns_client() {
-        let client = LlmHttpClient::new(
-            Duration::from_secs(10),
-            Duration::from_secs(5),
-        );
+        let client = LlmHttpClient::new(Duration::from_secs(10), Duration::from_secs(5));
 
         // Just verify we can get the inner client
         let _inner = client.inner();

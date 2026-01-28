@@ -2,7 +2,7 @@
 // Intervention generation from pondering insights
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 use super::{InterventionType, ProactiveConfig};
@@ -28,7 +28,10 @@ impl PendingIntervention {
             "focus_area" => "@",
             _ => ">",
         };
-        format!("[{}] {} ({}% confidence)", icon, self.content, confidence_pct)
+        format!(
+            "[{}] {} ({}% confidence)",
+            icon, self.content, confidence_pct
+        )
     }
 }
 
@@ -110,9 +113,8 @@ pub fn get_pending_interventions_sync(
         let (pattern_id, pattern_type, pattern_data, confidence) = row;
 
         // Extract description from pattern_data JSON
-        let description = extract_description(&pattern_data).unwrap_or_else(|| {
-            format!("Pattern detected: {}", pattern_type)
-        });
+        let description = extract_description(&pattern_data)
+            .unwrap_or_else(|| format!("Pattern detected: {}", pattern_type));
 
         // Map pattern type to intervention type
         let intervention_type = match pattern_type.as_str() {
@@ -176,11 +178,14 @@ pub fn record_intervention_response_sync(
     )?;
 
     // If pattern was associated, update its confidence
-    let pattern_id: Option<i64> = conn.query_row(
-        "SELECT trigger_pattern_id FROM proactive_interventions WHERE id = ?",
-        params![intervention_id],
-        |row| row.get(0),
-    ).ok().flatten();
+    let pattern_id: Option<i64> = conn
+        .query_row(
+            "SELECT trigger_pattern_id FROM proactive_interventions WHERE id = ?",
+            params![intervention_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
 
     if let Some(pid) = pattern_id {
         let multiplier = match response {
@@ -256,7 +261,10 @@ mod tests {
     #[test]
     fn test_extract_description() {
         let json = r#"{"description": "Test description", "evidence": []}"#;
-        assert_eq!(extract_description(json), Some("Test description".to_string()));
+        assert_eq!(
+            extract_description(json),
+            Some("Test description".to_string())
+        );
 
         let no_desc = r#"{"evidence": []}"#;
         assert_eq!(extract_description(no_desc), None);

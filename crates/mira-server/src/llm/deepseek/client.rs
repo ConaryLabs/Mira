@@ -2,7 +2,7 @@
 // DeepSeek API client (non-streaming, uses deepseek-reasoner)
 
 use crate::llm::http_client::LlmHttpClient;
-use crate::llm::openai_compat::{parse_chat_response, ChatRequest};
+use crate::llm::openai_compat::{ChatRequest, parse_chat_response};
 use crate::llm::provider::{LlmClient, Provider};
 use crate::llm::truncate_messages_to_budget;
 use crate::llm::{ChatResult, Message, Tool};
@@ -10,7 +10,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, instrument, Span};
+use tracing::{Span, debug, info, instrument};
 use uuid::Uuid;
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
@@ -30,16 +30,21 @@ impl DeepSeekClient {
 
     /// Create a new DeepSeek client with custom model
     pub fn with_model(api_key: String, model: String) -> Self {
-        let http = LlmHttpClient::new(
-            Duration::from_secs(300),
-            Duration::from_secs(30),
-        );
-        Self { api_key, model, http }
+        let http = LlmHttpClient::new(Duration::from_secs(300), Duration::from_secs(30));
+        Self {
+            api_key,
+            model,
+            http,
+        }
     }
 
     /// Create a new DeepSeek client with a shared HTTP client
     pub fn with_http_client(api_key: String, model: String, client: Client) -> Self {
-        Self { api_key, model, http: LlmHttpClient::from_client(client) }
+        Self {
+            api_key,
+            model,
+            http: LlmHttpClient::from_client(client),
+        }
     }
 
     /// Get model-specific max_tokens limit
@@ -47,9 +52,9 @@ impl DeepSeekClient {
     /// - deepseek-reasoner: 65536 (64k limit for synthesis)
     fn max_tokens_for_model(model: &str) -> u32 {
         if model.contains("reasoner") {
-            65536  // Reasoner models support up to 64k output
+            65536 // Reasoner models support up to 64k output
         } else {
-            8192   // Chat models have 8k limit
+            8192 // Chat models have 8k limit
         }
     }
 
@@ -63,7 +68,11 @@ impl DeepSeekClient {
 
     /// Chat using deepseek-reasoner model (non-streaming)
     #[instrument(skip(self, messages, tools), fields(request_id, model = %self.model, message_count = messages.len()))]
-    pub async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
+    pub async fn chat(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<Tool>>,
+    ) -> Result<ChatResult> {
         let request_id = Uuid::new_v4().to_string();
         let start_time = Instant::now();
 
@@ -103,12 +112,10 @@ impl DeepSeekClient {
         let body = serde_json::to_string(&request)?;
         debug!(request_id = %request_id, "DeepSeek request: {}", body);
 
-        let response_body = self.http.execute_with_retry(
-            &request_id,
-            DEEPSEEK_API_URL,
-            &self.api_key,
-            body,
-        ).await?;
+        let response_body = self
+            .http
+            .execute_with_retry(&request_id, DEEPSEEK_API_URL, &self.api_key, body)
+            .await?;
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
@@ -117,7 +124,10 @@ impl DeepSeekClient {
 
         // Log usage stats with DeepSeek-specific cache metrics
         if let Some(ref u) = result.usage {
-            let cache_hit_ratio = Self::calculate_cache_hit_ratio(u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens);
+            let cache_hit_ratio = Self::calculate_cache_hit_ratio(
+                u.prompt_cache_hit_tokens,
+                u.prompt_cache_miss_tokens,
+            );
 
             info!(
                 request_id = %request_id,
@@ -192,13 +202,34 @@ mod tests {
     #[test]
     fn test_calculate_cache_hit_ratio() {
         // Test cases
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(100)), Some(0.5));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(75), Some(25)), Some(0.75));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(100)), Some(0.0));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(0)), Some(1.0));
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(0)), None);
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(None, Some(100)), None);
-        assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(Some(100), None), None);
+        assert_eq!(
+            DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(100)),
+            Some(0.5)
+        );
+        assert_eq!(
+            DeepSeekClient::calculate_cache_hit_ratio(Some(75), Some(25)),
+            Some(0.75)
+        );
+        assert_eq!(
+            DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(100)),
+            Some(0.0)
+        );
+        assert_eq!(
+            DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(0)),
+            Some(1.0)
+        );
+        assert_eq!(
+            DeepSeekClient::calculate_cache_hit_ratio(Some(0), Some(0)),
+            None
+        );
+        assert_eq!(
+            DeepSeekClient::calculate_cache_hit_ratio(None, Some(100)),
+            None
+        );
+        assert_eq!(
+            DeepSeekClient::calculate_cache_hit_ratio(Some(100), None),
+            None
+        );
         assert_eq!(DeepSeekClient::calculate_cache_hit_ratio(None, None), None);
     }
 }

@@ -4,7 +4,7 @@
 use anyhow::Result;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 use super::CrossPatternType;
 
@@ -70,10 +70,7 @@ impl PatternAnonymizer {
         confidence: f64,
     ) -> Result<AnonymizedPattern> {
         // Extract generic file types instead of full paths
-        let generalized: Vec<String> = files
-            .iter()
-            .map(|f| self.generalize_file_path(f))
-            .collect();
+        let generalized: Vec<String> = files.iter().map(|f| self.generalize_file_path(f)).collect();
 
         // Add differential privacy noise to confidence
         let noisy_confidence = self.add_laplace_noise(confidence);
@@ -105,10 +102,7 @@ impl PatternAnonymizer {
         confidence: f64,
     ) -> Result<AnonymizedPattern> {
         // Tool names are already generic, just normalize
-        let normalized: Vec<String> = tools
-            .iter()
-            .map(|t| t.to_lowercase())
-            .collect();
+        let normalized: Vec<String> = tools.iter().map(|t| t.to_lowercase()).collect();
 
         let noisy_confidence = self.add_laplace_noise(confidence);
         let pattern_hash = self.hash_sequence(&normalized);
@@ -138,18 +132,13 @@ impl PatternAnonymizer {
         success_rate: f64,
     ) -> Result<AnonymizedPattern> {
         // Generalize approaches (remove specific file/variable names)
-        let generalized_approaches: Vec<String> = approaches
-            .iter()
-            .map(|a| self.generalize_text(a))
-            .collect();
+        let generalized_approaches: Vec<String> =
+            approaches.iter().map(|a| self.generalize_text(a)).collect();
 
         let noisy_success = self.add_laplace_noise(success_rate);
 
-        let pattern_hash = self.hash_problem_pattern(
-            expert_role,
-            problem_category,
-            &generalized_approaches,
-        );
+        let pattern_hash =
+            self.hash_problem_pattern(expert_role, problem_category, &generalized_approaches);
 
         Ok(AnonymizedPattern {
             pattern_type: CrossPatternType::ProblemPattern,
@@ -201,10 +190,7 @@ impl PatternAnonymizer {
         let filename = parts.last().unwrap_or(&"");
 
         // Get extension
-        let ext = filename
-            .rsplit('.')
-            .next()
-            .unwrap_or("unknown");
+        let ext = filename.rsplit('.').next().unwrap_or("unknown");
 
         // Detect common directory patterns
         let dir_type = self.classify_directory(&parts);
@@ -220,9 +206,7 @@ impl PatternAnonymizer {
                 let generic_name = self.generalize_filename(filename);
                 format!("{}/{}", last_dir, generic_name)
             }
-            AnonymizationLevel::None => {
-                path.to_string()
-            }
+            AnonymizationLevel::None => path.to_string(),
         }
     }
 
@@ -290,9 +274,25 @@ impl PatternAnonymizer {
         // Remove camelCase and snake_case identifiers that are too specific
         // Keep common programming terms
         let common_terms = [
-            "function", "class", "method", "variable", "type", "struct",
-            "interface", "module", "error", "result", "option", "async",
-            "await", "return", "if", "else", "for", "while", "match",
+            "function",
+            "class",
+            "method",
+            "variable",
+            "type",
+            "struct",
+            "interface",
+            "module",
+            "error",
+            "result",
+            "option",
+            "async",
+            "await",
+            "return",
+            "if",
+            "else",
+            "for",
+            "while",
+            "match",
         ];
 
         // For now, keep the text but note this could be enhanced

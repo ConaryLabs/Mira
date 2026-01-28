@@ -1,12 +1,12 @@
 // crates/mira-server/src/hooks/post_tool.rs
 // PostToolUse hook handler - tracks file changes and provides hints
 
-use anyhow::Result;
-use std::path::PathBuf;
-use std::sync::Arc;
 use crate::db::pool::DatabasePool;
 use crate::hooks::{read_hook_input, write_hook_output};
 use crate::proactive::behavior::BehaviorTracker;
+use anyhow::Result;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Get database path
 fn get_db_path() -> PathBuf {
@@ -75,17 +75,19 @@ pub async fn run() -> Result<()> {
     // Get current project
     let project_id = {
         let pool_clone = pool.clone();
-        let result: Result<Option<i64>, _> = pool_clone.interact(move |conn| {
-            let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-            let result = if let Some(path) = path {
-                crate::db::get_or_create_project_sync(conn, &path, None)
-                    .ok()
-                    .map(|(id, _)| id)
-            } else {
-                None
-            };
-            Ok::<_, anyhow::Error>(result)
-        }).await;
+        let result: Result<Option<i64>, _> = pool_clone
+            .interact(move |conn| {
+                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+                let result = if let Some(path) = path {
+                    crate::db::get_or_create_project_sync(conn, &path, None)
+                        .ok()
+                        .map(|(id, _)| id)
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>(result)
+            })
+            .await;
         result.ok().flatten()
     };
 
@@ -102,26 +104,28 @@ pub async fn run() -> Result<()> {
         let session_id = post_input.session_id.clone();
         let tool_name = post_input.tool_name.clone();
         let file_path_clone = file_path.clone();
-        let _ = pool_clone.interact(move |conn| {
-            let mut tracker = BehaviorTracker::new(session_id, project_id);
+        let _ = pool_clone
+            .interact(move |conn| {
+                let mut tracker = BehaviorTracker::new(session_id, project_id);
 
-            // Log tool use
-            let _ = tracker.log_tool_use(conn, &tool_name, None);
+                // Log tool use
+                let _ = tracker.log_tool_use(conn, &tool_name, None);
 
-            // Log file access
-            let _ = tracker.log_file_access(conn, &file_path_clone, &tool_name);
+                // Log file access
+                let _ = tracker.log_file_access(conn, &file_path_clone, &tool_name);
 
-            Ok::<_, anyhow::Error>(())
-        }).await;
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
     }
 
     // Queue file for re-indexing (background)
     {
         let pool_clone = pool.clone();
         let file_path_clone = file_path.clone();
-        let _ = pool_clone.interact(move |conn| {
-            queue_file_for_indexing(conn, project_id, &file_path_clone)
-        }).await;
+        let _ = pool_clone
+            .interact(move |conn| queue_file_for_indexing(conn, project_id, &file_path_clone))
+            .await;
     }
 
     // Check for related test files
@@ -153,7 +157,11 @@ pub async fn run() -> Result<()> {
 }
 
 /// Queue a file for background re-indexing
-fn queue_file_for_indexing(conn: &rusqlite::Connection, project_id: i64, file_path: &str) -> Result<()> {
+fn queue_file_for_indexing(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    file_path: &str,
+) -> Result<()> {
     // Add to pending_files table if it exists
     let sql = r#"
         INSERT OR REPLACE INTO pending_files (project_id, path, queued_at, status)
@@ -201,9 +209,7 @@ fn find_related_tests(file_path: &str) -> Option<String> {
             format!("{}_test.py", file_name),
             format!("tests/test_{}.py", file_name),
         ],
-        "go" => vec![
-            format!("{}_test.go", file_name),
-        ],
+        "go" => vec![format!("{}_test.go", file_name)],
         _ => return None,
     };
 
@@ -269,12 +275,17 @@ fn get_file_type_hint(file_path: &str) -> Option<String> {
 
     // Database/migration files
     if path.contains("migration") || path.contains("schema") {
-        return Some("Database schema change detected. Ensure migrations are reversible and tested.".to_string());
+        return Some(
+            "Database schema change detected. Ensure migrations are reversible and tested."
+                .to_string(),
+        );
     }
 
     // Config files
     if path.ends_with(".env") || path.contains("config") {
-        return Some("Configuration file changed. Verify environment-specific settings.".to_string());
+        return Some(
+            "Configuration file changed. Verify environment-specific settings.".to_string(),
+        );
     }
 
     None

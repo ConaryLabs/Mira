@@ -15,7 +15,9 @@ mod tests {
     fn test_get_or_create_project_basic() {
         let db = Database::open_in_memory().unwrap();
 
-        let (id, name) = db.get_or_create_project("/test/path", Some("test-project")).unwrap();
+        let (id, name) = db
+            .get_or_create_project("/test/path", Some("test-project"))
+            .unwrap();
         assert!(id > 0);
         assert_eq!(name, Some("test-project".to_string()));
     }
@@ -24,8 +26,12 @@ mod tests {
     fn test_get_or_create_project_upsert() {
         let db = Database::open_in_memory().unwrap();
 
-        let (id1, name1) = db.get_or_create_project("/test/path", Some("project-one")).unwrap();
-        let (id2, name2) = db.get_or_create_project("/test/path", Some("project-two")).unwrap();
+        let (id1, name1) = db
+            .get_or_create_project("/test/path", Some("project-one"))
+            .unwrap();
+        let (id2, name2) = db
+            .get_or_create_project("/test/path", Some("project-two"))
+            .unwrap();
 
         // Should return same ID (upsert behavior)
         assert_eq!(id1, id2);
@@ -95,9 +101,12 @@ mod tests {
     fn test_list_projects_multiple() {
         let db = Database::open_in_memory().unwrap();
 
-        db.get_or_create_project("/path1", Some("project1")).unwrap();
-        db.get_or_create_project("/path2", Some("project2")).unwrap();
-        db.get_or_create_project("/path3", Some("project3")).unwrap();
+        db.get_or_create_project("/path1", Some("project1"))
+            .unwrap();
+        db.get_or_create_project("/path2", Some("project2"))
+            .unwrap();
+        db.get_or_create_project("/path3", Some("project3"))
+            .unwrap();
 
         let projects = db.list_projects().unwrap();
         assert_eq!(projects.len(), 3);
@@ -111,7 +120,8 @@ mod tests {
     fn test_list_projects_with_names() {
         let db = Database::open_in_memory().unwrap();
 
-        db.get_or_create_project("/path1", Some("First Project")).unwrap();
+        db.get_or_create_project("/path1", Some("First Project"))
+            .unwrap();
         db.get_or_create_project("/path2", None).unwrap();
 
         let projects = db.list_projects().unwrap();
@@ -128,19 +138,20 @@ mod tests {
     fn test_update_and_get_project_briefing() {
         let db = Database::open_in_memory().unwrap();
 
-        let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+        let (project_id, _) = db
+            .get_or_create_project("/test/path", Some("test"))
+            .unwrap();
 
-        db.update_project_briefing(
-            project_id,
-            "abc123",
-            Some("New changes in the project"),
-        )
-        .unwrap();
+        db.update_project_briefing(project_id, "abc123", Some("New changes in the project"))
+            .unwrap();
 
         let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
         assert_eq!(briefing.project_id, project_id);
         assert_eq!(briefing.last_known_commit, Some("abc123".to_string()));
-        assert_eq!(briefing.briefing_text, Some("New changes in the project".to_string()));
+        assert_eq!(
+            briefing.briefing_text,
+            Some("New changes in the project".to_string())
+        );
         assert!(briefing.generated_at.is_some());
     }
 
@@ -148,7 +159,9 @@ mod tests {
     fn test_get_project_briefing_none() {
         let db = Database::open_in_memory().unwrap();
 
-        let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+        let (project_id, _) = db
+            .get_or_create_project("/test/path", Some("test"))
+            .unwrap();
 
         let briefing = db.get_project_briefing(project_id).unwrap();
         assert!(briefing.is_none());
@@ -158,7 +171,9 @@ mod tests {
     fn test_update_project_briefing_upsert() {
         let db = Database::open_in_memory().unwrap();
 
-        let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+        let (project_id, _) = db
+            .get_or_create_project("/test/path", Some("test"))
+            .unwrap();
 
         db.update_project_briefing(project_id, "commit1", Some("First briefing"))
             .unwrap();
@@ -174,9 +189,12 @@ mod tests {
     fn test_update_project_briefing_no_text() {
         let db = Database::open_in_memory().unwrap();
 
-        let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+        let (project_id, _) = db
+            .get_or_create_project("/test/path", Some("test"))
+            .unwrap();
 
-        db.update_project_briefing(project_id, "abc123", None).unwrap();
+        db.update_project_briefing(project_id, "abc123", None)
+            .unwrap();
 
         let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
         assert_eq!(briefing.last_known_commit, Some("abc123".to_string()));
@@ -187,7 +205,9 @@ mod tests {
     fn test_mark_session_clears_briefing() {
         let db = Database::open_in_memory().unwrap();
 
-        let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+        let (project_id, _) = db
+            .get_or_create_project("/test/path", Some("test"))
+            .unwrap();
 
         // Set briefing
         db.update_project_briefing(project_id, "abc123", Some("Briefing text"))
@@ -344,7 +364,9 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         // Create project
-        let (project_id, _) = db.get_or_create_project("/my/project", Some("MyProject")).unwrap();
+        let (project_id, _) = db
+            .get_or_create_project("/my/project", Some("MyProject"))
+            .unwrap();
 
         // Verify it's in the list
         let projects = db.list_projects().unwrap();
@@ -434,7 +456,9 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         let unicode_name = "🎉 项目 🚀";
-        let (id, stored_name) = db.get_or_create_project("/test", Some(unicode_name)).unwrap();
+        let (id, stored_name) = db
+            .get_or_create_project("/test", Some(unicode_name))
+            .unwrap();
 
         assert!(id > 0);
         assert_eq!(stored_name, Some(unicode_name.to_string()));

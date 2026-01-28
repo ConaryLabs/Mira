@@ -5,4 +5,4 @@ mod request;
 mod response;
 
 pub use request::ChatRequest;
-pub use response::{parse_chat_response, ChatResponse, ResponseChoice};
+pub use response::{ChatResponse, ResponseChoice, parse_chat_response};

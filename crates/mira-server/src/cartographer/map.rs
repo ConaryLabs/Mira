@@ -1,14 +1,16 @@
 // crates/mira-server/src/cartographer/map.rs
 // Codebase map generation, enrichment, and caching
 
-use super::detection::{count_lines_in_module, detect_modules, find_entry_points, resolve_import_to_module};
-use super::types::{CodebaseMap, Module};
-use crate::db::{
-    count_cached_modules_sync, get_cached_modules_sync, get_module_exports_sync,
-    count_symbols_in_path_sync, get_module_dependencies_sync, upsert_module_sync,
-    get_external_deps_sync,
+use super::detection::{
+    count_lines_in_module, detect_modules, find_entry_points, resolve_import_to_module,
 };
+use super::types::{CodebaseMap, Module};
 use crate::db::pool::DatabasePool;
+use crate::db::{
+    count_cached_modules_sync, count_symbols_in_path_sync, get_cached_modules_sync,
+    get_external_deps_sync, get_module_dependencies_sync, get_module_exports_sync,
+    upsert_module_sync,
+};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
@@ -61,8 +63,7 @@ pub async fn get_modules_with_purposes_pool(
     project_id: i64,
 ) -> Result<Vec<Module>> {
     pool.interact(move |conn| {
-        get_cached_modules_sync(conn, project_id)
-            .map_err(|e| anyhow::anyhow!("{}", e))
+        get_cached_modules_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
 }
@@ -112,7 +113,8 @@ fn get_or_generate_map_sync(
         let modules = detect_modules(path, project_type);
 
         // Enrich with database data and store
-        let enriched = enrich_and_store_modules_sync(conn, project_id, modules, path, project_type)?;
+        let enriched =
+            enrich_and_store_modules_sync(conn, project_id, modules, path, project_type)?;
 
         return Ok(CodebaseMap {
             name: project_name.to_string(),

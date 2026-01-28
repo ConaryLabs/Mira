@@ -2,9 +2,8 @@
 // Batch processing for symbols, imports, calls, and embeddings
 
 use crate::db::{
-    SymbolInsert, ImportInsert,
-    insert_symbol_sync, insert_import_sync, insert_call_sync, insert_chunk_embedding_sync,
-    pool::DatabasePool,
+    ImportInsert, SymbolInsert, insert_call_sync, insert_chunk_embedding_sync, insert_import_sync,
+    insert_symbol_sync, pool::DatabasePool,
 };
 use crate::embeddings::EmbeddingClient;
 use crate::indexer::parsing::{FunctionCall, Import, Symbol};
@@ -42,7 +41,10 @@ pub async fn embed_chunks(
     pending_chunks: &[PendingChunk],
 ) -> Result<Vec<Vec<f32>>, String> {
     let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
-    embeddings.embed_batch_for_storage(&texts).await.map_err(|e| e.to_string())
+    embeddings
+        .embed_batch_for_storage(&texts)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Helper to prepare chunk data for database storage
@@ -83,14 +85,20 @@ pub async fn store_chunk_embeddings(
                 project_id,
                 *start_line,
             ) {
-                tracing::warn!("Failed to store embedding ({}:{}): {}", file_path, start_line, e);
+                tracing::warn!(
+                    "Failed to store embedding ({}:{}): {}",
+                    file_path,
+                    start_line,
+                    e
+                );
                 errors += 1;
             }
         }
 
         tx.commit()?;
         Ok(errors)
-    }).await
+    })
+    .await
 }
 
 /// Flush accumulated chunks to database and generate embeddings
@@ -187,7 +195,12 @@ pub fn store_imports(
         };
 
         if let Err(e) = insert_import_sync(tx, project_id, file_path, &import_insert) {
-            tracing::warn!("Failed to store import {} ({}): {}", import.import_path, file_path, e);
+            tracing::warn!(
+                "Failed to store import {} ({}): {}",
+                import.import_path,
+                file_path,
+                e
+            );
             errors += 1;
         }
     }
@@ -206,7 +219,8 @@ pub fn store_function_calls(
 
     for call in calls {
         // Find the caller symbol whose line range contains this call
-        let caller_id = symbol_ranges.iter()
+        let caller_id = symbol_ranges
+            .iter()
             .find(|(name, start, end, _)| {
                 name == &call.caller_name && call.call_line >= *start && call.call_line <= *end
             })
@@ -214,17 +228,29 @@ pub fn store_function_calls(
 
         if let Some(cid) = caller_id {
             // Try to find callee ID (may be in same file)
-            let callee_id = symbol_ranges.iter()
+            let callee_id = symbol_ranges
+                .iter()
                 .find(|(name, _, _, _)| name == &call.callee_name)
                 .map(|(_, _, _, id)| *id);
 
             if let Err(e) = insert_call_sync(tx, cid, &call.callee_name, callee_id) {
-                tracing::warn!("Failed to store call {} -> {} ({}): {}", call.caller_name, call.callee_name, file_path, e);
+                tracing::warn!(
+                    "Failed to store call {} -> {} ({}): {}",
+                    call.caller_name,
+                    call.callee_name,
+                    file_path,
+                    e
+                );
                 errors += 1;
             }
         } else {
             // Caller not found (could be module-level call)
-            tracing::debug!("Skipping call {} -> {} (caller not found in {})", call.caller_name, call.callee_name, file_path);
+            tracing::debug!(
+                "Skipping call {} -> {} (caller not found in {})",
+                call.caller_name,
+                call.callee_name,
+                file_path
+            );
         }
     }
 
@@ -245,37 +271,45 @@ pub async fn flush_code_batch(
     let batches = std::mem::take(pending_batches);
     let total_symbols: usize = batches.iter().map(|b| b.symbols.len()).sum();
     let total_calls: usize = batches.iter().map(|b| b.calls.len()).sum();
-    tracing::info!("Flushing {} files ({} symbols, {} calls)...", batches.len(), total_symbols, total_calls);
+    tracing::info!(
+        "Flushing {} files ({} symbols, {} calls)...",
+        batches.len(),
+        total_symbols,
+        total_calls
+    );
 
     // Process all batches in a single transaction
-    let error_count = pool.interact(move |conn| {
-        let tx = conn.unchecked_transaction()?;
-        let mut total_errors = 0usize;
+    let error_count = pool
+        .interact(move |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut total_errors = 0usize;
 
-        // Process each file batch
-        for batch in batches {
-            // Store symbols and capture IDs
-            let (symbol_ranges, symbol_errors) = store_symbols_and_capture_ids(
-                &tx, project_id, &batch.file_path, &batch.symbols
-            )?;
-            total_errors += symbol_errors;
+            // Process each file batch
+            for batch in batches {
+                // Store symbols and capture IDs
+                let (symbol_ranges, symbol_errors) = store_symbols_and_capture_ids(
+                    &tx,
+                    project_id,
+                    &batch.file_path,
+                    &batch.symbols,
+                )?;
+                total_errors += symbol_errors;
 
-            // Store imports
-            let import_errors = store_imports(
-                &tx, project_id, &batch.file_path, &batch.imports
-            )?;
-            total_errors += import_errors;
+                // Store imports
+                let import_errors =
+                    store_imports(&tx, project_id, &batch.file_path, &batch.imports)?;
+                total_errors += import_errors;
 
-            // Store function calls for call graph
-            let call_errors = store_function_calls(
-                &tx, &batch.file_path, &batch.calls, &symbol_ranges
-            )?;
-            total_errors += call_errors;
-        }
+                // Store function calls for call graph
+                let call_errors =
+                    store_function_calls(&tx, &batch.file_path, &batch.calls, &symbol_ranges)?;
+                total_errors += call_errors;
+            }
 
-        tx.commit()?;
-        Ok(total_errors)
-    }).await?;
+            tx.commit()?;
+            Ok(total_errors)
+        })
+        .await?;
 
     stats.symbols += total_symbols - error_count;
     stats.errors += error_count;

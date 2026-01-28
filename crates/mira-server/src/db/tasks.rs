@@ -2,11 +2,11 @@
 // Task and goal database operations
 
 use anyhow::Result;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
-use rusqlite::Connection;
-use super::types::{Task, Goal};
 use super::Database;
+use super::types::{Goal, Task};
+use rusqlite::Connection;
 
 /// Parse Task from a rusqlite Row with standard column order:
 /// (id, project_id, goal_id, title, description, status, priority, created_at)
@@ -41,7 +41,11 @@ pub fn parse_goal_row(row: &rusqlite::Row) -> rusqlite::Result<Goal> {
 // Sync functions for pool.interact() usage
 
 /// Get pending tasks (sync version for pool.interact)
-pub fn get_pending_tasks_sync(conn: &Connection, project_id: Option<i64>, limit: usize) -> Result<Vec<Task>> {
+pub fn get_pending_tasks_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    limit: usize,
+) -> Result<Vec<Task>> {
     let sql = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                FROM tasks
                WHERE (project_id = ? OR project_id IS NULL) AND status != 'completed'
@@ -62,7 +66,11 @@ pub fn get_task_by_id_sync(conn: &Connection, id: i64) -> Result<Option<Task>> {
 }
 
 /// Get active goals (sync version for pool.interact)
-pub fn get_active_goals_sync(conn: &Connection, project_id: Option<i64>, limit: usize) -> Result<Vec<Goal>> {
+pub fn get_active_goals_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    limit: usize,
+) -> Result<Vec<Goal>> {
     let sql = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
                FROM goals
                WHERE (project_id = ? OR project_id IS NULL) AND status NOT IN ('completed', 'abandoned')
@@ -93,7 +101,11 @@ pub fn create_task_sync(
 }
 
 /// Get tasks with optional status filter (sync version for pool.interact)
-pub fn get_tasks_sync(conn: &Connection, project_id: Option<i64>, status_filter: Option<&str>) -> rusqlite::Result<Vec<Task>> {
+pub fn get_tasks_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    status_filter: Option<&str>,
+) -> rusqlite::Result<Vec<Task>> {
     let (negate, status_value) = match status_filter {
         Some(s) if s.starts_with('!') => (true, Some(&s[1..])),
         Some(s) => (false, Some(s)),
@@ -101,15 +113,21 @@ pub fn get_tasks_sync(conn: &Connection, project_id: Option<i64>, status_filter:
     };
 
     let sql = match (status_value, negate) {
-        (Some(_), true) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+        (Some(_), true) => {
+            "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                            FROM tasks WHERE (project_id = ? OR project_id IS NULL) AND status != ?
-                           ORDER BY created_at DESC, id DESC LIMIT 100",
-        (Some(_), false) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                           ORDER BY created_at DESC, id DESC LIMIT 100"
+        }
+        (Some(_), false) => {
+            "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                             FROM tasks WHERE (project_id = ? OR project_id IS NULL) AND status = ?
-                            ORDER BY created_at DESC, id DESC LIMIT 100",
-        (None, _) => "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                            ORDER BY created_at DESC, id DESC LIMIT 100"
+        }
+        (None, _) => {
+            "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                      FROM tasks WHERE (project_id = ? OR project_id IS NULL)
-                     ORDER BY created_at DESC, id DESC LIMIT 100",
+                     ORDER BY created_at DESC, id DESC LIMIT 100"
+        }
     };
     let mut stmt = conn.prepare(sql)?;
     let rows = match status_value {
@@ -128,13 +146,22 @@ pub fn update_task_sync(
     priority: Option<&str>,
 ) -> rusqlite::Result<()> {
     if let Some(title) = title {
-        conn.execute("UPDATE tasks SET title = ? WHERE id = ?", params![title, id])?;
+        conn.execute(
+            "UPDATE tasks SET title = ? WHERE id = ?",
+            params![title, id],
+        )?;
     }
     if let Some(status) = status {
-        conn.execute("UPDATE tasks SET status = ? WHERE id = ?", params![status, id])?;
+        conn.execute(
+            "UPDATE tasks SET status = ? WHERE id = ?",
+            params![status, id],
+        )?;
     }
     if let Some(priority) = priority {
-        conn.execute("UPDATE tasks SET priority = ? WHERE id = ?", params![priority, id])?;
+        conn.execute(
+            "UPDATE tasks SET priority = ? WHERE id = ?",
+            params![priority, id],
+        )?;
     }
     Ok(())
 }
@@ -147,7 +174,8 @@ pub fn delete_task_sync(conn: &Connection, id: i64) -> rusqlite::Result<()> {
 
 /// Get a goal by ID (sync version for pool.interact)
 pub fn get_goal_by_id_sync(conn: &Connection, id: i64) -> Result<Option<Goal>> {
-    let sql = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+    let sql =
+        "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
                FROM goals WHERE id = ?";
     conn.query_row(sql, [id], parse_goal_row)
         .optional()
@@ -175,7 +203,11 @@ pub fn create_goal_sync(
 }
 
 /// Get goals with optional status filter (sync version for pool.interact)
-pub fn get_goals_sync(conn: &Connection, project_id: Option<i64>, status_filter: Option<&str>) -> rusqlite::Result<Vec<Goal>> {
+pub fn get_goals_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+    status_filter: Option<&str>,
+) -> rusqlite::Result<Vec<Goal>> {
     let (negate, status_value) = match status_filter {
         Some(s) if s.starts_with('!') => (true, Some(&s[1..])),
         Some(s) => (false, Some(s)),
@@ -211,16 +243,28 @@ pub fn update_goal_sync(
     progress: Option<i64>,
 ) -> rusqlite::Result<()> {
     if let Some(title) = title {
-        conn.execute("UPDATE goals SET title = ? WHERE id = ?", params![title, id])?;
+        conn.execute(
+            "UPDATE goals SET title = ? WHERE id = ?",
+            params![title, id],
+        )?;
     }
     if let Some(status) = status {
-        conn.execute("UPDATE goals SET status = ? WHERE id = ?", params![status, id])?;
+        conn.execute(
+            "UPDATE goals SET status = ? WHERE id = ?",
+            params![status, id],
+        )?;
     }
     if let Some(priority) = priority {
-        conn.execute("UPDATE goals SET priority = ? WHERE id = ?", params![priority, id])?;
+        conn.execute(
+            "UPDATE goals SET priority = ? WHERE id = ?",
+            params![priority, id],
+        )?;
     }
     if let Some(progress) = progress {
-        conn.execute("UPDATE goals SET progress_percent = ? WHERE id = ?", params![progress, id])?;
+        conn.execute(
+            "UPDATE goals SET progress_percent = ? WHERE id = ?",
+            params![progress, id],
+        )?;
     }
     Ok(())
 }
@@ -281,17 +325,27 @@ impl Database {
         status: Option<&str>,
         priority: Option<&str>,
     ) -> Result<i64> {
-        create_task_sync(&self.conn(), project_id, goal_id, title, description, status, priority)
-            .map_err(Into::into)
+        create_task_sync(
+            &self.conn(),
+            project_id,
+            goal_id,
+            title,
+            description,
+            status,
+            priority,
+        )
+        .map_err(Into::into)
     }
 
     /// Get tasks with optional status filter
     /// Prefix with '!' to negate (e.g., "!completed" = status != 'completed')
-    pub fn get_tasks(&self, project_id: Option<i64>, status_filter: Option<&str>) -> Result<Vec<Task>> {
+    pub fn get_tasks(
+        &self,
+        project_id: Option<i64>,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<Task>> {
         get_tasks_sync(&self.conn(), project_id, status_filter).map_err(Into::into)
     }
-
-
 
     /// Update a task
     pub fn update_task(
@@ -319,13 +373,25 @@ impl Database {
         priority: Option<&str>,
         progress_percent: Option<i64>,
     ) -> Result<i64> {
-        create_goal_sync(&self.conn(), project_id, title, description, status, priority, progress_percent)
-            .map_err(Into::into)
+        create_goal_sync(
+            &self.conn(),
+            project_id,
+            title,
+            description,
+            status,
+            priority,
+            progress_percent,
+        )
+        .map_err(Into::into)
     }
 
     /// Get goals with optional status filter
     /// Prefix with '!' to negate (e.g., "!finished" = status != 'finished')
-    pub fn get_goals(&self, project_id: Option<i64>, status_filter: Option<&str>) -> Result<Vec<Goal>> {
+    pub fn get_goals(
+        &self,
+        project_id: Option<i64>,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<Goal>> {
         get_goals_sync(&self.conn(), project_id, status_filter).map_err(Into::into)
     }
 
@@ -338,7 +404,8 @@ impl Database {
         priority: Option<&str>,
         progress_percent: Option<i64>,
     ) -> Result<()> {
-        update_goal_sync(&self.conn(), id, title, status, priority, progress_percent).map_err(Into::into)
+        update_goal_sync(&self.conn(), id, title, status, priority, progress_percent)
+            .map_err(Into::into)
     }
 
     /// Delete a goal (orphans tasks, deletes milestones)

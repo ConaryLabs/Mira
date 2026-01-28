@@ -35,7 +35,8 @@ impl SemanticInjector {
             project_id,
             project_path,
             3, // limit to 3 results for context injection - useful but not excessive
-        ).await;
+        )
+        .await;
 
         match result {
             Ok(hybrid_result) => {
@@ -52,7 +53,11 @@ impl SemanticInjector {
                         context.push_str("\n");
                     }
                     // Extract filename from path
-                    let filename = search_result.file_path.split('/').last().unwrap_or(&search_result.file_path);
+                    let filename = search_result
+                        .file_path
+                        .split('/')
+                        .last()
+                        .unwrap_or(&search_result.file_path);
                     // Truncate content appropriately
                     let content = if search_result.content.len() > 200 {
                         &search_result.content[..200]

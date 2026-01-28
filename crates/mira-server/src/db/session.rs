@@ -3,17 +3,21 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use super::types::{SessionInfo, ToolHistoryEntry};
 use super::Database;
+use super::types::{SessionInfo, ToolHistoryEntry};
 
 // ============================================================================
 // Sync functions for pool.interact() usage
 // ============================================================================
 
 /// Create or update a session (sync version for pool.interact)
-pub fn create_session_sync(conn: &Connection, session_id: &str, project_id: Option<i64>) -> rusqlite::Result<()> {
+pub fn create_session_sync(
+    conn: &Connection,
+    session_id: &str,
+    project_id: Option<i64>,
+) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO sessions (id, project_id, status, started_at, last_activity)
          VALUES (?1, ?2, 'active', datetime('now'), datetime('now'))
@@ -24,7 +28,11 @@ pub fn create_session_sync(conn: &Connection, session_id: &str, project_id: Opti
 }
 
 /// Get recent sessions for a project (sync version for pool.interact)
-pub fn get_recent_sessions_sync(conn: &Connection, project_id: i64, limit: usize) -> rusqlite::Result<Vec<SessionInfo>> {
+pub fn get_recent_sessions_sync(
+    conn: &Connection,
+    project_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<SessionInfo>> {
     let mut stmt = conn.prepare(
         "SELECT id, project_id, status, summary, started_at, last_activity
          FROM sessions
@@ -46,7 +54,11 @@ pub fn get_recent_sessions_sync(conn: &Connection, project_id: i64, limit: usize
 }
 
 /// Get session history (sync version for pool.interact)
-pub fn get_session_history_sync(conn: &Connection, session_id: &str, limit: usize) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
+pub fn get_session_history_sync(
+    conn: &Connection,
+    session_id: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at
          FROM tool_history
@@ -69,7 +81,11 @@ pub fn get_session_history_sync(conn: &Connection, session_id: &str, limit: usiz
 }
 
 /// Get recent pondering insights for a project
-pub fn get_recent_insights_sync(conn: &Connection, project_id: i64, limit: usize) -> rusqlite::Result<Vec<(String, String, f64)>> {
+pub fn get_recent_insights_sync(
+    conn: &Connection,
+    project_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<(String, String, f64)>> {
     let mut stmt = conn.prepare(
         r#"SELECT pattern_type, pattern_data, confidence
            FROM behavior_patterns
@@ -90,9 +106,9 @@ pub fn get_recent_insights_sync(conn: &Connection, project_id: i64, limit: usize
 
 /// Build session recap - sync version for pool.interact()
 pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> String {
-    use super::project::get_project_info_sync;
     use super::chat::get_last_chat_time_sync;
-    use super::tasks::{get_pending_tasks_sync, get_active_goals_sync};
+    use super::project::get_project_info_sync;
+    use super::tasks::{get_active_goals_sync, get_pending_tasks_sync};
 
     let mut recap_parts = Vec::new();
 
@@ -143,8 +159,7 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
                     let short_id = &sess.id[..8.min(sess.id.len())];
                     let timestamp = &sess.last_activity[..16.min(sess.last_activity.len())];
                     if let Some(ref summary) = sess.summary {
-                        session_lines
-                            .push(format!("• [{}] {} - {}", short_id, timestamp, summary));
+                        session_lines.push(format!("• [{}] {} - {}", short_id, timestamp, summary));
                     } else {
                         session_lines.push(format!("• [{}] {}", short_id, timestamp));
                     }
@@ -209,7 +224,10 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
 }
 
 /// Get tool call count and unique tools for a session - sync version
-pub fn get_session_stats_sync(conn: &Connection, session_id: &str) -> rusqlite::Result<(usize, Vec<String>)> {
+pub fn get_session_stats_sync(
+    conn: &Connection,
+    session_id: &str,
+) -> rusqlite::Result<(usize, Vec<String>)> {
     // Get count
     let count: usize = conn.query_row(
         "SELECT COUNT(*) FROM tool_history WHERE session_id = ?",
@@ -281,17 +299,34 @@ impl Database {
         full_result: Option<&str>,
         success: bool,
     ) -> Result<i64> {
-        log_tool_call_sync(&self.conn(), session_id, tool_name, arguments, result_summary, full_result, success)
-            .map_err(Into::into)
+        log_tool_call_sync(
+            &self.conn(),
+            session_id,
+            tool_name,
+            arguments,
+            result_summary,
+            full_result,
+            success,
+        )
+        .map_err(Into::into)
     }
 
     /// Get recent tool history for a session
-    pub fn get_session_history(&self, session_id: &str, limit: usize) -> Result<Vec<ToolHistoryEntry>> {
+    pub fn get_session_history(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ToolHistoryEntry>> {
         get_session_history_sync(&self.conn(), session_id, limit).map_err(Into::into)
     }
 
     /// Get tool history after a specific event ID (for sync/reconnection)
-    pub fn get_history_after(&self, session_id: &str, after_id: i64, limit: usize) -> Result<Vec<ToolHistoryEntry>> {
+    pub fn get_history_after(
+        &self,
+        session_id: &str,
+        after_id: i64,
+        limit: usize,
+    ) -> Result<Vec<ToolHistoryEntry>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at

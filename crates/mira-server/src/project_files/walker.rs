@@ -7,9 +7,9 @@
 
 // crates/mira-server/src/project_files/walker.rs
 use ::ignore as ignore_crate;
-use walkdir;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
+use walkdir;
 
 /// Unified entry type for both ignore and walkdir backends.
 #[derive(Debug)]
@@ -114,7 +114,6 @@ impl FileWalker {
         self
     }
 
-
     /// Check if a file should be included based on extension filtering.
     fn should_include_file(&self, path: &Path) -> bool {
         if self.extensions.is_empty() {
@@ -182,7 +181,11 @@ impl FileWalker {
                     return true;
                 }
                 if let Some(lang) = language {
-                    crate::config::ignore::should_skip_for_lang_with_patterns(name, lang, &extra_patterns)
+                    crate::config::ignore::should_skip_for_lang_with_patterns(
+                        name,
+                        lang,
+                        &extra_patterns,
+                    )
                 } else {
                     crate::config::ignore::should_skip_with_patterns(name, &extra_patterns)
                 }
@@ -216,14 +219,17 @@ impl FileWalker {
                     return true;
                 }
                 if let Some(lang) = language {
-                    crate::config::ignore::should_skip_for_lang_with_patterns(name, lang, &extra_patterns)
+                    crate::config::ignore::should_skip_for_lang_with_patterns(
+                        name,
+                        lang,
+                        &extra_patterns,
+                    )
                 } else {
                     crate::config::ignore::should_skip_with_patterns(name, &extra_patterns)
                 }
             };
             // Use walkdir::WalkDir for simple walking
-            let mut walker = walkdir::WalkDir::new(&self.path)
-                .follow_links(self.follow_links);
+            let mut walker = walkdir::WalkDir::new(&self.path).follow_links(self.follow_links);
             if let Some(depth) = self.max_depth {
                 walker = walker.max_depth(depth);
             }
@@ -489,4 +495,3 @@ mod tests {
         assert!(entries.iter().any(|e| e.path().ends_with("test.rs")));
     }
 }
-

@@ -3,8 +3,8 @@
 
 use crate::background::documentation::clear_documentation_scan_marker_sync;
 use crate::db::documentation::{
-    get_doc_inventory, get_doc_task, mark_doc_task_applied, mark_doc_task_skipped, DocInventory,
-    DocTask,
+    DocInventory, DocTask, get_doc_inventory, get_doc_task, mark_doc_task_applied,
+    mark_doc_task_skipped,
 };
 use crate::mcp::requests::DocumentationAction;
 use crate::tools::core::ToolContext;
@@ -50,14 +50,20 @@ pub async fn list_doc_tasks(
             "{} `{}` -> `{}`\n",
             status_indicator, task.doc_category, task.target_doc_path
         ));
-        output.push_str(&format!("  ID: {} | Priority: {}\n", task.id, task.priority));
+        output.push_str(&format!(
+            "  ID: {} | Priority: {}\n",
+            task.id, task.priority
+        ));
 
         if let Some(reason) = &task.reason {
             output.push_str(&format!("  Reason: {}\n", reason));
         }
 
         if task.status == "pending" {
-            output.push_str(&format!("  Write with: `write_documentation({})`\n", task.id));
+            output.push_str(&format!(
+                "  Write with: `write_documentation({})`\n",
+                task.id
+            ));
         }
 
         output.push('\n');
@@ -163,11 +169,8 @@ pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
 }
 
 /// Write documentation for a detected gap - expert generates and writes directly
-pub async fn write_documentation<C: ToolContext>(
-    ctx: &C,
-    task_id: i64,
-) -> Result<String, String> {
-    use crate::tools::core::experts::{consult_expert, ExpertRole};
+pub async fn write_documentation<C: ToolContext>(ctx: &C, task_id: i64) -> Result<String, String> {
+    use crate::tools::core::experts::{ExpertRole, consult_expert};
 
     // Get task details
     let task = ctx
@@ -216,7 +219,13 @@ pub async fn write_documentation<C: ToolContext>(
     );
 
     // Call the documentation expert
-    let draft = consult_expert(ctx, ExpertRole::DocumentationWriter, context, Some(question)).await?;
+    let draft = consult_expert(
+        ctx,
+        ExpertRole::DocumentationWriter,
+        context,
+        Some(question),
+    )
+    .await?;
 
     // Extract just the markdown content
     let markdown_content = extract_markdown_from_response(&draft);
@@ -261,7 +270,10 @@ async fn build_expert_context<C: ToolContext>(
         .unwrap_or(&task.target_doc_path);
 
     context.push_str("# Documentation Task\n\n");
-    context.push_str(&format!("**Type:** {} / {}\n", task.doc_type, task.doc_category));
+    context.push_str(&format!(
+        "**Type:** {} / {}\n",
+        task.doc_type, task.doc_category
+    ));
     context.push_str(&format!("**Target:** {}\n", source_identifier));
     context.push_str(&format!("**Output Path:** {}\n\n", task.target_doc_path));
 
@@ -287,7 +299,9 @@ async fn build_expert_context<C: ToolContext>(
         }
         "module" => {
             context.push_str("## Guidelines for Module Documentation\n\n");
-            context.push_str("Include: Overview, Key Components, Usage patterns, Architecture notes.\n");
+            context.push_str(
+                "Include: Overview, Key Components, Usage patterns, Architecture notes.\n",
+            );
         }
         _ => {}
     }

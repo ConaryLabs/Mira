@@ -6,7 +6,9 @@ use super::*;
 /// Helper to create a test database with a project
 fn setup_test_db() -> (Database, i64) {
     let db = Database::open_in_memory().expect("Failed to open in-memory db");
-    let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+    let (project_id, _) = db
+        .get_or_create_project("/test/path", Some("test"))
+        .unwrap();
     (db, project_id)
 }
 
@@ -31,7 +33,11 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let result = db.create_session("session-with-project", Some(project_id));
-        assert!(result.is_ok(), "create_session with project failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "create_session with project failed: {:?}",
+            result.err()
+        );
 
         // Verify session exists
         let sessions = db.get_recent_sessions(project_id, 10).unwrap();
@@ -95,7 +101,10 @@ mod tests {
 
         // Touching non-existent session should not error
         let result = db.touch_session("nonexistent");
-        assert!(result.is_ok(), "touch_session should succeed even for nonexistent session");
+        assert!(
+            result.is_ok(),
+            "touch_session should succeed even for nonexistent session"
+        );
     }
 
     // ═══════════════════════════════════════
@@ -126,8 +135,14 @@ mod tests {
         let history = db.get_session_history("session-1", 10).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].tool_name, "remember");
-        assert_eq!(history[0].arguments, Some(r#"{"content": "test"}"#.to_string()));
-        assert_eq!(history[0].result_summary, Some("Stored memory ID: 1".to_string()));
+        assert_eq!(
+            history[0].arguments,
+            Some(r#"{"content": "test"}"#.to_string())
+        );
+        assert_eq!(
+            history[0].result_summary,
+            Some("Stored memory ID: 1".to_string())
+        );
         assert!(history[0].success);
     }
 
@@ -366,7 +381,9 @@ mod tests {
     #[test]
     fn test_get_recent_sessions_project_isolation() {
         let (db, project1) = setup_test_db();
-        let (project2, _) = db.get_or_create_project("/other/path", Some("other")).unwrap();
+        let (project2, _) = db
+            .get_or_create_project("/other/path", Some("other"))
+            .unwrap();
 
         db.create_session("proj1-session", Some(project1)).unwrap();
         db.create_session("proj2-session", Some(project2)).unwrap();
@@ -473,7 +490,7 @@ mod tests {
         // Create a pending task
         db.create_task(
             Some(project_id),
-            None,  // goal_id
+            None, // goal_id
             "Test task",
             Some("Test description"),
             Some("pending"),
@@ -523,7 +540,8 @@ mod tests {
         } // conn dropped here, lock released
 
         // Create current active session
-        db.create_session("current-active", Some(project_id)).unwrap();
+        db.create_session("current-active", Some(project_id))
+            .unwrap();
 
         let recap = db.build_session_recap(Some(project_id));
         // Should show recent sessions (excluding active)
@@ -647,7 +665,8 @@ mod tests {
 
         db.create_session("special-test", None).unwrap();
 
-        let special_args = r#"{"text": "Hello \"world\"", "emoji": "🎉", "newline": "line1\nline2"}"#;
+        let special_args =
+            r#"{"text": "Hello \"world\"", "emoji": "🎉", "newline": "line1\nline2"}"#;
         db.log_tool_call("special-test", "tool", special_args, "ok", None, true)
             .unwrap();
 

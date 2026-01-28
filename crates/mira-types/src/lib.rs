@@ -73,7 +73,6 @@ pub struct MemoryFact {
     pub created_at: String,
 
     // Evidence-based memory fields
-
     /// Number of distinct sessions where this fact was recalled or reinforced.
     #[serde(default = "default_session_count")]
     pub session_count: i32,
@@ -88,7 +87,6 @@ pub struct MemoryFact {
     pub status: String,
 
     // Multi-user memory sharing fields
-
     /// Owner of the memory (for user-scoped memories).
     #[serde(default)]
     pub user_id: Option<String>,
@@ -304,7 +302,10 @@ mod tests {
     #[test]
     fn test_agent_role_serialize() {
         assert_eq!(serde_json::to_string(&AgentRole::Mira).unwrap(), "\"mira\"");
-        assert_eq!(serde_json::to_string(&AgentRole::Claude).unwrap(), "\"claude\"");
+        assert_eq!(
+            serde_json::to_string(&AgentRole::Claude).unwrap(),
+            "\"claude\""
+        );
     }
 
     #[test]
@@ -386,7 +387,9 @@ mod tests {
         }"#;
         let event: WsEvent = serde_json::from_str(json).unwrap();
         match event {
-            WsEvent::ToolStart { tool_name, call_id, .. } => {
+            WsEvent::ToolStart {
+                tool_name, call_id, ..
+            } => {
                 assert_eq!(tool_name, "index");
                 assert_eq!(call_id, "abc");
             }

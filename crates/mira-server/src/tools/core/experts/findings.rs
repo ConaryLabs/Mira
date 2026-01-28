@@ -77,7 +77,11 @@ pub fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFin
         }
 
         // Check for numbered findings: "1.", "2.", etc.
-        if trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+        if trimmed
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
             && trimmed.contains('.')
         {
             if let Some(pos) = trimmed.find('.') {

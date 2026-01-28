@@ -1,11 +1,14 @@
 //! Test utilities for Mira integration tests
 
-use mira::{db::pool::DatabasePool, llm::ProviderFactory, embeddings::EmbeddingClient, llm::DeepSeekClient, background::watcher::WatcherHandle};
+use async_trait::async_trait;
+use mira::{
+    background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient,
+    llm::DeepSeekClient, llm::ProviderFactory,
+};
 use mira_types::{ProjectContext, WsEvent};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, oneshot};
-use std::collections::HashMap;
-use async_trait::async_trait;
 use uuid::Uuid;
 
 /// Test context that implements ToolContext for integration testing
@@ -21,7 +24,11 @@ impl TestContext {
     /// Create a new test context with in-memory database
     pub async fn new() -> Self {
         // Create pool with in-memory database
-        let pool = Arc::new(DatabasePool::open_in_memory().await.expect("Failed to create in-memory pool"));
+        let pool = Arc::new(
+            DatabasePool::open_in_memory()
+                .await
+                .expect("Failed to create in-memory pool"),
+        );
 
         // Create LLM factory (will have no clients since no API keys are set in test env)
         let llm_factory = Arc::new(ProviderFactory::new());

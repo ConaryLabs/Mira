@@ -52,10 +52,10 @@ impl EventType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PatternType {
-    FileSequence,   // Files accessed together or in sequence
-    ToolChain,      // Tools used in sequence
-    SessionFlow,    // Common session patterns
-    QueryPattern,   // Common query patterns
+    FileSequence, // Files accessed together or in sequence
+    ToolChain,    // Tools used in sequence
+    SessionFlow,  // Common session patterns
+    QueryPattern, // Common query patterns
 }
 
 impl PatternType {
@@ -104,10 +104,10 @@ impl InterventionType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum UserResponse {
-    Accepted,   // User explicitly accepted/used the suggestion
-    Dismissed,  // User explicitly dismissed
-    ActedUpon,  // User took related action without explicit acceptance
-    Ignored,    // No response within timeout
+    Accepted,  // User explicitly accepted/used the suggestion
+    Dismissed, // User explicitly dismissed
+    ActedUpon, // User took related action without explicit acceptance
+    Ignored,   // No response within timeout
 }
 
 impl UserResponse {
@@ -166,7 +166,11 @@ impl Default for ProactiveConfig {
 }
 
 /// Get proactive config for a user/project
-pub fn get_proactive_config(conn: &Connection, user_id: Option<&str>, project_id: i64) -> Result<ProactiveConfig> {
+pub fn get_proactive_config(
+    conn: &Connection,
+    user_id: Option<&str>,
+    project_id: i64,
+) -> Result<ProactiveConfig> {
     let mut config = ProactiveConfig::default();
 
     // Load user preferences if set
@@ -231,12 +235,24 @@ mod tests {
 
     #[test]
     fn test_event_type_from_str() {
-        assert_eq!(EventType::from_str("file_access"), Some(EventType::FileAccess));
+        assert_eq!(
+            EventType::from_str("file_access"),
+            Some(EventType::FileAccess)
+        );
         assert_eq!(EventType::from_str("tool_use"), Some(EventType::ToolUse));
         assert_eq!(EventType::from_str("query"), Some(EventType::Query));
-        assert_eq!(EventType::from_str("context_switch"), Some(EventType::ContextSwitch));
-        assert_eq!(EventType::from_str("goal_update"), Some(EventType::GoalUpdate));
-        assert_eq!(EventType::from_str("memory_recall"), Some(EventType::MemoryRecall));
+        assert_eq!(
+            EventType::from_str("context_switch"),
+            Some(EventType::ContextSwitch)
+        );
+        assert_eq!(
+            EventType::from_str("goal_update"),
+            Some(EventType::GoalUpdate)
+        );
+        assert_eq!(
+            EventType::from_str("memory_recall"),
+            Some(EventType::MemoryRecall)
+        );
         assert_eq!(EventType::from_str("invalid"), None);
         assert_eq!(EventType::from_str(""), None);
     }
@@ -254,7 +270,12 @@ mod tests {
         for event in &events {
             let s = event.as_str();
             let parsed = EventType::from_str(s);
-            assert_eq!(parsed, Some(event.clone()), "Roundtrip failed for {:?}", event);
+            assert_eq!(
+                parsed,
+                Some(event.clone()),
+                "Roundtrip failed for {:?}",
+                event
+            );
         }
     }
 
@@ -282,10 +303,22 @@ mod tests {
 
     #[test]
     fn test_pattern_type_from_str() {
-        assert_eq!(PatternType::from_str("file_sequence"), Some(PatternType::FileSequence));
-        assert_eq!(PatternType::from_str("tool_chain"), Some(PatternType::ToolChain));
-        assert_eq!(PatternType::from_str("session_flow"), Some(PatternType::SessionFlow));
-        assert_eq!(PatternType::from_str("query_pattern"), Some(PatternType::QueryPattern));
+        assert_eq!(
+            PatternType::from_str("file_sequence"),
+            Some(PatternType::FileSequence)
+        );
+        assert_eq!(
+            PatternType::from_str("tool_chain"),
+            Some(PatternType::ToolChain)
+        );
+        assert_eq!(
+            PatternType::from_str("session_flow"),
+            Some(PatternType::SessionFlow)
+        );
+        assert_eq!(
+            PatternType::from_str("query_pattern"),
+            Some(PatternType::QueryPattern)
+        );
         assert_eq!(PatternType::from_str("invalid"), None);
     }
 
@@ -300,7 +333,12 @@ mod tests {
         for pattern in &patterns {
             let s = pattern.as_str();
             let parsed = PatternType::from_str(s);
-            assert_eq!(parsed, Some(pattern.clone()), "Roundtrip failed for {:?}", pattern);
+            assert_eq!(
+                parsed,
+                Some(pattern.clone()),
+                "Roundtrip failed for {:?}",
+                pattern
+            );
         }
     }
 
@@ -310,10 +348,16 @@ mod tests {
 
     #[test]
     fn test_intervention_type_as_str() {
-        assert_eq!(InterventionType::ContextPrediction.as_str(), "context_prediction");
+        assert_eq!(
+            InterventionType::ContextPrediction.as_str(),
+            "context_prediction"
+        );
         assert_eq!(InterventionType::SecurityAlert.as_str(), "security_alert");
         assert_eq!(InterventionType::BugWarning.as_str(), "bug_warning");
-        assert_eq!(InterventionType::ResourceSuggestion.as_str(), "resource_suggestion");
+        assert_eq!(
+            InterventionType::ResourceSuggestion.as_str(),
+            "resource_suggestion"
+        );
     }
 
     #[test]
@@ -340,10 +384,22 @@ mod tests {
 
     #[test]
     fn test_user_response_from_str() {
-        assert_eq!(UserResponse::from_str("accepted"), Some(UserResponse::Accepted));
-        assert_eq!(UserResponse::from_str("dismissed"), Some(UserResponse::Dismissed));
-        assert_eq!(UserResponse::from_str("acted_upon"), Some(UserResponse::ActedUpon));
-        assert_eq!(UserResponse::from_str("ignored"), Some(UserResponse::Ignored));
+        assert_eq!(
+            UserResponse::from_str("accepted"),
+            Some(UserResponse::Accepted)
+        );
+        assert_eq!(
+            UserResponse::from_str("dismissed"),
+            Some(UserResponse::Dismissed)
+        );
+        assert_eq!(
+            UserResponse::from_str("acted_upon"),
+            Some(UserResponse::ActedUpon)
+        );
+        assert_eq!(
+            UserResponse::from_str("ignored"),
+            Some(UserResponse::Ignored)
+        );
         assert_eq!(UserResponse::from_str("invalid"), None);
     }
 
@@ -358,11 +414,20 @@ mod tests {
     #[test]
     fn test_user_response_multiplier_ordering() {
         // Accepted should be most positive
-        assert!(UserResponse::Accepted.effectiveness_multiplier() > UserResponse::ActedUpon.effectiveness_multiplier());
+        assert!(
+            UserResponse::Accepted.effectiveness_multiplier()
+                > UserResponse::ActedUpon.effectiveness_multiplier()
+        );
         // ActedUpon should be positive
-        assert!(UserResponse::ActedUpon.effectiveness_multiplier() > UserResponse::Ignored.effectiveness_multiplier());
+        assert!(
+            UserResponse::ActedUpon.effectiveness_multiplier()
+                > UserResponse::Ignored.effectiveness_multiplier()
+        );
         // Ignored should be neutral
-        assert!(UserResponse::Ignored.effectiveness_multiplier() > UserResponse::Dismissed.effectiveness_multiplier());
+        assert!(
+            UserResponse::Ignored.effectiveness_multiplier()
+                > UserResponse::Dismissed.effectiveness_multiplier()
+        );
         // Dismissed should be negative
         assert!(UserResponse::Dismissed.effectiveness_multiplier() < 0.0);
     }

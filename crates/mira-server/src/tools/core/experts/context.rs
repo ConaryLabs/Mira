@@ -47,7 +47,9 @@ pub async fn get_patterns_context<C: ToolContext>(ctx: &C, expert_role: &str) ->
 
     let corrections = ctx
         .pool()
-        .run(move |conn| get_relevant_corrections_sync(conn, None, correction_type_owned.as_deref(), 5))
+        .run(move |conn| {
+            get_relevant_corrections_sync(conn, None, correction_type_owned.as_deref(), 5)
+        })
         .await
         .unwrap_or_default();
 

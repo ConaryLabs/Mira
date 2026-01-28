@@ -6,7 +6,7 @@
 // - cartographer/summaries.rs
 
 use crate::cartographer::{Module, ModuleSummaryContext};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 
 /// Count cached modules for a project
@@ -19,7 +19,10 @@ pub fn count_cached_modules_sync(conn: &Connection, project_id: i64) -> rusqlite
 }
 
 /// Get all cached modules for a project
-pub fn get_cached_modules_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<Vec<Module>> {
+pub fn get_cached_modules_sync(
+    conn: &Connection,
+    project_id: i64,
+) -> rusqlite::Result<Vec<Module>> {
     let mut stmt = conn.prepare(
         "SELECT module_id, name, path, purpose, exports, depends_on, symbol_count, line_count
          FROM codebase_modules WHERE project_id = ? ORDER BY module_id",
@@ -102,9 +105,14 @@ pub fn get_module_dependencies_sync(
 }
 
 /// Insert or update a module in the cache
-pub fn upsert_module_sync(conn: &Connection, project_id: i64, module: &Module) -> rusqlite::Result<()> {
+pub fn upsert_module_sync(
+    conn: &Connection,
+    project_id: i64,
+    module: &Module,
+) -> rusqlite::Result<()> {
     let exports_json = serde_json::to_string(&module.exports).unwrap_or_else(|_| "[]".to_string());
-    let depends_json = serde_json::to_string(&module.depends_on).unwrap_or_else(|_| "[]".to_string());
+    let depends_json =
+        serde_json::to_string(&module.depends_on).unwrap_or_else(|_| "[]".to_string());
 
     conn.execute(
         "INSERT OR REPLACE INTO codebase_modules

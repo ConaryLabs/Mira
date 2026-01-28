@@ -3,9 +3,8 @@
 
 use super::ToolContext;
 use crate::db::{
-    get_findings_sync, get_finding_sync, get_finding_stats_sync,
-    update_finding_status_sync, bulk_update_finding_status_sync,
-    get_relevant_corrections_sync, extract_patterns_from_findings_sync,
+    bulk_update_finding_status_sync, extract_patterns_from_findings_sync, get_finding_stats_sync,
+    get_finding_sync, get_findings_sync, get_relevant_corrections_sync, update_finding_status_sync,
 };
 use crate::mcp::requests::FindingAction;
 use crate::utils::truncate;
@@ -195,23 +194,23 @@ pub async fn bulk_review_findings<C: ToolContext>(
     let updated = ctx
         .pool()
         .run(move |conn| {
-            bulk_update_finding_status_sync(conn, &finding_ids, &status_clone, reviewed_by.as_deref())
+            bulk_update_finding_status_sync(
+                conn,
+                &finding_ids,
+                &status_clone,
+                reviewed_by.as_deref(),
+            )
         })
         .await?;
 
     Ok(format!(
         "Updated {} of {} findings to '{}'",
-        updated,
-        finding_ids_len,
-        status
+        updated, finding_ids_len, status
     ))
 }
 
 /// Get details of a specific finding
-pub async fn get_finding<C: ToolContext>(
-    ctx: &C,
-    finding_id: i64,
-) -> Result<String, String> {
+pub async fn get_finding<C: ToolContext>(ctx: &C, finding_id: i64) -> Result<String, String> {
     let finding = ctx
         .pool()
         .run(move |conn| get_finding_sync(conn, finding_id))
@@ -220,7 +219,10 @@ pub async fn get_finding<C: ToolContext>(
 
     let mut output = format!("Finding #{} ({})\n", finding.id, finding.status);
     output.push_str(&format!("Expert: {}\n", finding.expert_role));
-    output.push_str(&format!("Type: {} | Severity: {}\n", finding.finding_type, finding.severity));
+    output.push_str(&format!(
+        "Type: {} | Severity: {}\n",
+        finding.finding_type, finding.severity
+    ));
 
     if let Some(file) = &finding.file_path {
         output.push_str(&format!("File: {}\n", file));
@@ -242,7 +244,11 @@ pub async fn get_finding<C: ToolContext>(
     }
 
     if let Some(reviewer) = &finding.reviewed_by {
-        output.push_str(&format!("Reviewed by: {} at {}\n", reviewer, finding.reviewed_at.as_deref().unwrap_or("?")));
+        output.push_str(&format!(
+            "Reviewed by: {} at {}\n",
+            reviewer,
+            finding.reviewed_at.as_deref().unwrap_or("?")
+        ));
     }
 
     output.push_str(&format!("\nCreated: {}", finding.created_at));
@@ -303,7 +309,10 @@ pub async fn extract_patterns<C: ToolContext>(ctx: &C) -> Result<String, String>
     if created == 0 {
         Ok("No new patterns extracted. Need more accepted findings with suggestions.".to_string())
     } else {
-        Ok(format!("Extracted {} new patterns from accepted findings", created))
+        Ok(format!(
+            "Extracted {} new patterns from accepted findings",
+            created
+        ))
     }
 }
 
@@ -362,7 +371,8 @@ pub async fn finding<C: ToolContext>(
                     return bulk_review_findings(ctx, ids, new_status).await;
                 }
             }
-            let id = finding_id.ok_or("finding_id (or finding_ids for bulk) is required for action 'review'")?;
+            let id = finding_id
+                .ok_or("finding_id (or finding_ids for bulk) is required for action 'review'")?;
             review_finding(ctx, id, new_status, feedback).await
         }
         FindingAction::Stats => get_finding_stats(ctx).await,

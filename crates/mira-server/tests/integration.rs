@@ -5,10 +5,15 @@
 
 mod test_utils;
 
-use test_utils::TestContext;
+use mira::mcp::requests::{ExpertConfigAction, GoalAction, IndexAction, SessionHistoryAction};
 #[allow(unused_imports)]
-use mira::tools::core::{ToolContext, session_start, set_project, get_project, remember, recall, forget, search_code, find_function_callers, find_function_callees, check_capability, get_symbols, index, summarize_codebase, session_history, ensure_session, goal, configure_expert, get_session_recap, reply_to_mira};
-use mira::mcp::requests::{IndexAction, SessionHistoryAction, GoalAction, ExpertConfigAction};
+use mira::tools::core::{
+    ToolContext, check_capability, configure_expert, ensure_session, find_function_callees,
+    find_function_callers, forget, get_project, get_session_recap, get_symbols, goal, index,
+    recall, remember, reply_to_mira, search_code, session_history, session_start, set_project,
+    summarize_codebase,
+};
+use test_utils::TestContext;
 
 #[tokio::test]
 async fn test_session_start_basic() {
@@ -26,8 +31,14 @@ async fn test_session_start_basic() {
     let output = result.unwrap();
 
     // Verify output contains expected information
-    assert!(output.contains("Project:"), "Output should contain project info");
-    assert!(output.contains("Test Project"), "Output should contain project name");
+    assert!(
+        output.contains("Project:"),
+        "Output should contain project info"
+    );
+    assert!(
+        output.contains("Test Project"),
+        "Output should contain project name"
+    );
     assert!(output.contains("Ready."), "Output should end with Ready.");
 
     // Verify project was set in context
@@ -51,16 +62,33 @@ async fn test_set_project_get_project() {
     let project_name = Some("Another Project".to_string());
 
     let set_result = set_project(&ctx, project_path.clone(), project_name.clone()).await;
-    assert!(set_result.is_ok(), "set_project failed: {:?}", set_result.err());
+    assert!(
+        set_result.is_ok(),
+        "set_project failed: {:?}",
+        set_result.err()
+    );
 
     // Test get_project
     let get_result = get_project(&ctx).await;
-    assert!(get_result.is_ok(), "get_project failed: {:?}", get_result.err());
+    assert!(
+        get_result.is_ok(),
+        "get_project failed: {:?}",
+        get_result.err()
+    );
 
     let output = get_result.unwrap();
-    assert!(output.contains("Current project:"), "Output should indicate current project");
-    assert!(output.contains("/tmp/another_project"), "Output should contain project path");
-    assert!(output.contains("Another Project"), "Output should contain project name");
+    assert!(
+        output.contains("Current project:"),
+        "Output should indicate current project"
+    );
+    assert!(
+        output.contains("/tmp/another_project"),
+        "Output should contain project path"
+    );
+    assert!(
+        output.contains("Another Project"),
+        "Output should contain project name"
+    );
 
     // Verify project context
     let project = ctx.get_project().await;
@@ -80,7 +108,11 @@ async fn test_session_start_with_existing_session_id() {
 
     let result = session_start(&ctx, project_path, None, Some(custom_session_id.clone())).await;
 
-    assert!(result.is_ok(), "session_start with custom ID failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "session_start with custom ID failed: {:?}",
+        result.err()
+    );
 
     // Verify the custom session ID was used
     let session_id = ctx.get_session_id().await;
@@ -92,14 +124,26 @@ async fn test_session_start_twice_different_projects() {
     let ctx = TestContext::new().await;
 
     // First session_start
-    let result1 = session_start(&ctx, "/tmp/project1".to_string(), Some("Project 1".to_string()), None).await;
+    let result1 = session_start(
+        &ctx,
+        "/tmp/project1".to_string(),
+        Some("Project 1".to_string()),
+        None,
+    )
+    .await;
     assert!(result1.is_ok(), "First session_start failed");
 
     let project1 = ctx.get_project().await.unwrap();
     let session_id1 = ctx.get_session_id().await.unwrap();
 
     // Second session_start with different project
-    let result2 = session_start(&ctx, "/tmp/project2".to_string(), Some("Project 2".to_string()), None).await;
+    let result2 = session_start(
+        &ctx,
+        "/tmp/project2".to_string(),
+        Some("Project 2".to_string()),
+        None,
+    )
+    .await;
     assert!(result2.is_ok(), "Second session_start failed");
 
     let project2 = ctx.get_project().await.unwrap();
@@ -119,9 +163,14 @@ async fn test_remember_basic() {
 
     // Need a project for memory operations
     let project_path = "/tmp/test_memory_project".to_string();
-    session_start(&ctx, project_path.clone(), Some("Memory Test Project".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Memory Test Project".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // Store a memory
     let content = "We decided to use Rust for the backend.";
@@ -144,7 +193,11 @@ async fn test_remember_basic() {
     // Extract memory ID from output (optional)
     // We'll just verify that recall can find it
     let recall_result = recall(&ctx, "Rust backend".to_string(), Some(5), None, None).await;
-    assert!(recall_result.is_ok(), "recall failed: {:?}", recall_result.err());
+    assert!(
+        recall_result.is_ok(),
+        "recall failed: {:?}",
+        recall_result.err()
+    );
     let recall_output = recall_result.unwrap();
     // Since embeddings are disabled, fallback to keyword search may find the memory
     // We'll just ensure no error
@@ -156,9 +209,14 @@ async fn test_remember_with_key() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_memory_key".to_string();
-    session_start(&ctx, project_path.clone(), Some("Memory Key Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Memory Key Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // Store a memory with a key
     let content = "API key is stored in .env file";
@@ -194,7 +252,11 @@ async fn test_remember_with_key() {
 
     // Try to forget the memory
     let forget_result = forget(&ctx, memory_id.to_string()).await;
-    assert!(forget_result.is_ok(), "forget failed: {:?}", forget_result.err());
+    assert!(
+        forget_result.is_ok(),
+        "forget failed: {:?}",
+        forget_result.err()
+    );
     let forget_output = forget_result.unwrap();
     assert!(forget_output.contains("deleted") || forget_output.contains("not found"));
 }
@@ -221,14 +283,23 @@ async fn test_search_code_empty() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_code_search".to_string();
-    session_start(&ctx, project_path.clone(), Some("Code Search Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Code Search Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = search_code(&ctx, "function foo".to_string(), None, Some(10)).await;
     assert!(result.is_ok(), "search_code failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("No code matches found"), "Output: {}", output);
+    assert!(
+        output.contains("No code matches found"),
+        "Output: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -236,12 +307,21 @@ async fn test_find_function_callers_empty() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_callers".to_string();
-    session_start(&ctx, project_path.clone(), Some("Callers Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Callers Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = find_function_callers(&ctx, "some_function".to_string(), Some(20)).await;
-    assert!(result.is_ok(), "find_function_callers failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "find_function_callers failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     assert!(output.contains("No callers found"), "Output: {}", output);
 }
@@ -251,12 +331,21 @@ async fn test_find_function_callees_empty() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_callees".to_string();
-    session_start(&ctx, project_path.clone(), Some("Callees Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Callees Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = find_function_callees(&ctx, "some_function".to_string(), Some(20)).await;
-    assert!(result.is_ok(), "find_function_callees failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "find_function_callees failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     assert!(output.contains("No callees found"), "Output: {}", output);
 }
@@ -266,12 +355,21 @@ async fn test_check_capability_empty() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_capability".to_string();
-    session_start(&ctx, project_path.clone(), Some("Capability Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Capability Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = check_capability(&ctx, "authentication system".to_string()).await;
-    assert!(result.is_ok(), "check_capability failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "check_capability failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     assert!(output.contains("No capability found"), "Output: {}", output);
 }
@@ -281,15 +379,24 @@ async fn test_index_status() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_index".to_string();
-    session_start(&ctx, project_path.clone(), Some("Index Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Index Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = index(&ctx, IndexAction::Status, None, false).await;
     assert!(result.is_ok(), "index status failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(output.contains("Index status"), "Output: {}", output);
-    assert!(output.contains("symbols") && output.contains("embedded chunks"), "Output: {}", output);
+    assert!(
+        output.contains("symbols") && output.contains("embedded chunks"),
+        "Output: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -325,7 +432,11 @@ impl Point {
     let output = result.unwrap();
     assert!(output.contains("symbols"), "Output: {}", output);
     // Should contain function and struct
-    assert!(output.contains("hello_world") || output.contains("Point"), "Output: {}", output);
+    assert!(
+        output.contains("hello_world") || output.contains("Point"),
+        "Output: {}",
+        output
+    );
 
     // Clean up (optional)
     let _ = fs::remove_file(file_path);
@@ -336,15 +447,27 @@ async fn test_summarize_codebase_no_deepseek() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_summarize".to_string();
-    session_start(&ctx, project_path.clone(), Some("Summarize Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Summarize Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = summarize_codebase(&ctx).await;
     // Should error because DeepSeek client not configured
-    assert!(result.is_err(), "summarize_codebase should fail without DeepSeek client");
+    assert!(
+        result.is_err(),
+        "summarize_codebase should fail without DeepSeek client"
+    );
     let error = result.unwrap_err();
-    assert!(error.contains("DeepSeek not configured") || error.contains("No active project"), "Error: {}", error);
+    assert!(
+        error.contains("DeepSeek not configured") || error.contains("No active project"),
+        "Error: {}",
+        error
+    );
 }
 
 #[tokio::test]
@@ -372,18 +495,31 @@ async fn test_session_history_current() {
 
     // No active session
     let result = session_history(&ctx, SessionHistoryAction::Current, None, None).await;
-    assert!(result.is_ok(), "session_history current failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "session_history current failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     assert!(output.contains("No active session"), "Output: {}", output);
 
     // Create a session via session_start
     let project_path = "/tmp/test_session_history".to_string();
-    session_start(&ctx, project_path.clone(), Some("Session History Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Session History Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = session_history(&ctx, SessionHistoryAction::Current, None, None).await;
-    assert!(result.is_ok(), "session_history current failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "session_history current failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     assert!(output.contains("Current session:"), "Output: {}", output);
 }
@@ -393,16 +529,29 @@ async fn test_session_history_list_sessions() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_list_sessions".to_string();
-    session_start(&ctx, project_path.clone(), Some("List Sessions Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("List Sessions Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = session_history(&ctx, SessionHistoryAction::ListSessions, None, Some(10)).await;
     // Should succeed even if no sessions in database (maybe there is one now)
-    assert!(result.is_ok(), "session_history list_sessions failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "session_history list_sessions failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     // Output either lists sessions or says "No sessions found"
-    assert!(output.contains("sessions") || output.contains("No sessions"), "Output: {}", output);
+    assert!(
+        output.contains("sessions") || output.contains("No sessions"),
+        "Output: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -410,55 +559,68 @@ async fn test_goal_create_and_list() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_goals".to_string();
-    session_start(&ctx, project_path.clone(), Some("Goal Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Goal Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // Create a goal
     let result = goal(
         &ctx,
         GoalAction::Create,
-        None, // goal_id
-        Some("Implement new feature".to_string()), // title
+        None,                                        // goal_id
+        Some("Implement new feature".to_string()),   // title
         Some("Add user authentication".to_string()), // description
-        Some("planning".to_string()), // status
-        Some("high".to_string()), // priority
-        Some(0), // progress_percent
-        None, // include_finished
-        None, // limit
-        None, // goals (bulk)
-        None, // milestone_title
-        None, // milestone_id
-        None, // weight
+        Some("planning".to_string()),                // status
+        Some("high".to_string()),                    // priority
+        Some(0),                                     // progress_percent
+        None,                                        // include_finished
+        None,                                        // limit
+        None,                                        // goals (bulk)
+        None,                                        // milestone_title
+        None,                                        // milestone_id
+        None,                                        // weight
     )
     .await;
     assert!(result.is_ok(), "goal create failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(output.contains("Created goal"), "Output: {}", output);
-    assert!(output.contains("Implement new feature"), "Output: {}", output);
+    assert!(
+        output.contains("Implement new feature"),
+        "Output: {}",
+        output
+    );
 
     // List goals
     let result = goal(
         &ctx,
         GoalAction::List,
-        None, // goal_id
-        None, // title
-        None, // description
-        None, // status
-        None, // priority
-        None, // progress_percent
+        None,        // goal_id
+        None,        // title
+        None,        // description
+        None,        // status
+        None,        // priority
+        None,        // progress_percent
         Some(false), // include_finished
-        Some(10), // limit
-        None, // goals (bulk)
-        None, // milestone_title
-        None, // milestone_id
-        None, // weight
+        Some(10),    // limit
+        None,        // goals (bulk)
+        None,        // milestone_title
+        None,        // milestone_id
+        None,        // weight
     )
     .await;
     assert!(result.is_ok(), "goal list failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(output.contains("goals"), "Output: {}", output);
-    assert!(output.contains("Implement new feature"), "Output: {}", output);
+    assert!(
+        output.contains("Implement new feature"),
+        "Output: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -466,16 +628,30 @@ async fn test_configure_expert_providers() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_expert".to_string();
-    session_start(&ctx, project_path.clone(), Some("Expert Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Expert Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // providers action should list available LLM providers (none in test)
-    let result = configure_expert(&ctx, ExpertConfigAction::Providers, None, None, None, None).await;
-    assert!(result.is_ok(), "configure_expert providers failed: {:?}", result.err());
+    let result =
+        configure_expert(&ctx, ExpertConfigAction::Providers, None, None, None, None).await;
+    assert!(
+        result.is_ok(),
+        "configure_expert providers failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     // Should indicate no providers available
-    assert!(output.contains("No LLM providers") || output.contains("LLM providers"), "Output: {}", output);
+    assert!(
+        output.contains("No LLM providers") || output.contains("LLM providers"),
+        "Output: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -483,15 +659,28 @@ async fn test_configure_expert_list() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_expert_list".to_string();
-    session_start(&ctx, project_path.clone(), Some("Expert List Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Expert List Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // list action should show no custom configurations
     let result = configure_expert(&ctx, ExpertConfigAction::List, None, None, None, None).await;
-    assert!(result.is_ok(), "configure_expert list failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "configure_expert list failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
-    assert!(output.contains("No custom configurations") || output.contains("expert configurations"), "Output: {}", output);
+    assert!(
+        output.contains("No custom configurations") || output.contains("expert configurations"),
+        "Output: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -499,9 +688,14 @@ async fn test_configure_expert_set_get_delete() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_expert_crud".to_string();
-    session_start(&ctx, project_path.clone(), Some("Expert CRUD Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Expert CRUD Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // Set custom prompt for architect
     let custom_prompt = "You are a test architect. Provide simple answers.";
@@ -514,9 +708,17 @@ async fn test_configure_expert_set_get_delete() {
         None,
     )
     .await;
-    assert!(result.is_ok(), "configure_expert set failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "configure_expert set failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
-    assert!(output.contains("Configuration updated"), "Output: {}", output);
+    assert!(
+        output.contains("Configuration updated"),
+        "Output: {}",
+        output
+    );
 
     // Get the configuration
     let result = configure_expert(
@@ -528,9 +730,17 @@ async fn test_configure_expert_set_get_delete() {
         None,
     )
     .await;
-    assert!(result.is_ok(), "configure_expert get failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "configure_expert get failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
-    assert!(output.contains("Configuration for 'architect'"), "Output: {}", output);
+    assert!(
+        output.contains("Configuration for 'architect'"),
+        "Output: {}",
+        output
+    );
     assert!(output.contains("Custom prompt:"), "Output: {}", output);
 
     // Delete the configuration
@@ -543,9 +753,17 @@ async fn test_configure_expert_set_get_delete() {
         None,
     )
     .await;
-    assert!(result.is_ok(), "configure_expert delete failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "configure_expert delete failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
-    assert!(output.contains("Configuration deleted") || output.contains("No custom configuration"), "Output: {}", output);
+    assert!(
+        output.contains("Configuration deleted") || output.contains("No custom configuration"),
+        "Output: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -553,13 +771,22 @@ async fn test_get_session_recap() {
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_recap".to_string();
-    session_start(&ctx, project_path.clone(), Some("Recap Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Recap Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let result = get_session_recap(&ctx).await;
     // Should succeed, may return "No session recap available."
-    assert!(result.is_ok(), "get_session_recap failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "get_session_recap failed: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     // Should contain welcome message or say no recap available
     assert!(
@@ -579,9 +806,14 @@ async fn test_pool_concurrent_access() {
 
     // Set up a project first
     let project_path = "/tmp/test_pool_concurrent".to_string();
-    session_start(&ctx, project_path.clone(), Some("Pool Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Pool Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // Run multiple concurrent memory operations
     let futures: Vec<_> = (0..5)
@@ -616,9 +848,17 @@ async fn test_pool_concurrent_access() {
 
     // Verify all memories were stored
     let recall_result = recall(&ctx, "Concurrent memory".to_string(), Some(10), None, None).await;
-    assert!(recall_result.is_ok(), "recall failed: {:?}", recall_result.err());
+    assert!(
+        recall_result.is_ok(),
+        "recall failed: {:?}",
+        recall_result.err()
+    );
     let output = recall_result.unwrap();
-    assert!(output.contains("memories"), "Should find memories: {}", output);
+    assert!(
+        output.contains("memories"),
+        "Should find memories: {}",
+        output
+    );
 }
 
 #[tokio::test]
@@ -629,20 +869,29 @@ async fn test_pool_and_database_share_state() {
 
     // Create a project using pool (via session_start)
     let project_path = "/tmp/test_pool_share".to_string();
-    session_start(&ctx, project_path.clone(), Some("Share Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Share Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let project_id = ctx.project_id().await.expect("Should have project_id");
 
     // Verify project exists via pool
-    let project_exists = ctx.pool()
+    let project_exists = ctx
+        .pool()
         .interact(move |conn| {
-            Ok::<bool, anyhow::Error>(conn.query_row(
-                "SELECT 1 FROM projects WHERE id = ?",
-                [project_id],
-                |_row| Ok(true),
-            ).unwrap_or(false))
+            Ok::<bool, anyhow::Error>(
+                conn.query_row(
+                    "SELECT 1 FROM projects WHERE id = ?",
+                    [project_id],
+                    |_row| Ok(true),
+                )
+                .unwrap_or(false),
+            )
         })
         .await
         .unwrap();
@@ -663,13 +912,17 @@ async fn test_pool_and_database_share_state() {
     .expect("remember failed");
 
     // Verify memory exists via pool
-    let memory_exists = ctx.pool()
+    let memory_exists = ctx
+        .pool()
         .interact(|conn| {
-            Ok::<bool, anyhow::Error>(conn.query_row(
-                "SELECT 1 FROM memory_facts WHERE key = ?",
-                ["pool_share_test"],
-                |_row| Ok(true),
-            ).unwrap_or(false))
+            Ok::<bool, anyhow::Error>(
+                conn.query_row(
+                    "SELECT 1 FROM memory_facts WHERE key = ?",
+                    ["pool_share_test"],
+                    |_row| Ok(true),
+                )
+                .unwrap_or(false),
+            )
         })
         .await
         .unwrap();
@@ -683,7 +936,10 @@ async fn test_pool_error_handling() {
 
     // Try to recall without a project (should still work, just return no results)
     let result = recall(&ctx, "nonexistent".to_string(), Some(5), None, None).await;
-    assert!(result.is_ok(), "recall should handle missing project gracefully");
+    assert!(
+        result.is_ok(),
+        "recall should handle missing project gracefully"
+    );
 
     // Try forget with invalid ID
     let result = forget(&ctx, "invalid".to_string()).await;
@@ -695,9 +951,16 @@ async fn test_pool_error_handling() {
 
     // Try forget with non-existent ID
     let result = forget(&ctx, "999999".to_string()).await;
-    assert!(result.is_ok(), "forget should handle non-existent ID gracefully");
+    assert!(
+        result.is_ok(),
+        "forget should handle non-existent ID gracefully"
+    );
     let output = result.unwrap();
-    assert!(output.contains("not found"), "Should indicate memory not found: {}", output);
+    assert!(
+        output.contains("not found"),
+        "Should indicate memory not found: {}",
+        output
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -722,8 +985,11 @@ async fn test_context_injection_basic() {
         .await;
 
     // Should attempt injection (may or may not find context depending on DB state)
-    assert!(result.skip_reason.is_none() || result.skip_reason == Some("sampled_out".to_string()),
-        "Should not skip for code-related message, got: {:?}", result.skip_reason);
+    assert!(
+        result.skip_reason.is_none() || result.skip_reason == Some("sampled_out".to_string()),
+        "Should not skip for code-related message, got: {:?}",
+        result.skip_reason
+    );
 }
 
 #[tokio::test]
@@ -734,13 +1000,19 @@ async fn test_context_injection_skip_simple_commands() {
     let manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
     // Simple commands should be skipped
-    let result = manager.get_context_for_message("git status", "test-session").await;
+    let result = manager
+        .get_context_for_message("git status", "test-session")
+        .await;
     assert_eq!(result.skip_reason, Some("simple_command".to_string()));
 
-    let result = manager.get_context_for_message("ls -la", "test-session").await;
+    let result = manager
+        .get_context_for_message("ls -la", "test-session")
+        .await;
     assert_eq!(result.skip_reason, Some("simple_command".to_string()));
 
-    let result = manager.get_context_for_message("/help", "test-session").await;
+    let result = manager
+        .get_context_for_message("/help", "test-session")
+        .await;
     assert_eq!(result.skip_reason, Some("simple_command".to_string()));
 }
 
@@ -761,7 +1033,8 @@ async fn test_context_injection_config() {
     use mira::context::{ContextInjectionManager, InjectionConfig};
 
     let ctx = TestContext::new().await;
-    let mut manager = ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
+    let mut manager =
+        ContextInjectionManager::new(ctx.pool().clone(), ctx.embeddings().cloned()).await;
 
     // Verify default config
     assert!(manager.config().enabled);
@@ -778,10 +1051,7 @@ async fn test_context_injection_config() {
 
     // Verify injection is disabled
     let result = manager
-        .get_context_for_message(
-            "How does the authentication function work?",
-            "test-session",
-        )
+        .get_context_for_message("How does the authentication function work?", "test-session")
         .await;
     assert_eq!(result.skip_reason, Some("disabled".to_string()));
 }
@@ -794,26 +1064,31 @@ async fn test_context_injection_with_goals() {
 
     // Create a project and some goals
     let project_path = "/tmp/test_injection_goals".to_string();
-    session_start(&ctx, project_path.clone(), Some("Injection Test".to_string()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Injection Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // Create a goal
     goal(
         &ctx,
         GoalAction::Create,
-        None, // goal_id
-        Some("Fix authentication bug".to_string()), // title
+        None,                                             // goal_id
+        Some("Fix authentication bug".to_string()),       // title
         Some("High priority security issue".to_string()), // description
-        None, // status
-        Some("high".to_string()), // priority
-        None, // progress_percent
-        None, // include_finished
-        None, // limit
-        None, // goals (bulk)
-        None, // milestone_title
-        None, // milestone_id
-        None, // weight
+        None,                                             // status
+        Some("high".to_string()),                         // priority
+        None,                                             // progress_percent
+        None,                                             // include_finished
+        None,                                             // limit
+        None,                                             // goals (bulk)
+        None,                                             // milestone_title
+        None,                                             // milestone_id
+        None,                                             // weight
     )
     .await
     .expect("goal creation failed");
@@ -824,7 +1099,10 @@ async fn test_context_injection_with_goals() {
     // Get context - should include goal info if task-aware injection is enabled
     // Note: due to sampling, this might be skipped
     let config = manager.config();
-    assert!(config.enable_task_aware, "Task-aware injection should be enabled by default");
+    assert!(
+        config.enable_task_aware,
+        "Task-aware injection should be enabled by default"
+    );
 }
 
 #[tokio::test]
@@ -857,21 +1135,25 @@ async fn test_context_injection_analytics() {
     let analytics = InjectionAnalytics::new(ctx.pool().clone());
 
     // Record some events
-    analytics.record(InjectionEvent {
-        session_id: "test-1".to_string(),
-        project_id: Some(1),
-        sources: vec![InjectionSource::Semantic],
-        context_len: 100,
-        message_preview: "test message 1".to_string(),
-    }).await;
+    analytics
+        .record(InjectionEvent {
+            session_id: "test-1".to_string(),
+            project_id: Some(1),
+            sources: vec![InjectionSource::Semantic],
+            context_len: 100,
+            message_preview: "test message 1".to_string(),
+        })
+        .await;
 
-    analytics.record(InjectionEvent {
-        session_id: "test-2".to_string(),
-        project_id: Some(1),
-        sources: vec![InjectionSource::Semantic, InjectionSource::TaskAware],
-        context_len: 200,
-        message_preview: "test message 2".to_string(),
-    }).await;
+    analytics
+        .record(InjectionEvent {
+            session_id: "test-2".to_string(),
+            project_id: Some(1),
+            sources: vec![InjectionSource::Semantic, InjectionSource::TaskAware],
+            context_len: 200,
+            message_preview: "test message 2".to_string(),
+        })
+        .await;
 
     // Check summary
     let summary = analytics.summary(None).await;

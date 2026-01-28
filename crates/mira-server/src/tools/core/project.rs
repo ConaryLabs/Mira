@@ -6,18 +6,18 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::cartographer;
-use crate::db::{
-    get_or_create_project_sync, update_project_name_sync, upsert_session_with_branch_sync,
-    search_memories_text_sync, get_preferences_sync, get_health_alerts_sync,
-    set_server_state_sync, get_project_briefing_sync, mark_session_for_briefing_sync,
-    save_active_project_sync, get_recent_sessions_sync, get_session_stats_sync,
-    store_memory_sync, StoreMemoryParams,
-};
 use crate::db::documentation::count_doc_tasks_by_status;
-use crate::proactive::{interventions, ProactiveConfig};
+use crate::db::{
+    StoreMemoryParams, get_health_alerts_sync, get_or_create_project_sync, get_preferences_sync,
+    get_project_briefing_sync, get_recent_sessions_sync, get_session_stats_sync,
+    mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
+    set_server_state_sync, store_memory_sync, update_project_name_sync,
+    upsert_session_with_branch_sync,
+};
 use crate::git::get_git_branch;
-use crate::tools::core::claude_local;
+use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
+use crate::tools::core::claude_local;
 
 // Helper functions moved to db/project.rs:
 // - search_memories_text_sync
@@ -151,7 +151,10 @@ pub async fn set_project<C: ToolContext>(
     let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
 
     let display_name = project_name.as_deref().unwrap_or(&project_path);
-    Ok(format!("Project set: {} (id: {})", display_name, project_id))
+    Ok(format!(
+        "Project set: {} (id: {})",
+        display_name, project_id
+    ))
 }
 
 /// Get current project info
@@ -195,8 +198,13 @@ pub async fn session_start<C: ToolContext>(
         .pool()
         .run(move |conn| {
             // Create/update session with branch
-            upsert_session_with_branch_sync(conn, &sid_for_db, Some(project_id), branch_for_db.as_deref())
-                .map_err(|e| e.to_string())?;
+            upsert_session_with_branch_sync(
+                conn,
+                &sid_for_db,
+                Some(project_id),
+                branch_for_db.as_deref(),
+            )
+            .map_err(|e| e.to_string())?;
 
             // Persist active session ID for restart recovery
             set_server_state_sync(conn, "active_session_id", &sid_for_db)
@@ -204,18 +212,21 @@ pub async fn session_start<C: ToolContext>(
 
             // Store system context as memory
             if let Some(ref content) = system_context {
-                let _ = store_memory_sync(conn, StoreMemoryParams {
-                    project_id: None, // global
-                    key: Some("system_context"),
-                    content,
-                    fact_type: "context",
-                    category: Some("system"),
-                    confidence: 1.0,
-                    session_id: None,
-                    user_id: None,
-                    scope: "project",
-                    branch: None,
-                });
+                let _ = store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: None, // global
+                        key: Some("system_context"),
+                        content,
+                        fact_type: "context",
+                        category: Some("system"),
+                        confidence: 1.0,
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                );
             }
 
             // Get project briefing
@@ -237,9 +248,10 @@ pub async fn session_start<C: ToolContext>(
     ctx.set_branch(branch.clone()).await;
 
     // Import CLAUDE.local.md entries as memories (if file exists)
-    let imported_count = claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
-        .await
-        .unwrap_or(0);
+    let imported_count =
+        claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
+            .await
+            .unwrap_or(0);
 
     // Detect project type
     let project_type = detect_project_type(&project_path);
@@ -268,8 +280,13 @@ pub async fn session_start<C: ToolContext>(
         .run(move |conn| {
             let sessions = get_recent_sessions_sync(conn, project_id, 4).unwrap_or_default();
             let mut result = Vec::new();
-            for sess in sessions.into_iter().filter(|s| s.id != sid_for_filter).take(3) {
-                let (tool_count, tools) = get_session_stats_sync(conn, &sess.id).unwrap_or((0, vec![]));
+            for sess in sessions
+                .into_iter()
+                .filter(|s| s.id != sid_for_filter)
+                .take(3)
+            {
+                let (tool_count, tools) =
+                    get_session_stats_sync(conn, &sess.id).unwrap_or((0, vec![]));
                 result.push((sess.id, sess.last_activity, sess.summary, tool_count, tools));
             }
             Ok::<_, String>(result)
@@ -295,7 +312,7 @@ pub async fn session_start<C: ToolContext>(
             }
         }
         response.push_str(
-            "  Use session_history(action=\"get_history\", session_id=\"...\") to view details\n"
+            "  Use session_history(action=\"get_history\", session_id=\"...\") to view details\n",
         );
     }
 
@@ -313,20 +330,30 @@ pub async fn session_start<C: ToolContext>(
             let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
 
             // Get recent memories
-            let memories = search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
+            let memories =
+                search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
 
             // Get health alerts
-            let health_alerts = get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
+            let health_alerts =
+                get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
 
             // Get documentation task counts
-            let doc_task_counts = count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
+            let doc_task_counts =
+                count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
 
             // Get pending proactive interventions
             let config = ProactiveConfig::default();
-            let interventions_list = interventions::get_pending_interventions_sync(conn, project_id, &config)
-                .unwrap_or_default();
+            let interventions_list =
+                interventions::get_pending_interventions_sync(conn, project_id, &config)
+                    .unwrap_or_default();
 
-            Ok::<_, String>((preferences, memories, health_alerts, doc_task_counts, interventions_list))
+            Ok::<_, String>((
+                preferences,
+                memories,
+                health_alerts,
+                doc_task_counts,
+                interventions_list,
+            ))
         })
         .await?;
 
@@ -417,7 +444,9 @@ pub async fn session_start<C: ToolContext>(
             project_path.clone(),
             display_name.to_string(),
             project_type.to_string(),
-        ).await {
+        )
+        .await
+        {
             Ok(map) => {
                 if !map.modules.is_empty() {
                     let formatted = cartographer::format_compact(&map);
@@ -456,9 +485,7 @@ fn gather_system_context_content() -> Option<String> {
     if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
         for line in content.lines() {
             if line.starts_with("PRETTY_NAME=") {
-                let name = line
-                    .trim_start_matches("PRETTY_NAME=")
-                    .trim_matches('"');
+                let name = line.trim_start_matches("PRETTY_NAME=").trim_matches('"');
                 context_parts.push(format!("Distro: {}", name));
                 break;
             }
@@ -505,15 +532,15 @@ fn gather_system_context_content() -> Option<String> {
     // Available tools (check common ones with single command)
     let tools_to_check = "git cargo rustc npm node python3 docker systemctl curl jq";
     if let Ok(output) = Command::new("sh")
-        .args(["-c", &format!("which {} 2>/dev/null | xargs -n1 basename", tools_to_check)])
+        .args([
+            "-c",
+            &format!("which {} 2>/dev/null | xargs -n1 basename", tools_to_check),
+        ])
         .output()
     {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
-            let tools: Vec<&str> = output_str
-                .lines()
-                .filter(|s| !s.is_empty())
-                .collect();
+            let tools: Vec<&str> = output_str.lines().filter(|s| !s.is_empty()).collect();
             if !tools.is_empty() {
                 context_parts.push(format!("Available tools: {}", tools.join(", ")));
             }

@@ -2,9 +2,9 @@
 // Node.js/TypeScript module detection from project structure
 
 use super::super::types::Module;
+use crate::project_files::walker::FileWalker;
 use std::collections::HashSet;
 use std::path::Path;
-use crate::project_files::walker::FileWalker;
 
 /// Detect Node.js/TypeScript modules from project structure
 pub fn detect(project_path: &Path) -> Vec<Module> {

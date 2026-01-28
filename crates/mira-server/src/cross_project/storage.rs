@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AnonymizationLevel, AnonymizedPattern, CrossPatternType, SharingDirection,
-    preferences::{get_preferences, consume_privacy_budget},
+    preferences::{consume_privacy_budget, get_preferences},
 };
 
 /// A cross-project pattern stored in the database
@@ -60,15 +60,18 @@ pub fn store_pattern(
             last_updated_at = datetime('now')
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        pattern.pattern_type.as_str(),
-        pattern.pattern_hash,
-        data_json,
-        pattern.category,
-        pattern.confidence,
-        pattern.noise_added,
-        k_anonymity,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            pattern.pattern_type.as_str(),
+            pattern.pattern_hash,
+            data_json,
+            pattern.category,
+            pattern.confidence,
+            pattern.noise_added,
+            k_anonymity,
+        ],
+    )?;
 
     let pattern_id = conn.last_insert_rowid();
 
@@ -79,7 +82,10 @@ pub fn store_pattern(
         (pattern_id, contribution_hash)
         VALUES (?, ?)
     "#;
-    conn.execute(provenance_sql, rusqlite::params![pattern_id, contribution_hash])?;
+    conn.execute(
+        provenance_sql,
+        rusqlite::params![pattern_id, contribution_hash],
+    )?;
 
     // Consume privacy budget
     consume_privacy_budget(conn, project_id, pattern.noise_added)?;
@@ -113,7 +119,8 @@ pub fn get_shareable_patterns(
         FROM cross_project_patterns
         WHERE source_project_count >= min_projects_required
           AND confidence >= ?
-    "#.to_string();
+    "#
+    .to_string();
 
     if category.is_some() {
         sql.push_str(" AND category = ?");
@@ -143,7 +150,8 @@ pub fn get_shareable_patterns(
 
         Ok(CrossProjectPattern {
             id: Some(row.get(0)?),
-            pattern_type: CrossPatternType::from_str(&type_str).unwrap_or(CrossPatternType::Behavior),
+            pattern_type: CrossPatternType::from_str(&type_str)
+                .unwrap_or(CrossPatternType::Behavior),
             pattern_hash: row.get(2)?,
             anonymized_data: serde_json::from_str(&data_str).unwrap_or(serde_json::json!({})),
             category: row.get(4)?,
@@ -202,8 +210,8 @@ pub fn get_patterns_for_project(
     let patterns = get_shareable_patterns(
         conn,
         category,
-        None, // Get all types, filter by preferences
-        0.5,  // Minimum confidence
+        None,      // Get all types, filter by preferences
+        0.5,       // Minimum confidence
         limit * 2, // Get more, then filter
     )?;
 
@@ -234,14 +242,17 @@ pub fn log_sharing_event(
         VALUES (?, ?, ?, ?, ?, ?)
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        project_id,
-        direction.as_str(),
-        pattern_type.as_str(),
-        pattern_hash,
-        anonymization_level.as_str(),
-        epsilon,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            project_id,
+            direction.as_str(),
+            pattern_type.as_str(),
+            pattern_hash,
+            anonymization_level.as_str(),
+            epsilon,
+        ],
+    )?;
 
     Ok(conn.last_insert_rowid())
 }
@@ -281,7 +292,7 @@ pub struct SharingStats {
 
 /// Hash a project contribution for anonymous provenance tracking
 fn hash_contribution(project_id: i64, pattern_hash: &str) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
     // Include a salt that changes over time to prevent correlation
@@ -330,7 +341,7 @@ pub fn extract_and_store_patterns(
             let data: String = row.get(0)?;
             let confidence: f64 = row.get(1)?;
             Ok((data, confidence))
-        }
+        },
     )?;
 
     for row in file_rows.flatten() {
@@ -343,7 +354,14 @@ pub fn extract_and_store_patterns(
                     .collect();
 
                 if let Ok(anonymized) = anonymizer.anonymize_file_sequence(&files, confidence) {
-                    if store_pattern(conn, project_id, &anonymized, config.k_anonymity_threshold as i64).is_ok() {
+                    if store_pattern(
+                        conn,
+                        project_id,
+                        &anonymized,
+                        config.k_anonymity_threshold as i64,
+                    )
+                    .is_ok()
+                    {
                         stored_count += 1;
                     }
                 }
@@ -366,7 +384,7 @@ pub fn extract_and_store_patterns(
             let data: String = row.get(0)?;
             let confidence: f64 = row.get(1)?;
             Ok((data, confidence))
-        }
+        },
     )?;
 
     for row in tool_rows.flatten() {
@@ -379,7 +397,14 @@ pub fn extract_and_store_patterns(
                     .collect();
 
                 if let Ok(anonymized) = anonymizer.anonymize_tool_chain(&tool_names, confidence) {
-                    if store_pattern(conn, project_id, &anonymized, config.k_anonymity_threshold as i64).is_ok() {
+                    if store_pattern(
+                        conn,
+                        project_id,
+                        &anonymized,
+                        config.k_anonymity_threshold as i64,
+                    )
+                    .is_ok()
+                    {
                         stored_count += 1;
                     }
                 }
@@ -409,7 +434,8 @@ pub fn extract_and_store_patterns(
     })?;
 
     for row in problem_rows.flatten() {
-        let (expert_role, _signature, _description, approaches_json, tools_json, success_rate) = row;
+        let (expert_role, _signature, _description, approaches_json, tools_json, success_rate) =
+            row;
 
         let approaches: Vec<String> = serde_json::from_str(&approaches_json).unwrap_or_default();
         let tools: Vec<String> = serde_json::from_str(&tools_json).unwrap_or_default();
@@ -424,7 +450,14 @@ pub fn extract_and_store_patterns(
             &tools,
             success_rate,
         ) {
-            if store_pattern(conn, project_id, &anonymized, config.k_anonymity_threshold as i64).is_ok() {
+            if store_pattern(
+                conn,
+                project_id,
+                &anonymized,
+                config.k_anonymity_threshold as i64,
+            )
+            .is_ok()
+            {
                 stored_count += 1;
             }
         }

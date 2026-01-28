@@ -5,21 +5,20 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::db::pool::DatabasePool;
-use crate::db::{store_memory_sync, store_fact_embedding_sync, StoreMemoryParams};
+use crate::db::{StoreMemoryParams, store_fact_embedding_sync, store_memory_sync};
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{record_llm_usage, DeepSeekClient, LlmClient, PromptBuilder};
+use crate::llm::{DeepSeekClient, LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::embedding_to_bytes;
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
-    "task",              // Task completions and updates
-    "goal",              // Goal progress and milestones
+    "task",                 // Task completions and updates
+    "goal",                 // Goal progress and milestones
     "semantic_code_search", // Code discoveries
-    "find_callers",      // Call graph insights
-    "find_callees",      // Call graph insights
-    "check_capability",  // Feature existence checks
+    "find_callers",         // Call graph insights
+    "find_callees",         // Call graph insights
+    "check_capability",     // Feature existence checks
 ];
-
 
 /// Spawn background extraction for a tool call
 pub fn spawn_tool_extraction(
@@ -39,17 +38,28 @@ pub fn spawn_tool_extraction(
 
     // Skip if result is too short (likely just a status message)
     if result.len() < 50 {
-        debug!("Tool extraction: skipping {} (result too short: {} chars)", tool_name, result.len());
+        debug!(
+            "Tool extraction: skipping {} (result too short: {} chars)",
+            tool_name,
+            result.len()
+        );
         return;
     }
 
     // Need DeepSeek for extraction
     let Some(deepseek) = deepseek else {
-        debug!("Tool extraction: skipping {} (no DeepSeek configured)", tool_name);
+        debug!(
+            "Tool extraction: skipping {} (no DeepSeek configured)",
+            tool_name
+        );
         return;
     };
 
-    info!("Tool extraction: spawning extraction for {} ({} chars)", tool_name, result.len());
+    info!(
+        "Tool extraction: spawning extraction for {} ({} chars)",
+        tool_name,
+        result.len()
+    );
 
     tokio::spawn(async move {
         if let Err(e) = extract_and_store(
@@ -60,7 +70,9 @@ pub fn spawn_tool_extraction(
             &tool_name,
             &args,
             &result,
-        ).await {
+        )
+        .await
+        {
             warn!("Tool extraction failed for {}: {}", tool_name, e);
         }
     });
@@ -82,11 +94,14 @@ async fn extract_and_store(
         tool_name,
         args,
         // Truncate very long results
-        if result.len() > 3000 { &result[..3000] } else { result }
+        if result.len() > 3000 {
+            &result[..3000]
+        } else {
+            result
+        }
     );
 
-    let messages = PromptBuilder::for_tool_extraction()
-        .build_messages(tool_context);
+    let messages = PromptBuilder::for_tool_extraction().build_messages(tool_context);
 
     // Call DeepSeek for extraction
     let response = deepseek.chat(messages, None).await?;
@@ -100,16 +115,21 @@ async fn extract_and_store(
         &response,
         project_id,
         None,
-    ).await;
+    )
+    .await;
 
-    let content = response.content
+    let content = response
+        .content
         .ok_or_else(|| anyhow::anyhow!("No content in extraction response"))?;
 
     // Parse JSON array
     let outcomes: Vec<ExtractedOutcome> = match serde_json::from_str(&content) {
         Ok(o) => o,
         Err(e) => {
-            debug!("Failed to parse tool extraction response: {} - content: {}", e, content);
+            debug!(
+                "Failed to parse tool extraction response: {} - content: {}",
+                e, content
+            );
             return Ok(());
         }
     };
@@ -119,11 +139,16 @@ async fn extract_and_store(
         return Ok(());
     }
 
-    info!("Extracted {} outcomes from {} call", outcomes.len(), tool_name);
+    info!(
+        "Extracted {} outcomes from {} call",
+        outcomes.len(),
+        tool_name
+    );
 
     // Store each outcome
     for outcome in outcomes {
-        let key = outcome.key
+        let key = outcome
+            .key
             .map(|k| format!("tool:{}:{}", tool_name, k))
             .unwrap_or_else(|| format!("tool:{}:{}", tool_name, uuid::Uuid::new_v4()));
 
@@ -131,36 +156,48 @@ async fn extract_and_store(
         let content_clone = outcome.content.clone();
         let key_clone = key.clone();
         let category_clone = outcome.category.clone();
-        let id = pool.interact(move |conn| {
-            store_memory_sync(conn, StoreMemoryParams {
-                project_id,
-                key: Some(&key_clone),
-                content: &content_clone,
-                fact_type: "tool_outcome",
-                category: Some(&category_clone),
-                confidence: 0.85,
-                session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
-            }).map_err(|e| anyhow::anyhow!("{}", e))
-        }).await?;
+        let id = pool
+            .interact(move |conn| {
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id,
+                        key: Some(&key_clone),
+                        content: &content_clone,
+                        fact_type: "tool_outcome",
+                        category: Some(&category_clone),
+                        confidence: 0.85,
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await?;
 
         // Store embedding if available (RETRIEVAL_DOCUMENT for storage)
         if let Some(embeddings) = embeddings {
             if let Ok(embedding) = embeddings.embed_for_storage(&outcome.content).await {
                 let embedding_bytes = embedding_to_bytes(&embedding);
                 let content_for_embed = outcome.content.clone();
-                if let Err(e) = pool.interact(move |conn| {
-                    store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                }).await {
+                if let Err(e) = pool
+                    .interact(move |conn| {
+                        store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
+                            .map_err(|e| anyhow::anyhow!("{}", e))
+                    })
+                    .await
+                {
                     warn!("Failed to store embedding for outcome {}: {}", id, e);
                 }
             }
         }
 
-        debug!("Stored tool outcome: {} (category: {})", outcome.content, outcome.category);
+        debug!(
+            "Stored tool outcome: {} (category: {})",
+            outcome.content, outcome.category
+        );
     }
 
     Ok(())

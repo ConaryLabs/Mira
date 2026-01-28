@@ -5,17 +5,14 @@ mod anonymizer;
 mod preferences;
 mod storage;
 
-pub use anonymizer::{
-    AnonymizationLevel, PatternAnonymizer, AnonymizedPattern,
-};
+pub use anonymizer::{AnonymizationLevel, AnonymizedPattern, PatternAnonymizer};
 pub use preferences::{
-    SharingPreferences, get_preferences, update_preferences,
-    reset_privacy_budget, enable_sharing, disable_sharing,
+    SharingPreferences, disable_sharing, enable_sharing, get_preferences, reset_privacy_budget,
+    update_preferences,
 };
 pub use storage::{
-    CrossProjectPattern, store_pattern, get_patterns_for_project,
-    import_pattern, get_shareable_patterns, log_sharing_event,
-    get_sharing_stats, SharingStats, extract_and_store_patterns,
+    CrossProjectPattern, SharingStats, extract_and_store_patterns, get_patterns_for_project,
+    get_shareable_patterns, get_sharing_stats, import_pattern, log_sharing_event, store_pattern,
 };
 
 use serde::{Deserialize, Serialize};

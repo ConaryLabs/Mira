@@ -1,7 +1,7 @@
 // crates/mira-server/src/db/documentation.rs
 // Database layer for documentation tracking and generation
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 /// Documentation task for tracking missing or stale docs
@@ -136,7 +136,8 @@ pub fn get_pending_doc_tasks(
     }
     .map_err(|e| e.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// Get all tasks with optional filters
@@ -178,7 +179,8 @@ pub fn list_doc_tasks(
 
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
 
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+    let params_refs: Vec<&dyn rusqlite::ToSql> =
+        params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
 
     stmt.query_map(params_refs.as_slice(), parse_doc_task)
         .map_err(|e| e.to_string())?
@@ -449,10 +451,12 @@ pub fn count_doc_tasks_by_status(
                      GROUP BY status",
                 )
                 .map_err(|e| e.to_string())?;
-            stmt.query_map([pid], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())
+            stmt.query_map([pid], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
         }
         None => {
             let mut stmt = conn
@@ -461,10 +465,12 @@ pub fn count_doc_tasks_by_status(
                      GROUP BY status",
                 )
                 .map_err(|e| e.to_string())?;
-            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
         }
     };
     sql

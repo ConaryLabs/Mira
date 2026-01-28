@@ -79,11 +79,7 @@ impl NormalizedUsage {
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     /// Send a chat completion request
-    async fn chat(
-        &self,
-        messages: Vec<Message>,
-        tools: Option<Vec<Tool>>,
-    ) -> Result<ChatResult>;
+    async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult>;
 
     /// Send a stateful chat request with optional previous response ID for continuation.
     /// This is used by providers that support stateful conversations via

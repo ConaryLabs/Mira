@@ -7,6 +7,7 @@
 
 mod briefings;
 mod capabilities;
+pub mod code_health;
 pub mod diff_analysis;
 pub mod documentation;
 mod embeddings;
@@ -14,14 +15,13 @@ mod fast_lane;
 mod pondering;
 mod slow_lane;
 mod summaries;
-pub mod code_health;
 pub mod watcher;
 
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::ProviderFactory;
 use std::sync::Arc;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{Notify, watch};
 
 pub use fast_lane::FastLaneWorker;
 pub use slow_lane::SlowLaneWorker;
@@ -64,11 +64,7 @@ pub fn spawn(
     });
 
     // Spawn slow lane worker (LLM tasks)
-    let slow_lane = SlowLaneWorker::new(
-        pool,
-        llm_factory,
-        shutdown_rx,
-    );
+    let slow_lane = SlowLaneWorker::new(pool, llm_factory, shutdown_rx);
     tokio::spawn(async move {
         slow_lane.run().await;
     });
@@ -102,7 +98,13 @@ impl BackgroundWorker {
         llm_factory: Arc<ProviderFactory>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
-        Self { pool, embeddings, llm_factory, shutdown, cycle_count: 0 }
+        Self {
+            pool,
+            embeddings,
+            llm_factory,
+            shutdown,
+            cycle_count: 0,
+        }
     }
 
     pub async fn run(mut self) {
@@ -148,7 +150,11 @@ impl BackgroundWorker {
             processed += count;
         }
 
-        match self.llm_factory.client_for_role("background", &self.pool).await {
+        match self
+            .llm_factory
+            .client_for_role("background", &self.pool)
+            .await
+        {
             Ok(client) => {
                 let count = self.process_summary_queue(&client).await?;
                 if count > 0 {
@@ -218,7 +224,10 @@ impl BackgroundWorker {
         documentation::process_documentation(&self.pool, client).await
     }
 
-    async fn process_pending_embeddings(&self, client: &Arc<EmbeddingClient>) -> Result<usize, String> {
+    async fn process_pending_embeddings(
+        &self,
+        client: &Arc<EmbeddingClient>,
+    ) -> Result<usize, String> {
         embeddings::process_pending_embeddings(&self.pool, Some(client)).await
     }
 

@@ -28,18 +28,16 @@ impl MiraConfig {
         let path = Self::config_path();
 
         match std::fs::read_to_string(&path) {
-            Ok(contents) => {
-                match toml::from_str(&contents) {
-                    Ok(config) => {
-                        debug!(path = %path.display(), "Loaded config from file");
-                        config
-                    }
-                    Err(e) => {
-                        warn!(path = %path.display(), error = %e, "Failed to parse config file");
-                        Self::default()
-                    }
+            Ok(contents) => match toml::from_str(&contents) {
+                Ok(config) => {
+                    debug!(path = %path.display(), "Loaded config from file");
+                    config
                 }
-            }
+                Err(e) => {
+                    warn!(path = %path.display(), error = %e, "Failed to parse config file");
+                    Self::default()
+                }
+            },
             Err(_) => {
                 debug!(path = %path.display(), "Config file not found, using defaults");
                 Self::default()

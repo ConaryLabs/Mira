@@ -71,9 +71,7 @@ impl SharingPreferences {
 
     /// Check if import is allowed for a pattern type
     pub fn can_import(&self, pattern_type: CrossPatternType) -> bool {
-        self.sharing_enabled
-            && self.import_patterns
-            && self.is_pattern_type_allowed(pattern_type)
+        self.sharing_enabled && self.import_patterns && self.is_pattern_type_allowed(pattern_type)
     }
 }
 
@@ -129,12 +127,8 @@ pub fn get_preferences(conn: &Connection, project_id: i64) -> Result<SharingPref
 /// Update sharing preferences for a project
 pub fn update_preferences(conn: &Connection, prefs: &SharingPreferences) -> Result<()> {
     let types_json = prefs.allowed_pattern_types.as_ref().map(|types| {
-        serde_json::to_string(
-            &types
-                .iter()
-                .map(|t| t.as_str())
-                .collect::<Vec<_>>()
-        ).unwrap_or_default()
+        serde_json::to_string(&types.iter().map(|t| t.as_str()).collect::<Vec<_>>())
+            .unwrap_or_default()
     });
 
     let sql = r#"
@@ -154,16 +148,19 @@ pub fn update_preferences(conn: &Connection, prefs: &SharingPreferences) -> Resu
             updated_at = datetime('now')
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        prefs.project_id,
-        prefs.sharing_enabled as i32,
-        prefs.export_patterns as i32,
-        prefs.import_patterns as i32,
-        prefs.min_anonymization_level.as_str(),
-        types_json,
-        prefs.privacy_epsilon_budget,
-        prefs.privacy_epsilon_used,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            prefs.project_id,
+            prefs.sharing_enabled as i32,
+            prefs.export_patterns as i32,
+            prefs.import_patterns as i32,
+            prefs.min_anonymization_level.as_str(),
+            types_json,
+            prefs.privacy_epsilon_budget,
+            prefs.privacy_epsilon_used,
+        ],
+    )?;
 
     Ok(())
 }

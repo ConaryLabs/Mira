@@ -5,8 +5,8 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use super::{InterventionType, UserResponse};
 use super::patterns::update_pattern_confidence;
+use super::{InterventionType, UserResponse};
 
 /// Record an intervention that was shown to the user
 pub fn record_intervention(
@@ -25,15 +25,18 @@ pub fn record_intervention(
         VALUES (?, ?, ?, ?, ?, ?, ?)
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        project_id,
-        session_id,
-        intervention_type.as_str(),
-        trigger_pattern_id,
-        trigger_context,
-        suggestion_content,
-        confidence,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            project_id,
+            session_id,
+            intervention_type.as_str(),
+            trigger_pattern_id,
+            trigger_context,
+            suggestion_content,
+            confidence,
+        ],
+    )?;
 
     Ok(conn.last_insert_rowid())
 }
@@ -57,19 +60,24 @@ pub fn record_response(
         WHERE id = ?
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        response.as_str(),
-        response_time_ms,
-        effectiveness,
-        intervention_id,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            response.as_str(),
+            response_time_ms,
+            effectiveness,
+            intervention_id,
+        ],
+    )?;
 
     // Update the source pattern's confidence if there is one
-    let pattern_id: Option<i64> = conn.query_row(
-        "SELECT trigger_pattern_id FROM proactive_interventions WHERE id = ?",
-        [intervention_id],
-        |row| row.get(0),
-    ).ok();
+    let pattern_id: Option<i64> = conn
+        .query_row(
+            "SELECT trigger_pattern_id FROM proactive_interventions WHERE id = ?",
+            [intervention_id],
+            |row| row.get(0),
+        )
+        .ok();
 
     if let Some(pattern_id) = pattern_id {
         update_pattern_confidence(conn, pattern_id, effectiveness)?;
@@ -79,7 +87,10 @@ pub fn record_response(
 }
 
 /// Get pending interventions (those without responses)
-pub fn get_pending_interventions(conn: &Connection, session_id: &str) -> Result<Vec<PendingIntervention>> {
+pub fn get_pending_interventions(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Vec<PendingIntervention>> {
     let sql = r#"
         SELECT id, intervention_type, suggestion_content, confidence, created_at
         FROM proactive_interventions

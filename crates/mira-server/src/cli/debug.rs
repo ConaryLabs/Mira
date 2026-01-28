@@ -28,7 +28,8 @@ pub async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
         project_path.to_string_lossy().to_string(),
         None,
         None,
-    ).await;
+    )
+    .await;
 
     match result {
         Ok(output) => {
@@ -74,7 +75,8 @@ pub async fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
         pool.interact(move |conn| {
             mira::db::get_or_create_project_sync(conn, &path_clone, None)
                 .map_err(|e| anyhow::anyhow!("{}", e))
-        }).await?
+        })
+        .await?
     };
     println!("Project ID: {}, Name: {:?}", project_id, name);
 
@@ -84,9 +86,14 @@ pub async fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
         project_path_str,
         name.unwrap_or_else(|| "unknown".to_string()),
         "rust".to_string(),
-    ).await {
+    )
+    .await
+    {
         Ok(map) => {
-            println!("\nCodebase map generated with {} modules", map.modules.len());
+            println!(
+                "\nCodebase map generated with {} modules",
+                map.modules.len()
+            );
             println!("\n{}", mira::cartographer::format_compact(&map));
         }
         Err(e) => {

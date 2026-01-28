@@ -98,8 +98,7 @@ mod tests {
 
     #[test]
     fn test_chat_request_with_thinking() {
-        let req = ChatRequest::new("model", vec![])
-            .with_thinking(true, 8192);
+        let req = ChatRequest::new("model", vec![]).with_thinking(true, 8192);
         assert!(req.thinking.is_some());
         let thinking = req.thinking.unwrap();
         assert!(thinking.enable_thinking);

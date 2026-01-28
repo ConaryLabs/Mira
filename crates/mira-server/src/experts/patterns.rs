@@ -47,24 +47,31 @@ pub fn upsert_pattern(conn: &Connection, pattern: &ProblemPattern) -> Result<i64
     let approaches_json = serde_json::to_string(&pattern.successful_approaches).unwrap_or_default();
     let tools_json = serde_json::to_string(&pattern.recommended_tools).unwrap_or_default();
 
-    conn.execute(sql, rusqlite::params![
-        pattern.expert_role.as_str(),
-        pattern.pattern_signature,
-        pattern.pattern_description,
-        context_json,
-        approaches_json,
-        tools_json,
-        pattern.success_rate,
-        pattern.occurrence_count,
-        pattern.avg_confidence,
-        pattern.avg_acceptance_rate,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            pattern.expert_role.as_str(),
+            pattern.pattern_signature,
+            pattern.pattern_description,
+            context_json,
+            approaches_json,
+            tools_json,
+            pattern.success_rate,
+            pattern.occurrence_count,
+            pattern.avg_confidence,
+            pattern.avg_acceptance_rate,
+        ],
+    )?;
 
     Ok(conn.last_insert_rowid())
 }
 
 /// Get patterns for an expert sorted by success rate
-pub fn get_top_patterns(conn: &Connection, expert_role: ExpertRole, limit: i64) -> Result<Vec<ProblemPattern>> {
+pub fn get_top_patterns(
+    conn: &Connection,
+    expert_role: ExpertRole,
+    limit: i64,
+) -> Result<Vec<ProblemPattern>> {
     let sql = r#"
         SELECT id, expert_role, pattern_signature, pattern_description,
                common_context_elements, successful_approaches, recommended_tools,
@@ -121,9 +128,7 @@ pub fn find_matching_patterns(
     // Filter to those that match the context keywords
     let matching: Vec<ProblemPattern> = patterns
         .into_iter()
-        .filter(|p| {
-            p.success_rate >= min_success_rate && pattern_matches_context(p, &keywords)
-        })
+        .filter(|p| p.success_rate >= min_success_rate && pattern_matches_context(p, &keywords))
         .collect();
 
     Ok(matching)
@@ -135,13 +140,40 @@ fn extract_keywords(context: &str) -> Vec<String> {
 
     // Common technical keywords to look for
     let technical_keywords = [
-        "security", "auth", "password", "token", "api", "database", "query",
-        "performance", "cache", "memory", "cpu", "async", "thread",
-        "error", "exception", "bug", "fix", "crash",
-        "refactor", "clean", "simplify", "extract",
-        "test", "coverage", "mock", "stub",
-        "design", "pattern", "architecture", "module",
-        "config", "env", "setting", "option",
+        "security",
+        "auth",
+        "password",
+        "token",
+        "api",
+        "database",
+        "query",
+        "performance",
+        "cache",
+        "memory",
+        "cpu",
+        "async",
+        "thread",
+        "error",
+        "exception",
+        "bug",
+        "fix",
+        "crash",
+        "refactor",
+        "clean",
+        "simplify",
+        "extract",
+        "test",
+        "coverage",
+        "mock",
+        "stub",
+        "design",
+        "pattern",
+        "architecture",
+        "module",
+        "config",
+        "env",
+        "setting",
+        "option",
     ];
 
     technical_keywords
@@ -177,7 +209,11 @@ fn pattern_matches_context(pattern: &ProblemPattern, keywords: &[String]) -> boo
 }
 
 /// Mine patterns from consultation history
-pub fn mine_patterns_from_history(conn: &Connection, expert_role: ExpertRole, project_id: i64) -> Result<usize> {
+pub fn mine_patterns_from_history(
+    conn: &Connection,
+    expert_role: ExpertRole,
+    project_id: i64,
+) -> Result<usize> {
     // Find consultations with accepted findings
     let sql = r#"
         SELECT ec.problem_category, ec.tools_used, ec.context_summary,
@@ -237,7 +273,11 @@ pub fn mine_patterns_from_history(conn: &Connection, expert_role: ExpertRole, pr
 }
 
 /// Update pattern success rate based on new outcome
-pub fn update_pattern_success(conn: &Connection, pattern_id: i64, outcome_success: bool) -> Result<()> {
+pub fn update_pattern_success(
+    conn: &Connection,
+    pattern_id: i64,
+    outcome_success: bool,
+) -> Result<()> {
     let success_delta = if outcome_success { 1.0 } else { 0.0 };
 
     let sql = r#"
@@ -447,6 +487,9 @@ mod tests {
         let cloned = pattern.clone();
         assert_eq!(pattern.expert_role, cloned.expert_role);
         assert_eq!(pattern.pattern_signature, cloned.pattern_signature);
-        assert_eq!(pattern.common_context_elements, cloned.common_context_elements);
+        assert_eq!(
+            pattern.common_context_elements,
+            cloned.common_context_elements
+        );
     }
 }

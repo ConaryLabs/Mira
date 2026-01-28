@@ -1,9 +1,9 @@
 // crates/mira-server/src/db/schema/vectors.rs
 // Vector table migrations for embeddings storage
 
+use crate::db::migration_helpers::{add_column_if_missing, table_exists};
 use anyhow::Result;
 use rusqlite::Connection;
-use crate::db::migration_helpers::{table_exists, add_column_if_missing};
 
 /// Migrate vector tables if dimensions changed
 pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
@@ -34,7 +34,7 @@ pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
             // Drop old tables - CASCADE not supported, drop in order
             conn.execute_batch(
                 "DROP TABLE IF EXISTS vec_memory;
-                 DROP TABLE IF EXISTS vec_code;"
+                 DROP TABLE IF EXISTS vec_code;",
             )?;
         }
     }
@@ -116,6 +116,6 @@ pub fn migrate_pending_embeddings_line_numbers(conn: &Connection) -> Result<()> 
         conn,
         "pending_embeddings",
         "start_line",
-        "INTEGER NOT NULL DEFAULT 1"
+        "INTEGER NOT NULL DEFAULT 1",
     )
 }

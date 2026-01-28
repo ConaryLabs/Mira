@@ -323,7 +323,16 @@ pub async fn goal<C: ToolContext>(
         }
         GoalAction::Create => {
             let t = title.ok_or("Title is required for create action")?;
-            action_create(ctx, project_id, t, description, status, priority, progress_percent).await
+            action_create(
+                ctx,
+                project_id,
+                t,
+                description,
+                status,
+                priority,
+                progress_percent,
+            )
+            .await
         }
         GoalAction::BulkCreate => {
             let g = goals.ok_or("goals parameter is required for bulk_create action")?;
@@ -348,11 +357,13 @@ pub async fn goal<C: ToolContext>(
         }
         GoalAction::AddMilestone => {
             let gid = goal_id.ok_or("Goal ID is required for add_milestone action")?;
-            let mt = milestone_title.ok_or("milestone_title is required for add_milestone action")?;
+            let mt =
+                milestone_title.ok_or("milestone_title is required for add_milestone action")?;
             action_add_milestone(ctx, &gid, mt, weight).await
         }
         GoalAction::CompleteMilestone => {
-            let mid = milestone_id.ok_or("milestone_id is required for complete_milestone action")?;
+            let mid =
+                milestone_id.ok_or("milestone_id is required for complete_milestone action")?;
             action_complete_milestone(ctx, &mid).await
         }
         GoalAction::DeleteMilestone => {

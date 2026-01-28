@@ -6,7 +6,9 @@ use super::*;
 /// Helper to create a test database with a project
 fn setup_test_db() -> (Database, i64) {
     let db = Database::open_in_memory().expect("Failed to open in-memory db");
-    let (project_id, _) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+    let (project_id, _) = db
+        .get_or_create_project("/test/path", Some("test"))
+        .unwrap();
     (db, project_id)
 }
 
@@ -88,7 +90,9 @@ mod tests {
     fn test_create_task_global() {
         let db = Database::open_in_memory().unwrap();
 
-        let id = db.create_task(None, None, "Global task", None, None, None).unwrap();
+        let id = db
+            .create_task(None, None, "Global task", None, None, None)
+            .unwrap();
 
         assert!(id > 0);
 
@@ -348,14 +352,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Old title",
-                None,
-                None,
-                None,
-            )
+            .create_task(Some(project_id), None, "Old title", None, None, None)
             .unwrap();
 
         db.update_task(id, Some("New title"), None, None).unwrap();
@@ -369,14 +366,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Task",
-                None,
-                Some("pending"),
-                None,
-            )
+            .create_task(Some(project_id), None, "Task", None, Some("pending"), None)
             .unwrap();
 
         db.update_task(id, None, Some("in_progress"), None).unwrap();
@@ -390,14 +380,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Task",
-                None,
-                None,
-                Some("low"),
-            )
+            .create_task(Some(project_id), None, "Task", None, None, Some("low"))
             .unwrap();
 
         db.update_task(id, None, None, Some("urgent")).unwrap();
@@ -421,13 +404,8 @@ mod tests {
             )
             .unwrap();
 
-        db.update_task(
-            id,
-            Some("New title"),
-            Some("in_progress"),
-            Some("high"),
-        )
-        .unwrap();
+        db.update_task(id, Some("New title"), Some("in_progress"), Some("high"))
+            .unwrap();
 
         let task = db.get_task_by_id(id).unwrap().unwrap();
         assert_eq!(task.title, "New title");
@@ -440,14 +418,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Task",
-                None,
-                None,
-                None,
-            )
+            .create_task(Some(project_id), None, "Task", None, None, None)
             .unwrap();
 
         // Update with None for all fields should not error
@@ -466,14 +437,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "To delete",
-                None,
-                None,
-                None,
-            )
+            .create_task(Some(project_id), None, "To delete", None, None, None)
             .unwrap();
 
         db.delete_task(id).unwrap();
@@ -538,7 +502,9 @@ mod tests {
     fn test_create_goal_global() {
         let db = Database::open_in_memory().unwrap();
 
-        let id = db.create_goal(None, "Global goal", None, None, None, None).unwrap();
+        let id = db
+            .create_goal(None, "Global goal", None, None, None, None)
+            .unwrap();
 
         let goal = db.get_goal_by_id(id).unwrap().unwrap();
         assert!(goal.project_id.is_none());
@@ -628,7 +594,11 @@ mod tests {
 
         let active = db.get_active_goals(Some(project_id), 10).unwrap();
         assert_eq!(active.len(), 2);
-        assert!(active.iter().all(|g| g.status != "completed" && g.status != "abandoned"));
+        assert!(
+            active
+                .iter()
+                .all(|g| g.status != "completed" && g.status != "abandoned")
+        );
     }
 
     #[test]
@@ -747,17 +717,11 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_goal(
-                Some(project_id),
-                "Old title",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_goal(Some(project_id), "Old title", None, None, None, None)
             .unwrap();
 
-        db.update_goal(id, Some("New title"), None, None, None).unwrap();
+        db.update_goal(id, Some("New title"), None, None, None)
+            .unwrap();
 
         let goal = db.get_goal_by_id(id).unwrap().unwrap();
         assert_eq!(goal.title, "New title");
@@ -768,17 +732,11 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_goal(
-                Some(project_id),
-                "Goal",
-                None,
-                Some("planning"),
-                None,
-                None,
-            )
+            .create_goal(Some(project_id), "Goal", None, Some("planning"), None, None)
             .unwrap();
 
-        db.update_goal(id, None, Some("in_progress"), None, None).unwrap();
+        db.update_goal(id, None, Some("in_progress"), None, None)
+            .unwrap();
 
         let goal = db.get_goal_by_id(id).unwrap().unwrap();
         assert_eq!(goal.status, "in_progress");
@@ -789,17 +747,11 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_goal(
-                Some(project_id),
-                "Goal",
-                None,
-                None,
-                Some("low"),
-                None,
-            )
+            .create_goal(Some(project_id), "Goal", None, None, Some("low"), None)
             .unwrap();
 
-        db.update_goal(id, None, None, Some("urgent"), None).unwrap();
+        db.update_goal(id, None, None, Some("urgent"), None)
+            .unwrap();
 
         let goal = db.get_goal_by_id(id).unwrap().unwrap();
         assert_eq!(goal.priority, "urgent");
@@ -810,14 +762,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_goal(
-                Some(project_id),
-                "Goal",
-                None,
-                None,
-                None,
-                Some(25),
-            )
+            .create_goal(Some(project_id), "Goal", None, None, None, Some(25))
             .unwrap();
 
         db.update_goal(id, None, None, None, Some(75)).unwrap();
@@ -866,14 +811,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_goal(
-                Some(project_id),
-                "To delete",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_goal(Some(project_id), "To delete", None, None, None, None)
             .unwrap();
 
         db.delete_goal(id).unwrap();
@@ -899,14 +837,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let goal_id = db
-            .create_goal(
-                Some(project_id),
-                "Parent goal",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_goal(Some(project_id), "Parent goal", None, None, None, None)
             .unwrap();
 
         let task1_id = db
@@ -944,25 +875,11 @@ mod tests {
 
         // Create a task with a goal, then delete the goal
         let goal_id = db
-            .create_goal(
-                Some(project_id),
-                "Temporary goal",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_goal(Some(project_id), "Temporary goal", None, None, None, None)
             .unwrap();
 
         let task_id = db
-            .create_task(
-                Some(project_id),
-                Some(goal_id),
-                "Task",
-                None,
-                None,
-                None,
-            )
+            .create_task(Some(project_id), Some(goal_id), "Task", None, None, None)
             .unwrap();
 
         db.delete_goal(goal_id).unwrap();
@@ -981,26 +898,14 @@ mod tests {
     #[test]
     fn test_task_project_isolation() {
         let (db, project1) = setup_test_db();
-        let (project2, _) = db.get_or_create_project("/other/path", Some("other")).unwrap();
+        let (project2, _) = db
+            .get_or_create_project("/other/path", Some("other"))
+            .unwrap();
 
-        db.create_task(
-            Some(project1),
-            None,
-            "Project 1 task",
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        db.create_task(
-            Some(project2),
-            None,
-            "Project 2 task",
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        db.create_task(Some(project1), None, "Project 1 task", None, None, None)
+            .unwrap();
+        db.create_task(Some(project2), None, "Project 2 task", None, None, None)
+            .unwrap();
 
         let tasks1 = db.get_tasks(Some(project1), None).unwrap();
         let tasks2 = db.get_tasks(Some(project2), None).unwrap();
@@ -1014,26 +919,14 @@ mod tests {
     #[test]
     fn test_goal_project_isolation() {
         let (db, project1) = setup_test_db();
-        let (project2, _) = db.get_or_create_project("/other/path", Some("other")).unwrap();
+        let (project2, _) = db
+            .get_or_create_project("/other/path", Some("other"))
+            .unwrap();
 
-        db.create_goal(
-            Some(project1),
-            "Project 1 goal",
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        db.create_goal(
-            Some(project2),
-            "Project 2 goal",
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        db.create_goal(Some(project1), "Project 1 goal", None, None, None, None)
+            .unwrap();
+        db.create_goal(Some(project2), "Project 2 goal", None, None, None, None)
+            .unwrap();
 
         let goals1 = db.get_goals(Some(project1), None).unwrap();
         let goals2 = db.get_goals(Some(project2), None).unwrap();
@@ -1078,14 +971,7 @@ mod tests {
 
         // Should handle values outside 0-100 range
         let id = db
-            .create_goal(
-                Some(project_id),
-                "Goal",
-                None,
-                None,
-                None,
-                Some(150),
-            )
+            .create_goal(Some(project_id), "Goal", None, None, None, Some(150))
             .unwrap();
 
         let goal = db.get_goal_by_id(id).unwrap().unwrap();
@@ -1097,14 +983,7 @@ mod tests {
         let (db, project_id) = setup_test_db();
 
         let id = db
-            .create_goal(
-                Some(project_id),
-                "Goal",
-                None,
-                None,
-                None,
-                Some(-10),
-            )
+            .create_goal(Some(project_id), "Goal", None, None, None, Some(-10))
             .unwrap();
 
         let goal = db.get_goal_by_id(id).unwrap().unwrap();

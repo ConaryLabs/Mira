@@ -67,20 +67,28 @@ pub fn upsert_pattern(conn: &Connection, pattern: &BehaviorPattern) -> Result<i6
             updated_at = datetime('now')
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        pattern.project_id,
-        pattern.pattern_type.as_str(),
-        &pattern.pattern_key,
-        pattern.pattern_data.to_json(),
-        pattern.confidence,
-        pattern.occurrence_count,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            pattern.project_id,
+            pattern.pattern_type.as_str(),
+            &pattern.pattern_key,
+            pattern.pattern_data.to_json(),
+            pattern.confidence,
+            pattern.occurrence_count,
+        ],
+    )?;
 
     Ok(conn.last_insert_rowid())
 }
 
 /// Get patterns for a project by type
-pub fn get_patterns_by_type(conn: &Connection, project_id: i64, pattern_type: &PatternType, limit: i64) -> Result<Vec<BehaviorPattern>> {
+pub fn get_patterns_by_type(
+    conn: &Connection,
+    project_id: i64,
+    pattern_type: &PatternType,
+    limit: i64,
+) -> Result<Vec<BehaviorPattern>> {
     let sql = r#"
         SELECT id, project_id, pattern_type, pattern_key, pattern_data, confidence, occurrence_count
         FROM behavior_patterns
@@ -90,21 +98,32 @@ pub fn get_patterns_by_type(conn: &Connection, project_id: i64, pattern_type: &P
     "#;
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params![project_id, pattern_type.as_str(), limit], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, f64>(5)?,
-            row.get::<_, i64>(6)?,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        rusqlite::params![project_id, pattern_type.as_str(), limit],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, f64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        },
+    )?;
 
     let mut patterns = Vec::new();
     for row in rows.flatten() {
-        let (id, project_id, pattern_type_str, pattern_key, pattern_data_str, confidence, occurrence_count) = row;
+        let (
+            id,
+            project_id,
+            pattern_type_str,
+            pattern_key,
+            pattern_data_str,
+            confidence,
+            occurrence_count,
+        ) = row;
 
         if let (Some(pattern_type), Some(pattern_data)) = (
             PatternType::from_str(&pattern_type_str),
@@ -126,7 +145,11 @@ pub fn get_patterns_by_type(conn: &Connection, project_id: i64, pattern_type: &P
 }
 
 /// Get high-confidence patterns for predictions
-pub fn get_high_confidence_patterns(conn: &Connection, project_id: i64, min_confidence: f64) -> Result<Vec<BehaviorPattern>> {
+pub fn get_high_confidence_patterns(
+    conn: &Connection,
+    project_id: i64,
+    min_confidence: f64,
+) -> Result<Vec<BehaviorPattern>> {
     let sql = r#"
         SELECT id, project_id, pattern_type, pattern_key, pattern_data, confidence, occurrence_count
         FROM behavior_patterns
@@ -150,7 +173,15 @@ pub fn get_high_confidence_patterns(conn: &Connection, project_id: i64, min_conf
 
     let mut patterns = Vec::new();
     for row in rows.flatten() {
-        let (id, project_id, pattern_type_str, pattern_key, pattern_data_str, confidence, occurrence_count) = row;
+        let (
+            id,
+            project_id,
+            pattern_type_str,
+            pattern_key,
+            pattern_data_str,
+            confidence,
+            occurrence_count,
+        ) = row;
 
         if let (Some(pattern_type), Some(pattern_data)) = (
             PatternType::from_str(&pattern_type_str),
@@ -172,7 +203,11 @@ pub fn get_high_confidence_patterns(conn: &Connection, project_id: i64, min_conf
 }
 
 /// Mine file sequence patterns from behavior logs
-pub fn mine_file_sequence_patterns(conn: &Connection, project_id: i64, min_occurrences: i64) -> Result<Vec<BehaviorPattern>> {
+pub fn mine_file_sequence_patterns(
+    conn: &Connection,
+    project_id: i64,
+    min_occurrences: i64,
+) -> Result<Vec<BehaviorPattern>> {
     // Find files that are frequently accessed together (within 5 minutes of each other)
     let sql = r#"
         WITH file_pairs AS (
@@ -236,7 +271,11 @@ pub fn mine_file_sequence_patterns(conn: &Connection, project_id: i64, min_occur
 }
 
 /// Mine tool chain patterns from behavior logs
-pub fn mine_tool_chain_patterns(conn: &Connection, project_id: i64, min_occurrences: i64) -> Result<Vec<BehaviorPattern>> {
+pub fn mine_tool_chain_patterns(
+    conn: &Connection,
+    project_id: i64,
+    min_occurrences: i64,
+) -> Result<Vec<BehaviorPattern>> {
     // Find tools that are frequently used in sequence
     let sql = r#"
         WITH tool_pairs AS (
@@ -274,7 +313,7 @@ pub fn mine_tool_chain_patterns(conn: &Connection, project_id: i64, min_occurren
     for row in rows.flatten() {
         let (tool_a, tool_b, count) = row;
 
-        let pattern_key = format!("{}->{}",  &tool_a, &tool_b);
+        let pattern_key = format!("{}->{}", &tool_a, &tool_b);
         let confidence = (count as f64 / 5.0).min(1.0);
 
         patterns.push(BehaviorPattern {
@@ -295,7 +334,11 @@ pub fn mine_tool_chain_patterns(conn: &Connection, project_id: i64, min_occurren
 }
 
 /// Update pattern confidence based on intervention feedback
-pub fn update_pattern_confidence(conn: &Connection, pattern_id: i64, feedback_multiplier: f64) -> Result<()> {
+pub fn update_pattern_confidence(
+    conn: &Connection,
+    pattern_id: i64,
+    feedback_multiplier: f64,
+) -> Result<()> {
     // Adjust confidence using exponential moving average
     let sql = r#"
         UPDATE behavior_patterns
@@ -373,7 +416,11 @@ mod tests {
         assert!(json.contains("cargo"));
 
         let parsed = PatternData::from_json(&json).unwrap();
-        if let PatternData::ToolChain { tools, typical_args } = parsed {
+        if let PatternData::ToolChain {
+            tools,
+            typical_args,
+        } = parsed
+        {
             assert_eq!(tools.len(), 2);
             assert_eq!(typical_args.get("verbose"), Some(&"true".to_string()));
         } else {
@@ -392,7 +439,11 @@ mod tests {
         assert!(json.contains("session_flow"));
 
         let parsed = PatternData::from_json(&json).unwrap();
-        if let PatternData::SessionFlow { stages, typical_duration_ms } = parsed {
+        if let PatternData::SessionFlow {
+            stages,
+            typical_duration_ms,
+        } = parsed
+        {
             assert_eq!(stages.len(), 3);
             assert_eq!(typical_duration_ms, Some(3600000));
         } else {
@@ -412,7 +463,12 @@ mod tests {
         assert!(json.contains("query_pattern"));
 
         let parsed = PatternData::from_json(&json).unwrap();
-        if let PatternData::QueryPattern { keywords, query_type, typical_context } = parsed {
+        if let PatternData::QueryPattern {
+            keywords,
+            query_type,
+            typical_context,
+        } = parsed
+        {
             assert_eq!(keywords.len(), 2);
             assert_eq!(query_type, "search");
             assert_eq!(typical_context, Some("debugging session".to_string()));

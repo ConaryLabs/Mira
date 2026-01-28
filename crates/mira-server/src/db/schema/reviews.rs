@@ -1,13 +1,16 @@
 // crates/mira-server/src/db/schema/reviews.rs
 // Review findings and embeddings usage tracking migrations
 
+use crate::db::migration_helpers::{column_exists, create_table_if_missing, table_exists};
 use anyhow::Result;
 use rusqlite::Connection;
-use crate::db::migration_helpers::{table_exists, column_exists, create_table_if_missing};
 
 /// Migrate to add review_findings table for code review learning loop
 pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "review_findings", r#"
+    create_table_if_missing(
+        conn,
+        "review_findings",
+        r#"
         CREATE TABLE IF NOT EXISTS review_findings (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -31,7 +34,8 @@ pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_review_findings_expert ON review_findings(expert_role);
         CREATE INDEX IF NOT EXISTS idx_review_findings_file ON review_findings(file_path);
         CREATE INDEX IF NOT EXISTS idx_review_findings_status ON review_findings(status);
-    "#)
+    "#,
+    )
 }
 
 /// Migrate corrections table to add learning columns
@@ -53,7 +57,10 @@ pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {
 
 /// Migrate to add embeddings_usage table for embedding cost tracking
 pub fn migrate_embeddings_usage_table(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "embeddings_usage", r#"
+    create_table_if_missing(
+        conn,
+        "embeddings_usage",
+        r#"
         CREATE TABLE IF NOT EXISTS embeddings_usage (
             id INTEGER PRIMARY KEY,
             provider TEXT NOT NULL,
@@ -67,12 +74,16 @@ pub fn migrate_embeddings_usage_table(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_embeddings_usage_provider ON embeddings_usage(provider, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_embeddings_usage_project ON embeddings_usage(project_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_embeddings_usage_created ON embeddings_usage(created_at DESC);
-    "#)
+    "#,
+    )
 }
 
 /// Migrate to add diff_analyses table for semantic diff analysis
 pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "diff_analyses", r#"
+    create_table_if_missing(
+        conn,
+        "diff_analyses",
+        r#"
         CREATE TABLE IF NOT EXISTS diff_analyses (
             id INTEGER PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id),
@@ -91,12 +102,16 @@ pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_diff_commits ON diff_analyses(project_id, from_commit, to_commit);
         CREATE INDEX IF NOT EXISTS idx_diff_created ON diff_analyses(project_id, created_at DESC);
-    "#)
+    "#,
+    )
 }
 
 /// Migrate to add llm_usage table for LLM cost/token tracking
 pub fn migrate_llm_usage_table(conn: &Connection) -> Result<()> {
-    create_table_if_missing(conn, "llm_usage", r#"
+    create_table_if_missing(
+        conn,
+        "llm_usage",
+        r#"
         CREATE TABLE IF NOT EXISTS llm_usage (
             id INTEGER PRIMARY KEY,
             provider TEXT NOT NULL,
@@ -118,5 +133,6 @@ pub fn migrate_llm_usage_table(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_llm_usage_project ON llm_usage(project_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_session ON llm_usage(session_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_created ON llm_usage(created_at DESC);
-    "#)
+    "#,
+    )
 }

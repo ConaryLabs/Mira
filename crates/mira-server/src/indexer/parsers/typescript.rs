@@ -3,7 +3,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
 use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
@@ -65,11 +65,23 @@ pub fn walk(
     match node.kind() {
         "function_declaration" | "method_definition" | "arrow_function" => {
             if let Some(sym) = extract_function(node, source, parent_name, language) {
-                let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                let func_name = sym
+                    .qualified_name
+                    .clone()
+                    .unwrap_or_else(|| sym.name.clone());
                 symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(child, source, symbols, imports, calls, parent_name, Some(&func_name), language);
+                        walk(
+                            child,
+                            source,
+                            symbols,
+                            imports,
+                            calls,
+                            parent_name,
+                            Some(&func_name),
+                            language,
+                        );
                     }
                 }
                 return;
@@ -81,7 +93,16 @@ pub fn walk(
                 symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(child, source, symbols, imports, calls, Some(&name), current_function, language);
+                        walk(
+                            child,
+                            source,
+                            symbols,
+                            imports,
+                            calls,
+                            Some(&name),
+                            current_function,
+                            language,
+                        );
                     }
                 }
                 return;
@@ -112,7 +133,16 @@ pub fn walk(
         "export_statement" => {
             // Handle exported declarations
             for child in node.children(&mut node.walk()) {
-                walk(child, source, symbols, imports, calls, parent_name, current_function, language);
+                walk(
+                    child,
+                    source,
+                    symbols,
+                    imports,
+                    calls,
+                    parent_name,
+                    current_function,
+                    language,
+                );
             }
             return;
         }
@@ -124,7 +154,9 @@ pub fn walk(
                         if value.kind() == "arrow_function" || value.kind() == "function" {
                             if let Some(name_node) = declarator.child_by_field_name("name") {
                                 let name = node_text(name_node, source);
-                                if let Some(mut sym) = extract_function(value, source, parent_name, language) {
+                                if let Some(mut sym) =
+                                    extract_function(value, source, parent_name, language)
+                                {
                                     sym.name = name.clone();
                                     sym.qualified_name = Some(name);
                                     symbols.push(sym);
@@ -139,12 +171,27 @@ pub fn walk(
     }
 
     for child in node.children(&mut node.walk()) {
-        walk(child, source, symbols, imports, calls, parent_name, current_function, language);
+        walk(
+            child,
+            source,
+            symbols,
+            imports,
+            calls,
+            parent_name,
+            current_function,
+            language,
+        );
     }
 }
 
-fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>, language: &str) -> Option<Symbol> {
-    let name = node.child_by_field_name("name")
+fn extract_function(
+    node: Node,
+    source: &[u8],
+    parent_name: Option<&str>,
+    language: &str,
+) -> Option<Symbol> {
+    let name = node
+        .child_by_field_name("name")
         .map(|n| node_text(n, source))
         .unwrap_or_else(|| "<anonymous>".to_string());
 
@@ -153,14 +200,16 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>, langua
         None => name.clone(),
     };
 
-    let signature = node.child_by_field_name("parameters")
+    let signature = node
+        .child_by_field_name("parameters")
         .map(|n| node_text(n, source));
 
-    let is_async = node.children(&mut node.walk())
-        .any(|n| n.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
 
-    let is_test = name.starts_with("test") || name.contains("Test") ||
-                  name.starts_with("it(") || name.starts_with("describe(");
+    let is_test = name.starts_with("test")
+        || name.contains("Test")
+        || name.starts_with("it(")
+        || name.starts_with("describe(");
 
     Some(Symbol {
         name,
@@ -252,18 +301,33 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     let function_node = node.child_by_field_name("function")?;
     let callee_name = match function_node.kind() {
         "identifier" => node_text(function_node, source),
-        "member_expression" => {
-            function_node.child_by_field_name("property")
-                .map(|n| node_text(n, source))?
-        }
+        "member_expression" => function_node
+            .child_by_field_name("property")
+            .map(|n| node_text(n, source))?,
         _ => return None,
     };
 
     // Skip common builtins
-    if matches!(callee_name.as_str(), "console" | "log" | "error" | "warn" | "info" |
-                "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" |
-                "parseInt" | "parseFloat" | "JSON" | "Object" | "Array" | "String" |
-                "require" | "import") {
+    if matches!(
+        callee_name.as_str(),
+        "console"
+            | "log"
+            | "error"
+            | "warn"
+            | "info"
+            | "setTimeout"
+            | "setInterval"
+            | "clearTimeout"
+            | "clearInterval"
+            | "parseInt"
+            | "parseFloat"
+            | "JSON"
+            | "Object"
+            | "Array"
+            | "String"
+            | "require"
+            | "import"
+    ) {
         return None;
     }
 
@@ -382,8 +446,16 @@ export type UserId = number;
 "#;
         let (symbols, _, _) = parse_ts(code);
 
-        assert!(symbols.iter().any(|s| s.name == "Status" && s.symbol_type == "type"));
-        assert!(symbols.iter().any(|s| s.name == "UserId" && s.symbol_type == "type"));
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Status" && s.symbol_type == "type")
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "UserId" && s.symbol_type == "type")
+        );
     }
 
     #[test]

@@ -18,11 +18,14 @@ pub fn estimate_tokens(text: &str) -> u64 {
 
 /// Estimate tokens for all messages
 pub fn estimate_message_tokens(messages: &[Message]) -> u64 {
-    messages.iter().map(|m| {
-        let content = m.content.as_deref().unwrap_or("");
-        let reasoning = m.reasoning_content.as_deref().unwrap_or("");
-        estimate_tokens(content) + estimate_tokens(reasoning)
-    }).sum()
+    messages
+        .iter()
+        .map(|m| {
+            let content = m.content.as_deref().unwrap_or("");
+            let reasoning = m.reasoning_content.as_deref().unwrap_or("");
+            estimate_tokens(content) + estimate_tokens(reasoning)
+        })
+        .sum()
 }
 
 /// Truncate messages to fit budget
@@ -53,11 +56,8 @@ pub fn truncate_messages_to_budget(mut messages: Vec<Message>) -> Vec<Message> {
 
         if let Some(idx) = remove_index {
             let removed = messages.remove(idx);
-            let removed_tokens = estimate_tokens(
-                removed.content.as_deref().unwrap_or("")
-            ) + estimate_tokens(
-                removed.reasoning_content.as_deref().unwrap_or("")
-            );
+            let removed_tokens = estimate_tokens(removed.content.as_deref().unwrap_or(""))
+                + estimate_tokens(removed.reasoning_content.as_deref().unwrap_or(""));
             current_total = current_total.saturating_sub(removed_tokens);
         } else {
             break;
@@ -89,9 +89,7 @@ mod tests {
 
     #[test]
     fn test_estimate_messages_with_content() {
-        let messages = vec![
-            Message::user("hello world"),
-        ];
+        let messages = vec![Message::user("hello world")];
         // "hello world" is 11 chars / 4 = 2.75 -> 3
         assert_eq!(estimate_message_tokens(&messages), 3);
     }
@@ -125,10 +123,7 @@ mod tests {
 
     #[test]
     fn test_truncate_keeps_minimum_messages() {
-        let messages = vec![
-            Message::system("System"),
-            Message::user("User"),
-        ];
+        let messages = vec![Message::system("System"), Message::user("User")];
 
         let result = truncate_messages_to_budget(messages);
         // Should keep both if under budget

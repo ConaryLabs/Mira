@@ -2,7 +2,7 @@
 // Team management database operations for multi-user memory sharing
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::Database;
 
@@ -25,10 +25,7 @@ pub fn create_team_sync(
 }
 
 /// Get a team by ID - sync version for pool.interact()
-pub fn get_team_sync(
-    conn: &Connection,
-    team_id: i64,
-) -> rusqlite::Result<Option<Team>> {
+pub fn get_team_sync(conn: &Connection, team_id: i64) -> rusqlite::Result<Option<Team>> {
     let team = conn
         .query_row(
             "SELECT id, name, description, created_by, created_at FROM teams WHERE id = ?",
@@ -48,10 +45,7 @@ pub fn get_team_sync(
 }
 
 /// Get a team by name - sync version for pool.interact()
-pub fn get_team_by_name_sync(
-    conn: &Connection,
-    name: &str,
-) -> rusqlite::Result<Option<Team>> {
+pub fn get_team_by_name_sync(conn: &Connection, name: &str) -> rusqlite::Result<Option<Team>> {
     let team = conn
         .query_row(
             "SELECT id, name, description, created_by, created_at FROM teams WHERE name = ?",
@@ -116,10 +110,7 @@ pub fn is_team_member_sync(
 }
 
 /// List all teams a user belongs to - sync version for pool.interact()
-pub fn list_user_teams_sync(
-    conn: &Connection,
-    user_identity: &str,
-) -> rusqlite::Result<Vec<Team>> {
+pub fn list_user_teams_sync(conn: &Connection, user_identity: &str) -> rusqlite::Result<Vec<Team>> {
     let mut stmt = conn.prepare(
         "SELECT t.id, t.name, t.description, t.created_by, t.created_at
          FROM teams t
@@ -357,9 +348,7 @@ impl Database {
     /// Get team IDs that a user belongs to (for query filtering)
     pub fn get_user_team_ids(&self, user_identity: &str) -> Result<Vec<i64>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT team_id FROM team_members WHERE user_identity = ?",
-        )?;
+        let mut stmt = conn.prepare("SELECT team_id FROM team_members WHERE user_identity = ?")?;
 
         let team_ids = stmt
             .query_map([user_identity], |row| row.get(0))?
@@ -440,12 +429,17 @@ mod tests {
         assert!(!db.is_team_member(team_id, "other@example.com").unwrap());
 
         // List members
-        let members = db.list_team_members(team_id).expect("Failed to list members");
+        let members = db
+            .list_team_members(team_id)
+            .expect("Failed to list members");
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].user_identity, "member@example.com");
 
         // Remove member
-        assert!(db.remove_team_member(team_id, "member@example.com").unwrap());
+        assert!(
+            db.remove_team_member(team_id, "member@example.com")
+                .unwrap()
+        );
         assert!(!db.is_team_member(team_id, "member@example.com").unwrap());
 
         // Delete team

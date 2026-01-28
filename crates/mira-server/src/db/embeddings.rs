@@ -64,7 +64,13 @@ impl Database {
         conn.execute(
             "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
              VALUES (?, ?, ?, ?, ?)",
-            params![embedding_bytes, file_path, chunk_content, project_id, start_line],
+            params![
+                embedding_bytes,
+                file_path,
+                chunk_content,
+                project_id,
+                start_line
+            ],
         )?;
 
         Ok(())

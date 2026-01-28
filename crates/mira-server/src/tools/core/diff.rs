@@ -4,8 +4,9 @@
 use std::path::Path;
 
 use crate::background::diff_analysis::{
-    analyze_diff, build_impact_graph, format_diff_analysis, get_head_commit, get_staged_diff,
-    get_working_diff, map_to_symbols, resolve_ref, DiffAnalysisResult, DiffStats, RiskAssessment,
+    DiffAnalysisResult, DiffStats, RiskAssessment, analyze_diff, build_impact_graph,
+    format_diff_analysis, get_head_commit, get_staged_diff, get_working_diff, map_to_symbols,
+    resolve_ref,
 };
 use crate::db::get_recent_diff_analyses_sync;
 use crate::search::format_project_header;
@@ -50,13 +51,31 @@ pub async fn analyze_diff_tool<C: ToolContext>(
             // Check if there are staged changes first
             let staged = get_staged_diff(path)?;
             if !staged.is_empty() {
-                return analyze_staged_or_working(ctx, path, project_id, &context_header, "staged", &staged, include_impact).await;
+                return analyze_staged_or_working(
+                    ctx,
+                    path,
+                    project_id,
+                    &context_header,
+                    "staged",
+                    &staged,
+                    include_impact,
+                )
+                .await;
             }
 
             // Check working directory changes
             let working = get_working_diff(path)?;
             if !working.is_empty() {
-                return analyze_staged_or_working(ctx, path, project_id, &context_header, "working", &working, include_impact).await;
+                return analyze_staged_or_working(
+                    ctx,
+                    path,
+                    project_id,
+                    &context_header,
+                    "working",
+                    &working,
+                    include_impact,
+                )
+                .await;
             }
 
             // Default to last commit
@@ -83,7 +102,11 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     )
     .await?;
 
-    Ok(format!("{}{}", context_header, format_diff_analysis(&result)))
+    Ok(format!(
+        "{}{}",
+        context_header,
+        format_diff_analysis(&result)
+    ))
 }
 
 /// Analyze staged or working directory changes (no caching, simpler flow)
@@ -117,7 +140,8 @@ async fn analyze_staged_or_working<C: ToolContext>(
     }
 
     // Semantic analysis
-    let (changes, summary, risk_flags) = analyze_diff_semantic(diff_content, deepseek, ctx.pool(), project_id).await?;
+    let (changes, summary, risk_flags) =
+        analyze_diff_semantic(diff_content, deepseek, ctx.pool(), project_id).await?;
 
     // Build impact if requested
     let impact = if include_impact && !changes.is_empty() {
@@ -173,7 +197,11 @@ async fn analyze_staged_or_working<C: ToolContext>(
         lines_removed: stats.lines_removed,
     };
 
-    Ok(format!("{}{}", context_header, format_diff_analysis(&result)))
+    Ok(format!(
+        "{}{}",
+        context_header,
+        format_diff_analysis(&result)
+    ))
 }
 
 /// Parse stats for staged changes

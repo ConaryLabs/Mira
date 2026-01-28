@@ -10,16 +10,17 @@ pub mod documentation;
 mod embeddings;
 mod index;
 mod memory;
-mod search;
-mod migration_helpers;
 #[cfg(test)]
 mod memory_tests;
+mod migration_helpers;
+mod milestones;
 pub mod pool;
 mod project;
 #[cfg(test)]
 mod project_tests;
 mod reviews;
 mod schema;
+mod search;
 mod session;
 #[cfg(test)]
 mod session_tests;
@@ -29,141 +30,121 @@ mod tasks_tests;
 mod teams;
 mod types;
 mod usage;
-mod milestones;
 
+pub use background::{
+    clear_old_capabilities_sync,
+    clear_old_health_issues_sync,
+    delete_memory_by_key_sync,
+    delete_pending_embedding_sync,
+    get_documented_by_category_sync,
+    get_error_heavy_functions_sync,
+    // Code health analysis
+    get_large_functions_sync,
+    get_lib_symbols_sync,
+    get_modules_for_doc_gaps_sync,
+    // Permission hooks
+    get_permission_rules_sync,
+    // Summaries processor
+    get_projects_with_pending_summaries_sync,
+    get_scan_info_sync,
+    get_symbols_for_file_sync,
+    get_unused_functions_sync,
+    insert_system_marker_sync,
+    is_time_older_than_sync,
+    // Diff analysis
+    map_files_to_symbols_sync,
+    mark_health_scanned_sync,
+    memory_key_exists_sync,
+    store_code_embedding_sync,
+};
 pub use cartographer::{
-    count_cached_modules_sync,
-    get_cached_modules_sync,
-    get_module_exports_sync,
-    count_symbols_in_path_sync,
-    get_module_dependencies_sync,
-    upsert_module_sync,
-    get_external_deps_sync,
-    get_modules_needing_summaries_sync,
-    update_module_purposes_sync,
+    count_cached_modules_sync, count_symbols_in_path_sync, get_cached_modules_sync,
+    get_external_deps_sync, get_module_dependencies_sync, get_module_exports_sync,
+    get_modules_needing_summaries_sync, update_module_purposes_sync, upsert_module_sync,
 };
+pub use chat::get_last_chat_time_sync;
 pub use config::{
-    EmbeddingModelCheck, ExpertConfig,
-    get_expert_config_sync, set_expert_config_sync, delete_custom_prompt_sync, list_custom_prompts_sync,
+    EmbeddingModelCheck, ExpertConfig, delete_custom_prompt_sync, get_expert_config_sync,
+    list_custom_prompts_sync, set_expert_config_sync,
 };
-pub use index::{
-    clear_project_index_sync,
-    clear_file_index_sync,
-    count_symbols_sync,
-    count_embedded_chunks_sync,
-    clear_modules_without_purpose_sync,
-    // Batch insert operations
-    SymbolInsert, ImportInsert, CallInsert,
-    insert_symbol_sync, insert_import_sync, insert_call_sync,
-    insert_chunk_embedding_sync, queue_pending_embedding_sync,
-};
-pub use search::{
-    CrossRefResult,
-    find_callers_sync,
-    find_callees_sync,
-    get_symbol_bounds_sync,
-    FtsSearchResult,
-    fts_search_sync,
-    ChunkSearchResult,
-    chunk_like_search_sync,
-    SymbolSearchResult,
-    symbol_like_search_sync,
-    SemanticCodeResult,
-    semantic_code_search_sync,
-};
-pub use diff_analysis::{DiffAnalysis, store_diff_analysis_sync, get_cached_diff_analysis_sync, get_recent_diff_analyses_sync};
-pub use usage::{
-    EmbeddingUsageRecord, insert_embedding_usage_sync,
-    LlmUsageRecord, insert_llm_usage_sync,
-    UsageStats, query_llm_usage_stats, get_llm_usage_summary,
+pub use diff_analysis::{
+    DiffAnalysis, get_cached_diff_analysis_sync, get_recent_diff_analyses_sync,
+    store_diff_analysis_sync,
 };
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
+pub use index::{
+    CallInsert,
+    ImportInsert,
+    // Batch insert operations
+    SymbolInsert,
+    clear_file_index_sync,
+    clear_modules_without_purpose_sync,
+    clear_project_index_sync,
+    count_embedded_chunks_sync,
+    count_symbols_sync,
+    insert_call_sync,
+    insert_chunk_embedding_sync,
+    insert_import_sync,
+    insert_symbol_sync,
+    queue_pending_embedding_sync,
+};
 pub use memory::{
-    parse_memory_fact_row,
-    // Sync functions for pool.interact() usage
-    store_memory_sync, StoreMemoryParams,
-    store_embedding_sync, store_fact_embedding_sync,
+    StoreMemoryParams,
+    delete_memory_sync,
     import_confirmed_memory_sync,
-    search_capabilities_sync,
+    parse_memory_fact_row,
     recall_semantic_sync,
     recall_semantic_with_branch_info_sync,
-    search_memories_sync,
     record_memory_access_sync,
-    delete_memory_sync,
-};
-pub use reviews::{
-    Correction, ReviewFinding, store_review_finding_sync, get_relevant_corrections_sync,
-    get_findings_sync, get_finding_sync, get_finding_stats_sync, update_finding_status_sync,
-    bulk_update_finding_status_sync, extract_patterns_from_findings_sync,
-};
-pub use teams::{
-    Team, TeamMember,
-    create_team_sync, get_team_sync, get_team_by_name_sync,
-    add_team_member_sync, remove_team_member_sync, is_team_member_sync,
-    list_user_teams_sync, list_team_members_sync,
-};
-pub use types::*;
-pub use tasks::{
-    parse_task_row, parse_goal_row,
-    get_pending_tasks_sync, get_task_by_id_sync, get_active_goals_sync,
-    create_task_sync, get_tasks_sync, update_task_sync, delete_task_sync,
-    get_goal_by_id_sync, create_goal_sync, get_goals_sync, update_goal_sync, delete_goal_sync,
+    search_capabilities_sync,
+    search_memories_sync,
+    store_embedding_sync,
+    store_fact_embedding_sync,
+    // Sync functions for pool.interact() usage
+    store_memory_sync,
 };
 pub use milestones::{
-    parse_milestone_row, create_milestone_sync, get_milestones_for_goal_sync,
-    get_milestone_by_id_sync, update_milestone_sync, complete_milestone_sync,
-    delete_milestone_sync, calculate_goal_progress_sync, update_goal_progress_from_milestones_sync,
+    calculate_goal_progress_sync, complete_milestone_sync, create_milestone_sync,
+    delete_milestone_sync, get_milestone_by_id_sync, get_milestones_for_goal_sync,
+    parse_milestone_row, update_goal_progress_from_milestones_sync, update_milestone_sync,
+};
+pub use project::{
+    get_health_alerts_sync, get_indexed_projects_sync, get_last_active_project_sync,
+    get_or_create_project_sync, get_preferences_sync, get_project_briefing_sync,
+    get_project_info_sync, get_projects_for_briefing_check_sync, get_server_state_sync,
+    mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
+    set_server_state_sync, update_project_briefing_sync, update_project_name_sync,
+    upsert_session_sync, upsert_session_with_branch_sync,
+};
+pub use reviews::{
+    Correction, ReviewFinding, bulk_update_finding_status_sync,
+    extract_patterns_from_findings_sync, get_finding_stats_sync, get_finding_sync,
+    get_findings_sync, get_relevant_corrections_sync, store_review_finding_sync,
+    update_finding_status_sync,
+};
+pub use search::{
+    ChunkSearchResult, CrossRefResult, FtsSearchResult, SemanticCodeResult, SymbolSearchResult,
+    chunk_like_search_sync, find_callees_sync, find_callers_sync, fts_search_sync,
+    get_symbol_bounds_sync, semantic_code_search_sync, symbol_like_search_sync,
 };
 pub use session::{
-    create_session_sync, get_recent_sessions_sync, get_session_history_sync,
-    build_session_recap_sync, get_session_stats_sync, log_tool_call_sync,
+    build_session_recap_sync, create_session_sync, get_recent_sessions_sync,
+    get_session_history_sync, get_session_stats_sync, log_tool_call_sync,
 };
-pub use chat::get_last_chat_time_sync;
-pub use project::{
-    get_or_create_project_sync,
-    update_project_name_sync,
-    get_project_info_sync,
-    upsert_session_sync,
-    upsert_session_with_branch_sync,
-    get_indexed_projects_sync,
-    search_memories_text_sync,
-    get_preferences_sync,
-    get_health_alerts_sync,
-    get_projects_for_briefing_check_sync,
-    update_project_briefing_sync,
-    set_server_state_sync,
-    get_server_state_sync,
-    get_project_briefing_sync,
-    mark_session_for_briefing_sync,
-    save_active_project_sync,
-    get_last_active_project_sync,
+pub use tasks::{
+    create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync, get_active_goals_sync,
+    get_goal_by_id_sync, get_goals_sync, get_pending_tasks_sync, get_task_by_id_sync,
+    get_tasks_sync, parse_goal_row, parse_task_row, update_goal_sync, update_task_sync,
 };
-pub use background::{
-    get_scan_info_sync,
-    is_time_older_than_sync,
-    memory_key_exists_sync,
-    delete_memory_by_key_sync,
-    insert_system_marker_sync,
-    clear_old_capabilities_sync,
-    mark_health_scanned_sync,
-    clear_old_health_issues_sync,
-    get_documented_by_category_sync,
-    get_lib_symbols_sync,
-    get_modules_for_doc_gaps_sync,
-    get_symbols_for_file_sync,
-    store_code_embedding_sync,
-    delete_pending_embedding_sync,
-    // Code health analysis
-    get_large_functions_sync,
-    get_error_heavy_functions_sync,
-    get_unused_functions_sync,
-    // Diff analysis
-    map_files_to_symbols_sync,
-    // Summaries processor
-    get_projects_with_pending_summaries_sync,
-    // Permission hooks
-    get_permission_rules_sync,
+pub use teams::{
+    Team, TeamMember, add_team_member_sync, create_team_sync, get_team_by_name_sync, get_team_sync,
+    is_team_member_sync, list_team_members_sync, list_user_teams_sync, remove_team_member_sync,
+};
+pub use types::*;
+pub use usage::{
+    EmbeddingUsageRecord, LlmUsageRecord, UsageStats, get_llm_usage_summary,
+    insert_embedding_usage_sync, insert_llm_usage_sync, query_llm_usage_stats,
 };
 
 use anyhow::{Context, Result};
@@ -309,7 +290,9 @@ mod tests {
     #[test]
     fn test_open_in_memory() {
         let db = Database::open_in_memory().expect("Failed to open in-memory db");
-        let (project_id, name) = db.get_or_create_project("/test/path", Some("test")).unwrap();
+        let (project_id, name) = db
+            .get_or_create_project("/test/path", Some("test"))
+            .unwrap();
         assert!(project_id > 0);
         assert_eq!(name, Some("test".to_string()));
     }
@@ -320,7 +303,16 @@ mod tests {
         let (project_id, _name) = db.get_or_create_project("/test", None).unwrap();
 
         // Store
-        let id = db.store_memory(Some(project_id), Some("test-key"), "test content", "general", None, 1.0).unwrap();
+        let id = db
+            .store_memory(
+                Some(project_id),
+                Some("test-key"),
+                "test content",
+                "general",
+                None,
+                1.0,
+            )
+            .unwrap();
         assert!(id > 0);
 
         // Search

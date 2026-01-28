@@ -2,7 +2,7 @@
 // Database operations for code review findings and learned patterns
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::Database;
 
@@ -56,21 +56,25 @@ pub fn get_relevant_corrections_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<Correction>> {
     let sql = match correction_type {
-        Some(_) => "SELECT id, project_id, what_was_wrong, what_is_right, correction_type,
+        Some(_) => {
+            "SELECT id, project_id, what_was_wrong, what_is_right, correction_type,
                            scope, confidence, occurrence_count, acceptance_rate, created_at
                     FROM corrections
                     WHERE (project_id = ? OR project_id IS NULL OR scope = 'global')
                           AND correction_type = ?
                           AND confidence >= 0.5
                     ORDER BY acceptance_rate DESC, occurrence_count DESC
-                    LIMIT ?",
-        None => "SELECT id, project_id, what_was_wrong, what_is_right, correction_type,
+                    LIMIT ?"
+        }
+        None => {
+            "SELECT id, project_id, what_was_wrong, what_is_right, correction_type,
                         scope, confidence, occurrence_count, acceptance_rate, created_at
                  FROM corrections
                  WHERE (project_id = ? OR project_id IS NULL OR scope = 'global')
                        AND confidence >= 0.5
                  ORDER BY acceptance_rate DESC, occurrence_count DESC
-                 LIMIT ?",
+                 LIMIT ?"
+        }
     };
 
     let mut stmt = conn.prepare(sql)?;
@@ -128,7 +132,10 @@ pub fn get_findings_sync(
 }
 
 /// Get a single finding by ID (sync version for pool.interact)
-pub fn get_finding_sync(conn: &Connection, finding_id: i64) -> rusqlite::Result<Option<ReviewFinding>> {
+pub fn get_finding_sync(
+    conn: &Connection,
+    finding_id: i64,
+) -> rusqlite::Result<Option<ReviewFinding>> {
     let sql = "SELECT id, project_id, expert_role, file_path, finding_type, severity,
                       content, code_snippet, suggestion, status, feedback, confidence,
                       user_id, reviewed_by, session_id, created_at, reviewed_at
@@ -144,7 +151,10 @@ pub fn get_finding_sync(conn: &Connection, finding_id: i64) -> rusqlite::Result<
 }
 
 /// Get statistics about review findings (sync version for pool.interact)
-pub fn get_finding_stats_sync(conn: &Connection, project_id: Option<i64>) -> rusqlite::Result<(i64, i64, i64, i64)> {
+pub fn get_finding_stats_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+) -> rusqlite::Result<(i64, i64, i64, i64)> {
     let sql = "SELECT
                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
                    SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
@@ -213,7 +223,10 @@ pub fn bulk_update_finding_status_sync(
 }
 
 /// Extract patterns from accepted findings (sync version for pool.interact)
-pub fn extract_patterns_from_findings_sync(conn: &Connection, project_id: Option<i64>) -> rusqlite::Result<usize> {
+pub fn extract_patterns_from_findings_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+) -> rusqlite::Result<usize> {
     // Find accepted findings that could become patterns
     let sql = "SELECT finding_type, content, suggestion, COUNT(*) as cnt
                FROM review_findings
@@ -254,7 +267,14 @@ pub fn extract_patterns_from_findings_sync(conn: &Connection, project_id: Option
                     project_id, what_was_wrong, what_is_right, correction_type,
                     scope, confidence, occurrence_count, acceptance_rate
                 ) VALUES (?, ?, ?, ?, 'project', ?, ?, 1.0)",
-                params![project_id, &content, &suggestion, &finding_type, confidence, count],
+                params![
+                    project_id,
+                    &content,
+                    &suggestion,
+                    &finding_type,
+                    confidence,
+                    count
+                ],
             )?;
             created += 1;
         } else {
@@ -367,9 +387,20 @@ impl Database {
         session_id: Option<&str>,
     ) -> Result<i64> {
         store_review_finding_sync(
-            &self.conn(), project_id, expert_role, file_path, finding_type, severity,
-            content, code_snippet, suggestion, confidence, user_id, session_id,
-        ).map_err(Into::into)
+            &self.conn(),
+            project_id,
+            expert_role,
+            file_path,
+            finding_type,
+            severity,
+            content,
+            code_snippet,
+            suggestion,
+            confidence,
+            user_id,
+            session_id,
+        )
+        .map_err(Into::into)
     }
 
     /// Get pending review findings for a project
@@ -407,8 +438,15 @@ impl Database {
         file_path: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ReviewFinding>> {
-        get_findings_sync(&self.conn(), project_id, status, expert_role, file_path, limit)
-            .map_err(Into::into)
+        get_findings_sync(
+            &self.conn(),
+            project_id,
+            status,
+            expert_role,
+            file_path,
+            limit,
+        )
+        .map_err(Into::into)
     }
 
     /// Get a single finding by ID
@@ -462,7 +500,10 @@ impl Database {
                    ORDER BY created_at DESC
                    LIMIT ?";
         let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![project_id, file_path, limit as i64], parse_review_finding_row)?;
+        let rows = stmt.query_map(
+            params![project_id, file_path, limit as i64],
+            parse_review_finding_row,
+        )?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
@@ -483,7 +524,14 @@ impl Database {
             "INSERT INTO corrections (
                 project_id, what_was_wrong, what_is_right, correction_type, scope, confidence
             ) VALUES (?, ?, ?, ?, ?, ?)",
-            params![project_id, what_was_wrong, what_is_right, correction_type, scope, confidence],
+            params![
+                project_id,
+                what_was_wrong,
+                what_is_right,
+                correction_type,
+                scope,
+                confidence
+            ],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -500,11 +548,7 @@ impl Database {
     }
 
     /// Update correction statistics after a finding is reviewed
-    pub fn update_correction_stats(
-        &self,
-        correction_id: i64,
-        was_accepted: bool,
-    ) -> Result<()> {
+    pub fn update_correction_stats(&self, correction_id: i64, was_accepted: bool) -> Result<()> {
         let conn = self.conn();
 
         // Get current stats
@@ -518,7 +562,11 @@ impl Database {
         // Calculate new acceptance rate
         let new_count = occurrence_count + 1;
         let accepted_count = (acceptance_rate * occurrence_count as f64) as i64;
-        let new_accepted = if was_accepted { accepted_count + 1 } else { accepted_count };
+        let new_accepted = if was_accepted {
+            accepted_count + 1
+        } else {
+            accepted_count
+        };
         let new_rate = new_accepted as f64 / new_count as f64;
 
         conn.execute(
@@ -550,19 +598,21 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
 
-        let id = db.store_review_finding(
-            Some(project_id),
-            "code_reviewer",
-            Some("src/main.rs"),
-            "bug",
-            "major",
-            "Potential null pointer dereference",
-            Some("let x = foo.unwrap();"),
-            Some("Use .unwrap_or_default() or handle the None case"),
-            0.8,
-            Some("user@example.com"),
-            Some("session-123"),
-        ).unwrap();
+        let id = db
+            .store_review_finding(
+                Some(project_id),
+                "code_reviewer",
+                Some("src/main.rs"),
+                "bug",
+                "major",
+                "Potential null pointer dereference",
+                Some("let x = foo.unwrap();"),
+                Some("Use .unwrap_or_default() or handle the None case"),
+                0.8,
+                Some("user@example.com"),
+                Some("session-123"),
+            )
+            .unwrap();
 
         assert!(id > 0);
 
@@ -577,26 +627,30 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
 
-        let id = db.store_review_finding(
-            Some(project_id),
-            "security",
-            Some("src/auth.rs"),
-            "security",
-            "critical",
-            "SQL injection vulnerability",
-            None,
-            Some("Use parameterized queries"),
-            0.9,
-            None,
-            None,
-        ).unwrap();
+        let id = db
+            .store_review_finding(
+                Some(project_id),
+                "security",
+                Some("src/auth.rs"),
+                "security",
+                "critical",
+                "SQL injection vulnerability",
+                None,
+                Some("Use parameterized queries"),
+                0.9,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let updated = db.update_finding_status(
-            id,
-            "accepted",
-            Some("Good catch, will fix"),
-            Some("reviewer@example.com"),
-        ).unwrap();
+        let updated = db
+            .update_finding_status(
+                id,
+                "accepted",
+                Some("Good catch, will fix"),
+                Some("reviewer@example.com"),
+            )
+            .unwrap();
 
         assert!(updated);
 
@@ -611,9 +665,48 @@ mod tests {
         let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
 
         // Create findings with different severities
-        db.store_review_finding(Some(project_id), "code_reviewer", None, "bug", "minor", "Minor issue", None, None, 0.5, None, None).unwrap();
-        db.store_review_finding(Some(project_id), "code_reviewer", None, "bug", "critical", "Critical issue", None, None, 0.9, None, None).unwrap();
-        db.store_review_finding(Some(project_id), "code_reviewer", None, "bug", "major", "Major issue", None, None, 0.7, None, None).unwrap();
+        db.store_review_finding(
+            Some(project_id),
+            "code_reviewer",
+            None,
+            "bug",
+            "minor",
+            "Minor issue",
+            None,
+            None,
+            0.5,
+            None,
+            None,
+        )
+        .unwrap();
+        db.store_review_finding(
+            Some(project_id),
+            "code_reviewer",
+            None,
+            "bug",
+            "critical",
+            "Critical issue",
+            None,
+            None,
+            0.9,
+            None,
+            None,
+        )
+        .unwrap();
+        db.store_review_finding(
+            Some(project_id),
+            "code_reviewer",
+            None,
+            "bug",
+            "major",
+            "Major issue",
+            None,
+            None,
+            0.7,
+            None,
+            None,
+        )
+        .unwrap();
 
         let findings = db.get_pending_findings(Some(project_id), 10).unwrap();
         assert_eq!(findings.len(), 3);

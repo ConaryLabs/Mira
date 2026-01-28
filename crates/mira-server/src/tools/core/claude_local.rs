@@ -114,14 +114,17 @@ fn import_claude_local_md_sync(
     }
 
     // Get existing memories to check for duplicates
-    let existing = search_memories_sync(conn, Some(project_id), "", None, 1000)
-        .map_err(|e| e.to_string())?;
+    let existing =
+        search_memories_sync(conn, Some(project_id), "", None, 1000).map_err(|e| e.to_string())?;
     let existing_content: HashSet<_> = existing.iter().map(|m| m.content.as_str()).collect();
 
     let mut imported = 0;
     for (entry_content, category) in entries {
         // Skip if content already exists (fuzzy match - normalize whitespace)
-        let normalized = entry_content.split_whitespace().collect::<Vec<_>>().join(" ");
+        let normalized = entry_content
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         if existing_content.iter().any(|e| {
             let e_normalized = e.split_whitespace().collect::<Vec<_>>().join(" ");
             e_normalized == normalized
@@ -130,7 +133,10 @@ fn import_claude_local_md_sync(
         }
 
         // Store as memory with source key for tracking
-        let key = format!("claude_local:{}", &entry_content[..entry_content.len().min(50)]);
+        let key = format!(
+            "claude_local:{}",
+            &entry_content[..entry_content.len().min(50)]
+        );
         let fact_type = match category.as_deref() {
             Some("preference") => "preference",
             Some("decision") => "decision",
@@ -146,7 +152,8 @@ fn import_claude_local_md_sync(
             fact_type,
             category.as_deref(),
             0.9,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         imported += 1;
     }
@@ -161,8 +168,8 @@ fn export_to_claude_local_md_sync(
     project_id: i64,
 ) -> Result<String, String> {
     // Get all high-confidence memories for this project
-    let memories = search_memories_sync(conn, Some(project_id), "", None, 100)
-        .map_err(|e| e.to_string())?;
+    let memories =
+        search_memories_sync(conn, Some(project_id), "", None, 100).map_err(|e| e.to_string())?;
 
     if memories.is_empty() {
         return Ok(String::new());
@@ -197,7 +204,9 @@ fn export_to_claude_local_md_sync(
     }
 
     let mut output = String::from("# CLAUDE.local.md\n\n");
-    output.push_str("<!-- Auto-generated from Mira memories. Manual edits will be imported back. -->\n\n");
+    output.push_str(
+        "<!-- Auto-generated from Mira memories. Manual edits will be imported back. -->\n\n",
+    );
 
     if !preferences.is_empty() {
         output.push_str("## Preferences\n\n");

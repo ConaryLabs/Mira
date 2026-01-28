@@ -1,7 +1,7 @@
 // db/milestones.rs
 // Milestone database operations
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::types::Milestone;
 
@@ -33,7 +33,10 @@ pub fn create_milestone_sync(
 }
 
 /// Get all milestones for a goal
-pub fn get_milestones_for_goal_sync(conn: &Connection, goal_id: i64) -> rusqlite::Result<Vec<Milestone>> {
+pub fn get_milestones_for_goal_sync(
+    conn: &Connection,
+    goal_id: i64,
+) -> rusqlite::Result<Vec<Milestone>> {
     let sql = "SELECT id, goal_id, title, completed, weight
                FROM milestones WHERE goal_id = ?
                ORDER BY id ASC";
@@ -57,10 +60,16 @@ pub fn update_milestone_sync(
     weight: Option<i32>,
 ) -> rusqlite::Result<()> {
     if let Some(title) = title {
-        conn.execute("UPDATE milestones SET title = ? WHERE id = ?", params![title, id])?;
+        conn.execute(
+            "UPDATE milestones SET title = ? WHERE id = ?",
+            params![title, id],
+        )?;
     }
     if let Some(weight) = weight {
-        conn.execute("UPDATE milestones SET weight = ? WHERE id = ?", params![weight, id])?;
+        conn.execute(
+            "UPDATE milestones SET weight = ? WHERE id = ?",
+            params![weight, id],
+        )?;
     }
     Ok(())
 }
@@ -69,21 +78,20 @@ pub fn update_milestone_sync(
 pub fn complete_milestone_sync(conn: &Connection, id: i64) -> rusqlite::Result<Option<i64>> {
     conn.execute("UPDATE milestones SET completed = 1 WHERE id = ?", [id])?;
     // Return the goal_id so caller can update progress
-    conn.query_row(
-        "SELECT goal_id FROM milestones WHERE id = ?",
-        [id],
-        |row| row.get(0),
-    ).optional()
+    conn.query_row("SELECT goal_id FROM milestones WHERE id = ?", [id], |row| {
+        row.get(0)
+    })
+    .optional()
 }
 
 /// Delete a milestone and return the goal_id for progress update
 pub fn delete_milestone_sync(conn: &Connection, id: i64) -> rusqlite::Result<Option<i64>> {
     // Get goal_id first
-    let goal_id: Option<i64> = conn.query_row(
-        "SELECT goal_id FROM milestones WHERE id = ?",
-        [id],
-        |row| row.get(0),
-    ).optional()?;
+    let goal_id: Option<i64> = conn
+        .query_row("SELECT goal_id FROM milestones WHERE id = ?", [id], |row| {
+            row.get(0)
+        })
+        .optional()?;
 
     conn.execute("DELETE FROM milestones WHERE id = ?", [id])?;
     Ok(goal_id)
@@ -110,7 +118,10 @@ pub fn calculate_goal_progress_sync(conn: &Connection, goal_id: i64) -> rusqlite
 }
 
 /// Update a goal's progress based on its milestones
-pub fn update_goal_progress_from_milestones_sync(conn: &Connection, goal_id: i64) -> rusqlite::Result<i32> {
+pub fn update_goal_progress_from_milestones_sync(
+    conn: &Connection,
+    goal_id: i64,
+) -> rusqlite::Result<i32> {
     let progress = calculate_goal_progress_sync(conn, goal_id)?;
     conn.execute(
         "UPDATE goals SET progress_percent = ? WHERE id = ?",
@@ -127,10 +138,12 @@ mod tests {
     fn setup_test_db() -> Database {
         let db = Database::open_in_memory().expect("Failed to create in-memory db");
         // Create a project and goal for testing
-        db.conn().execute(
-            "INSERT INTO projects (path, name) VALUES ('/test', 'Test')",
-            [],
-        ).unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO projects (path, name) VALUES ('/test', 'Test')",
+                [],
+            )
+            .unwrap();
         db.conn().execute(
             "INSERT INTO goals (project_id, title, status) VALUES (1, 'Test Goal', 'in_progress')",
             [],

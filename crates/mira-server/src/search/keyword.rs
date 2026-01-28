@@ -1,7 +1,7 @@
 // crates/mira-server/src/search/keyword.rs
 // FTS5-powered keyword search for code
 
-use crate::db::{fts_search_sync, chunk_like_search_sync, symbol_like_search_sync};
+use crate::db::{chunk_like_search_sync, fts_search_sync, symbol_like_search_sync};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -95,7 +95,12 @@ fn fts5_search(
             // Convert BM25 score to 0-1 range (BM25 is negative, lower is better)
             // Typical range is -20 to 0, so we normalize
             let score = ((-r.score + 20.0) / 20.0).clamp(0.0, 1.0) as f32;
-            (r.file_path, r.chunk_content, score, r.start_line.unwrap_or(0))
+            (
+                r.file_path,
+                r.chunk_content,
+                score,
+                r.start_line.unwrap_or(0),
+            )
         })
         .collect()
 }
@@ -270,12 +275,7 @@ mod tests {
 
     #[test]
     fn test_keyword_result_type() {
-        let result: KeywordResult = (
-            "src/main.rs".to_string(),
-            "fn main()".to_string(),
-            0.85,
-            10,
-        );
+        let result: KeywordResult = ("src/main.rs".to_string(), "fn main()".to_string(), 0.85, 10);
         assert_eq!(result.0, "src/main.rs");
         assert_eq!(result.1, "fn main()");
         assert!((result.2 - 0.85).abs() < 0.001);

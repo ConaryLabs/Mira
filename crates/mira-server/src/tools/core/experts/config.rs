@@ -1,9 +1,9 @@
 // crates/mira-server/src/tools/core/experts/config.rs
 // Expert configuration management
 
-use crate::mcp::requests::ExpertConfigAction;
-use super::role::ExpertRole;
 use super::ToolContext;
+use super::role::ExpertRole;
+use crate::mcp::requests::ExpertConfigAction;
 
 /// Configure expert system prompts and LLM providers (set, get, delete, list, providers)
 pub async fn configure_expert<C: ToolContext>(
@@ -22,12 +22,11 @@ pub async fn configure_expert<C: ToolContext>(
 
     match action {
         ExpertConfigAction::Set => {
-            let role_key = role.as_deref()
-                .ok_or("Role is required for 'set' action")?;
+            let role_key = role.as_deref().ok_or("Role is required for 'set' action")?;
 
             // Validate role (expert roles + special system roles like "background")
-            let is_valid_role = ExpertRole::from_db_key(role_key).is_some()
-                || role_key == "background";
+            let is_valid_role =
+                ExpertRole::from_db_key(role_key).is_some() || role_key == "background";
             if !is_valid_role {
                 return Err(format!(
                     "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
@@ -38,7 +37,10 @@ pub async fn configure_expert<C: ToolContext>(
             // Parse provider if provided
             let parsed_provider = if let Some(ref p) = provider {
                 Some(Provider::from_str(p).ok_or_else(|| {
-                    format!("Invalid provider '{}'. Valid providers: deepseek, gemini", p)
+                    format!(
+                        "Invalid provider '{}'. Valid providers: deepseek, gemini",
+                        p
+                    )
                 })?)
             } else {
                 None
@@ -46,7 +48,10 @@ pub async fn configure_expert<C: ToolContext>(
 
             // At least one of prompt, provider, or model should be set
             if prompt.is_none() && parsed_provider.is_none() && model.is_none() {
-                return Err("At least one of prompt, provider, or model is required for 'set' action".to_string());
+                return Err(
+                    "At least one of prompt, provider, or model is required for 'set' action"
+                        .to_string(),
+                );
             }
 
             let role_key_clone = role_key.to_string();
@@ -79,8 +84,7 @@ pub async fn configure_expert<C: ToolContext>(
         }
 
         ExpertConfigAction::Get => {
-            let role_key = role.as_deref()
-                .ok_or("Role is required for 'get' action")?;
+            let role_key = role.as_deref().ok_or("Role is required for 'get' action")?;
 
             // Validate role (expert roles + special system roles like "background")
             let expert = ExpertRole::from_db_key(role_key);
@@ -98,13 +102,18 @@ pub async fn configure_expert<C: ToolContext>(
                 .run(move |conn| get_expert_config_sync(conn, &role_key_clone))
                 .await?;
 
-            let role_name = expert.map(|e| e.name()).unwrap_or_else(|| "Background Worker".to_string());
+            let role_name = expert
+                .map(|e| e.name())
+                .unwrap_or_else(|| "Background Worker".to_string());
             let mut output = format!("Configuration for '{}' ({}):\n", role_key, role_name);
             output.push_str(&format!("  Provider: {}\n", config.provider));
             if let Some(ref m) = config.model {
                 output.push_str(&format!("  Model: {}\n", m));
             } else {
-                output.push_str(&format!("  Model: {} (default)\n", config.provider.default_model()));
+                output.push_str(&format!(
+                    "  Model: {} (default)\n",
+                    config.provider.default_model()
+                ));
             }
             if let Some(ref p) = config.prompt {
                 let preview = if p.len() > 200 {
@@ -120,12 +129,13 @@ pub async fn configure_expert<C: ToolContext>(
         }
 
         ExpertConfigAction::Delete => {
-            let role_key = role.as_deref()
+            let role_key = role
+                .as_deref()
                 .ok_or("Role is required for 'delete' action")?;
 
             // Validate role (expert roles + special system roles like "background")
-            let is_valid_role = ExpertRole::from_db_key(role_key).is_some()
-                || role_key == "background";
+            let is_valid_role =
+                ExpertRole::from_db_key(role_key).is_some() || role_key == "background";
             if !is_valid_role {
                 return Err(format!(
                     "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
@@ -140,9 +150,15 @@ pub async fn configure_expert<C: ToolContext>(
                 .await?;
 
             if deleted {
-                Ok(format!("Configuration deleted for '{}'. Reverted to defaults.", role_key))
+                Ok(format!(
+                    "Configuration deleted for '{}'. Reverted to defaults.",
+                    role_key
+                ))
             } else {
-                Ok(format!("No custom configuration was set for '{}'.", role_key))
+                Ok(format!(
+                    "No custom configuration was set for '{}'.",
+                    role_key
+                ))
             }
         }
 
@@ -180,7 +196,10 @@ pub async fn configure_expert<C: ToolContext>(
             let available = factory.available_providers();
 
             if available.is_empty() {
-                Ok("No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.".to_string())
+                Ok(
+                    "No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY."
+                        .to_string(),
+                )
             } else {
                 let mut output = format!("{} LLM providers available:\n\n", available.len());
                 for p in &available {
@@ -188,7 +207,9 @@ pub async fn configure_expert<C: ToolContext>(
                     let default_marker = if is_default { " (default)" } else { "" };
                     output.push_str(&format!(
                         "  {}: model={}{}\n",
-                        p, p.default_model(), default_marker
+                        p,
+                        p.default_model(),
+                        default_marker
                     ));
                 }
                 output.push_str("\nSet DEFAULT_LLM_PROVIDER env var to change the global default.");

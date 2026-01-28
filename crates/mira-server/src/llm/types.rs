@@ -91,7 +91,11 @@ pub struct Tool {
 }
 
 impl Tool {
-    pub fn function(name: impl Into<String>, description: impl Into<String>, parameters: Value) -> Self {
+    pub fn function(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: Value,
+    ) -> Self {
         Self {
             tool_type: "function".into(),
             function: FunctionDef {

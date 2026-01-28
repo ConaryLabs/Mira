@@ -5,7 +5,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use super::{ExpertRole, ComplexityAssessment, CollaborationMode};
+use super::{CollaborationMode, ComplexityAssessment, ExpertRole};
 
 /// Decision about how experts should collaborate
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +37,8 @@ pub fn decide_collaboration(
     requested_experts: &[ExpertRole],
 ) -> Result<CollaborationDecision> {
     // Check for matching collaboration patterns
-    if let Some(pattern) = find_matching_collaboration_pattern(conn, &complexity.domains_involved)? {
+    if let Some(pattern) = find_matching_collaboration_pattern(conn, &complexity.domains_involved)?
+    {
         if pattern.success_rate >= 0.6 {
             return Ok(CollaborationDecision {
                 mode: pattern.collaboration_mode,
@@ -58,7 +59,8 @@ pub fn decide_collaboration(
         CollaborationDecision {
             mode: CollaborationMode::Parallel,
             experts,
-            rationale: "High complexity with multiple domains requires parallel expert analysis".to_string(),
+            rationale: "High complexity with multiple domains requires parallel expert analysis"
+                .to_string(),
             estimated_benefit: 0.3,
         }
     } else if complexity.score > 0.4 && complexity.domains_involved.len() > 1 {
@@ -73,7 +75,12 @@ pub fn decide_collaboration(
     } else if complexity.risk_level > 0.6 {
         // High risk - use security expert as lead
         let mut experts = vec![ExpertRole::Security];
-        experts.extend(requested_experts.iter().filter(|e| **e != ExpertRole::Security).cloned());
+        experts.extend(
+            requested_experts
+                .iter()
+                .filter(|e| **e != ExpertRole::Security)
+                .cloned(),
+        );
         CollaborationDecision {
             mode: CollaborationMode::Hierarchical,
             experts,
@@ -198,11 +205,19 @@ fn prioritize_experts_by_domain(domains: &[String]) -> Vec<ExpertRole> {
 }
 
 /// Store a collaboration pattern
-pub fn store_collaboration_pattern(conn: &Connection, pattern: &CollaborationPattern) -> Result<i64> {
+pub fn store_collaboration_pattern(
+    conn: &Connection,
+    pattern: &CollaborationPattern,
+) -> Result<i64> {
     let domains_json = serde_json::to_string(&pattern.problem_domains).unwrap_or_default();
     let experts_json = serde_json::to_string(
-        &pattern.recommended_experts.iter().map(|e| e.as_str()).collect::<Vec<_>>()
-    ).unwrap_or_default();
+        &pattern
+            .recommended_experts
+            .iter()
+            .map(|e| e.as_str())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_default();
 
     let sql = r#"
         INSERT INTO collaboration_patterns
@@ -215,22 +230,29 @@ pub fn store_collaboration_pattern(conn: &Connection, pattern: &CollaborationPat
             last_used_at = datetime('now')
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        domains_json,
-        pattern.complexity_threshold,
-        experts_json,
-        pattern.collaboration_mode.as_str(),
-        pattern.synthesis_method,
-        pattern.success_rate,
-        pattern.time_saved_percent,
-        pattern.occurrence_count,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            domains_json,
+            pattern.complexity_threshold,
+            experts_json,
+            pattern.collaboration_mode.as_str(),
+            pattern.synthesis_method,
+            pattern.success_rate,
+            pattern.time_saved_percent,
+            pattern.occurrence_count,
+        ],
+    )?;
 
     Ok(conn.last_insert_rowid())
 }
 
 /// Update collaboration pattern success based on outcome
-pub fn update_collaboration_success(conn: &Connection, pattern_id: i64, was_successful: bool) -> Result<()> {
+pub fn update_collaboration_success(
+    conn: &Connection,
+    pattern_id: i64,
+    was_successful: bool,
+) -> Result<()> {
     let success_value = if was_successful { 1.0 } else { 0.0 };
 
     let sql = r#"
@@ -265,7 +287,12 @@ pub fn synthesize_expert_results(
                 .iter()
                 .enumerate()
                 .map(|(i, (role, result))| {
-                    format!("## Step {}: {} Analysis\n\n{}", i + 1, role.as_str(), result)
+                    format!(
+                        "## Step {}: {} Analysis\n\n{}",
+                        i + 1,
+                        role.as_str(),
+                        result
+                    )
                 })
                 .collect();
             sections.join("\n\n")
@@ -275,7 +302,9 @@ pub fn synthesize_expert_results(
             if let Some((lead, lead_result)) = results.first() {
                 let supporting: Vec<String> = results[1..]
                     .iter()
-                    .map(|(role, result)| format!("### Supporting: {}\n\n{}", role.as_str(), result))
+                    .map(|(role, result)| {
+                        format!("### Supporting: {}\n\n{}", role.as_str(), result)
+                    })
                     .collect();
 
                 format!(

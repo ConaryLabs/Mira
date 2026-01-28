@@ -35,9 +35,13 @@ impl BehaviorTracker {
     }
 
     /// Log a behavior event
-    pub fn log_event(&mut self, conn: &Connection, event_type: EventType, data: serde_json::Value) -> Result<i64> {
-        let time_since_last = self.last_event_time
-            .map(|t| t.elapsed().as_millis() as i64);
+    pub fn log_event(
+        &mut self,
+        conn: &Connection,
+        event_type: EventType,
+        data: serde_json::Value,
+    ) -> Result<i64> {
+        let time_since_last = self.last_event_time.map(|t| t.elapsed().as_millis() as i64);
 
         self.sequence_position += 1;
         self.last_event_time = Some(Instant::now());
@@ -48,20 +52,28 @@ impl BehaviorTracker {
             VALUES (?, ?, ?, ?, ?, ?)
         "#;
 
-        conn.execute(sql, rusqlite::params![
-            self.project_id,
-            &self.session_id,
-            event_type.as_str(),
-            data.to_string(),
-            self.sequence_position,
-            time_since_last,
-        ])?;
+        conn.execute(
+            sql,
+            rusqlite::params![
+                self.project_id,
+                &self.session_id,
+                event_type.as_str(),
+                data.to_string(),
+                self.sequence_position,
+                time_since_last,
+            ],
+        )?;
 
         Ok(conn.last_insert_rowid())
     }
 
     /// Log file access
-    pub fn log_file_access(&mut self, conn: &Connection, file_path: &str, action: &str) -> Result<i64> {
+    pub fn log_file_access(
+        &mut self,
+        conn: &Connection,
+        file_path: &str,
+        action: &str,
+    ) -> Result<i64> {
         let data = serde_json::json!({
             "file_path": file_path,
             "action": action,
@@ -70,7 +82,12 @@ impl BehaviorTracker {
     }
 
     /// Log tool usage
-    pub fn log_tool_use(&mut self, conn: &Connection, tool_name: &str, args_summary: Option<&str>) -> Result<i64> {
+    pub fn log_tool_use(
+        &mut self,
+        conn: &Connection,
+        tool_name: &str,
+        args_summary: Option<&str>,
+    ) -> Result<i64> {
         let data = serde_json::json!({
             "tool_name": tool_name,
             "args_summary": args_summary,
@@ -79,7 +96,12 @@ impl BehaviorTracker {
     }
 
     /// Log user query/prompt
-    pub fn log_query(&mut self, conn: &Connection, query_text: &str, query_type: &str) -> Result<i64> {
+    pub fn log_query(
+        &mut self,
+        conn: &Connection,
+        query_text: &str,
+        query_type: &str,
+    ) -> Result<i64> {
         // Hash or truncate the query for privacy
         let query_summary = if query_text.len() > 200 {
             format!("{}...", &query_text[..200])
@@ -96,7 +118,12 @@ impl BehaviorTracker {
     }
 
     /// Log context switch (e.g., moving to a different area of the codebase)
-    pub fn log_context_switch(&mut self, conn: &Connection, from_context: &str, to_context: &str) -> Result<i64> {
+    pub fn log_context_switch(
+        &mut self,
+        conn: &Connection,
+        from_context: &str,
+        to_context: &str,
+    ) -> Result<i64> {
         let data = serde_json::json!({
             "from": from_context,
             "to": to_context,
@@ -106,7 +133,11 @@ impl BehaviorTracker {
 }
 
 /// Get recent events for a session
-pub fn get_session_events(conn: &Connection, session_id: &str, limit: i64) -> Result<Vec<BehaviorEvent>> {
+pub fn get_session_events(
+    conn: &Connection,
+    session_id: &str,
+    limit: i64,
+) -> Result<Vec<BehaviorEvent>> {
     let sql = r#"
         SELECT event_type, event_data, created_at
         FROM session_behavior_log
@@ -148,7 +179,11 @@ pub fn get_session_events(conn: &Connection, session_id: &str, limit: i64) -> Re
 }
 
 /// Get recent file access sequence for a project
-pub fn get_recent_file_sequence(conn: &Connection, project_id: i64, limit: i64) -> Result<Vec<String>> {
+pub fn get_recent_file_sequence(
+    conn: &Connection,
+    project_id: i64,
+    limit: i64,
+) -> Result<Vec<String>> {
     let sql = r#"
         SELECT DISTINCT json_extract(event_data, '$.file_path') as file_path
         FROM session_behavior_log
@@ -160,9 +195,7 @@ pub fn get_recent_file_sequence(conn: &Connection, project_id: i64, limit: i64) 
     "#;
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([project_id, limit], |row| {
-        row.get::<_, String>(0)
-    })?;
+    let rows = stmt.query_map([project_id, limit], |row| row.get::<_, String>(0))?;
 
     let files: Vec<String> = rows.flatten().collect();
     Ok(files)

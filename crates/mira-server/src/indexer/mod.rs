@@ -1,9 +1,9 @@
 // crates/mira-server/src/indexer/mod.rs
 // Code indexing for symbol extraction and semantic search
 
-pub mod parsers;
 mod batch;
 mod chunking;
+pub mod parsers;
 mod parsing;
 mod project;
 mod types;

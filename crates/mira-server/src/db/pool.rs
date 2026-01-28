@@ -130,8 +130,14 @@ impl DatabasePool {
                         Ok::<_, rusqlite::Error>(())
                     })
                     .await
-                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into()))?
-                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("connection setup failed: {e}").into()))
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
+                    })?
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(
+                            format!("connection setup failed: {e}").into(),
+                        )
+                    })
                 })
             }))
             .build()
@@ -174,8 +180,14 @@ impl DatabasePool {
                         Ok::<_, rusqlite::Error>(())
                     })
                     .await
-                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into()))?
-                    .map_err(|e| deadpool_sqlite::HookError::Message(format!("connection setup failed: {e}").into()))
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
+                    })?
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(
+                            format!("connection setup failed: {e}").into(),
+                        )
+                    })
                 })
             }))
             .build()
@@ -422,11 +434,9 @@ mod tests {
         // Verify from another connection in the pool (tests shared cache)
         let name: String = pool
             .interact(move |conn| {
-                conn.query_row(
-                    "SELECT name FROM projects WHERE id = ?",
-                    [result],
-                    |row| row.get(0),
-                )
+                conn.query_row("SELECT name FROM projects WHERE id = ?", [result], |row| {
+                    row.get(0)
+                })
                 .map_err(Into::into)
             })
             .await

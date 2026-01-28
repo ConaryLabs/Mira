@@ -83,7 +83,9 @@ impl UserIdentity {
 
     /// Get identity from MIRA_USER_ID environment variable
     fn from_env() -> Option<Self> {
-        let identity = std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty())?;
+        let identity = std::env::var("MIRA_USER_ID")
+            .ok()
+            .filter(|s| !s.is_empty())?;
 
         // Try to parse "Name <email>" format
         let (display_name, email) = parse_identity_string(&identity);
@@ -124,8 +126,16 @@ fn parse_identity_string(s: &str) -> (Option<String>, Option<String>) {
             let name = s[..bracket_start].trim();
             let email = s[bracket_start + 1..bracket_end].trim();
             return (
-                if name.is_empty() { None } else { Some(name.to_string()) },
-                if email.is_empty() { None } else { Some(email.to_string()) },
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(name.to_string())
+                },
+                if email.is_empty() {
+                    None
+                } else {
+                    Some(email.to_string())
+                },
             );
         }
     }

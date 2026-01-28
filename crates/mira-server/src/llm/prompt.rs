@@ -291,7 +291,13 @@ mod tests {
         let builder = PromptBuilder::new("Role instructions");
         let messages = builder.build_messages("User content here");
 
-        assert!(messages[0].content.as_ref().unwrap().contains("Role instructions"));
+        assert!(
+            messages[0]
+                .content
+                .as_ref()
+                .unwrap()
+                .contains("Role instructions")
+        );
         assert_eq!(messages[1].content.as_ref().unwrap(), "User content here");
     }
 
@@ -301,7 +307,8 @@ mod tests {
 
     #[test]
     fn test_for_expert() {
-        let builder = PromptBuilder::for_expert("Security Expert", "Analyze code for vulnerabilities");
+        let builder =
+            PromptBuilder::for_expert("Security Expert", "Analyze code for vulnerabilities");
         let prompt = builder.build_system_prompt();
 
         assert!(prompt.contains("Security Expert"));

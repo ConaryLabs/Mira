@@ -4,7 +4,7 @@
 use crate::embeddings::GoogleEmbeddingModel;
 use crate::llm::Provider;
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::Database;
 
@@ -95,21 +95,22 @@ pub fn set_expert_config_sync(
 
 /// Delete custom system prompt (sync version for pool.interact)
 pub fn delete_custom_prompt_sync(conn: &Connection, role: &str) -> rusqlite::Result<bool> {
-    let deleted = conn.execute(
-        "DELETE FROM system_prompts WHERE role = ?",
-        params![role],
-    )?;
+    let deleted = conn.execute("DELETE FROM system_prompts WHERE role = ?", params![role])?;
     Ok(deleted > 0)
 }
 
 /// List all custom prompts with provider info (sync version for pool.interact)
-pub fn list_custom_prompts_sync(conn: &Connection) -> rusqlite::Result<Vec<(String, String, String, Option<String>)>> {
+pub fn list_custom_prompts_sync(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<(String, String, String, Option<String>)>> {
     let mut stmt = conn.prepare(
         "SELECT role, prompt, COALESCE(provider, 'deepseek'), model FROM system_prompts ORDER BY role",
     )?;
 
     let results = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -204,7 +205,12 @@ impl Database {
     }
 
     /// Set LLM provider for an expert role
-    pub fn set_expert_provider(&self, role: &str, provider: Provider, model: Option<&str>) -> Result<()> {
+    pub fn set_expert_provider(
+        &self,
+        role: &str,
+        provider: Provider,
+        model: Option<&str>,
+    ) -> Result<()> {
         let conn = self.conn();
         // Use a dummy prompt if none exists, we're primarily setting provider/model
         conn.execute(
@@ -275,10 +281,7 @@ impl Database {
     /// Delete custom system prompt (revert to default)
     pub fn delete_custom_prompt(&self, role: &str) -> Result<bool> {
         let conn = self.conn();
-        let deleted = conn.execute(
-            "DELETE FROM system_prompts WHERE role = ?",
-            params![role],
-        )?;
+        let deleted = conn.execute("DELETE FROM system_prompts WHERE role = ?", params![role])?;
         Ok(deleted > 0)
     }
 
@@ -290,7 +293,9 @@ impl Database {
         )?;
 
         let results = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -318,7 +323,10 @@ impl Database {
 
     /// Check if embedding model can be safely used
     /// Returns Ok(()) if safe, Err with warning message if model mismatch detected
-    pub fn check_embedding_model(&self, model: GoogleEmbeddingModel) -> Result<EmbeddingModelCheck> {
+    pub fn check_embedding_model(
+        &self,
+        model: GoogleEmbeddingModel,
+    ) -> Result<EmbeddingModelCheck> {
         let stored = self.get_embedding_model()?;
 
         match stored {
@@ -332,9 +340,7 @@ impl Database {
                 }
                 Ok(EmbeddingModelCheck::FirstUse)
             }
-            Some(stored_model) if stored_model == model => {
-                Ok(EmbeddingModelCheck::Matches)
-            }
+            Some(stored_model) if stored_model == model => Ok(EmbeddingModelCheck::Matches),
             Some(stored_model) => {
                 // Model mismatch!
                 let has_vectors = self.has_existing_vectors()?;
@@ -350,11 +356,11 @@ impl Database {
     /// Check if any vectors exist in the database
     fn has_existing_vectors(&self) -> Result<bool> {
         let conn = self.conn();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_code LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_code LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap_or(0);
         Ok(count > 0)
     }
 }

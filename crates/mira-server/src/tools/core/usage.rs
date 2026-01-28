@@ -2,7 +2,7 @@
 // LLM usage analytics tool
 
 use super::ToolContext;
-use crate::db::{query_llm_usage_stats, get_llm_usage_summary};
+use crate::db::{get_llm_usage_summary, query_llm_usage_stats};
 use crate::mcp::requests::UsageAction;
 
 /// Query LLM usage statistics
@@ -23,7 +23,9 @@ pub async fn usage<C: ToolContext>(
                 .run(move |conn| get_llm_usage_summary(conn, project_id, since_days))
                 .await?;
 
-            let period = since_days.map(|d| format!("last {} days", d)).unwrap_or_else(|| "all time".to_string());
+            let period = since_days
+                .map(|d| format!("last {} days", d))
+                .unwrap_or_else(|| "all time".to_string());
 
             Ok(format!(
                 "LLM Usage Summary ({})\n\n\
@@ -47,19 +49,26 @@ pub async fn usage<C: ToolContext>(
 
             let stats = ctx
                 .pool()
-                .run(move |conn| query_llm_usage_stats(conn, &group_by_clone, project_id, since_days))
+                .run(move |conn| {
+                    query_llm_usage_stats(conn, &group_by_clone, project_id, since_days)
+                })
                 .await?;
 
             if stats.is_empty() {
                 return Ok("No usage data found".to_string());
             }
 
-            let period = since_days.map(|d| format!("last {} days", d)).unwrap_or_else(|| "all time".to_string());
+            let period = since_days
+                .map(|d| format!("last {} days", d))
+                .unwrap_or_else(|| "all time".to_string());
 
             let mut output = format!("LLM Usage by {} ({})\n\n", group_by, period);
             output.push_str(&format!(
                 "{:<30} {:>8} {:>12} {:>10}\n",
-                group_by.to_uppercase(), "REQUESTS", "TOKENS", "COST"
+                group_by.to_uppercase(),
+                "REQUESTS",
+                "TOKENS",
+                "COST"
             ));
             output.push_str(&"-".repeat(65));
             output.push('\n');
@@ -100,7 +109,9 @@ pub async fn usage<C: ToolContext>(
                 return Ok("No usage data found".to_string());
             }
 
-            let period = since_days.map(|d| format!("last {} days", d)).unwrap_or_else(|| "all time".to_string());
+            let period = since_days
+                .map(|d| format!("last {} days", d))
+                .unwrap_or_else(|| "all time".to_string());
             let limit = limit.unwrap_or(50) as usize;
 
             let mut output = format!("Recent LLM Usage by Role ({}, limit {})\n\n", period, limit);
@@ -108,10 +119,7 @@ pub async fn usage<C: ToolContext>(
             for stat in stats.iter().take(limit) {
                 output.push_str(&format!(
                     "- {}: {} requests, {} tokens, ${:.4}\n",
-                    stat.group_key,
-                    stat.total_requests,
-                    stat.total_tokens,
-                    stat.total_cost
+                    stat.group_key, stat.total_requests, stat.total_tokens, stat.total_cost
                 ));
             }
 

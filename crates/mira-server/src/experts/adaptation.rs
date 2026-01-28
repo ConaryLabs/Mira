@@ -33,7 +33,10 @@ pub struct PerformanceMetrics {
 }
 
 /// Get the current active prompt version for an expert
-pub fn get_active_prompt_version(conn: &Connection, expert_role: ExpertRole) -> Result<Option<PromptVersion>> {
+pub fn get_active_prompt_version(
+    conn: &Connection,
+    expert_role: ExpertRole,
+) -> Result<Option<PromptVersion>> {
     let sql = r#"
         SELECT id, expert_role, version, prompt_additions, performance_metrics,
                adaptation_reason, consultation_count, acceptance_rate, is_active
@@ -98,12 +101,15 @@ pub fn create_prompt_version(
         VALUES (?, ?, ?, '{}', ?, 1)
     "#;
 
-    conn.execute(sql, rusqlite::params![
-        expert_role.as_str(),
-        new_version,
-        prompt_additions,
-        adaptation_reason,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            expert_role.as_str(),
+            new_version,
+            prompt_additions,
+            adaptation_reason,
+        ],
+    )?;
 
     Ok(conn.last_insert_rowid())
 }
@@ -197,19 +203,26 @@ pub fn build_adaptive_prompt(
         );
     } else if stats.acceptance_rate > 0.8 && stats.total_consultations >= 10 {
         additions.push(
-            "Note: Historical acceptance rate is high. Continue with thorough, detailed analysis.".to_string()
+            "Note: Historical acceptance rate is high. Continue with thorough, detailed analysis."
+                .to_string(),
         );
     }
 
     if additions.is_empty() {
         Ok(String::new())
     } else {
-        Ok(format!("\n[Adaptive Context]\n{}\n", additions.join("\n\n")))
+        Ok(format!(
+            "\n[Adaptive Context]\n{}\n",
+            additions.join("\n\n")
+        ))
     }
 }
 
 /// Check if prompt adaptation is needed based on performance
-pub fn should_adapt_prompt(conn: &Connection, expert_role: ExpertRole) -> Result<Option<AdaptationTrigger>> {
+pub fn should_adapt_prompt(
+    conn: &Connection,
+    expert_role: ExpertRole,
+) -> Result<Option<AdaptationTrigger>> {
     let sql = r#"
         SELECT
             COUNT(*) as recent_count,
@@ -290,10 +303,18 @@ impl AdaptationTrigger {
             AdaptationTrigger::PerformanceDrop { drop_percent, .. } => {
                 format!("Performance dropped {}% from baseline", drop_percent)
             }
-            AdaptationTrigger::PerformanceImprovement { improvement_percent, .. } => {
-                format!("Performance improved {}% from baseline", improvement_percent)
+            AdaptationTrigger::PerformanceImprovement {
+                improvement_percent,
+                ..
+            } => {
+                format!(
+                    "Performance improved {}% from baseline",
+                    improvement_percent
+                )
             }
-            AdaptationTrigger::NewPatternIdentified { pattern_description } => {
+            AdaptationTrigger::NewPatternIdentified {
+                pattern_description,
+            } => {
                 format!("New pattern identified: {}", pattern_description)
             }
             AdaptationTrigger::UserFeedbackTrend { feedback_summary } => {

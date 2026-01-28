@@ -54,7 +54,10 @@ impl ProviderFactory {
         // Initialize DeepSeek client
         if let Some(ref key) = api_keys.deepseek {
             info!("DeepSeek client initialized");
-            clients.insert(Provider::DeepSeek, Arc::new(DeepSeekClient::new(key.clone())));
+            clients.insert(
+                Provider::DeepSeek,
+                Arc::new(DeepSeekClient::new(key.clone())),
+            );
         }
 
         // Initialize Gemini client

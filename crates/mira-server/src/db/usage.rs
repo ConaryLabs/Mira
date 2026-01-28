@@ -2,14 +2,17 @@
 // Database operations for usage tracking (embeddings and LLM)
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 // ============================================================================
 // Embedding Usage
 // ============================================================================
 
 /// Insert an embedding usage record - sync version for pool.interact()
-pub fn insert_embedding_usage_sync(conn: &Connection, record: &EmbeddingUsageRecord) -> Result<i64> {
+pub fn insert_embedding_usage_sync(
+    conn: &Connection,
+    record: &EmbeddingUsageRecord,
+) -> Result<i64> {
     conn.execute(
         "INSERT INTO embeddings_usage (
             provider, model, tokens, text_count, cost_estimate, project_id
@@ -177,7 +180,9 @@ pub fn query_llm_usage_stats(
         params_vec.push(Box::new(-(days as i32)));
     }
 
-    sql.push_str(&format!(" GROUP BY {group_column} ORDER BY total_cost DESC"));
+    sql.push_str(&format!(
+        " GROUP BY {group_column} ORDER BY total_cost DESC"
+    ));
 
     let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
 
@@ -217,7 +222,7 @@ pub fn get_llm_usage_summary(
             COALESCE(SUM(cost_estimate), 0) as total_cost,
             AVG(duration_ms) as avg_duration_ms
         FROM llm_usage
-        WHERE 1=1"
+        WHERE 1=1",
     );
 
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();

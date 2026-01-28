@@ -32,7 +32,12 @@ pub async fn scan_existing_docs(
     let mut doc_files = collect_markdown_files(&docs_dir);
 
     // Also add root-level documentation files
-    for file in ["README.md", "CONTRIBUTING.md", "CONFIGURATION.md", "ARCHITECTURE.md"] {
+    for file in [
+        "README.md",
+        "CONTRIBUTING.md",
+        "CONFIGURATION.md",
+        "ARCHITECTURE.md",
+    ] {
         let file_path = project_path.join(file);
         if file_path.exists() {
             doc_files.push(file_path);
@@ -47,7 +52,10 @@ pub async fn scan_existing_docs(
             project_path,
             &file_path,
             current_commit.as_deref(),
-        ).await.is_ok() {
+        )
+        .await
+        .is_ok()
+        {
             scanned += 1;
         }
     }
@@ -112,7 +120,9 @@ async fn inventory_file(
         None
     };
 
-    let source_symbols = source_signature_hash.as_ref().map(|_| "from_source".to_string());
+    let source_symbols = source_signature_hash
+        .as_ref()
+        .map(|_| "from_source".to_string());
 
     // Convert git_commit reference to owned String
     let git_commit_owned = git_commit.map(|s| s.to_string());
@@ -129,7 +139,8 @@ async fn inventory_file(
             source_signature_hash.as_deref(),
             source_symbols.as_deref(),
             git_commit_owned.as_deref(),
-        ).map_err(|e| anyhow::anyhow!("{}", e))
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -169,12 +180,10 @@ fn classify_document(path: &str) -> (String, Option<String>) {
 /// Extract title from markdown file (first # heading)
 async fn extract_title(file_path: &Path) -> Option<String> {
     let file_path_buf = file_path.to_path_buf();
-    let content = tokio::task::spawn_blocking(move || {
-        read_file_content(&file_path_buf).ok()
-    })
-    .await
-    .ok()
-    .flatten()?;
+    let content = tokio::task::spawn_blocking(move || read_file_content(&file_path_buf).ok())
+        .await
+        .ok()
+        .flatten()?;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -225,12 +234,13 @@ async fn get_source_signature(
     let source_path = source_path.to_string();
 
     // Get symbols from db - returns (id, name, symbol_type, start_line, end_line, signature)
-    let symbols = pool.interact(move |conn| {
-        get_symbols_for_file_sync(conn, project_id, &source_path)
-            .map_err(|e| anyhow::anyhow!("{}", e))
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let symbols = pool
+        .interact(move |conn| {
+            get_symbols_for_file_sync(conn, project_id, &source_path)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if symbols.is_empty() {
         return Ok(None);

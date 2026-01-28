@@ -4,12 +4,11 @@
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::indexer::batch::{
-    flush_chunks, flush_code_batch,
-    PendingChunk, PendingFileBatch,
-    SYMBOL_FLUSH_THRESHOLD, FILE_FLUSH_THRESHOLD, CHUNK_FLUSH_THRESHOLD,
+    CHUNK_FLUSH_THRESHOLD, FILE_FLUSH_THRESHOLD, PendingChunk, PendingFileBatch,
+    SYMBOL_FLUSH_THRESHOLD, flush_chunks, flush_code_batch,
 };
 use crate::indexer::chunking::create_semantic_chunks;
-use crate::indexer::parsing::{extract_all, Symbol, Import, FunctionCall};
+use crate::indexer::parsing::{FunctionCall, Import, Symbol, extract_all};
 use crate::indexer::types::{IndexStats, ParsedSymbol};
 use crate::project_files::walker::FileWalker;
 use anyhow::Result;
@@ -50,7 +49,10 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
 }
 
 /// Clear existing data for a project from all relevant tables
-async fn clear_existing_project_data(pool: Arc<DatabasePool>, project_id: Option<i64>) -> Result<()> {
+async fn clear_existing_project_data(
+    pool: Arc<DatabasePool>,
+    project_id: Option<i64>,
+) -> Result<()> {
     use crate::db::clear_project_index_sync;
 
     tracing::info!("Clearing existing data...");
@@ -74,7 +76,10 @@ struct ParsedFile {
 }
 
 /// Parse all files in parallel using rayon (CPU-bound work)
-fn parse_files_parallel(files: &[std::path::PathBuf], base_path: &Path) -> (Vec<ParsedFile>, usize) {
+fn parse_files_parallel(
+    files: &[std::path::PathBuf],
+    base_path: &Path,
+) -> (Vec<ParsedFile>, usize) {
     let results: Vec<_> = files
         .par_iter()
         .map(|file_path| {
@@ -165,7 +170,9 @@ async fn process_parsed_files(
 
         // Check if we should flush accumulated batches
         let total_batched_symbols: usize = pending_batches.iter().map(|b| b.symbols.len()).sum();
-        if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD || pending_batches.len() >= FILE_FLUSH_THRESHOLD {
+        if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD
+            || pending_batches.len() >= FILE_FLUSH_THRESHOLD
+        {
             let flush_start = std::time::Instant::now();
             flush_code_batch(pending_batches, pool.clone(), project_id, stats).await?;
             tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
@@ -193,7 +200,8 @@ async fn process_parsed_files(
                     embeddings.clone(),
                     project_id,
                     stats,
-                ).await?;
+                )
+                .await?;
             }
         }
     }
@@ -221,7 +229,8 @@ async fn flush_remaining_data(
         embeddings.clone(),
         project_id,
         stats,
-    ).await?;
+    )
+    .await?;
 
     Ok(())
 }
@@ -251,8 +260,6 @@ pub async fn index_project(
         chunks: 0,
         errors: 0,
     };
-
-
 
     tracing::info!("Collecting files...");
     let files = collect_files_to_index(path, &mut stats);
@@ -287,7 +294,8 @@ pub async fn index_project(
         embeddings.clone(),
         project_id,
         &mut stats,
-    ).await?;
+    )
+    .await?;
 
     // Flush any remaining batches and chunks
     flush_remaining_data(
@@ -297,7 +305,8 @@ pub async fn index_project(
         embeddings.clone(),
         project_id,
         &mut stats,
-    ).await?;
+    )
+    .await?;
 
     // Rebuild FTS5 full-text search index for this project
     rebuild_fts_index_if_needed(pool.clone(), project_id).await;
@@ -305,12 +314,17 @@ pub async fn index_project(
     if stats.errors > 0 {
         tracing::warn!(
             "Indexing complete with errors: {} files, {} symbols, {} chunks, {} errors",
-            stats.files, stats.symbols, stats.chunks, stats.errors
+            stats.files,
+            stats.symbols,
+            stats.chunks,
+            stats.errors
         );
     } else {
         tracing::info!(
             "Indexing complete: {} files, {} symbols, {} chunks",
-            stats.files, stats.symbols, stats.chunks
+            stats.files,
+            stats.symbols,
+            stats.chunks
         );
     }
     Ok(stats)

@@ -2,7 +2,7 @@
 // Database operations for semantic diff analysis
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::Database;
 
@@ -237,7 +237,11 @@ impl Database {
     }
 
     /// Delete old diff analyses (keep only recent N per project)
-    pub fn cleanup_old_diff_analyses(&self, project_id: Option<i64>, keep_count: usize) -> Result<usize> {
+    pub fn cleanup_old_diff_analyses(
+        &self,
+        project_id: Option<i64>,
+        keep_count: usize,
+    ) -> Result<usize> {
         let conn = self.conn();
         let sql = "DELETE FROM diff_analyses
                    WHERE (project_id = ? OR (project_id IS NULL AND ? IS NULL))
@@ -249,7 +253,13 @@ impl Database {
                          )";
         let deleted = conn.execute(
             sql,
-            params![project_id, project_id, project_id, project_id, keep_count as i64],
+            params![
+                project_id,
+                project_id,
+                project_id,
+                project_id,
+                keep_count as i64
+            ],
         )?;
         Ok(deleted)
     }
@@ -268,19 +278,21 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
 
-        let id = db.store_diff_analysis(
-            Some(project_id),
-            "abc123",
-            "def456",
-            "commit",
-            Some(r#"[{"change_type": "NewFunction", "file_path": "src/main.rs"}]"#),
-            Some(r#"{"affected_functions": []}"#),
-            Some(r#"{"overall": "Low", "flags": []}"#),
-            Some("Added new function for handling errors"),
-            Some(2),
-            Some(50),
-            Some(10),
-        ).unwrap();
+        let id = db
+            .store_diff_analysis(
+                Some(project_id),
+                "abc123",
+                "def456",
+                "commit",
+                Some(r#"[{"change_type": "NewFunction", "file_path": "src/main.rs"}]"#),
+                Some(r#"{"affected_functions": []}"#),
+                Some(r#"{"overall": "Low", "flags": []}"#),
+                Some("Added new function for handling errors"),
+                Some(2),
+                Some(50),
+                Some(10),
+            )
+            .unwrap();
 
         assert!(id > 0);
 
@@ -294,19 +306,11 @@ mod tests {
     fn test_store_diff_analysis_minimal() {
         let db = Database::open_in_memory().unwrap();
 
-        let id = db.store_diff_analysis(
-            None,
-            "commit1",
-            "commit2",
-            "simple",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ).unwrap();
+        let id = db
+            .store_diff_analysis(
+                None, "commit1", "commit2", "simple", None, None, None, None, None, None, None,
+            )
+            .unwrap();
 
         assert!(id > 0);
 
@@ -327,7 +331,9 @@ mod tests {
         let (project_id, _) = db.get_or_create_project("/test", None).unwrap();
 
         // No cached analysis initially
-        let cached = db.get_cached_diff_analysis(Some(project_id), "abc123", "def456").unwrap();
+        let cached = db
+            .get_cached_diff_analysis(Some(project_id), "abc123", "def456")
+            .unwrap();
         assert!(cached.is_none());
 
         // Store one
@@ -343,10 +349,13 @@ mod tests {
             Some(1),
             Some(10),
             Some(5),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Now should find it
-        let cached = db.get_cached_diff_analysis(Some(project_id), "abc123", "def456").unwrap();
+        let cached = db
+            .get_cached_diff_analysis(Some(project_id), "abc123", "def456")
+            .unwrap();
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().summary, Some("Test summary".to_string()));
     }
@@ -361,15 +370,26 @@ mod tests {
             "abc123",
             "def456",
             "commit",
-            None, None, None, None, None, None, None,
-        ).unwrap();
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // Wrong to_commit
-        let cached = db.get_cached_diff_analysis(Some(project_id), "abc123", "wrong").unwrap();
+        let cached = db
+            .get_cached_diff_analysis(Some(project_id), "abc123", "wrong")
+            .unwrap();
         assert!(cached.is_none());
 
         // Wrong from_commit
-        let cached = db.get_cached_diff_analysis(Some(project_id), "wrong", "def456").unwrap();
+        let cached = db
+            .get_cached_diff_analysis(Some(project_id), "wrong", "def456")
+            .unwrap();
         assert!(cached.is_none());
     }
 
@@ -398,8 +418,15 @@ mod tests {
                 &format!("from{}", i),
                 &format!("to{}", i),
                 "commit",
-                None, None, None, None, None, None, None,
-            ).unwrap();
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         }
 
         // Request only 3
@@ -434,8 +461,15 @@ mod tests {
                 &format!("from{}", i),
                 &format!("to{}", i),
                 "commit",
-                None, None, None, None, None, None, None,
-            ).unwrap();
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         }
 
         // Keep only 2
@@ -459,8 +493,15 @@ mod tests {
                 &format!("from{}", i),
                 &format!("to{}", i),
                 "commit",
-                None, None, None, None, None, None, None,
-            ).unwrap();
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         }
 
         // Keep 5 (more than we have)
@@ -475,9 +516,11 @@ mod tests {
     #[test]
     fn test_diff_analysis_clone() {
         let db = Database::open_in_memory().unwrap();
-        let id = db.store_diff_analysis(
-            None, "a", "b", "test", None, None, None, None, None, None, None,
-        ).unwrap();
+        let id = db
+            .store_diff_analysis(
+                None, "a", "b", "test", None, None, None, None, None, None, None,
+            )
+            .unwrap();
 
         let analysis = db.get_diff_analysis(id).unwrap().unwrap();
         let cloned = analysis.clone();

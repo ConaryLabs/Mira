@@ -1,22 +1,21 @@
 // crates/mira-server/src/background/watcher.rs
 // File system watcher for automatic incremental indexing
 
-use super::code_health;
 use super::FastLaneNotify;
+use super::code_health;
 use crate::config::ignore;
-use crate::db::{
-    SymbolInsert, ImportInsert,
-    insert_symbol_sync, insert_import_sync, queue_pending_embedding_sync,
-    clear_file_index_sync,
-};
 use crate::db::pool::DatabasePool;
+use crate::db::{
+    ImportInsert, SymbolInsert, clear_file_index_sync, insert_import_sync, insert_symbol_sync,
+    queue_pending_embedding_sync,
+};
 use crate::indexer;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, watch, RwLock};
+use tokio::sync::{RwLock, mpsc, watch};
 
 /// Supported file extensions
 const SUPPORTED_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "go"];
@@ -62,7 +61,11 @@ impl FileWatcher {
     pub async fn watch_project(&self, project_id: i64, project_path: PathBuf) {
         let mut projects = self.watched_projects.write().await;
         projects.entry(project_id).or_insert_with(|| {
-            tracing::info!("Starting file watch for project {} at {:?}", project_id, project_path);
+            tracing::info!(
+                "Starting file watch for project {} at {:?}",
+                project_id,
+                project_path
+            );
             project_path
         });
     }
@@ -71,7 +74,11 @@ impl FileWatcher {
     pub async fn unwatch_project(&self, project_id: i64) {
         let mut projects = self.watched_projects.write().await;
         if let Some(path) = projects.remove(&project_id) {
-            tracing::info!("Stopped file watch for project {} at {:?}", project_id, path);
+            tracing::info!(
+                "Stopped file watch for project {} at {:?}",
+                project_id,
+                path
+            );
         }
     }
 
@@ -235,7 +242,11 @@ impl FileWatcher {
     }
 
     /// Process a single file change
-    async fn process_file_change(&self, path: &Path, change_type: ChangeType) -> Result<(), String> {
+    async fn process_file_change(
+        &self,
+        path: &Path,
+        change_type: ChangeType,
+    ) -> Result<(), String> {
         // Find which project this file belongs to
         let (project_id, relative_path) = {
             let projects = self.watched_projects.read().await;
@@ -259,8 +270,13 @@ impl FileWatcher {
                 self.delete_file_data(project_id, &rel_path_str).await?;
             }
             ChangeType::Created | ChangeType::Modified => {
-                tracing::info!("File {}: {}",
-                    if change_type == ChangeType::Created { "created" } else { "modified" },
+                tracing::info!(
+                    "File {}: {}",
+                    if change_type == ChangeType::Created {
+                        "created"
+                    } else {
+                        "modified"
+                    },
                     rel_path_str
                 );
                 self.update_file(project_id, path, &rel_path_str).await?;
@@ -268,10 +284,14 @@ impl FileWatcher {
         }
 
         // Mark project for health rescan (will run on next background cycle)
-        if let Err(e) = self.pool.interact(move |conn| {
-            code_health::mark_health_scan_needed_sync(conn, project_id)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        }).await {
+        if let Err(e) = self
+            .pool
+            .interact(move |conn| {
+                code_health::mark_health_scan_needed_sync(conn, project_id)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
             tracing::warn!("Failed to mark project for health scan: {}", e);
         }
 
@@ -281,17 +301,27 @@ impl FileWatcher {
     /// Delete all data associated with a file (runs on pool connection)
     async fn delete_file_data(&self, project_id: i64, file_path: &str) -> Result<(), String> {
         let file_path = file_path.to_string();
-        self.pool.interact(move |conn| -> Result<(), anyhow::Error> {
-            clear_file_index_sync(conn, project_id, &file_path)?;
-            tracing::debug!("Deleted data for file {} in project {}", file_path, project_id);
-            Ok(())
-        })
-        .await
-        .map_err(|e| e.to_string())
+        self.pool
+            .interact(move |conn| -> Result<(), anyhow::Error> {
+                clear_file_index_sync(conn, project_id, &file_path)?;
+                tracing::debug!(
+                    "Deleted data for file {} in project {}",
+                    file_path,
+                    project_id
+                );
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Update a file (re-parse and queue embeddings) - runs DB ops on pool connection
-    async fn update_file(&self, project_id: i64, full_path: &Path, relative_path: &str) -> Result<(), String> {
+    async fn update_file(
+        &self,
+        project_id: i64,
+        full_path: &Path,
+        relative_path: &str,
+    ) -> Result<(), String> {
         // First delete existing data for this file
         self.delete_file_data(project_id, relative_path).await?;
 
@@ -312,54 +342,57 @@ impl FileWatcher {
         };
 
         // Parse the file (CPU-bound, runs on current thread - that's fine)
-        let parse_result = indexer::parse_file(&content, language)
-            .map_err(|e| format!("Parse error: {}", e))?;
+        let parse_result =
+            indexer::parse_file(&content, language).map_err(|e| format!("Parse error: {}", e))?;
 
         // Run DB inserts on pool connection with a transaction for speed
         let relative_path = relative_path.to_string();
         let relative_path_for_db = relative_path.clone();
         let symbol_count = parse_result.symbols.len();
         let chunk_count = parse_result.chunks.len();
-        self.pool.interact(move |conn| -> Result<(), anyhow::Error> {
-            let relative_path = relative_path_for_db;
-            // Use a transaction for batch inserts (much faster)
-            let tx = conn.unchecked_transaction()?;
+        self.pool
+            .interact(move |conn| -> Result<(), anyhow::Error> {
+                let relative_path = relative_path_for_db;
+                // Use a transaction for batch inserts (much faster)
+                let tx = conn.unchecked_transaction()?;
 
-            // Insert symbols
-            for symbol in &parse_result.symbols {
-                let sym_insert = SymbolInsert {
-                    name: &symbol.name,
-                    symbol_type: &symbol.kind,
-                    start_line: symbol.start_line,
-                    end_line: symbol.end_line,
-                    signature: symbol.signature.as_deref(),
-                };
-                insert_symbol_sync(&tx, Some(project_id), &relative_path, &sym_insert)?;
-            }
+                // Insert symbols
+                for symbol in &parse_result.symbols {
+                    let sym_insert = SymbolInsert {
+                        name: &symbol.name,
+                        symbol_type: &symbol.kind,
+                        start_line: symbol.start_line,
+                        end_line: symbol.end_line,
+                        signature: symbol.signature.as_deref(),
+                    };
+                    insert_symbol_sync(&tx, Some(project_id), &relative_path, &sym_insert)?;
+                }
 
-            // Insert imports
-            for import in &parse_result.imports {
-                let import_insert = ImportInsert {
-                    import_path: &import.path,
-                    is_external: import.is_external,
-                };
-                insert_import_sync(&tx, Some(project_id), &relative_path, &import_insert)?;
-            }
+                // Insert imports
+                for import in &parse_result.imports {
+                    let import_insert = ImportInsert {
+                        import_path: &import.path,
+                        is_external: import.is_external,
+                    };
+                    insert_import_sync(&tx, Some(project_id), &relative_path, &import_insert)?;
+                }
 
-            // Queue chunks for background embedding
-            for chunk in &parse_result.chunks {
-                queue_pending_embedding_sync(
-                    &tx,
-                    Some(project_id),
-                    &relative_path,
-                    &chunk.content,
-                    chunk.start_line,
-                )?;
-            }
+                // Queue chunks for background embedding
+                for chunk in &parse_result.chunks {
+                    queue_pending_embedding_sync(
+                        &tx,
+                        Some(project_id),
+                        &relative_path,
+                        &chunk.content,
+                        chunk.start_line,
+                    )?;
+                }
 
-            tx.commit()?;
-            Ok(())
-        }).await.map_err(|e| e.to_string())?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())?;
 
         // Wake fast lane worker to process new embeddings immediately
         if let Some(ref notify) = self.fast_lane_notify {
@@ -368,7 +401,10 @@ impl FileWatcher {
 
         tracing::debug!(
             "Updated file {} in project {}: {} symbols, {} chunks queued",
-            relative_path, project_id, symbol_count, chunk_count
+            relative_path,
+            project_id,
+            symbol_count,
+            chunk_count
         );
 
         Ok(())
@@ -386,7 +422,11 @@ impl WatcherHandle {
     pub async fn watch(&self, project_id: i64, project_path: PathBuf) {
         let mut projects = self.watched_projects.write().await;
         projects.entry(project_id).or_insert_with(|| {
-            tracing::info!("Registering project {} for file watching at {:?}", project_id, project_path);
+            tracing::info!(
+                "Registering project {} for file watching at {:?}",
+                project_id,
+                project_path
+            );
             project_path
         });
     }

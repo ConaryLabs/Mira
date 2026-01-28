@@ -17,8 +17,7 @@ impl ApiKeys {
     /// Load API keys from environment variables (single source of truth)
     pub fn from_env() -> Self {
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
-        let gemini = Self::read_key("GEMINI_API_KEY")
-            .or_else(|| Self::read_key("GOOGLE_API_KEY"));
+        let gemini = Self::read_key("GEMINI_API_KEY").or_else(|| Self::read_key("GOOGLE_API_KEY"));
 
         let keys = Self { deepseek, gemini };
         keys.log_status();
@@ -27,9 +26,7 @@ impl ApiKeys {
 
     /// Read a single API key from environment, filtering empty values
     fn read_key(name: &str) -> Option<String> {
-        std::env::var(name)
-            .ok()
-            .filter(|k| !k.trim().is_empty())
+        std::env::var(name).ok().filter(|k| !k.trim().is_empty())
     }
 
     /// Log which API keys are available (without exposing values)
@@ -110,7 +107,10 @@ impl EmbeddingsConfig {
             debug!(dimensions = dims, "Custom embedding dimensions configured");
         }
 
-        Self { dimensions, task_type }
+        Self {
+            dimensions,
+            task_type,
+        }
     }
 
     /// Parse task type from string
@@ -206,7 +206,9 @@ impl EnvConfig {
         let config = Self {
             api_keys: ApiKeys::from_env(),
             embeddings: EmbeddingsConfig::from_env(),
-            default_provider: std::env::var("DEFAULT_LLM_PROVIDER").ok().filter(|s| !s.is_empty()),
+            default_provider: std::env::var("DEFAULT_LLM_PROVIDER")
+                .ok()
+                .filter(|s| !s.is_empty()),
             user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
         };
 
@@ -219,15 +221,14 @@ impl EnvConfig {
 
         // Check for LLM providers
         if !self.api_keys.has_llm_provider() {
-            validation.add_warning(
-                "No LLM API keys configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY."
-            );
+            validation
+                .add_warning("No LLM API keys configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.");
         }
 
         // Check for embeddings
         if !self.api_keys.has_embeddings() {
             validation.add_warning(
-                "No embeddings API key configured. Set GEMINI_API_KEY for semantic search."
+                "No embeddings API key configured. Set GEMINI_API_KEY for semantic search.",
             );
         }
 

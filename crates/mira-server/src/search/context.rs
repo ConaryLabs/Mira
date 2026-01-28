@@ -72,7 +72,9 @@ pub fn expand_context_with_conn(
     // Try to expand using symbol bounds from DB
     if let (Some(conn), Some(proj_path)) = (conn, project_path) {
         if let Some((kind, name)) = parse_symbol_header(chunk_content) {
-            if let Some((start_line, end_line)) = lookup_symbol_bounds_sync(conn, project_id, file_path, &name) {
+            if let Some((start_line, end_line)) =
+                lookup_symbol_bounds_sync(conn, project_id, file_path, &name)
+            {
                 let full_path = Path::new(proj_path).join(file_path);
                 if let Ok(file_content) = std::fs::read_to_string(&full_path) {
                     let all_lines: Vec<&str> = file_content.lines().collect();
@@ -83,7 +85,8 @@ pub fn expand_context_with_conn(
 
                     if start < all_lines.len() {
                         let full_symbol = all_lines[start..end].join("\n");
-                        let header = format!("// {} {} (lines {}-{})", kind, name, start_line, end_line);
+                        let header =
+                            format!("// {} {} (lines {}-{})", kind, name, start_line, end_line);
                         return Some((Some(header), full_symbol));
                     }
                 }
@@ -135,7 +138,9 @@ mod tests {
 
     #[test]
     fn test_parse_symbol_header_function_with_signature() {
-        let result = parse_symbol_header("// function foo: fn foo(x: i32) -> bool\nfn foo(x: i32) -> bool {}");
+        let result = parse_symbol_header(
+            "// function foo: fn foo(x: i32) -> bool\nfn foo(x: i32) -> bool {}",
+        );
         assert_eq!(result, Some(("function".to_string(), "foo".to_string())));
     }
 
@@ -159,7 +164,8 @@ mod tests {
 
     #[test]
     fn test_parse_symbol_header_method() {
-        let result = parse_symbol_header("// method process: fn process(&self)\nfn process(&self) {}");
+        let result =
+            parse_symbol_header("// method process: fn process(&self)\nfn process(&self) {}");
         assert_eq!(result, Some(("method".to_string(), "process".to_string())));
     }
 
@@ -191,7 +197,10 @@ mod tests {
     #[test]
     fn test_parse_symbol_header_whitespace_in_name() {
         let result = parse_symbol_header("// function my_func \nfn my_func() {}");
-        assert_eq!(result, Some(("function".to_string(), "my_func".to_string())));
+        assert_eq!(
+            result,
+            Some(("function".to_string(), "my_func".to_string()))
+        );
     }
 
     // ============================================================================

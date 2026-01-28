@@ -4,7 +4,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 use super::ExpertRole;
 
@@ -132,20 +132,23 @@ pub fn log_consultation(conn: &Connection, record: &ConsultationRecord) -> Resul
 
     let tools_json = serde_json::to_string(&record.tools_used).unwrap_or_default();
 
-    conn.execute(sql, rusqlite::params![
-        record.expert_role.as_str(),
-        record.project_id,
-        record.session_id,
-        record.context_hash,
-        record.problem_category,
-        record.context_summary,
-        tools_json,
-        record.tool_call_count,
-        record.consultation_duration_ms,
-        record.initial_confidence,
-        record.calibrated_confidence,
-        record.prompt_version,
-    ])?;
+    conn.execute(
+        sql,
+        rusqlite::params![
+            record.expert_role.as_str(),
+            record.project_id,
+            record.session_id,
+            record.context_hash,
+            record.problem_category,
+            record.context_summary,
+            tools_json,
+            record.tool_call_count,
+            record.consultation_duration_ms,
+            record.initial_confidence,
+            record.calibrated_confidence,
+            record.prompt_version,
+        ],
+    )?;
 
     Ok(conn.last_insert_rowid())
 }
@@ -168,34 +171,41 @@ pub fn get_recent_consultations(
     "#;
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params![expert_role.as_str(), project_id, limit], |row| {
-        let tools_json: String = row.get(7)?;
-        let tools: Vec<String> = serde_json::from_str(&tools_json).unwrap_or_default();
-        let role_str: String = row.get(1)?;
+    let rows = stmt.query_map(
+        rusqlite::params![expert_role.as_str(), project_id, limit],
+        |row| {
+            let tools_json: String = row.get(7)?;
+            let tools: Vec<String> = serde_json::from_str(&tools_json).unwrap_or_default();
+            let role_str: String = row.get(1)?;
 
-        Ok(ConsultationRecord {
-            id: Some(row.get(0)?),
-            expert_role: ExpertRole::from_str(&role_str).unwrap_or(ExpertRole::Architect),
-            project_id: row.get(2)?,
-            session_id: row.get(3)?,
-            context_hash: row.get(4)?,
-            problem_category: row.get(5)?,
-            context_summary: row.get(6)?,
-            tools_used: tools,
-            tool_call_count: row.get(8)?,
-            consultation_duration_ms: row.get(9)?,
-            initial_confidence: row.get(10)?,
-            calibrated_confidence: row.get(11)?,
-            prompt_version: row.get(12)?,
-        })
-    })?;
+            Ok(ConsultationRecord {
+                id: Some(row.get(0)?),
+                expert_role: ExpertRole::from_str(&role_str).unwrap_or(ExpertRole::Architect),
+                project_id: row.get(2)?,
+                session_id: row.get(3)?,
+                context_hash: row.get(4)?,
+                problem_category: row.get(5)?,
+                context_summary: row.get(6)?,
+                tools_used: tools,
+                tool_call_count: row.get(8)?,
+                consultation_duration_ms: row.get(9)?,
+                initial_confidence: row.get(10)?,
+                calibrated_confidence: row.get(11)?,
+                prompt_version: row.get(12)?,
+            })
+        },
+    )?;
 
     let consultations: Vec<ConsultationRecord> = rows.flatten().collect();
     Ok(consultations)
 }
 
 /// Get consultation statistics for an expert
-pub fn get_expert_stats(conn: &Connection, expert_role: ExpertRole, project_id: i64) -> Result<ExpertStats> {
+pub fn get_expert_stats(
+    conn: &Connection,
+    expert_role: ExpertRole,
+    project_id: i64,
+) -> Result<ExpertStats> {
     let sql = r#"
         SELECT
             COUNT(*) as total_consultations,
@@ -206,15 +216,19 @@ pub fn get_expert_stats(conn: &Connection, expert_role: ExpertRole, project_id: 
         WHERE expert_role = ? AND project_id = ?
     "#;
 
-    let result = conn.query_row(sql, [expert_role.as_str(), &project_id.to_string()], |row| {
-        Ok(ExpertStats {
-            total_consultations: row.get(0)?,
-            avg_tool_calls: row.get::<_, Option<f64>>(1)?.unwrap_or(0.0),
-            avg_duration_ms: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
-            avg_confidence: row.get::<_, Option<f64>>(3)?.unwrap_or(0.5),
-            acceptance_rate: 0.0, // Will be filled from findings
-        })
-    })?;
+    let result = conn.query_row(
+        sql,
+        [expert_role.as_str(), &project_id.to_string()],
+        |row| {
+            Ok(ExpertStats {
+                total_consultations: row.get(0)?,
+                avg_tool_calls: row.get::<_, Option<f64>>(1)?.unwrap_or(0.0),
+                avg_duration_ms: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
+                avg_confidence: row.get::<_, Option<f64>>(3)?.unwrap_or(0.5),
+                acceptance_rate: 0.0, // Will be filled from findings
+            })
+        },
+    )?;
 
     // Get acceptance rate from review_findings
     let acceptance_sql = r#"
@@ -226,9 +240,11 @@ pub fn get_expert_stats(conn: &Connection, expert_role: ExpertRole, project_id: 
     "#;
 
     let acceptance_rate: f64 = conn
-        .query_row(acceptance_sql, [expert_role.as_str(), &project_id.to_string()], |row| {
-            row.get::<_, Option<f64>>(0)
-        })
+        .query_row(
+            acceptance_sql,
+            [expert_role.as_str(), &project_id.to_string()],
+            |row| row.get::<_, Option<f64>>(0),
+        )
         .ok()
         .flatten()
         .unwrap_or(0.5);

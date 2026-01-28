@@ -1,11 +1,11 @@
 // src/hooks/user_prompt.rs
 // UserPromptSubmit hook handler for proactive context injection
 
-use anyhow::Result;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::{read_hook_input, write_hook_output};
 use crate::proactive::{behavior::BehaviorTracker, predictor};
+use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -35,11 +35,15 @@ pub async fn run() -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    eprintln!("[mira] UserPromptSubmit hook triggered (session: {}, message length: {})",
+    eprintln!(
+        "[mira] UserPromptSubmit hook triggered (session: {}, message length: {})",
         &session_id[..session_id.len().min(8)],
         user_message.len()
     );
-    eprintln!("[mira] Hook input keys: {:?}", input.as_object().map(|obj| obj.keys().collect::<Vec<_>>()));
+    eprintln!(
+        "[mira] Hook input keys: {:?}",
+        input.as_object().map(|obj| obj.keys().collect::<Vec<_>>())
+    );
 
     // Open database and create context injection manager
     let db_path = get_db_path();
@@ -50,17 +54,20 @@ pub async fn run() -> Result<()> {
     // Get project ID for proactive features
     let project_id: Option<i64> = {
         let pool_clone = pool.clone();
-        match pool_clone.interact(move |conn| {
-            let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-            let result = if let Some(path) = path {
-                crate::db::get_or_create_project_sync(conn, &path, None)
-                    .ok()
-                    .map(|(id, _)| id)
-            } else {
-                None
-            };
-            Ok::<_, anyhow::Error>(result)
-        }).await {
+        match pool_clone
+            .interact(move |conn| {
+                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+                let result = if let Some(path) = path {
+                    crate::db::get_or_create_project_sync(conn, &path, None)
+                        .ok()
+                        .map(|(id, _)| id)
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>(result)
+            })
+            .await
+        {
             Ok(id) => id,
             Err(_) => None,
         }
@@ -71,60 +78,73 @@ pub async fn run() -> Result<()> {
         let pool_clone = pool.clone();
         let session_id_clone = session_id.to_string();
         let message_clone = user_message.to_string();
-        let _ = pool_clone.interact(move |conn| {
-            let mut tracker = BehaviorTracker::new(session_id_clone, project_id);
-            let _ = tracker.log_query(conn, &message_clone, "user_prompt");
-            Ok::<_, anyhow::Error>(())
-        }).await;
+        let _ = pool_clone
+            .interact(move |conn| {
+                let mut tracker = BehaviorTracker::new(session_id_clone, project_id);
+                let _ = tracker.log_query(conn, &message_clone, "user_prompt");
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
     }
 
     // Get relevant context with metadata
-    let result = manager.get_context_for_message(user_message, session_id).await;
+    let result = manager
+        .get_context_for_message(user_message, session_id)
+        .await;
 
     // Get proactive predictions if enabled
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
         let pool_clone = pool.clone();
-        match pool_clone.interact(move |conn| {
-            let config = crate::proactive::get_proactive_config(conn, None, project_id)
+        match pool_clone
+            .interact(move |conn| {
+                let config = crate::proactive::get_proactive_config(conn, None, project_id)
+                    .unwrap_or_default();
+
+                if !config.enabled {
+                    return Ok::<Option<String>, anyhow::Error>(None);
+                }
+
+                // Build current context from recent behavior
+                let recent_files =
+                    crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
+                        .unwrap_or_default();
+
+                let current_context = predictor::CurrentContext {
+                    current_file: recent_files.first().cloned(),
+                    last_tool: None, // Will be populated by PostToolUse
+                    recent_queries: vec![],
+                    session_stage: None,
+                };
+
+                // Get predictions
+                let predictions = predictor::generate_context_predictions(
+                    conn,
+                    project_id,
+                    &current_context,
+                    &config,
+                )
                 .unwrap_or_default();
 
-            if !config.enabled {
-                return Ok::<Option<String>, anyhow::Error>(None);
-            }
+                if predictions.is_empty() {
+                    return Ok(None);
+                }
 
-            // Build current context from recent behavior
-            let recent_files = crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
-                .unwrap_or_default();
+                // Convert to intervention suggestions and format
+                let suggestions = predictor::predictions_to_interventions(&predictions, &config);
+                let context_lines: Vec<String> = suggestions
+                    .iter()
+                    .take(2) // Limit to 2 proactive suggestions
+                    .map(|s| s.to_context_string())
+                    .collect();
 
-            let current_context = predictor::CurrentContext {
-                current_file: recent_files.first().cloned(),
-                last_tool: None, // Will be populated by PostToolUse
-                recent_queries: vec![],
-                session_stage: None,
-            };
-
-            // Get predictions
-            let predictions = predictor::generate_context_predictions(conn, project_id, &current_context, &config)
-                .unwrap_or_default();
-
-            if predictions.is_empty() {
-                return Ok(None);
-            }
-
-            // Convert to intervention suggestions and format
-            let suggestions = predictor::predictions_to_interventions(&predictions, &config);
-            let context_lines: Vec<String> = suggestions
-                .iter()
-                .take(2) // Limit to 2 proactive suggestions
-                .map(|s| s.to_context_string())
-                .collect();
-
-            if context_lines.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(context_lines.join("\n")))
-            }
-        }).await {
+                if context_lines.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(context_lines.join("\n")))
+                }
+            })
+            .await
+        {
             Ok(ctx) => ctx,
             Err(_) => None,
         }

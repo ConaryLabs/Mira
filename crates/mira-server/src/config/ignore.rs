@@ -85,7 +85,11 @@ pub fn should_skip_with_patterns(name: &str, extra_patterns: &[String]) -> bool 
 }
 
 /// Check with language-specific rules and additional patterns.
-pub fn should_skip_for_lang_with_patterns(name: &str, lang: &str, extra_patterns: &[String]) -> bool {
+pub fn should_skip_for_lang_with_patterns(
+    name: &str,
+    lang: &str,
+    extra_patterns: &[String],
+) -> bool {
     if should_skip_with_patterns(name, extra_patterns) {
         return true;
     }
@@ -219,7 +223,11 @@ mod tests {
     #[test]
     fn test_load_project_ignore_patterns_comments_only() {
         let temp_dir = TempDir::new().unwrap();
-        fs::write(temp_dir.path().join(".miraignore"), "# comment 1\n# comment 2\n").unwrap();
+        fs::write(
+            temp_dir.path().join(".miraignore"),
+            "# comment 1\n# comment 2\n",
+        )
+        .unwrap();
         let patterns = load_project_ignore_patterns(temp_dir.path());
         assert!(patterns.is_empty());
     }
@@ -251,8 +259,16 @@ mod tests {
     #[test]
     fn test_should_skip_for_lang_with_patterns() {
         let extra = vec!["my_custom_dir".to_string()];
-        assert!(should_skip_for_lang_with_patterns("my_custom_dir", "python", &extra));
-        assert!(should_skip_for_lang_with_patterns(".pytest_cache", "python", &extra));
+        assert!(should_skip_for_lang_with_patterns(
+            "my_custom_dir",
+            "python",
+            &extra
+        ));
+        assert!(should_skip_for_lang_with_patterns(
+            ".pytest_cache",
+            "python",
+            &extra
+        ));
         assert!(!should_skip_for_lang_with_patterns("src", "python", &extra));
     }
 
@@ -260,11 +276,21 @@ mod tests {
     fn test_should_skip_for_lang_with_patterns_combines_all() {
         let extra = vec!["custom".to_string()];
         // Custom pattern
-        assert!(should_skip_for_lang_with_patterns("custom", "python", &extra));
+        assert!(should_skip_for_lang_with_patterns(
+            "custom", "python", &extra
+        ));
         // Common pattern
-        assert!(should_skip_for_lang_with_patterns("node_modules", "python", &extra));
+        assert!(should_skip_for_lang_with_patterns(
+            "node_modules",
+            "python",
+            &extra
+        ));
         // Language-specific pattern
-        assert!(should_skip_for_lang_with_patterns(".pytest_cache", "python", &extra));
+        assert!(should_skip_for_lang_with_patterns(
+            ".pytest_cache",
+            "python",
+            &extra
+        ));
         // None of the above
         assert!(!should_skip_for_lang_with_patterns("src", "python", &extra));
     }

@@ -64,12 +64,8 @@ static GO_PARSER: GoParser = GoParser;
 
 /// Global parser registry - use this for all parser lookups
 pub static PARSERS: Lazy<ParserRegistry> = Lazy::new(|| {
-    let parsers: &[&'static dyn LanguageParser] = &[
-        &RUST_PARSER,
-        &PYTHON_PARSER,
-        &TYPESCRIPT_PARSER,
-        &GO_PARSER,
-    ];
+    let parsers: &[&'static dyn LanguageParser] =
+        &[&RUST_PARSER, &PYTHON_PARSER, &TYPESCRIPT_PARSER, &GO_PARSER];
 
     let mut by_extension = HashMap::new();
     let mut by_language = HashMap::new();

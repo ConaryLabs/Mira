@@ -9,7 +9,7 @@
 
 use super::{ChatResult, Provider};
 use crate::db::pool::DatabasePool;
-use crate::db::{insert_llm_usage_sync, LlmUsageRecord};
+use crate::db::{LlmUsageRecord, insert_llm_usage_sync};
 use std::sync::Arc;
 
 /// Cost per million tokens (input, output)
@@ -52,7 +52,8 @@ impl ModelPricing {
 
         let input_cost = if let Some(cached_price) = self.cached_input_per_million {
             // Provider supports caching - charge different rates
-            (cache_hit * cached_price / 1_000_000.0) + (cache_miss * self.input_per_million / 1_000_000.0)
+            (cache_hit * cached_price / 1_000_000.0)
+                + (cache_miss * self.input_per_million / 1_000_000.0)
         } else {
             // No caching - all input at standard rate
             (prompt_tokens as f64) * self.input_per_million / 1_000_000.0
@@ -77,13 +78,9 @@ pub fn get_pricing(provider: Provider, model: &str) -> Option<ModelPricing> {
 /// All models: $0.028/1M cache hit, $0.28/1M cache miss, $0.42/1M output
 fn get_deepseek_pricing(model: &str) -> Option<ModelPricing> {
     match model {
-        "deepseek-reasoner" | "deepseek-chat" => {
-            Some(ModelPricing::with_cache(0.28, 0.42, 0.028))
-        }
+        "deepseek-reasoner" | "deepseek-chat" => Some(ModelPricing::with_cache(0.28, 0.42, 0.028)),
         // Default for unknown DeepSeek models
-        _ if model.starts_with("deepseek") => {
-            Some(ModelPricing::with_cache(0.28, 0.42, 0.028))
-        }
+        _ if model.starts_with("deepseek") => Some(ModelPricing::with_cache(0.28, 0.42, 0.028)),
         _ => None,
     }
 }
@@ -93,13 +90,9 @@ fn get_gemini_pricing(model: &str) -> Option<ModelPricing> {
     match model {
         // Gemini 3 Pro: $2.00/$12.00 (standard context <=200K)
         // Long context pricing ($4/$18) not tracked separately yet
-        "gemini-3-pro-preview" | "gemini-3-pro" => {
-            Some(ModelPricing::new(2.00, 12.00))
-        }
+        "gemini-3-pro-preview" | "gemini-3-pro" => Some(ModelPricing::new(2.00, 12.00)),
         // Gemini 3 Flash: $0.50/$3.00
-        "gemini-3-flash" | "gemini-3-flash-preview" => {
-            Some(ModelPricing::new(0.50, 3.00))
-        }
+        "gemini-3-flash" | "gemini-3-flash-preview" => Some(ModelPricing::new(0.50, 3.00)),
         _ => None,
     }
 }

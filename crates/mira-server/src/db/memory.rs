@@ -74,7 +74,9 @@ impl Database {
         category: Option<&str>,
         confidence: f64,
     ) -> Result<i64> {
-        self.store_memory_with_session(project_id, key, content, fact_type, category, confidence, None)
+        self.store_memory_with_session(
+            project_id, key, content, fact_type, category, confidence, None,
+        )
     }
 
     /// Store a memory fact with explicit session tracking
@@ -104,8 +106,9 @@ impl Database {
 
                 if let Some((id, last_session)) = existing {
                     // Check if this is a new session
-                    let is_new_session =
-                        session_id.map(|s| last_session.as_deref() != Some(s)).unwrap_or(false);
+                    let is_new_session = session_id
+                        .map(|s| last_session.as_deref() != Some(s))
+                        .unwrap_or(false);
 
                     if is_new_session {
                         // Increment session count and update last_session_id
@@ -239,7 +242,12 @@ impl Database {
     }
 
     /// Search memories by text (basic SQL LIKE)
-    pub fn search_memories(&self, project_id: Option<i64>, query: &str, limit: usize) -> Result<Vec<MemoryFact>> {
+    pub fn search_memories(
+        &self,
+        project_id: Option<i64>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryFact>> {
         let conn = self.conn();
         // Escape SQL LIKE wildcards to prevent injection
         let escaped = query
@@ -255,10 +263,13 @@ impl Database {
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
              ORDER BY updated_at DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
 
-        let rows = stmt.query_map(params![project_id, pattern, limit as i64], parse_memory_fact_row)?;
+        let rows = stmt.query_map(
+            params![project_id, pattern, limit as i64],
+            parse_memory_fact_row,
+        )?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
@@ -273,7 +284,7 @@ impl Database {
                     user_id, scope, team_id
              FROM memory_facts
              WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
-             ORDER BY category, created_at DESC"
+             ORDER BY category, created_at DESC",
         )?;
 
         let rows = stmt.query_map(params![project_id], parse_memory_fact_row)?;
@@ -290,7 +301,11 @@ impl Database {
 
     /// Get health alerts (high-confidence issues found by background scanner)
     /// Returns issues with fact_type='health' sorted by confidence and recency
-    pub fn get_health_alerts(&self, project_id: Option<i64>, limit: usize) -> Result<Vec<MemoryFact>> {
+    pub fn get_health_alerts(
+        &self,
+        project_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<MemoryFact>> {
         let conn = self.conn();
 
         let mut stmt = conn.prepare(
@@ -302,7 +317,7 @@ impl Database {
                AND fact_type = 'health'
                AND confidence >= 0.7
              ORDER BY confidence DESC, updated_at DESC
-             LIMIT ?"
+             LIMIT ?",
         )?;
 
         let rows = stmt.query_map(params![project_id, limit as i64], parse_memory_fact_row)?;
@@ -334,7 +349,11 @@ impl Database {
     }
 
     /// Get global memories by category
-    pub fn get_global_memories(&self, category: Option<&str>, limit: usize) -> Result<Vec<MemoryFact>> {
+    pub fn get_global_memories(
+        &self,
+        category: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryFact>> {
         let conn = self.conn();
 
         let (query, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(cat) = category {
@@ -389,7 +408,7 @@ impl Database {
              JOIN vec_memory v ON f.id = v.fact_id
              WHERE f.project_id IS NULL
              ORDER BY distance
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
         let results = stmt
@@ -439,7 +458,14 @@ impl Database {
 
     /// Set project-specific persona (upserts by key)
     pub fn set_project_persona(&self, project_id: i64, content: &str) -> Result<i64> {
-        self.store_memory(Some(project_id), Some("project_persona"), content, "persona", None, 1.0)
+        self.store_memory(
+            Some(project_id),
+            Some("project_persona"),
+            content,
+            "persona",
+            None,
+            1.0,
+        )
     }
 
     /// Clear project-specific persona
@@ -476,7 +502,7 @@ impl Database {
              FROM memory_facts
              WHERE has_embedding = 0
              ORDER BY created_at ASC
-             LIMIT ?"
+             LIMIT ?",
         )?;
 
         let rows = stmt.query_map([limit as i64], parse_memory_fact_row)?;
@@ -495,7 +521,12 @@ impl Database {
     }
 
     /// Store embedding for a fact and mark as embedded
-    pub fn store_fact_embedding(&self, fact_id: i64, content: &str, embedding: &[f32]) -> Result<()> {
+    pub fn store_fact_embedding(
+        &self,
+        fact_id: i64,
+        content: &str,
+        embedding: &[f32],
+    ) -> Result<()> {
         let conn = self.conn();
 
         let embedding_bytes = embedding_to_bytes(embedding);
@@ -537,7 +568,10 @@ pub struct StoreMemoryParams<'a> {
 
 /// Store a memory with full scope/user support (sync version for pool.interact())
 /// Returns the memory ID
-pub fn store_memory_sync(conn: &rusqlite::Connection, params: StoreMemoryParams) -> rusqlite::Result<i64> {
+pub fn store_memory_sync(
+    conn: &rusqlite::Connection,
+    params: StoreMemoryParams,
+) -> rusqlite::Result<i64> {
     // Upsert by key if provided
     if let Some(key) = params.key {
         let existing: Option<(i64, Option<String>)> = conn
@@ -585,14 +619,26 @@ pub fn store_memory_sync(conn: &rusqlite::Connection, params: StoreMemoryParams)
     }
 
     // New memory - starts as candidate with capped confidence
-    let initial_confidence = if params.confidence < 1.0 { params.confidence } else { 0.5 };
+    let initial_confidence = if params.confidence < 1.0 {
+        params.confidence
+    } else {
+        0.5
+    };
     conn.execute(
         "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
          session_count, first_session_id, last_session_id, status, user_id, scope, branch)
          VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?, ?)",
         rusqlite::params![
-            params.project_id, params.key, params.content, params.fact_type, params.category,
-            initial_confidence, params.session_id, params.session_id, params.user_id, params.scope,
+            params.project_id,
+            params.key,
+            params.content,
+            params.fact_type,
+            params.category,
+            initial_confidence,
+            params.session_id,
+            params.session_id,
+            params.user_id,
+            params.scope,
             params.branch
         ],
     )?;
@@ -618,9 +664,10 @@ pub fn search_capabilities_sync(
     )?;
 
     let results = stmt
-        .query_map(rusqlite::params![embedding_bytes, project_id, limit as i64], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
+        .query_map(
+            rusqlite::params![embedding_bytes, project_id, limit as i64],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -728,9 +775,10 @@ pub fn recall_semantic_with_branch_sync(
     )?;
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
-        .query_map(rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
+        .query_map(
+            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -782,9 +830,10 @@ pub fn recall_semantic_with_branch_info_sync(
     )?;
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
-        .query_map(rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
+        .query_map(
+            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -884,9 +933,15 @@ pub fn record_memory_access_sync(
 /// Delete a memory and its embedding (sync version for pool.interact())
 pub fn delete_memory_sync(conn: &rusqlite::Connection, id: i64) -> rusqlite::Result<bool> {
     // Delete from vector table first
-    conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", rusqlite::params![id])?;
+    conn.execute(
+        "DELETE FROM vec_memory WHERE fact_id = ?",
+        rusqlite::params![id],
+    )?;
     // Delete from facts table
-    let deleted = conn.execute("DELETE FROM memory_facts WHERE id = ?", rusqlite::params![id])? > 0;
+    let deleted = conn.execute(
+        "DELETE FROM memory_facts WHERE id = ?",
+        rusqlite::params![id],
+    )? > 0;
     Ok(deleted)
 }
 
@@ -946,7 +1001,8 @@ mod branch_boost_tests {
         let base_distance = 0.5;
 
         let same_branch = apply_branch_boost(base_distance, Some("feature-x"), Some("feature-x"));
-        let different_branch = apply_branch_boost(base_distance, Some("feature-y"), Some("feature-x"));
+        let different_branch =
+            apply_branch_boost(base_distance, Some("feature-y"), Some("feature-x"));
 
         // Same branch should have lower (better) distance
         assert!(same_branch < different_branch);
@@ -958,7 +1014,8 @@ mod branch_boost_tests {
         let base_distance = 0.5;
 
         let main_branch = apply_branch_boost(base_distance, Some("main"), Some("feature-x"));
-        let different_branch = apply_branch_boost(base_distance, Some("feature-y"), Some("feature-x"));
+        let different_branch =
+            apply_branch_boost(base_distance, Some("feature-y"), Some("feature-x"));
 
         // main should have lower (better) distance
         assert!(main_branch < different_branch);

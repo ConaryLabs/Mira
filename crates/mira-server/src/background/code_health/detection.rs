@@ -2,7 +2,7 @@
 // Pattern-based detection for code health issues
 // Uses pure Rust implementation (no shell commands) for cross-platform support
 
-use crate::db::{get_unused_functions_sync, store_memory_sync, StoreMemoryParams};
+use crate::db::{StoreMemoryParams, get_unused_functions_sync, store_memory_sync};
 use crate::project_files::walker;
 use regex::Regex;
 use rusqlite::Connection;
@@ -30,8 +30,10 @@ fn is_cfg_test(line: &str) -> bool {
                         if line[pos + 1..].starts_with(']') {
                             let content = &line[cfg_start + "#[cfg(".len()..pos];
                             // Check if content contains "test" as a separate word
-                            if content.split(|c: char| !c.is_alphanumeric() && c != '_')
-                                .any(|part| part == "test") {
+                            if content
+                                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                                .any(|part| part == "test")
+                            {
                                 return true;
                             }
                         }
@@ -52,8 +54,7 @@ fn is_cfg_test(line: &str) -> bool {
 
 /// Walk Rust files in a project, respecting .gitignore
 fn walk_rust_files(project_path: &str) -> Result<Vec<String>, String> {
-    walker::walk_rust_files(project_path)
-        .map_err(|e| e.to_string())
+    walker::walk_rust_files(project_path).map_err(|e| e.to_string())
 }
 
 /// Scan for TODO/FIXME/HACK comments
@@ -62,8 +63,7 @@ pub fn scan_todo_comments(
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    let pattern =
-        Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").map_err(|e| e.to_string())?;
+    let pattern = Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").map_err(|e| e.to_string())?;
 
     let mut stored = 0;
 
@@ -82,18 +82,22 @@ pub fn scan_todo_comments(
                 let content = format!("[todo] {}:{} - {}", file, line_num, comment);
                 let key = format!("health:todo:{}:{}", file, line_num);
 
-                store_memory_sync(conn, StoreMemoryParams {
-                    project_id: Some(project_id),
-                    key: Some(&key),
-                    content: &content,
-                    fact_type: "health",
-                    category: Some("todo"),
-                    confidence: 0.7,
-                    session_id: None,
-                    user_id: None,
-                    scope: "project",
-                    branch: None,
-                }).map_err(|e| e.to_string())?;
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: Some(&key),
+                        content: &content,
+                        fact_type: "health",
+                        category: Some("todo"),
+                        confidence: 0.7,
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
 
                 stored += 1;
 
@@ -114,8 +118,7 @@ pub fn scan_unimplemented(
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    let pattern =
-        Regex::new(r"(unimplemented!|todo!)\s*\(").map_err(|e| e.to_string())?;
+    let pattern = Regex::new(r"(unimplemented!|todo!)\s*\(").map_err(|e| e.to_string())?;
 
     let mut stored = 0;
 
@@ -139,18 +142,22 @@ pub fn scan_unimplemented(
                 let content = format!("[unimplemented] {}:{} - {}", file, line_num, code);
                 let key = format!("health:unimplemented:{}:{}", file, line_num);
 
-                store_memory_sync(conn, StoreMemoryParams {
-                    project_id: Some(project_id),
-                    key: Some(&key),
-                    content: &content,
-                    fact_type: "health",
-                    category: Some("unimplemented"),
-                    confidence: 0.8,
-                    session_id: None,
-                    user_id: None,
-                    scope: "project",
-                    branch: None,
-                }).map_err(|e| e.to_string())?;
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: Some(&key),
+                        content: &content,
+                        fact_type: "health",
+                        category: Some("unimplemented"),
+                        confidence: 0.8,
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
 
                 stored += 1;
 
@@ -178,18 +185,22 @@ pub fn scan_unused_functions(conn: &Connection, project_id: i64) -> Result<usize
         );
         let key = format!("health:unused:{}:{}", file_path, name);
 
-        store_memory_sync(conn, StoreMemoryParams {
-            project_id: Some(project_id),
-            key: Some(&key),
-            content: &content,
-            fact_type: "health",
-            category: Some("unused"),
-            confidence: 0.5,
-            session_id: None,
-            user_id: None,
-            scope: "project",
-            branch: None,
-        }).map_err(|e| e.to_string())?;
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id: Some(project_id),
+                key: Some(&key),
+                content: &content,
+                fact_type: "health",
+                category: Some("unused"),
+                confidence: 0.5,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+            },
+        )
+        .map_err(|e| e.to_string())?;
 
         stored += 1;
     }
@@ -282,18 +293,22 @@ pub fn scan_unwrap_usage(
                 );
                 let key = format!("health:unwrap:{}:{}", file, line_num);
 
-                store_memory_sync(conn, StoreMemoryParams {
-                    project_id: Some(project_id),
-                    key: Some(&key),
-                    content: &content_str,
-                    fact_type: "health",
-                    category: Some("unwrap"),
-                    confidence: if severity == "high" { 0.85 } else { 0.7 },
-                    session_id: None,
-                    user_id: None,
-                    scope: "project",
-                    branch: None,
-                }).map_err(|e| e.to_string())?;
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: Some(&key),
+                        content: &content_str,
+                        fact_type: "health",
+                        category: Some("unwrap"),
+                        confidence: if severity == "high" { 0.85 } else { 0.7 },
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
 
                 stored += 1;
 
@@ -419,18 +434,22 @@ pub fn scan_error_handling(
                 );
                 let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
 
-                store_memory_sync(conn, StoreMemoryParams {
-                    project_id: Some(project_id),
-                    key: Some(&key),
-                    content: &content_str,
-                    fact_type: "health",
-                    category: Some("error_handling"),
-                    confidence: if severity == "high" { 0.8 } else { 0.6 },
-                    session_id: None,
-                    user_id: None,
-                    scope: "project",
-                    branch: None,
-                }).map_err(|e| e.to_string())?;
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: Some(&key),
+                        content: &content_str,
+                        fact_type: "health",
+                        category: Some("error_handling"),
+                        confidence: if severity == "high" { 0.8 } else { 0.6 },
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
 
                 stored += 1;
 

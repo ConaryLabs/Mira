@@ -132,12 +132,24 @@ pub struct GoogleEmbeddings {
 impl GoogleEmbeddings {
     /// Create new Google embeddings client with default settings
     pub fn new(api_key: String) -> Self {
-        Self::with_config(api_key, GoogleEmbeddingModel::default(), None, TaskType::default(), None)
+        Self::with_config(
+            api_key,
+            GoogleEmbeddingModel::default(),
+            None,
+            TaskType::default(),
+            None,
+        )
     }
 
     /// Create embeddings client with database pool for usage tracking
     pub fn with_pool(api_key: String, pool: Option<Arc<DatabasePool>>) -> Self {
-        Self::with_config(api_key, GoogleEmbeddingModel::default(), None, TaskType::default(), pool)
+        Self::with_config(
+            api_key,
+            GoogleEmbeddingModel::default(),
+            None,
+            TaskType::default(),
+            pool,
+        )
     }
 
     /// Create embeddings client with full configuration
@@ -214,10 +226,12 @@ impl GoogleEmbeddings {
                 project_id,
             };
 
-            if let Err(e) = pool.interact(move |conn| {
-                insert_embedding_usage_sync(conn, &record)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            }).await {
+            if let Err(e) = pool
+                .interact(move |conn| {
+                    insert_embedding_usage_sync(conn, &record).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+            {
                 tracing::warn!("Failed to record embedding usage: {}", e);
             }
         }
@@ -245,7 +259,8 @@ impl GoogleEmbeddings {
 
     /// Embed text optimized for document storage (RETRIEVAL_DOCUMENT)
     pub async fn embed_for_storage(&self, text: &str) -> Result<Vec<f32>> {
-        self.embed_with_task(text, TaskType::RetrievalDocument).await
+        self.embed_with_task(text, TaskType::RetrievalDocument)
+            .await
     }
 
     /// Embed text optimized for search queries (RETRIEVAL_QUERY)
@@ -255,14 +270,19 @@ impl GoogleEmbeddings {
 
     /// Embed code content (CODE_RETRIEVAL_QUERY)
     pub async fn embed_code(&self, text: &str) -> Result<Vec<f32>> {
-        self.embed_with_task(text, TaskType::CodeRetrievalQuery).await
+        self.embed_with_task(text, TaskType::CodeRetrievalQuery)
+            .await
     }
 
     /// Embed a single text with a specific task type
     pub async fn embed_with_task(&self, text: &str, task_type: TaskType) -> Result<Vec<f32>> {
         // Truncate if too long
         let text = if text.len() > MAX_TEXT_CHARS {
-            debug!("Truncating text from {} to {} chars", text.len(), MAX_TEXT_CHARS);
+            debug!(
+                "Truncating text from {} to {} chars",
+                text.len(),
+                MAX_TEXT_CHARS
+            );
             &text[..MAX_TEXT_CHARS]
         } else {
             text
@@ -341,16 +361,22 @@ impl GoogleEmbeddings {
 
     /// Embed multiple texts optimized for document storage (RETRIEVAL_DOCUMENT)
     pub async fn embed_batch_for_storage(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_batch_with_task(texts, TaskType::RetrievalDocument).await
+        self.embed_batch_with_task(texts, TaskType::RetrievalDocument)
+            .await
     }
 
     /// Embed multiple texts optimized for code (CODE_RETRIEVAL_QUERY)
     pub async fn embed_batch_code(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_batch_with_task(texts, TaskType::CodeRetrievalQuery).await
+        self.embed_batch_with_task(texts, TaskType::CodeRetrievalQuery)
+            .await
     }
 
     /// Embed multiple texts with a specific task type
-    pub async fn embed_batch_with_task(&self, texts: &[String], task_type: TaskType) -> Result<Vec<Vec<f32>>> {
+    pub async fn embed_batch_with_task(
+        &self,
+        texts: &[String],
+        task_type: TaskType,
+    ) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
         }
@@ -365,17 +391,18 @@ impl GoogleEmbeddings {
         }
 
         // Large batches: chunk into MAX_BATCH_SIZE and process in parallel
-        let chunks: Vec<Vec<String>> = texts
-            .chunks(MAX_BATCH_SIZE)
-            .map(|c| c.to_vec())
-            .collect();
+        let chunks: Vec<Vec<String>> = texts.chunks(MAX_BATCH_SIZE).map(|c| c.to_vec()).collect();
         let num_batches = chunks.len();
 
         if num_batches == 1 {
             return self.embed_batch_inner(&chunks[0], task_type).await;
         }
 
-        debug!("Embedding {} texts in {} parallel batches", texts.len(), num_batches);
+        debug!(
+            "Embedding {} texts in {} parallel batches",
+            texts.len(),
+            num_batches
+        );
 
         // Process batches in parallel
         let futures: Vec<_> = chunks
@@ -395,7 +422,11 @@ impl GoogleEmbeddings {
     }
 
     /// Internal batch embedding using Google's batchEmbedContents
-    async fn embed_batch_inner(&self, texts: &[String], task_type: TaskType) -> Result<Vec<Vec<f32>>> {
+    async fn embed_batch_inner(
+        &self,
+        texts: &[String],
+        task_type: TaskType,
+    ) -> Result<Vec<Vec<f32>>> {
         // Build requests array
         let requests: Vec<serde_json::Value> = texts
             .iter()

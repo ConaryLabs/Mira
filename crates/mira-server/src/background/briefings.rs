@@ -3,7 +3,7 @@
 
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
-use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
+use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -13,10 +13,13 @@ pub async fn process_briefings(
     pool: &Arc<DatabasePool>,
     client: &Arc<dyn LlmClient>,
 ) -> Result<usize, String> {
-    let projects = pool.interact(move |conn| {
-        get_projects_for_briefing_check_sync(conn)
-            .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
-    }).await.map_err(|e| e.to_string())?;
+    let projects = pool
+        .interact(move |conn| {
+            get_projects_for_briefing_check_sync(conn)
+                .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut processed = 0;
 
@@ -61,7 +64,9 @@ pub async fn process_briefings(
             pool.interact(move |conn| {
                 update_project_briefing_sync(conn, project_id, &commit, Some(&text_clone))
                     .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
-            }).await.map_err(|e| e.to_string())?;
+            })
+            .await
+            .map_err(|e| e.to_string())?;
             tracing::info!(
                 "Generated briefing for project {} ({})",
                 project_id,
@@ -200,7 +205,6 @@ async fn generate_briefing(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Option<String> {
-
     // Get git log
     let git_log = get_git_changes(project_path, from_commit)?;
 
@@ -225,8 +229,7 @@ Summary:"#,
         context
     );
 
-    let messages = PromptBuilder::for_briefings()
-        .build_messages(prompt);
+    let messages = PromptBuilder::for_briefings().build_messages(prompt);
 
     // Use configured background provider
     match client.chat(messages, None).await {
@@ -240,7 +243,8 @@ Summary:"#,
                 &result,
                 Some(project_id),
                 None,
-            ).await;
+            )
+            .await;
 
             let summary = result.content.as_deref().unwrap_or("").trim().to_string();
             if summary.is_empty() {

@@ -2,8 +2,8 @@
 // Developer experience tools
 
 use crate::db::build_session_recap_sync;
-use crate::tools::core::session_notes;
 use crate::tools::core::ToolContext;
+use crate::tools::core::session_notes;
 
 /// Get session recap for MCP clients
 /// Returns recent context, preferences, project state, and Claude Code session notes

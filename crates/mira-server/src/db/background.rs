@@ -1,7 +1,7 @@
 // crates/mira-server/src/db/background.rs
 // Database operations for background workers (capabilities, health, documentation)
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Common scan time/rate limiting functions
@@ -188,7 +188,16 @@ pub fn get_symbols_for_file_sync(
     conn: &Connection,
     project_id: i64,
     file_path: &str,
-) -> rusqlite::Result<Vec<(i64, String, String, Option<i32>, Option<i32>, Option<String>)>> {
+) -> rusqlite::Result<
+    Vec<(
+        i64,
+        String,
+        String,
+        Option<i32>,
+        Option<i32>,
+        Option<String>,
+    )>,
+> {
     let mut stmt = conn.prepare(
         "SELECT id, name, symbol_type, start_line, end_line, signature
          FROM code_symbols
@@ -229,7 +238,13 @@ pub fn store_code_embedding_sync(
     conn.execute(
         "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
          VALUES (?, ?, ?, ?, ?)",
-        params![embedding_bytes, file_path, chunk_content, project_id, start_line],
+        params![
+            embedding_bytes,
+            file_path,
+            chunk_content,
+            project_id,
+            start_line
+        ],
     )?;
     Ok(())
 }
@@ -473,13 +488,10 @@ pub fn get_projects_with_pending_summaries_sync(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Get permission rules for a tool
-pub fn get_permission_rules_sync(
-    conn: &Connection,
-    tool_name: &str,
-) -> Vec<(String, String)> {
-    let mut stmt = match conn.prepare(
-        "SELECT pattern, match_type FROM permission_rules WHERE tool_name = ?",
-    ) {
+pub fn get_permission_rules_sync(conn: &Connection, tool_name: &str) -> Vec<(String, String)> {
+    let mut stmt = match conn
+        .prepare("SELECT pattern, match_type FROM permission_rules WHERE tool_name = ?")
+    {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
@@ -515,7 +527,11 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let conn = db.conn();
         // Old time should be older than 1 day
-        assert!(is_time_older_than_sync(&conn, "2020-01-01 00:00:00", "-1 day"));
+        assert!(is_time_older_than_sync(
+            &conn,
+            "2020-01-01 00:00:00",
+            "-1 day"
+        ));
     }
 
     #[test]

@@ -27,10 +27,13 @@ impl GoalAwareInjector {
     /// Returns goals with status not in 'completed' or 'abandoned'
     pub async fn get_active_goal_ids(&self) -> Vec<i64> {
         let project_id = self.project_id;
-        match self.pool.interact(move |conn| {
-            get_active_goals_sync(conn, project_id, 10)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        }).await {
+        match self
+            .pool
+            .interact(move |conn| {
+                get_active_goals_sync(conn, project_id, 10).map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
             Ok(goals) => goals.into_iter().map(|g| g.id).collect(),
             Err(e) => {
                 tracing::debug!("Failed to get active goals: {}", e);
@@ -51,10 +54,13 @@ impl GoalAwareInjector {
         }
 
         let project_id = self.project_id;
-        let goals = match self.pool.interact(move |conn| {
-            get_active_goals_sync(conn, project_id, 5)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        }).await {
+        let goals = match self
+            .pool
+            .interact(move |conn| {
+                get_active_goals_sync(conn, project_id, 5).map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
             Ok(goals) => goals,
             Err(_) => return String::new(),
         };
@@ -69,10 +75,13 @@ impl GoalAwareInjector {
         for goal in goals.iter().take(5) {
             // Get milestones for this goal
             let gid = goal.id;
-            let milestones = self.pool.interact(move |conn| {
-                get_milestones_for_goal_sync(conn, gid)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            }).await.unwrap_or_default();
+            let milestones = self
+                .pool
+                .interact(move |conn| {
+                    get_milestones_for_goal_sync(conn, gid).map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .unwrap_or_default();
 
             let milestone_summary = if milestones.is_empty() {
                 String::new()
@@ -127,10 +136,14 @@ mod tests {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         // Create a project first (via pool)
-        let project_id = pool.interact(|conn| {
-            crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        }).await.unwrap().0;
+        let project_id = pool
+            .interact(|conn| {
+                crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap()
+            .0;
 
         // Create some goals
         pool.interact(move |conn| {
@@ -161,10 +174,14 @@ mod tests {
     async fn test_with_milestones() {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let project_id = pool.interact(|conn| {
-            crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        }).await.unwrap().0;
+        let project_id = pool
+            .interact(|conn| {
+                crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap()
+            .0;
 
         // Create a goal with milestones
         pool.interact(move |conn| {

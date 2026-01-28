@@ -5,7 +5,7 @@
 // insights about the developer's workflow and codebase.
 
 use crate::db::pool::DatabasePool;
-use crate::llm::{record_llm_usage, LlmClient, PromptBuilder};
+use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -104,7 +104,8 @@ pub async fn process_pondering(
         }
 
         // Generate insights
-        let insights = generate_insights(pool, project_id, &name, &tool_history, &memories, client).await?;
+        let insights =
+            generate_insights(pool, project_id, &name, &tool_history, &memories, client).await?;
 
         // Store insights as behavior patterns
         let stored = store_insights(pool, project_id, &insights).await?;
@@ -194,15 +195,18 @@ async fn get_recent_tool_history(
             .map_err(|e| anyhow::anyhow!("Failed to prepare: {}", e))?;
 
         let rows = stmt
-            .query_map(params![project_id, LOOKBACK_HOURS, MAX_HISTORY_ENTRIES], |row| {
-                let args: Option<String> = row.get(1)?;
-                Ok(ToolUsageEntry {
-                    tool_name: row.get(0)?,
-                    arguments_summary: summarize_arguments(&args.unwrap_or_default()),
-                    success: row.get::<_, i32>(2)? == 1,
-                    timestamp: row.get(3)?,
-                })
-            })
+            .query_map(
+                params![project_id, LOOKBACK_HOURS, MAX_HISTORY_ENTRIES],
+                |row| {
+                    let args: Option<String> = row.get(1)?;
+                    Ok(ToolUsageEntry {
+                        tool_name: row.get(0)?,
+                        arguments_summary: summarize_arguments(&args.unwrap_or_default()),
+                        success: row.get::<_, i32>(2)? == 1,
+                        timestamp: row.get(3)?,
+                    })
+                },
+            )
             .map_err(|e| anyhow::anyhow!("Failed to query: {}", e))?;
 
         rows.collect::<Result<Vec<_>, _>>()
@@ -277,7 +281,8 @@ async fn generate_insights(
 ) -> Result<Vec<PonderingInsight>, String> {
     // Build tool usage summary
     let mut tool_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    let mut failure_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut failure_counts: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
 
     for entry in tool_history {
         *tool_counts.entry(&entry.tool_name).or_default() += 1;
@@ -346,7 +351,11 @@ Only include high-value insights. If nothing notable, return an empty array []."
         tool_sequence = tool_history
             .iter()
             .take(20)
-            .map(|e| format!("- {} ({})", e.tool_name, if e.success { "ok" } else { "fail" }))
+            .map(|e| format!(
+                "- {} ({})",
+                e.tool_name,
+                if e.success { "ok" } else { "fail" }
+            ))
             .collect::<Vec<_>>()
             .join("\n"),
         memory_summary = memory_summary.join("\n"),

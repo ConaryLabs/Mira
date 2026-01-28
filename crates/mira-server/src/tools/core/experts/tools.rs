@@ -5,8 +5,8 @@ use super::ToolContext;
 use crate::db::{recall_semantic_sync, search_memories_sync};
 use crate::indexer;
 use crate::llm::{Tool, ToolCall};
-use crate::search::{embedding_to_bytes, find_callers, find_callees, hybrid_search};
-use serde_json::{json, Value};
+use crate::search::{embedding_to_bytes, find_callees, find_callers, hybrid_search};
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// Define the tools available to experts
@@ -128,12 +128,8 @@ pub fn get_expert_tools() -> Vec<Tool> {
 }
 
 /// Execute a tool call and return the result
-pub async fn execute_tool<C: ToolContext>(
-    ctx: &C,
-    tool_call: &ToolCall,
-) -> String {
-    let args: Value = serde_json::from_str(&tool_call.function.arguments)
-        .unwrap_or(json!({}));
+pub async fn execute_tool<C: ToolContext>(ctx: &C, tool_call: &ToolCall) -> String {
+    let args: Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or(json!({}));
 
     match tool_call.function.name.as_str() {
         "search_code" => {
@@ -182,7 +178,9 @@ async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize)
         project_id,
         project_path.as_deref(),
         limit,
-    ).await {
+    )
+    .await
+    {
         Ok(result) => {
             if result.results.is_empty() {
                 "No code matches found.".to_string()
@@ -195,7 +193,10 @@ async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize)
                     } else {
                         r.content
                     };
-                    output.push_str(&format!("### {}\n```\n{}\n```\n\n", r.file_path, content_preview));
+                    output.push_str(&format!(
+                        "### {}\n```\n{}\n```\n\n",
+                        r.file_path, content_preview
+                    ));
                 }
                 output
             }
@@ -229,7 +230,8 @@ async fn execute_get_symbols<C: ToolContext>(ctx: &C, file_path: &str) -> String
                 format!("No symbols found in {}", file_path)
             } else {
                 let mut output = format!("{} symbols in {}:\n", symbols.len(), file_path);
-                for s in symbols.iter().take(50) { // Increased limit slightly, but capped
+                for s in symbols.iter().take(50) {
+                    // Increased limit slightly, but capped
                     let lines = if s.start_line == s.end_line {
                         format!("line {}", s.start_line)
                     } else {
@@ -282,7 +284,11 @@ async fn execute_read_file<C: ToolContext>(
             }
 
             if start >= lines.len() {
-                return format!("Start line {} exceeds file length ({})", start + 1, lines.len());
+                return format!(
+                    "Start line {} exceeds file length ({})",
+                    start + 1,
+                    lines.len()
+                );
             }
 
             let selected: Vec<String> = lines[start..end]
@@ -301,7 +307,11 @@ async fn execute_read_file<C: ToolContext>(
     }
 }
 
-async fn execute_find_callers<C: ToolContext>(ctx: &C, function_name: &str, limit: usize) -> String {
+async fn execute_find_callers<C: ToolContext>(
+    ctx: &C,
+    function_name: &str,
+    limit: usize,
+) -> String {
     let project_id = ctx.project_id().await;
     let fn_name = function_name.to_string();
 
@@ -325,7 +335,11 @@ async fn execute_find_callers<C: ToolContext>(ctx: &C, function_name: &str, limi
     }
 }
 
-async fn execute_find_callees<C: ToolContext>(ctx: &C, function_name: &str, limit: usize) -> String {
+async fn execute_find_callees<C: ToolContext>(
+    ctx: &C,
+    function_name: &str,
+    limit: usize,
+) -> String {
     let project_id = ctx.project_id().await;
     let fn_name = function_name.to_string();
 
@@ -340,7 +354,10 @@ async fn execute_find_callees<C: ToolContext>(ctx: &C, function_name: &str, limi
     } else {
         let mut output = format!("Functions that `{}` calls:\n", function_name);
         for callee in callees {
-            output.push_str(&format!("  {} ({}x)\n", callee.symbol_name, callee.call_count));
+            output.push_str(&format!(
+                "  {} ({}x)\n",
+                callee.symbol_name, callee.call_count
+            ));
         }
         output
     }
@@ -357,7 +374,9 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
             // Run vector search via connection pool
             let results: Result<Vec<(i64, String, f32)>, String> = ctx
                 .pool()
-                .run(move |conn| recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit))
+                .run(move |conn| {
+                    recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit)
+                })
                 .await;
 
             if let Ok(results) = results {

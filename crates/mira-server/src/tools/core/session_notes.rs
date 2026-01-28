@@ -196,7 +196,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_project_path() {
-        assert_eq!(sanitize_project_path("/home/peter/Mira"), "-home-peter-Mira");
+        assert_eq!(
+            sanitize_project_path("/home/peter/Mira"),
+            "-home-peter-Mira"
+        );
         assert_eq!(sanitize_project_path("/tmp/test"), "-tmp-test");
     }
 

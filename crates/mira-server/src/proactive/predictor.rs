@@ -76,7 +76,11 @@ pub fn predict_next_files(
     }
 
     // Sort by confidence and deduplicate
-    predictions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    predictions.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     predictions.dedup_by(|a, b| a.content == b.content);
 
     // Limit results
@@ -114,7 +118,11 @@ pub fn predict_next_tool(
         }
     }
 
-    predictions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    predictions.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     predictions.truncate(3);
 
     Ok(predictions)
@@ -142,7 +150,11 @@ pub fn generate_context_predictions(
     }
 
     // Sort all predictions by confidence
-    all_predictions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    all_predictions.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(all_predictions)
 }
@@ -157,13 +169,18 @@ pub struct CurrentContext {
 }
 
 /// Convert predictions to intervention suggestions
-pub fn predictions_to_interventions(predictions: &[Prediction], config: &ProactiveConfig) -> Vec<InterventionSuggestion> {
+pub fn predictions_to_interventions(
+    predictions: &[Prediction],
+    config: &ProactiveConfig,
+) -> Vec<InterventionSuggestion> {
     predictions
         .iter()
         .filter(|p| p.confidence >= config.min_confidence)
         .map(|p| InterventionSuggestion {
             intervention_type: match p.prediction_type {
-                PredictionType::NextFile | PredictionType::RelatedFiles => InterventionType::ContextPrediction,
+                PredictionType::NextFile | PredictionType::RelatedFiles => {
+                    InterventionType::ContextPrediction
+                }
                 PredictionType::NextTool => InterventionType::ContextPrediction,
                 PredictionType::RelatedMemories => InterventionType::ContextPrediction,
                 PredictionType::ResourceSuggestion => InterventionType::ResourceSuggestion,
@@ -211,16 +228,10 @@ impl InterventionSuggestion {
                 )
             }
             InterventionType::SecurityAlert => {
-                format!(
-                    "[Security] Potential issue: {}",
-                    self.content
-                )
+                format!("[Security] Potential issue: {}", self.content)
             }
             InterventionType::BugWarning => {
-                format!(
-                    "[Warning] Potential bug pattern: {}",
-                    self.content
-                )
+                format!("[Warning] Potential bug pattern: {}", self.content)
             }
         }
     }

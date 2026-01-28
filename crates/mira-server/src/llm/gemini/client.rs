@@ -3,17 +3,17 @@
 // Handles internal translation between Mira's format and Google's format
 // Note: Built-in tools (Google Search) cannot combine with custom function tools
 
-use crate::llm::{ChatResult, Message, Tool, Usage};
 use crate::llm::gemini::conversion::{convert_message, convert_tools, google_search_tool};
 use crate::llm::gemini::extraction::{extract_content, extract_thoughts, extract_tool_calls};
 use crate::llm::gemini::types::{
-    GenerationConfig, GeminiContent, GeminiRequest, GeminiResponse, GeminiTool, ThinkingConfig,
+    GeminiContent, GeminiRequest, GeminiResponse, GeminiTool, GenerationConfig, ThinkingConfig,
 };
 use crate::llm::provider::{LlmClient, Provider};
-use anyhow::{anyhow, Result};
+use crate::llm::{ChatResult, Message, Tool, Usage};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, instrument, Span};
+use tracing::{Span, debug, info, instrument};
 use uuid::Uuid;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -93,14 +93,15 @@ impl LlmClient for GeminiClient {
         );
 
         // Build tool call ID to name mapping from assistant messages for correct response formatting
-        let mut call_id_to_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut call_id_to_name: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for msg in &messages {
             if let Some(ref tool_calls) = msg.tool_calls {
                 for tc in tool_calls {
                     call_id_to_name.insert(tc.id.clone(), tc.function.name.clone());
                     // Also map item_id if present (for providers with extended tool call tracking)
                     if let Some(ref item_id) = tc.item_id {
-                         call_id_to_name.insert(item_id.clone(), tc.function.name.clone());
+                        call_id_to_name.insert(item_id.clone(), tc.function.name.clone());
                     }
                 }
             }
@@ -175,7 +176,9 @@ impl LlmClient for GeminiClient {
                         let error_body = response.text().await.unwrap_or_default();
 
                         // Check for transient errors
-                        if attempts < max_attempts && (status.as_u16() == 429 || status.is_server_error()) {
+                        if attempts < max_attempts
+                            && (status.as_u16() == 429 || status.is_server_error())
+                        {
                             tracing::warn!(
                                 request_id = %request_id,
                                 status = %status,
@@ -242,7 +245,8 @@ impl LlmClient for GeminiClient {
                         );
                         for tc in tcs {
                             let args: serde_json::Value =
-                                serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
+                                serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or(serde_json::Value::Null);
                             debug!(
                                 request_id = %request_id,
                                 tool = %tc.function.name,

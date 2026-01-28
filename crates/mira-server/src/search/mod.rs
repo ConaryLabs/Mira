@@ -9,11 +9,11 @@ mod utils;
 
 pub use context::{expand_context, expand_context_with_conn};
 pub use crossref::{
-    crossref_search, find_callers, find_callees, format_crossref_results, CrossRefResult,
-    CrossRefType,
+    CrossRefResult, CrossRefType, crossref_search, find_callees, find_callers,
+    format_crossref_results,
 };
 pub use keyword::keyword_search;
 pub use semantic::{
-    format_results, hybrid_search, semantic_search, HybridSearchResult, SearchResult, SearchType,
+    HybridSearchResult, SearchResult, SearchType, format_results, hybrid_search, semantic_search,
 };
 pub use utils::{distance_to_score, embedding_to_bytes, format_project_header};

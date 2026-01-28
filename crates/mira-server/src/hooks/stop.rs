@@ -1,11 +1,11 @@
 // crates/mira-server/src/hooks/stop.rs
 // Stop hook handler - checks goal progress and saves session state
 
+use crate::db::pool::DatabasePool;
+use crate::hooks::{read_hook_input, write_hook_output};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::db::pool::DatabasePool;
-use crate::hooks::{read_hook_input, write_hook_output};
 
 /// Get database path
 fn get_db_path() -> PathBuf {
@@ -66,17 +66,19 @@ pub async fn run() -> Result<()> {
     // Get current project
     let project_id = {
         let pool_clone = pool.clone();
-        let result: Result<Option<i64>, _> = pool_clone.interact(move |conn| {
-            let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-            let result = if let Some(path) = path {
-                crate::db::get_or_create_project_sync(conn, &path, None)
-                    .ok()
-                    .map(|(id, _)| id)
-            } else {
-                None
-            };
-            Ok::<_, anyhow::Error>(result)
-        }).await;
+        let result: Result<Option<i64>, _> = pool_clone
+            .interact(move |conn| {
+                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+                let result = if let Some(path) = path {
+                    crate::db::get_or_create_project_sync(conn, &path, None)
+                        .ok()
+                        .map(|(id, _)| id)
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>(result)
+            })
+            .await;
         result.ok().flatten()
     };
 
@@ -89,9 +91,10 @@ pub async fn run() -> Result<()> {
     // Check for in-progress goals
     let goals: Vec<GoalInfo> = {
         let pool_clone = pool.clone();
-        match pool_clone.interact(move |conn| {
-            Ok::<_, anyhow::Error>(get_in_progress_goals(conn, project_id))
-        }).await {
+        match pool_clone
+            .interact(move |conn| Ok::<_, anyhow::Error>(get_in_progress_goals(conn, project_id)))
+            .await
+        {
             Ok(g) => g,
             Err(_) => Vec::new(),
         }
@@ -104,13 +107,17 @@ pub async fn run() -> Result<()> {
         // We have active goals - add context but don't block
         let goal_summary: Vec<String> = goals
             .iter()
-            .map(|g| format!("- {} ({}%): {}", g.title, g.progress, g.next_milestone.as_deref().unwrap_or("no milestones")))
+            .map(|g| {
+                format!(
+                    "- {} ({}%): {}",
+                    g.title,
+                    g.progress,
+                    g.next_milestone.as_deref().unwrap_or("no milestones")
+                )
+            })
             .collect();
 
-        let context = format!(
-            "Active goals in progress:\n{}",
-            goal_summary.join("\n")
-        );
+        let context = format!("Active goals in progress:\n{}", goal_summary.join("\n"));
 
         // Add as additional context (informational, not blocking)
         output = serde_json::json!({
@@ -127,14 +134,20 @@ pub async fn run() -> Result<()> {
     {
         let pool_clone = pool.clone();
         let session_id = stop_input.session_id.clone();
-        let _ = pool_clone.interact(move |conn| {
-            crate::db::set_server_state_sync(conn, "last_stop_time", &chrono::Utc::now().to_rfc3339())
+        let _ = pool_clone
+            .interact(move |conn| {
+                crate::db::set_server_state_sync(
+                    conn,
+                    "last_stop_time",
+                    &chrono::Utc::now().to_rfc3339(),
+                )
                 .ok();
-            if !session_id.is_empty() {
-                crate::db::set_server_state_sync(conn, "active_session_id", &session_id).ok();
-            }
-            Ok::<_, anyhow::Error>(())
-        }).await;
+                if !session_id.is_empty() {
+                    crate::db::set_server_state_sync(conn, "active_session_id", &session_id).ok();
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
     }
 
     write_hook_output(&output);

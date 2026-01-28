@@ -6,10 +6,10 @@ use super::findings::{parse_expert_findings, store_findings};
 use super::role::ExpertRole;
 use super::tools::{execute_tool, get_expert_tools};
 use super::{
-    ToolContext, EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
-    PARALLEL_EXPERT_TIMEOUT,
+    EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
+    PARALLEL_EXPERT_TIMEOUT, ToolContext,
 };
-use crate::llm::{record_llm_usage, Message};
+use crate::llm::{Message, record_llm_usage};
 use std::sync::Arc;
 use tokio::time::timeout;
 
@@ -53,10 +53,7 @@ pub async fn consult_expert<C: ToolContext>(
     let user_prompt = build_user_prompt(&enriched_context, question.as_deref());
     let tools = get_expert_tools();
 
-    let mut messages = vec![
-        Message::system(system_prompt),
-        Message::user(user_prompt),
-    ];
+    let mut messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
     let mut total_tool_calls = 0;
     let mut iterations = 0;
@@ -78,22 +75,23 @@ pub async fn consult_expert<C: ToolContext>(
             // For stateful providers, only send new messages after
             // the first call. The previous_response_id preserves context server-side.
             // For non-stateful providers (DeepSeek, Gemini), always send full history.
-            let messages_to_send = if previous_response_id.is_some() && chat_client.supports_stateful() {
-                // Only send tool messages (results from current iteration)
-                // These are at the end of the messages vec after the last assistant message
-                messages
-                    .iter()
-                    .rev()
-                    .take_while(|m| m.role == "tool")
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect()
-            } else {
-                // First call OR non-stateful provider - send all messages
-                messages.clone()
-            };
+            let messages_to_send =
+                if previous_response_id.is_some() && chat_client.supports_stateful() {
+                    // Only send tool messages (results from current iteration)
+                    // These are at the end of the messages vec after the last assistant message
+                    messages
+                        .iter()
+                        .rev()
+                        .take_while(|m| m.role == "tool")
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect()
+                } else {
+                    // First call OR non-stateful provider - send all messages
+                    messages.clone()
+                };
 
             // Call LLM with tools using chat client during tool-gathering phase
             let result = timeout(
@@ -102,7 +100,7 @@ pub async fn consult_expert<C: ToolContext>(
                     messages_to_send,
                     Some(tools.clone()),
                     previous_response_id.as_deref(),
-                )
+                ),
             )
             .await
             .map_err(|_| format!("LLM call timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
@@ -118,7 +116,8 @@ pub async fn consult_expert<C: ToolContext>(
                 &result,
                 ctx.project_id().await,
                 ctx.get_session_id().await,
-            ).await;
+            )
+            .await;
 
             // Store response ID for next iteration (enables reasoning context preservation)
             previous_response_id = Some(result.request_id.clone());
@@ -136,7 +135,7 @@ pub async fn consult_expert<C: ToolContext>(
 
                     // Execute tools in parallel for better performance
                     let tool_futures = tool_calls.iter().map(|tc| {
-                        let ctx = ctx;  // ctx is already &C, just copy the reference
+                        let ctx = ctx; // ctx is already &C, just copy the reference
                         let tc = tc.clone();
                         async move {
                             let result = execute_tool(ctx, &tc).await;
@@ -167,24 +166,21 @@ pub async fn consult_expert<C: ToolContext>(
                 );
 
                 // Add chat client's response as context for reasoner
-                let assistant_msg = Message::assistant(
-                    result.content.clone(),
-                    result.reasoning_content.clone(),
-                );
+                let assistant_msg =
+                    Message::assistant(result.content.clone(), result.reasoning_content.clone());
                 messages.push(assistant_msg);
 
                 // Create synthesis prompt for reasoner
-                let synthesis_prompt = Message::user(
-                    String::from("Based on the tool results above, provide your final expert analysis. \
-                    Synthesize the findings into a clear, actionable response.")
-                );
+                let synthesis_prompt = Message::user(String::from(
+                    "Based on the tool results above, provide your final expert analysis. \
+                    Synthesize the findings into a clear, actionable response.",
+                ));
                 messages.push(synthesis_prompt);
 
                 // Call reasoner without tools for final synthesis (no timeout reasoner, it can be slow)
                 let final_result = reasoner
                     .chat_stateful(
-                        messages,
-                        None, // No tools for synthesis
+                        messages, None, // No tools for synthesis
                         None, // No previous_response_id across different clients
                     )
                     .await
@@ -200,7 +196,8 @@ pub async fn consult_expert<C: ToolContext>(
                     &final_result,
                     ctx.project_id().await,
                     ctx.get_session_id().await,
-                ).await;
+                )
+                .await;
 
                 return Ok((final_result, total_tool_calls, iterations));
             }
@@ -210,11 +207,13 @@ pub async fn consult_expert<C: ToolContext>(
         }
     })
     .await
-    .map_err(|_| format!(
-        "{} consultation timed out after {}s",
-        expert.name(),
-        EXPERT_TIMEOUT.as_secs()
-    ))??;
+    .map_err(|_| {
+        format!(
+            "{} consultation timed out after {}s",
+            expert.name(),
+            EXPERT_TIMEOUT.as_secs()
+        )
+    })??;
 
     let (final_result, tool_calls, iters) = result;
 
@@ -234,7 +233,12 @@ pub async fn consult_expert<C: ToolContext>(
         }
     }
 
-    Ok(format_expert_response(expert, final_result, tool_calls, iters))
+    Ok(format_expert_response(
+        expert,
+        final_result,
+        tool_calls,
+        iters,
+    ))
 }
 
 /// Consult multiple experts in parallel
@@ -274,9 +278,13 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
             let question = question.clone();
             let role_clone = role.clone();
             async move {
-                let result =
-                    consult_expert(&ctx, role, context.to_string(), question.map(|q| q.to_string()))
-                        .await;
+                let result = consult_expert(
+                    &ctx,
+                    role,
+                    context.to_string(),
+                    question.map(|q| q.to_string()),
+                )
+                .await;
                 (role_clone, result)
             }
         })
@@ -306,7 +314,11 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
                 successes += 1;
             }
             Err(e) => {
-                output.push_str(&format!("## {} (Failed)\n\nError: {}\n\n---\n\n", role.name(), e));
+                output.push_str(&format!(
+                    "## {} (Failed)\n\nError: {}\n\n---\n\n",
+                    role.name(),
+                    e
+                ));
                 failures += 1;
             }
         }

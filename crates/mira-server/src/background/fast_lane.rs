@@ -8,7 +8,7 @@ use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{Notify, watch};
 
 use super::embeddings;
 

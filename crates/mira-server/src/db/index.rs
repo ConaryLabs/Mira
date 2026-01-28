@@ -6,7 +6,7 @@
 // - background/watcher.rs (file deletion)
 // - tools/core/code.rs (counts, module cleanup)
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// Clear all index data for a project (symbols, embeddings, imports, modules, call graph)
 ///
@@ -45,7 +45,11 @@ pub fn clear_project_index_sync(conn: &Connection, project_id: i64) -> rusqlite:
 /// Clear index data for a specific file within a project
 ///
 /// Used by the file watcher when a file is deleted or needs re-indexing.
-pub fn clear_file_index_sync(conn: &Connection, project_id: i64, file_path: &str) -> rusqlite::Result<()> {
+pub fn clear_file_index_sync(
+    conn: &Connection,
+    project_id: i64,
+    file_path: &str,
+) -> rusqlite::Result<()> {
     // Delete symbols for this file
     conn.execute(
         "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
@@ -100,7 +104,10 @@ pub fn count_embedded_chunks_sync(conn: &Connection, project_id: Option<i64>) ->
 /// Clear cached modules that don't have a purpose set
 ///
 /// Used after generating module summaries to clean up partial entries.
-pub fn clear_modules_without_purpose_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<usize> {
+pub fn clear_modules_without_purpose_sync(
+    conn: &Connection,
+    project_id: i64,
+) -> rusqlite::Result<usize> {
     let deleted = conn.execute(
         "DELETE FROM codebase_modules WHERE project_id = ? AND purpose IS NULL",
         params![project_id],

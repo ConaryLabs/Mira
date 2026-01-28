@@ -1,7 +1,7 @@
 // src/indexer/parsers/go.rs
 // Go language parser using tree-sitter
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
 use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
@@ -60,11 +60,22 @@ pub fn walk(
     match node.kind() {
         "function_declaration" | "method_declaration" => {
             if let Some(sym) = extract_function(node, source, parent_name) {
-                let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                let func_name = sym
+                    .qualified_name
+                    .clone()
+                    .unwrap_or_else(|| sym.name.clone());
                 symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                        walk(
+                            child,
+                            source,
+                            symbols,
+                            imports,
+                            calls,
+                            parent_name,
+                            Some(&func_name),
+                        );
                     }
                 }
                 return;
@@ -75,7 +86,15 @@ pub fn walk(
                 let name = sym.name.clone();
                 symbols.push(sym);
                 for child in node.children(&mut node.walk()) {
-                    walk(child, source, symbols, imports, calls, Some(&name), current_function);
+                    walk(
+                        child,
+                        source,
+                        symbols,
+                        imports,
+                        calls,
+                        Some(&name),
+                        current_function,
+                    );
                 }
                 return;
             }
@@ -100,7 +119,15 @@ pub fn walk(
     }
 
     for child in node.children(&mut node.walk()) {
-        walk(child, source, symbols, imports, calls, parent_name, current_function);
+        walk(
+            child,
+            source,
+            symbols,
+            imports,
+            calls,
+            parent_name,
+            current_function,
+        );
     }
 }
 
@@ -110,16 +137,15 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
 
     // For method declarations, get the receiver type
     let receiver = if node.kind() == "method_declaration" {
-        node.child_by_field_name("receiver")
-            .and_then(|r| {
-                // Find the type identifier in the receiver
-                for child in r.children(&mut r.walk()) {
-                    if child.kind() == "type_identifier" || child.kind() == "pointer_type" {
-                        return Some(node_text(child, source));
-                    }
+        node.child_by_field_name("receiver").and_then(|r| {
+            // Find the type identifier in the receiver
+            for child in r.children(&mut r.walk()) {
+                if child.kind() == "type_identifier" || child.kind() == "pointer_type" {
+                    return Some(node_text(child, source));
                 }
-                None
-            })
+            }
+            None
+        })
     } else {
         None
     };
@@ -130,14 +156,21 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         (None, None) => name.clone(),
     };
 
-    let signature = node.child_by_field_name("parameters")
+    let signature = node
+        .child_by_field_name("parameters")
         .map(|n| node_text(n, source));
 
     // Check for test functions
-    let is_test = name.starts_with("Test") || name.starts_with("Benchmark") || name.starts_with("Example");
+    let is_test =
+        name.starts_with("Test") || name.starts_with("Benchmark") || name.starts_with("Example");
 
     // Check visibility (exported = starts with uppercase)
-    let visibility = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+    let visibility = if name
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+    {
         Some("public".to_string())
     } else {
         Some("private".to_string())
@@ -165,7 +198,8 @@ fn extract_type(node: Node, source: &[u8]) -> Option<Symbol> {
             let name_node = child.child_by_field_name("name")?;
             let name = node_text(name_node, source);
 
-            let symbol_type = child.child_by_field_name("type")
+            let symbol_type = child
+                .child_by_field_name("type")
                 .map(|t| match t.kind() {
                     "struct_type" => "struct",
                     "interface_type" => "interface",
@@ -173,7 +207,12 @@ fn extract_type(node: Node, source: &[u8]) -> Option<Symbol> {
                 })
                 .unwrap_or("type");
 
-            let visibility = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            let visibility = if name
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+            {
                 Some("public".to_string())
             } else {
                 Some("private".to_string())
@@ -254,17 +293,31 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     let function_node = node.child_by_field_name("function")?;
     let callee_name = match function_node.kind() {
         "identifier" => node_text(function_node, source),
-        "selector_expression" => {
-            function_node.child_by_field_name("field")
-                .map(|n| node_text(n, source))?
-        }
+        "selector_expression" => function_node
+            .child_by_field_name("field")
+            .map(|n| node_text(n, source))?,
         _ => return None,
     };
 
     // Skip common stdlib functions
-    if matches!(callee_name.as_str(), "make" | "new" | "append" | "len" | "cap" |
-                "copy" | "delete" | "panic" | "recover" | "print" | "println" |
-                "close" | "complex" | "real" | "imag") {
+    if matches!(
+        callee_name.as_str(),
+        "make"
+            | "new"
+            | "append"
+            | "len"
+            | "cap"
+            | "copy"
+            | "delete"
+            | "panic"
+            | "recover"
+            | "print"
+            | "println"
+            | "close"
+            | "complex"
+            | "real"
+            | "imag"
+    ) {
         return None;
     }
 
@@ -392,7 +445,10 @@ import (
         let fmt_import = imports.iter().find(|i| i.import_path == "fmt").unwrap();
         assert!(fmt_import.is_external);
 
-        let pkg_import = imports.iter().find(|i| i.import_path.contains("github.com")).unwrap();
+        let pkg_import = imports
+            .iter()
+            .find(|i| i.import_path.contains("github.com"))
+            .unwrap();
         assert!(pkg_import.is_external);
     }
 
@@ -418,7 +474,10 @@ func ExampleUsage() {
         let test_sym = symbols.iter().find(|s| s.name == "TestSomething").unwrap();
         assert!(test_sym.is_test);
 
-        let bench_sym = symbols.iter().find(|s| s.name == "BenchmarkOperation").unwrap();
+        let bench_sym = symbols
+            .iter()
+            .find(|s| s.name == "BenchmarkOperation")
+            .unwrap();
         assert!(bench_sym.is_test);
 
         let example_sym = symbols.iter().find(|s| s.name == "ExampleUsage").unwrap();
