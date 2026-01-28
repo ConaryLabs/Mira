@@ -1,9 +1,9 @@
 {
   "name": "mira",
   "description": "Semantic memory and code intelligence for Claude Code. Persistent memory across sessions, expert consultations, goal tracking, and proactive context injection.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
-    "name": "Peter Chaganti"
+    "name": "Peter Permenter"
   },
   "homepage": "https://github.com/ConaryLabs/Mira",
   "repository": "https://github.com/ConaryLabs/Mira",
