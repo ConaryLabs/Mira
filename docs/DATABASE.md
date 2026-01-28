@@ -358,7 +358,7 @@ Vector embeddings for semantic memory search.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| embedding | float[768] | Google text-embedding-004 (or 1536 for OpenAI) |
+| embedding | float[1536] | Google text-embedding-001 |
 | fact_id | INTEGER | Reference to memory_facts.id |
 | content | TEXT | Searchable content |
 
@@ -368,7 +368,7 @@ Vector embeddings for semantic code search.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| embedding | float[768] | Google text-embedding-004 (or 1536 for OpenAI) |
+| embedding | float[1536] | Google text-embedding-001 |
 | file_path | TEXT | Source file |
 | chunk_content | TEXT | Code chunk |
 | project_id | INTEGER | Project reference |
@@ -433,6 +433,25 @@ Tracking for batch embedding requests.
 
 ## Usage Tracking
 
+### llm_usage
+
+LLM API usage and cost tracking.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| provider | TEXT | `deepseek` or `gemini` |
+| model | TEXT | Model name |
+| role | TEXT | Expert role that made the call |
+| prompt_tokens | INTEGER | Input token count |
+| completion_tokens | INTEGER | Output token count |
+| total_tokens | INTEGER | Total tokens |
+| cost_estimate | REAL | Estimated cost in USD |
+| duration_ms | INTEGER | Request duration |
+| project_id | INTEGER FK | Project reference |
+| session_id | TEXT | Session reference |
+| created_at | TEXT | Timestamp |
+
 ### embeddings_usage
 
 Embedding API usage tracking.
@@ -440,8 +459,8 @@ Embedding API usage tracking.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
-| provider | TEXT | `openai` or `google` |
-| model | TEXT | Model name |
+| provider | TEXT | `google` |
+| model | TEXT | Model name (text-embedding-001) |
 | tokens | INTEGER | Token count |
 | text_count | INTEGER | Number of texts embedded |
 | cost_estimate | REAL | Estimated cost |

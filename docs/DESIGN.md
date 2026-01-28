@@ -92,8 +92,8 @@ Key components:
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
-| LLM Factory | `llm/factory.rs` | DeepSeek, Gemini, GLM providers |
-| Embeddings | `embeddings/mod.rs` | OpenAI and Google embedding clients |
+| LLM Factory | `llm/factory.rs` | DeepSeek, Gemini providers |
+| Embeddings | `embeddings/mod.rs` | Google embedding client (text-embedding-001) |
 
 ---
 
@@ -187,17 +187,16 @@ Mira stores everything in SQLite and embeds vector search using `sqlite-vec`
 
 ### What We Chose
 
-Mira's intelligence features use a **Provider Factory** that supports DeepSeek,
-OpenAI, and Gemini. While DeepSeek Reasoner is the default for its reasoning
-capabilities, users can configure different providers per expert role.
+Mira's intelligence features use a **Provider Factory** that supports DeepSeek
+and Gemini. DeepSeek Reasoner is the default for its extended reasoning
+capabilities, while Gemini provides cost-effective alternatives.
 
 ### Why Multi-Provider
 
 **1) Different tasks benefit from different models**
 - Extended reasoning tasks (architects, security) → DeepSeek Reasoner
-- Thinking mode → GLM 4.7 (Z.AI)
-- Alternative providers → Gemini
-- Cost optimization → Choose based on task complexity
+- Cost-sensitive tasks → Gemini
+- Embeddings → Google text-embedding-001
 
 **2) Resilience and choice**
 - No single-provider lock-in
@@ -212,8 +211,7 @@ capabilities, users can configure different providers per expert role.
 
 Via tool:
 ```
-configure_expert(action="set", role="architect", provider="gemini", model="gemini-3-pro-preview")
-configure_expert(action="set", role="code_reviewer", provider="glm")
+configure_expert(action="set", role="architect", provider="gemini")
 configure_expert(action="providers")  # List available providers
 ```
 
@@ -370,7 +368,7 @@ The schema is "product-shaped," not purely technical:
 
 ### Embeddings and Search
 
-Embeddings are optional and pluggable (OpenAI, Google). Semantic search happens
+Embeddings are optional (Google text-embedding-001). Semantic search happens
 in two areas:
 1. **Memory recall** - `vec_memory` queried with cosine distance
 2. **Code search** - Hybrid semantic + keyword search via `vec_code` and `code_fts`
@@ -429,7 +427,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
 | Storage | SQLite single-file | Horizontal scaling |
-| Intelligence | Multi-provider (DeepSeek default) | Requires at least one API key |
+| Intelligence | DeepSeek + Gemini | Requires at least one API key |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |
 | Data | Local-first | Built-in sync |

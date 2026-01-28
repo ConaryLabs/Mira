@@ -205,7 +205,6 @@ configure_expert(action="delete", role="architect")
 |----------|---------------|----------|
 | `deepseek` | `deepseek-reasoner` | Extended reasoning, multi-step analysis |
 | `gemini` | `gemini-3-pro-preview` | Cost-effective, good reasoning |
-| `glm` | `glm-4.7` | Thinking mode, Z.AI infrastructure |
 
 Use `configure_expert(action="providers")` to see available providers and their configured models.
 
@@ -247,7 +246,6 @@ background_provider = "deepseek"
 |----------|--------------|-----------------|---------------|
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
 | Gemini | `gemini` | `GEMINI_API_KEY` | `gemini-3-pro-preview` |
-| GLM (Z.AI) | `glm` or `zai` | `ZAI_API_KEY` | `glm-4.7` |
 
 If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available.
 

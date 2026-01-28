@@ -87,7 +87,7 @@ This allows tracing execution paths and understanding dependencies without readi
 
 ### Semantic Search
 
-Code chunks and memories are embedded into vector space using Google or OpenAI embeddings. This enables **semantic search** - finding code by meaning rather than exact keywords.
+Code chunks and memories are embedded into vector space using Google's text-embedding-001 model. This enables **semantic search** - finding code by meaning rather than exact keywords.
 
 ```
 "authentication middleware" → finds auth-related code
@@ -155,8 +155,7 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 
 Experts can be backed by different LLM providers via `configure_expert` or `~/.mira/config.toml`:
 - **DeepSeek** (default) - Optimized for extended reasoning
-- **Gemini** - Google's models, cost-effective
-- **GLM** - Z.AI's GLM 4.7 with thinking mode
+- **Gemini** - Google's models, cost-effective for simpler tasks
 
 Each expert role can use a different provider based on the task requirements.
 
@@ -238,9 +237,9 @@ Documentation is tracked against the code it describes:
 ### Generation Workflow
 
 ```
-list_doc_tasks()         → See what needs documentation
-write_documentation(42)  → Expert generates and writes the doc
-skip_doc_task(42)        → Mark as not needed
+documentation(action="list")           → See what needs documentation
+documentation(action="write", task_id=42)  → Expert generates the doc
+documentation(action="skip", task_id=42)   → Mark as not needed
 ```
 
 The Documentation Writer expert explores the actual implementation to produce accurate, comprehensive docs.
