@@ -251,6 +251,109 @@ pub fn get_session_stats_sync(
     Ok((count, tools))
 }
 
+/// Close a session by setting its status to completed and optionally adding a summary
+pub fn close_session_sync(
+    conn: &Connection,
+    session_id: &str,
+    summary: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE sessions SET status = 'completed', summary = COALESCE(?2, summary), last_activity = datetime('now')
+         WHERE id = ?1",
+        params![session_id, summary],
+    )?;
+    Ok(())
+}
+
+/// Get stale active sessions (no activity for given minutes)
+/// Returns (session_id, project_id, tool_count)
+pub fn get_stale_sessions_sync(
+    conn: &Connection,
+    stale_minutes: i64,
+) -> rusqlite::Result<Vec<(String, Option<i64>, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.project_id,
+                (SELECT COUNT(*) FROM tool_history WHERE session_id = s.id) as tool_count
+         FROM sessions s
+         WHERE s.status = 'active'
+           AND s.last_activity < datetime('now', '-' || ? || ' minutes')
+         ORDER BY s.last_activity ASC
+         LIMIT 20",
+    )?;
+    let rows = stmt.query_map(params![stale_minutes], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    rows.collect()
+}
+
+/// Get tool history summary for a session (for LLM summarization)
+pub fn get_session_tool_summary_sync(
+    conn: &Connection,
+    session_id: &str,
+) -> rusqlite::Result<String> {
+    let mut stmt = conn.prepare(
+        "SELECT tool_name, arguments, result_summary, success
+         FROM tool_history
+         WHERE session_id = ?
+         ORDER BY created_at ASC
+         LIMIT 50",
+    )?;
+
+    let entries: Vec<String> = stmt
+        .query_map(params![session_id], |row| {
+            let tool: String = row.get(0)?;
+            let args: Option<String> = row.get(1)?;
+            let result: Option<String> = row.get(2)?;
+            let success: i32 = row.get(3)?;
+
+            let status = if success != 0 { "✓" } else { "✗" };
+            let args_preview = args
+                .map(|a| if a.len() > 100 { format!("{}...", &a[..100]) } else { a })
+                .unwrap_or_default();
+            let result_preview = result
+                .map(|r| if r.len() > 150 { format!("{}...", &r[..150]) } else { r })
+                .unwrap_or_default();
+
+            Ok(format!("{} {}({}) -> {}", status, tool, args_preview, result_preview))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(entries.join("\n"))
+}
+
+/// Get completed sessions that need summaries
+/// Returns (session_id, project_id, tool_count)
+pub fn get_sessions_needing_summary_sync(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<(String, Option<i64>, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.project_id,
+                (SELECT COUNT(*) FROM tool_history WHERE session_id = s.id) as tool_count
+         FROM sessions s
+         WHERE s.status = 'completed'
+           AND s.summary IS NULL
+           AND (SELECT COUNT(*) FROM tool_history WHERE session_id = s.id) >= 3
+         ORDER BY s.last_activity DESC
+         LIMIT 10",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    rows.collect()
+}
+
+/// Update session summary (for background worker)
+pub fn update_session_summary_sync(
+    conn: &Connection,
+    session_id: &str,
+    summary: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE sessions SET summary = ? WHERE id = ?",
+        params![summary, session_id],
+    )?;
+    Ok(())
+}
+
 /// Log a tool call to history - sync version for pool.interact()
 pub fn log_tool_call_sync(
     conn: &Connection,

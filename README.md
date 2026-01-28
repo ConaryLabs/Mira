@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ConaryLabs/Mira/actions/workflows/ci.yml/badge.svg)](https://github.com/ConaryLabs/Mira/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.1-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.2-green.svg)](CHANGELOG.md)
 
 **A second brain for Claude Code**
 
@@ -12,11 +12,11 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.3.1
+## What's New in v0.3.2
 
-- **Plugin Marketplace**: Install with `claude plugin install ConaryLabs/Mira`
-- Auto-initialize project from Claude Code's working directory
-- GitHub Actions CI pipeline with automated testing
+- **Session Lifecycle**: Sessions now properly close when Claude Code exits
+- **Auto Summaries**: LLM-generated session summaries for sessions with 3+ tool calls
+- **Background Cleanup**: Stale sessions (30+ min inactive) auto-close with summaries
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 

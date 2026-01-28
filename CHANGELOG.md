@@ -80,6 +80,18 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-01-28
+
+### Added
+- Session lifecycle management: sessions now properly close when Claude Code exits
+- LLM-powered session summaries generated automatically for sessions with 3+ tool calls
+- Background worker closes stale sessions (inactive 30+ min) with auto-generated summaries
+- New database functions: `close_session_sync`, `get_stale_sessions_sync`, `get_sessions_needing_summary_sync`
+
+### Fixed
+- Sessions no longer stay "active" forever - stop hook now marks them as "completed"
+- `session_history` now shows meaningful session data with summaries
+
 ## [0.3.1] - 2026-01-28
 
 ### Added

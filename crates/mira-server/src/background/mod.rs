@@ -13,6 +13,7 @@ pub mod documentation;
 mod embeddings;
 mod fast_lane;
 mod pondering;
+pub mod session_summaries;
 mod slow_lane;
 mod summaries;
 pub mod watcher;

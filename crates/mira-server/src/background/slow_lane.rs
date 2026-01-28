@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
-use super::{briefings, capabilities, code_health, documentation, pondering, summaries};
+use super::{briefings, capabilities, code_health, documentation, pondering, session_summaries, summaries};
 
 /// Slow lane worker for LLM-dependent background tasks
 pub struct SlowLaneWorker {
@@ -93,6 +93,9 @@ impl SlowLaneWorker {
             }
         };
 
+        // Process stale sessions (close and summarize)
+        processed += self.process_stale_sessions(&client).await?;
+
         // Process summaries (rate limited)
         processed += self.process_summaries(&client).await?;
 
@@ -162,6 +165,14 @@ impl SlowLaneWorker {
         let count = pondering::process_pondering(&self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: generated {} pondering insights", count);
+        }
+        Ok(count)
+    }
+
+    async fn process_stale_sessions(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+        let count = session_summaries::process_stale_sessions(&self.pool, client).await?;
+        if count > 0 {
+            tracing::info!("Slow lane: closed {} stale sessions", count);
         }
         Ok(count)
     }
