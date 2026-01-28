@@ -12,14 +12,36 @@ Semantic memory and code intelligence for Claude Code. Provides persistent memor
 
 ## Installation
 
-### 1. Build Mira
+### Option 1: Install from Marketplace (Recommended)
+
+```bash
+claude plugin install ConaryLabs/Mira
+```
+
+Then set your API keys in `~/.mira/.env`:
+
+```bash
+mkdir -p ~/.mira
+cat > ~/.mira/.env << 'EOF'
+DEEPSEEK_API_KEY=your-key-here
+GEMINI_API_KEY=your-key-here
+EOF
+```
+
+Get your keys from:
+- DeepSeek: https://platform.deepseek.com/api_keys
+- Gemini: https://aistudio.google.com/app/apikey
+
+### Option 2: Install from Source
+
+#### 1. Build Mira
 
 ```bash
 cd /path/to/mira
 cargo build --release
 ```
 
-### 2. Configure Plugin Files
+#### 2. Configure Plugin Files
 
 Copy the example config files and update paths to your mira binary:
 
@@ -40,7 +62,7 @@ Edit both files and replace `/path/to/mira` with your actual path:
 sed -i 's|/path/to/mira|/home/user/mira|g' .mcp.json hooks/hooks.json
 ```
 
-### 3. Set Environment Variables
+#### 3. Set Environment Variables
 
 Add to your shell profile (`~/.bashrc` or `~/.zshrc`):
 
@@ -49,7 +71,7 @@ export DEEPSEEK_API_KEY="your-key"    # For expert consultations
 export GEMINI_API_KEY="your-key"       # For embeddings
 ```
 
-### 4. Run Claude Code with Plugin
+#### 4. Run Claude Code with Plugin
 
 ```bash
 claude --plugin-dir /path/to/mira/plugin

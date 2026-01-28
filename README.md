@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ConaryLabs/Mira/actions/workflows/ci.yml/badge.svg)](https://github.com/ConaryLabs/Mira/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.1-green.svg)](CHANGELOG.md)
 
 **A second brain for Claude Code**
 
@@ -12,11 +12,11 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.3.0
+## What's New in v0.3.1
 
+- **Plugin Marketplace**: Install with `claude plugin install ConaryLabs/Mira`
+- Auto-initialize project from Claude Code's working directory
 - GitHub Actions CI pipeline with automated testing
-- Production-ready documentation and contribution guidelines
-- Cleaned up configuration and simplified LLM provider setup
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
@@ -37,13 +37,36 @@ Mira runs as an MCP server alongside Claude Code, providing:
 
 ## Installation
 
-### Install via Cargo
+### Option 1: Install as Claude Code Plugin (Recommended)
+
+The easiest way to install Mira is via the Claude Code plugin marketplace:
+
+```bash
+claude plugin install ConaryLabs/Mira
+```
+
+This installs Mira as a plugin with full features including hooks for proactive context injection.
+
+### Option 2: Install via Cargo (MCP Server Only)
 
 ```bash
 cargo install --git https://github.com/ConaryLabs/Mira.git
 ```
 
-### Or Build from Source
+Then add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "command": "mira",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### Option 3: Build from Source
 
 ```bash
 git clone https://github.com/ConaryLabs/Mira.git
@@ -51,11 +74,7 @@ cd Mira
 cargo build --release
 ```
 
-The binary will be at `target/release/mira`.
-
-### Configure Claude Code
-
-Add to your project's `.mcp.json`:
+The binary will be at `target/release/mira`. Add to `.mcp.json`:
 
 ```json
 {
@@ -105,11 +124,13 @@ Then recall("preferences") before writing code.
 
 See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a complete template you can copy into your project.
 
-### Advanced: Plugin Mode
+### Plugin vs MCP Server
 
-For proactive context injection (auto-recall on every prompt, hooks for file changes), Mira can run as a Claude Code plugin instead of just an MCP server.
+The **plugin installation** (Option 1) provides the full Mira experience with proactive context injection - auto-recall on every prompt, hooks for file changes, and session-aware features.
 
-See [plugin/README.md](plugin/README.md) for setup instructions.
+The **MCP server installation** (Options 2-3) provides the core tools without hooks. Use this if you prefer manual control or can't use plugins.
+
+See [plugin/README.md](plugin/README.md) for advanced plugin configuration.
 
 ## Features
 
