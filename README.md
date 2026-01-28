@@ -86,13 +86,24 @@ Get your keys from:
 
 ### Add to CLAUDE.md
 
-Add to your project's `CLAUDE.md`:
+Add Mira instructions to your project's `CLAUDE.md` so Claude Code knows how to use the tools effectively.
+
+**Minimal setup** - Add this at minimum:
 
 ```markdown
 ## Session Start
 project(action="start", project_path="/path/to/your/project")
 Then recall("preferences") before writing code.
 ```
+
+**Recommended setup** - For best results, include guidance on:
+- When to use Mira tools vs Grep/Glob
+- Memory system usage (remember/recall)
+- Goal tracking for multi-session work
+- Expert consultation patterns
+- Sub-agent context injection
+
+See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a complete template you can copy into your project.
 
 ### Advanced: Plugin Mode
 

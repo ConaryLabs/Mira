@@ -61,7 +61,7 @@ Mira loads environment files in this order (later overrides earlier):
 
 | File | Purpose |
 |------|---------|
-| `CLAUDE.md` | Project instructions (checked into git) |
+| `CLAUDE.md` | Project instructions (checked into git) - see [template](CLAUDE_TEMPLATE.md) |
 | `CLAUDE.local.md` | Local-only instructions (gitignored) |
 | `.miraignore` | Files to exclude from indexing |
 
