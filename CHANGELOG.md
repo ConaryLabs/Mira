@@ -80,6 +80,15 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-01-28
+
+### Added
+- Plugin marketplace distribution (`claude plugin install ConaryLabs/Mira`)
+- Auto-initialize project from Claude Code's working directory
+
+### Changed
+- Updated installation docs to recommend marketplace installation
+
 ## [0.3.0] - 2026-01-28
 
 ### Added
