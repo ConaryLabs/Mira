@@ -358,7 +358,7 @@ Vector embeddings for semantic memory search.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| embedding | float[1536] | Google text-embedding-001 |
+| embedding | float[1536] | Google gemini-embedding-001 |
 | fact_id | INTEGER | Reference to memory_facts.id |
 | content | TEXT | Searchable content |
 
@@ -368,7 +368,7 @@ Vector embeddings for semantic code search.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| embedding | float[1536] | Google text-embedding-001 |
+| embedding | float[1536] | Google gemini-embedding-001 |
 | file_path | TEXT | Source file |
 | chunk_content | TEXT | Code chunk |
 | project_id | INTEGER | Project reference |
@@ -460,7 +460,7 @@ Embedding API usage tracking.
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
 | provider | TEXT | `google` |
-| model | TEXT | Model name (text-embedding-001) |
+| model | TEXT | Model name (gemini-embedding-001) |
 | tokens | INTEGER | Token count |
 | text_count | INTEGER | Number of texts embedded |
 | cost_estimate | REAL | Estimated cost |

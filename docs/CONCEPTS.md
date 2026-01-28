@@ -14,13 +14,16 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 
 | Field | Description |
 |-------|-------------|
-| **Content** | The textual information (e.g., "The project uses Postgres 14") |
-| **Fact Type** | Categorizes the memory (see below) |
-| **Confidence** | A score (0.0 - 1.0) indicating reliability |
-| **Scope** | Where the memory applies (project, personal, team) |
-| **Status** | Lifecycle state: `candidate`, `verified`, or `rejected` |
-| **Category** | Optional grouping (e.g., "coding", "architecture") |
-| **Owner** | User ID or Team ID for shared/scoped memories |
+| **content** | The textual information (e.g., "The project uses Postgres 14") |
+| **fact_type** | Categorizes the memory (see below) |
+| **confidence** | A score (0.0 - 1.0) indicating reliability |
+| **scope** | Where the memory applies: `project`, `personal`, or `team` |
+| **status** | Lifecycle state: `candidate` or `confirmed` |
+| **category** | Optional grouping (e.g., "coding", "architecture") |
+| **user_id** | User identity for personal-scoped memories |
+| **team_id** | Team reference for team-scoped memories |
+| **session_count** | Number of sessions where this memory was accessed |
+| **has_embedding** | Whether the memory has a vector embedding |
 
 ### Fact Types
 
@@ -32,6 +35,7 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 | `context` | Background information about the project |
 | `health` | Code health issues detected by scanners |
 | `capability` | Discovered features or tools in the codebase |
+| `system` | Internal system markers (used internally) |
 
 ### Evidence-Based Confidence
 
@@ -55,8 +59,10 @@ This ensures only useful, recurring information becomes permanent.
 | Scope | Visibility |
 |-------|------------|
 | `project` | Only visible within the current project (default) |
-| `personal` | Visible across all your projects |
-| `team` | Shared with team members |
+| `personal` | Visible across all your projects (requires user identity) |
+| `team` | Shared with team members (requires team membership) |
+
+**Note:** Personal scope requires a user identity (from git config or `MIRA_USER_ID`). Team scope requires team membership configured via the `team` tool.
 
 ---
 
@@ -87,7 +93,7 @@ This allows tracing execution paths and understanding dependencies without readi
 
 ### Semantic Search
 
-Code chunks and memories are embedded into vector space using Google's text-embedding-001 model. This enables **semantic search** - finding code by meaning rather than exact keywords.
+Code chunks and memories are embedded into vector space using Google's gemini-embedding-001 model. This enables **semantic search** - finding code by meaning rather than exact keywords.
 
 ```
 "authentication middleware" → finds auth-related code

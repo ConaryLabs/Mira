@@ -14,14 +14,19 @@ Mira uses environment variables for API keys and configuration. These can be set
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, capabilities, documentation (default provider) |
 | `GEMINI_API_KEY` | Recommended | For embeddings (semantic search) and as alternative expert provider |
+| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `gemini` |
+| `MIRA_USER_ID` | Optional | User identity override (defaults to git config user.email) |
 
-*At least one provider key (DeepSeek, Gemini, or OpenAI) is required for intelligence features. DeepSeek is the default. Mira runs without any keys but with reduced functionality (no experts, no summaries, no semantic search).
+*At least one provider key (DeepSeek or Gemini) is required for intelligence features. DeepSeek is the default. Mira runs without any keys but with reduced functionality (no experts, no summaries, no semantic search).
 
 ### Embeddings Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MIRA_EMBEDDING_DIMENSIONS` | Output dimensions for Google embeddings | 768 |
+| `MIRA_EMBEDDING_DIMENSIONS` | Output dimensions for Google embeddings | 1536 |
+| `MIRA_EMBEDDING_TASK_TYPE` | Task type for embeddings (see below) | `SEMANTIC_SIMILARITY` |
+
+**Embedding Task Types:** `SEMANTIC_SIMILARITY` (default), `RETRIEVAL_DOCUMENT`, `RETRIEVAL_QUERY`, `CODE_RETRIEVAL_QUERY`
 
 ### Environment File Loading
 
@@ -175,8 +180,8 @@ configure_expert(action="list")
 configure_expert(
   action="set",
   role="architect",
-  provider="openai",
-  model="gpt-4o"
+  provider="gemini",
+  model="gemini-2.5-pro"
 )
 ```
 

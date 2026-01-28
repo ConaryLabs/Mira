@@ -93,7 +93,7 @@ Key components:
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
 | LLM Factory | `llm/factory.rs` | DeepSeek, Gemini providers |
-| Embeddings | `embeddings/mod.rs` | Google embedding client (text-embedding-001) |
+| Embeddings | `embeddings/mod.rs` | Google embedding client (gemini-embedding-001) |
 
 ---
 
@@ -196,7 +196,7 @@ capabilities, while Gemini provides cost-effective alternatives.
 **1) Different tasks benefit from different models**
 - Extended reasoning tasks (architects, security) → DeepSeek Reasoner
 - Cost-sensitive tasks → Gemini
-- Embeddings → Google text-embedding-001
+- Embeddings → Google gemini-embedding-001
 
 **2) Resilience and choice**
 - No single-provider lock-in
@@ -368,7 +368,7 @@ The schema is "product-shaped," not purely technical:
 
 ### Embeddings and Search
 
-Embeddings are optional (Google text-embedding-001). Semantic search happens
+Embeddings are optional (Google gemini-embedding-001). Semantic search happens
 in two areas:
 1. **Memory recall** - `vec_memory` queried with cosine distance
 2. **Code search** - Hybrid semantic + keyword search via `vec_code` and `code_fts`
