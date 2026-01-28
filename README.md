@@ -6,7 +6,7 @@
 
 **A second brain for Claude Code**
 
-[![asciicast](https://asciinema.org/a/EELnz5mMffGHzMD8.svg)](https://asciinema.org/a/EELnz5mMffGHzMD8)
+![Mira Demo](demo.gif)
 
 Mira transforms Claude Code from a stateless assistant into one that truly knows your project. It remembers your decisions, understands your codebase architecture, and continuously builds intelligence about your code - all persisted locally across sessions.
 
