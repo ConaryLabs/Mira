@@ -30,6 +30,14 @@ curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-
 sudo mv mira /usr/local/bin/
 ```
 
+**Windows (PowerShell):**
+```powershell
+Invoke-WebRequest -Uri "https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-pc-windows-msvc.zip" -OutFile mira.zip
+Expand-Archive mira.zip -DestinationPath .
+Remove-Item mira.zip
+Move-Item mira.exe C:\Tools\  # Or another directory in your PATH
+```
+
 2. **Install the plugin**:
 
 ```bash

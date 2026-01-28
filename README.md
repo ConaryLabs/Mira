@@ -55,6 +55,17 @@ curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-
 sudo mv mira /usr/local/bin/
 ```
 
+**Windows (PowerShell):**
+```powershell
+# Download and extract
+Invoke-WebRequest -Uri "https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-pc-windows-msvc.zip" -OutFile mira.zip
+Expand-Archive mira.zip -DestinationPath .
+Remove-Item mira.zip
+
+# Move to a directory in your PATH (e.g., create C:\Tools and add to PATH)
+Move-Item mira.exe C:\Tools\
+```
+
 2. **Install the plugin** (go to Plugins tab in Claude Code, or run):
 
 ```bash
