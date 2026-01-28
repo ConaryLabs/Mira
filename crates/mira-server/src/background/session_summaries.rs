@@ -164,7 +164,12 @@ async fn generate_session_summary(
     // Build prompt for summarization
     let prompt = format!(
         r#"Summarize this Claude Code session in 1-2 concise sentences.
-Focus on: what was accomplished, which areas of code were worked on.
+
+Focus on USER-FACING WORK: code written, bugs fixed, features added, files modified, questions answered.
+De-emphasize or skip internal housekeeping: project switching, indexing, recall/remember operations, goal management.
+
+If the session was mostly housekeeping with no substantive user work, respond with just: "Housekeeping session"
+
 Be specific but brief. No preamble, just the summary.
 
 Tool calls in session:
