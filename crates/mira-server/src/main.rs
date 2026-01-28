@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
         Some(Commands::Serve) | None => Level::WARN, // Quiet for MCP stdio
         Some(Commands::Tool { .. }) => Level::WARN,
         Some(Commands::Hook { .. }) => Level::WARN,
+        Some(Commands::Index { quiet, .. }) if *quiet => Level::WARN,
         Some(Commands::Index { .. }) => Level::INFO,
         Some(Commands::DebugCarto { .. }) => Level::DEBUG,
         Some(Commands::DebugSession { .. }) => Level::DEBUG,
@@ -49,8 +50,8 @@ async fn main() -> Result<()> {
         Some(Commands::Tool { name, args }) => {
             cli::run_tool(name, args).await?;
         }
-        Some(Commands::Index { path, no_embed }) => {
-            cli::run_index(path, no_embed).await?;
+        Some(Commands::Index { path, no_embed, quiet }) => {
+            cli::run_index(path, no_embed, quiet).await?;
         }
         Some(Commands::Hook { action }) => match action {
             HookAction::Permission => {

@@ -50,6 +50,10 @@ pub enum Commands {
         /// Skip embeddings (faster, no semantic search)
         #[arg(long)]
         no_embed: bool,
+
+        /// Suppress verbose output (show only summary)
+        #[arg(short, long)]
+        quiet: bool,
     },
 
     /// Client hook handlers

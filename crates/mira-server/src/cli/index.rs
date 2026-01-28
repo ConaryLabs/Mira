@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tracing::info;
 
 /// Run the index command to index a project
-pub async fn run_index(path: Option<PathBuf>, no_embed: bool) -> Result<()> {
+pub async fn run_index(path: Option<PathBuf>, no_embed: bool, _quiet: bool) -> Result<()> {
     let path =
         path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
