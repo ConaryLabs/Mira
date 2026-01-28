@@ -39,13 +39,29 @@ Mira runs as an MCP server alongside Claude Code, providing:
 
 ### Option 1: Install as Claude Code Plugin (Recommended)
 
-The easiest way to install Mira is via the Claude Code plugin marketplace:
+The easiest way to install Mira is via the Claude Code plugin system:
 
 ```bash
-claude plugin install ConaryLabs/Mira
+# First, add the Mira marketplace
+claude marketplace add ConaryLabs/Mira
+
+# Then install the plugin
+claude plugin install mira@mira
 ```
 
 This installs Mira as a plugin with full features including hooks for proactive context injection.
+
+**Updating:** To update to the latest version:
+```bash
+claude plugin update mira@mira
+```
+
+If updates aren't working, force a fresh install:
+```bash
+rm -rf ~/.claude/plugins/marketplaces/mira
+claude marketplace add ConaryLabs/Mira
+claude plugin install mira@mira
+```
 
 ### Option 2: Install via Cargo (MCP Server Only)
 
