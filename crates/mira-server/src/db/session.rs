@@ -308,13 +308,28 @@ pub fn get_session_tool_summary_sync(
 
             let status = if success != 0 { "✓" } else { "✗" };
             let args_preview = args
-                .map(|a| if a.len() > 100 { format!("{}...", &a[..100]) } else { a })
+                .map(|a| {
+                    if a.len() > 100 {
+                        format!("{}...", &a[..100])
+                    } else {
+                        a
+                    }
+                })
                 .unwrap_or_default();
             let result_preview = result
-                .map(|r| if r.len() > 150 { format!("{}...", &r[..150]) } else { r })
+                .map(|r| {
+                    if r.len() > 150 {
+                        format!("{}...", &r[..150])
+                    } else {
+                        r
+                    }
+                })
                 .unwrap_or_default();
 
-            Ok(format!("{} {}({}) -> {}", status, tool, args_preview, result_preview))
+            Ok(format!(
+                "{} {}({}) -> {}",
+                status, tool, args_preview, result_preview
+            ))
         })?
         .filter_map(|r| r.ok())
         .collect();

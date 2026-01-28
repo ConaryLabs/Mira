@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
-use super::{briefings, capabilities, code_health, documentation, pondering, session_summaries, summaries};
+use super::{
+    briefings, capabilities, code_health, documentation, pondering, session_summaries, summaries,
+};
 
 /// Slow lane worker for LLM-dependent background tasks
 pub struct SlowLaneWorker {
