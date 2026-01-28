@@ -4,11 +4,15 @@ This project uses **Mira** for persistent memory and code intelligence.
 
 ## Session Start
 
+Project context is **auto-initialized** from Claude Code's working directory.
+No manual `project(action="start")` call is needed.
+
+For full session context (preferences, insights, etc.), call:
 ```
-project(action="start", project_path="/home/peter/Mira")
+get_session_recap()
 ```
 
-Then `recall("preferences")` before writing code.
+Or use `recall("preferences")` before writing code.
 
 ---
 
@@ -20,7 +24,6 @@ Then `recall("preferences")` before writing code.
 |-------|------------|
 | Use `Database` directly | Use `DatabasePool` for all database access |
 | Store secrets in memories | Keep secrets in `.env` only |
-| Skip `session_start` | Always call at conversation start |
 | Guess at MCP tool parameters | Check tool schema or existing usage first |
 | Add dependencies without checking | Run `recall("dependencies")` first |
 | Modify `proxy.rs` handler signatures | Coordinate changes across all tool handlers |

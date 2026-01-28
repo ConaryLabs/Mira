@@ -14,7 +14,7 @@ use crate::background::watcher::WatcherHandle;
 use crate::config::ApiKeys;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
-use crate::hooks::session::read_claude_session_id;
+use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
 use crate::llm::{DeepSeekClient, ProviderFactory};
 use mira_types::ProjectContext;
 use rmcp::{
@@ -99,6 +99,55 @@ impl MiraServer {
         let mut server = Self::from_api_keys(pool, embeddings, &api_keys);
         server.watcher = Some(watcher);
         server
+    }
+
+    /// Auto-initialize project from Claude's cwd if not already set or mismatched
+    async fn maybe_auto_init_project(&self) {
+        // Read the cwd that Claude's SessionStart hook captured
+        let Some(cwd) = read_claude_cwd() else {
+            return; // No cwd captured yet, skip auto-init
+        };
+
+        // Check if we already have a project set
+        let current_project = self.project.read().await;
+        if let Some(ref proj) = *current_project {
+            // Already have a project - check if path matches
+            if proj.path == cwd {
+                return; // Already initialized to the correct project
+            }
+            // Path mismatch - we'll re-initialize below
+            eprintln!(
+                "[mira] Project path mismatch: {} vs {}, auto-switching",
+                proj.path, cwd
+            );
+        }
+        drop(current_project); // Release the read lock
+
+        // Auto-initialize the project
+        eprintln!("[mira] Auto-initializing project from cwd: {}", cwd);
+
+        // Get session_id from hook (if available)
+        let session_id = read_claude_session_id();
+
+        // Call the project initialization (action=Start, with the cwd as path)
+        // We use a minimal init here - just set up the project context
+        // The full session_start output will be shown if user explicitly calls project(action="start")
+        match tools::project(
+            self,
+            requests::ProjectAction::Set, // Use Set for silent init, not Start
+            Some(cwd.clone()),
+            None, // Auto-detect name
+            session_id,
+        )
+        .await
+        {
+            Ok(_) => {
+                eprintln!("[mira] Auto-initialized project: {}", cwd);
+            }
+            Err(e) => {
+                eprintln!("[mira] Failed to auto-initialize project: {}", e);
+            }
+        }
     }
 
     /// Broadcast an event (no-op in MCP-only mode)
@@ -437,6 +486,12 @@ impl ServerHandler for MiraServer {
 
             // Get or create session for persistence
             let session_id = self.get_or_create_session().await;
+
+            // Auto-initialize project from Claude's cwd if needed
+            // Skip if the tool being called IS the project tool (avoid recursion)
+            if tool_name != "project" {
+                self.maybe_auto_init_project().await;
+            }
 
             // Serialize arguments for storage
             let args_json = request
