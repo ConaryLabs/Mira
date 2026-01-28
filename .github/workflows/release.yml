@@ -21,6 +21,8 @@ jobs:
             os: macos-13  # Intel runner for Intel builds
           - target: aarch64-apple-darwin
             os: macos-latest  # ARM runner for ARM builds
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -46,16 +48,31 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package (Unix)
+        if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
           tar -czvf ../../../mira-${{ matrix.target }}.tar.gz mira
           cd ../../..
 
-      - name: Upload artifact
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/${{ matrix.target }}/release/mira.exe -DestinationPath mira-${{ matrix.target }}.zip
+
+      - name: Upload artifact (Unix)
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: mira-${{ matrix.target }}
           path: mira-${{ matrix.target }}.tar.gz
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-${{ matrix.target }}
+          path: mira-${{ matrix.target }}.zip
 
   release:
     name: Create Release
@@ -90,3 +107,4 @@ jobs:
             artifacts/mira-x86_64-unknown-linux-gnu/mira-x86_64-unknown-linux-gnu.tar.gz
             artifacts/mira-x86_64-apple-darwin/mira-x86_64-apple-darwin.tar.gz
             artifacts/mira-aarch64-apple-darwin/mira-aarch64-apple-darwin.tar.gz
+            artifacts/mira-x86_64-pc-windows-msvc/mira-x86_64-pc-windows-msvc.zip
