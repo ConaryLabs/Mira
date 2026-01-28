@@ -11,6 +11,7 @@
 .mcp.json
 plugin/hooks/hooks.json
 .claude/
+CLAUDE.local.md
 
 # Database files
 *.db
