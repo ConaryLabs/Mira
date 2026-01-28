@@ -37,10 +37,28 @@ Mira runs as an MCP server alongside Claude Code, providing:
 
 ## Installation
 
-### Option 1: Download Binary + Install Plugin (Recommended)
+### Quick Install (Recommended)
 
-1. **Download the latest release** from [GitHub Releases](https://github.com/ConaryLabs/Mira/releases):
+```bash
+curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
+```
 
+This automatically detects your OS, downloads the binary, and installs the Claude Code plugin.
+
+Then add your API keys to `~/.mira/.env`:
+```bash
+DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
+GEMINI_API_KEY=your-key-here    # https://aistudio.google.com/app/apikey
+```
+
+### Manual Install
+
+<details>
+<summary>Click to expand manual installation options</summary>
+
+#### Download Binary
+
+**Linux/macOS:**
 ```bash
 # Linux (x86_64)
 curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-unknown-linux-gnu.tar.gz | tar xz
@@ -57,22 +75,19 @@ sudo mv mira /usr/local/bin/
 
 **Windows (PowerShell):**
 ```powershell
-# Download and extract
 Invoke-WebRequest -Uri "https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-pc-windows-msvc.zip" -OutFile mira.zip
 Expand-Archive mira.zip -DestinationPath .
 Remove-Item mira.zip
-
-# Move to a directory in your PATH (e.g., create C:\Tools and add to PATH)
-Move-Item mira.exe C:\Tools\
+Move-Item mira.exe C:\Tools\  # Or another directory in your PATH
 ```
 
-2. **Install the plugin** (go to Plugins tab in Claude Code, or run):
+#### Install Plugin
 
 ```bash
 claude plugin install ConaryLabs/Mira
 ```
 
-This installs Mira as a plugin with full features including hooks for proactive context injection.
+</details>
 
 ### Option 2: Install via Cargo (MCP Server Only)
 

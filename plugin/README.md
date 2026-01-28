@@ -12,51 +12,17 @@ Semantic memory and code intelligence for Claude Code. Provides persistent memor
 
 ## Installation
 
-### Option 1: Download Binary + Install Plugin (Recommended)
-
-1. **Download the latest release** from [GitHub Releases](https://github.com/ConaryLabs/Mira/releases):
+### Quick Install (Recommended)
 
 ```bash
-# Linux (x86_64)
-curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv mira /usr/local/bin/
-
-# macOS (Apple Silicon)
-curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv mira /usr/local/bin/
-
-# macOS (Intel)
-curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv mira /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
-```powershell
-Invoke-WebRequest -Uri "https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-pc-windows-msvc.zip" -OutFile mira.zip
-Expand-Archive mira.zip -DestinationPath .
-Remove-Item mira.zip
-Move-Item mira.exe C:\Tools\  # Or another directory in your PATH
-```
-
-2. **Install the plugin**:
-
+Then add your API keys to `~/.mira/.env`:
 ```bash
-claude plugin install ConaryLabs/Mira
+DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
+GEMINI_API_KEY=your-key-here    # https://aistudio.google.com/app/apikey
 ```
-
-3. **Set your API keys** in `~/.mira/.env`:
-
-```bash
-mkdir -p ~/.mira
-cat > ~/.mira/.env << 'EOF'
-DEEPSEEK_API_KEY=your-key-here
-GEMINI_API_KEY=your-key-here
-EOF
-```
-
-Get your keys from:
-- DeepSeek: https://platform.deepseek.com/api_keys
-- Gemini: https://aistudio.google.com/app/apikey
 
 ### Option 2: Build from Source
 
