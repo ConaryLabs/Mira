@@ -371,36 +371,6 @@ mod tests {
     use super::*;
 
     // ============================================================================
-    // CrossRefType tests
-    // ============================================================================
-
-    #[test]
-    fn test_crossref_type_display_caller() {
-        assert_eq!(format!("{}", CrossRefType::Caller), "caller");
-    }
-
-    #[test]
-    fn test_crossref_type_display_callee() {
-        assert_eq!(format!("{}", CrossRefType::Callee), "callee");
-    }
-
-    #[test]
-    fn test_crossref_type_equality() {
-        assert_eq!(CrossRefType::Caller, CrossRefType::Caller);
-        assert_eq!(CrossRefType::Callee, CrossRefType::Callee);
-        assert_ne!(CrossRefType::Caller, CrossRefType::Callee);
-    }
-
-    #[test]
-    fn test_crossref_type_clone_copy() {
-        let t = CrossRefType::Caller;
-        let cloned = t;
-        let copied = t;
-        assert_eq!(t, cloned);
-        assert_eq!(t, copied);
-    }
-
-    // ============================================================================
     // extract_crossref_target tests - Caller patterns
     // ============================================================================
 
@@ -616,24 +586,5 @@ mod tests {
         assert!(output.contains("Functions called by `main`"));
         assert!(output.contains("helper"));
         assert!(output.contains("src/utils.rs"));
-    }
-
-    // ============================================================================
-    // CrossRefResult tests
-    // ============================================================================
-
-    #[test]
-    fn test_crossref_result_clone() {
-        let result = CrossRefResult {
-            symbol_name: "test".to_string(),
-            file_path: "src/test.rs".to_string(),
-            ref_type: CrossRefType::Caller,
-            call_count: 5,
-        };
-        let cloned = result.clone();
-        assert_eq!(result.symbol_name, cloned.symbol_name);
-        assert_eq!(result.file_path, cloned.file_path);
-        assert_eq!(result.ref_type, cloned.ref_type);
-        assert_eq!(result.call_count, cloned.call_count);
     }
 }

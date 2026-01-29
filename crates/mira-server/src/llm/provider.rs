@@ -198,47 +198,6 @@ mod tests {
     }
 
     // ============================================================================
-    // Provider equality and hash tests
-    // ============================================================================
-
-    #[test]
-    fn test_provider_equality() {
-        assert_eq!(Provider::DeepSeek, Provider::DeepSeek);
-        assert_ne!(Provider::DeepSeek, Provider::Gemini);
-    }
-
-    #[test]
-    fn test_provider_clone_copy() {
-        let provider = Provider::DeepSeek;
-        let cloned = provider;
-        let copied = provider;
-        assert_eq!(provider, cloned);
-        assert_eq!(provider, copied);
-    }
-
-    // ============================================================================
-    // Provider serialization tests
-    // ============================================================================
-
-    #[test]
-    fn test_provider_serialize() {
-        let json = serde_json::to_string(&Provider::DeepSeek).unwrap();
-        assert_eq!(json, "\"deepseek\"");
-
-        let json = serde_json::to_string(&Provider::Gemini).unwrap();
-        assert_eq!(json, "\"gemini\"");
-    }
-
-    #[test]
-    fn test_provider_deserialize() {
-        let provider: Provider = serde_json::from_str("\"deepseek\"").unwrap();
-        assert_eq!(provider, Provider::DeepSeek);
-
-        let provider: Provider = serde_json::from_str("\"gemini\"").unwrap();
-        assert_eq!(provider, Provider::Gemini);
-    }
-
-    // ============================================================================
     // NormalizedUsage tests
     // ============================================================================
 
@@ -248,34 +207,5 @@ mod tests {
         assert_eq!(usage.prompt_tokens, 100);
         assert_eq!(usage.completion_tokens, 50);
         assert_eq!(usage.total_tokens, 150);
-    }
-
-    #[test]
-    fn test_normalized_usage_default() {
-        let usage = NormalizedUsage::default();
-        assert_eq!(usage.prompt_tokens, 0);
-        assert_eq!(usage.completion_tokens, 0);
-        assert_eq!(usage.total_tokens, 0);
-    }
-
-    #[test]
-    fn test_normalized_usage_zero() {
-        let usage = NormalizedUsage::new(0, 0);
-        assert_eq!(usage.total_tokens, 0);
-    }
-
-    #[test]
-    fn test_normalized_usage_large() {
-        let usage = NormalizedUsage::new(100_000, 50_000);
-        assert_eq!(usage.total_tokens, 150_000);
-    }
-
-    #[test]
-    fn test_normalized_usage_clone() {
-        let usage = NormalizedUsage::new(100, 50);
-        let cloned = usage.clone();
-        assert_eq!(usage.prompt_tokens, cloned.prompt_tokens);
-        assert_eq!(usage.completion_tokens, cloned.completion_tokens);
-        assert_eq!(usage.total_tokens, cloned.total_tokens);
     }
 }

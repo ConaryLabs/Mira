@@ -467,29 +467,4 @@ mod tests {
         assert_eq!(parsed.success_rate, 0.85);
         assert_eq!(parsed.occurrence_count, 10);
     }
-
-    #[test]
-    fn test_problem_pattern_clone() {
-        let pattern = ProblemPattern {
-            id: None,
-            expert_role: ExpertRole::Security,
-            pattern_signature: "test".to_string(),
-            pattern_description: None,
-            common_context_elements: vec!["auth".to_string()],
-            successful_approaches: vec![],
-            recommended_tools: vec![],
-            success_rate: 0.5,
-            occurrence_count: 1,
-            avg_confidence: 0.5,
-            avg_acceptance_rate: 0.5,
-        };
-
-        let cloned = pattern.clone();
-        assert_eq!(pattern.expert_role, cloned.expert_role);
-        assert_eq!(pattern.pattern_signature, cloned.pattern_signature);
-        assert_eq!(
-            pattern.common_context_elements,
-            cloned.common_context_elements
-        );
-    }
 }

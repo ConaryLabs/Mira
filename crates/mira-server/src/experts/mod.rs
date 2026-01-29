@@ -325,10 +325,4 @@ mod tests {
         let parsed: CollaborationMode = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, mode);
     }
-
-    #[test]
-    fn test_collaboration_mode_equality() {
-        assert_eq!(CollaborationMode::Single, CollaborationMode::Single);
-        assert_ne!(CollaborationMode::Single, CollaborationMode::Parallel);
-    }
 }

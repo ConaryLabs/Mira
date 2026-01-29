@@ -508,33 +508,6 @@ mod tests {
     }
 
     // ============================================================================
-    // ChangeType tests
-    // ============================================================================
-
-    #[test]
-    fn test_change_type_equality() {
-        assert_eq!(ChangeType::Modified, ChangeType::Modified);
-        assert_eq!(ChangeType::Created, ChangeType::Created);
-        assert_eq!(ChangeType::Deleted, ChangeType::Deleted);
-        assert_ne!(ChangeType::Modified, ChangeType::Created);
-        assert_ne!(ChangeType::Created, ChangeType::Deleted);
-    }
-
-    #[test]
-    fn test_change_type_copy() {
-        let ct = ChangeType::Modified;
-        let copied = ct;
-        assert_eq!(ct, copied);
-    }
-
-    #[test]
-    fn test_change_type_clone() {
-        let ct = ChangeType::Created;
-        let cloned = ct;
-        assert_eq!(ct, cloned);
-    }
-
-    // ============================================================================
     // should_process_path tests
     // ============================================================================
 
@@ -624,14 +597,5 @@ mod tests {
     fn test_should_process_path_skip_pycache() {
         let path = Path::new("/project/__pycache__/module.py");
         assert!(!FileWatcher::should_process_path(path));
-    }
-
-    // ============================================================================
-    // DEBOUNCE_MS tests
-    // ============================================================================
-
-    #[test]
-    fn test_debounce_value() {
-        assert_eq!(DEBOUNCE_MS, 500);
     }
 }

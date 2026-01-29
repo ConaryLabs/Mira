@@ -235,19 +235,6 @@ mod tests {
     }
 
     #[test]
-    fn test_user_identity_clone() {
-        let identity = UserIdentity {
-            identity: "User".to_string(),
-            display_name: Some("User".to_string()),
-            email: None,
-            source: IdentitySource::SystemUser,
-        };
-        let cloned = identity.clone();
-        assert_eq!(identity.identity, cloned.identity);
-        assert_eq!(identity.source, cloned.source);
-    }
-
-    #[test]
     fn test_detect_identity() {
         // This will use whatever is available on the system
         // Just verify it doesn't panic

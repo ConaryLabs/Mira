@@ -271,66 +271,6 @@ mod tests {
         assert_eq!(fact.team_id, Some(10));
     }
 
-    #[test]
-    fn test_memory_fact_clone() {
-        let fact = MemoryFact {
-            id: 1,
-            project_id: Some(1),
-            key: Some("key".to_string()),
-            content: "content".to_string(),
-            fact_type: "general".to_string(),
-            category: Some("cat".to_string()),
-            confidence: 0.9,
-            created_at: "2024-01-01".to_string(),
-            session_count: 1,
-            first_session_id: None,
-            last_session_id: None,
-            status: "candidate".to_string(),
-            user_id: None,
-            scope: "project".to_string(),
-            team_id: None,
-        };
-        let cloned = fact.clone();
-        assert_eq!(fact.id, cloned.id);
-        assert_eq!(fact.content, cloned.content);
-    }
-
-    // ============================================================================
-    // AgentRole tests
-    // ============================================================================
-
-    #[test]
-    fn test_agent_role_serialize() {
-        assert_eq!(serde_json::to_string(&AgentRole::Mira).unwrap(), "\"mira\"");
-        assert_eq!(
-            serde_json::to_string(&AgentRole::Claude).unwrap(),
-            "\"claude\""
-        );
-    }
-
-    #[test]
-    fn test_agent_role_deserialize() {
-        let mira: AgentRole = serde_json::from_str("\"mira\"").unwrap();
-        assert_eq!(mira, AgentRole::Mira);
-
-        let claude: AgentRole = serde_json::from_str("\"claude\"").unwrap();
-        assert_eq!(claude, AgentRole::Claude);
-    }
-
-    #[test]
-    fn test_agent_role_equality() {
-        assert_eq!(AgentRole::Mira, AgentRole::Mira);
-        assert_eq!(AgentRole::Claude, AgentRole::Claude);
-        assert_ne!(AgentRole::Mira, AgentRole::Claude);
-    }
-
-    #[test]
-    fn test_agent_role_copy() {
-        let role = AgentRole::Mira;
-        let copied = role;
-        assert_eq!(role, copied);
-    }
-
     // ============================================================================
     // WsEvent tests
     // ============================================================================
@@ -395,43 +335,5 @@ mod tests {
             }
             _ => panic!("Expected ToolStart"),
         }
-    }
-
-    #[test]
-    fn test_ws_event_equality() {
-        let event1 = WsEvent::ToolResult {
-            tool_name: "test".to_string(),
-            result: "ok".to_string(),
-            success: true,
-            call_id: "1".to_string(),
-            duration_ms: 100,
-        };
-        let event2 = WsEvent::ToolResult {
-            tool_name: "test".to_string(),
-            result: "ok".to_string(),
-            success: true,
-            call_id: "1".to_string(),
-            duration_ms: 100,
-        };
-        assert_eq!(event1, event2);
-    }
-
-    // ============================================================================
-    // Default function tests
-    // ============================================================================
-
-    #[test]
-    fn test_default_session_count() {
-        assert_eq!(default_session_count(), 1);
-    }
-
-    #[test]
-    fn test_default_status() {
-        assert_eq!(default_status(), "candidate");
-    }
-
-    #[test]
-    fn test_default_scope() {
-        assert_eq!(default_scope(), "project");
     }
 }

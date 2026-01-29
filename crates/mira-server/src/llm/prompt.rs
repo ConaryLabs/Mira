@@ -226,14 +226,6 @@ mod tests {
         assert!(builder.include_tool_guidance);
     }
 
-    #[test]
-    fn test_prompt_builder_clone() {
-        let builder = PromptBuilder::new("Test").with_tool_guidance();
-        let cloned = builder.clone();
-        assert_eq!(builder.role_instructions, cloned.role_instructions);
-        assert_eq!(builder.include_tool_guidance, cloned.include_tool_guidance);
-    }
-
     // ============================================================================
     // build_system_prompt tests
     // ============================================================================

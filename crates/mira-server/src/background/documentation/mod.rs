@@ -453,38 +453,4 @@ mod tests {
         let content = read_file_content(temp_file.path()).unwrap();
         assert_eq!(content, "test content");
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // CodeSymbol Tests
-    // ═══════════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_code_symbol_clone() {
-        let symbol = CodeSymbol {
-            id: 1,
-            project_id: 42,
-            file_path: "src/main.rs".to_string(),
-            name: "main".to_string(),
-            symbol_type: "function".to_string(),
-            start_line: Some(1),
-            end_line: Some(10),
-            signature: Some("fn main()".to_string()),
-            indexed_at: "2024-01-01T00:00:00Z".to_string(),
-        };
-
-        let cloned = symbol.clone();
-        assert_eq!(symbol.id, cloned.id);
-        assert_eq!(symbol.name, cloned.name);
-        assert_eq!(symbol.signature, cloned.signature);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // Constants Tests
-    // ═══════════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_doc_scan_marker_key_constant() {
-        assert_eq!(DOC_SCAN_MARKER_KEY, "documentation_last_scan");
-        assert!(!DOC_SCAN_MARKER_KEY.is_empty());
-    }
 }

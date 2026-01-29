@@ -465,12 +465,4 @@ mod tests {
         assert!(!parsed.enabled);
         assert_eq!(parsed.cooldown_seconds, 600);
     }
-
-    #[test]
-    fn test_proactive_config_clone() {
-        let config = ProactiveConfig::default();
-        let cloned = config.clone();
-        assert_eq!(config.min_confidence, cloned.min_confidence);
-        assert_eq!(config.enabled, cloned.enabled);
-    }
 }

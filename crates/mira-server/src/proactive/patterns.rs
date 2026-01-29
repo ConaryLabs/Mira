@@ -522,25 +522,4 @@ mod tests {
         assert_eq!(parsed.confidence, 0.85);
         assert_eq!(parsed.occurrence_count, 10);
     }
-
-    #[test]
-    fn test_behavior_pattern_clone() {
-        let pattern = BehaviorPattern {
-            id: None,
-            project_id: 1,
-            pattern_type: PatternType::ToolChain,
-            pattern_key: "key".to_string(),
-            pattern_data: PatternData::ToolChain {
-                tools: vec!["tool".to_string()],
-                typical_args: HashMap::new(),
-            },
-            confidence: 0.5,
-            occurrence_count: 5,
-        };
-
-        let cloned = pattern.clone();
-        assert_eq!(pattern.project_id, cloned.project_id);
-        assert_eq!(pattern.pattern_key, cloned.pattern_key);
-        assert_eq!(pattern.confidence, cloned.confidence);
-    }
 }

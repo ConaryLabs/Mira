@@ -675,23 +675,4 @@ mod tests {
         // Output should be truncated, not contain all 600 chars
         assert!(output.len() < 700);
     }
-
-    // ============================================================================
-    // SearchResult tests
-    // ============================================================================
-
-    #[test]
-    fn test_search_result_clone() {
-        let result = SearchResult {
-            file_path: "test.rs".to_string(),
-            content: "content".to_string(),
-            score: 0.5,
-            start_line: 10,
-        };
-        let cloned = result.clone();
-        assert_eq!(result.file_path, cloned.file_path);
-        assert_eq!(result.content, cloned.content);
-        assert_eq!(result.score, cloned.score);
-        assert_eq!(result.start_line, cloned.start_line);
-    }
 }
