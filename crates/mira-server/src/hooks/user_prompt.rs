@@ -1,6 +1,7 @@
 // src/hooks/user_prompt.rs
 // UserPromptSubmit hook handler for proactive context injection
 
+use crate::background::proactive::get_pre_generated_suggestions;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::{read_hook_input, write_hook_output};
@@ -77,7 +78,7 @@ pub async fn run() -> Result<()> {
         let message_clone = user_message.to_string();
         let _ = pool_clone
             .interact(move |conn| {
-                let mut tracker = BehaviorTracker::new(session_id_clone, project_id);
+                let mut tracker = BehaviorTracker::for_session(conn, session_id_clone, project_id);
                 let _ = tracker.log_query(conn, &message_clone, "user_prompt");
                 Ok::<_, anyhow::Error>(())
             })
@@ -89,7 +90,7 @@ pub async fn run() -> Result<()> {
         .get_context_for_message(user_message, session_id)
         .await;
 
-    // Get proactive predictions if enabled
+    // Get proactive predictions if enabled (hybrid approach)
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
         let pool_clone = pool.clone();
         pool_clone
@@ -106,14 +107,44 @@ pub async fn run() -> Result<()> {
                     crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
                         .unwrap_or_default();
 
+                let current_file = recent_files.first().cloned();
+
+                // HYBRID APPROACH:
+                // 1. First try pre-generated LLM suggestions (fast O(1) lookup)
+                if let Some(ref file) = current_file {
+                    if let Ok(pre_gen) = get_pre_generated_suggestions(conn, project_id, file) {
+                        if !pre_gen.is_empty() {
+                            let context_lines: Vec<String> = pre_gen
+                                .iter()
+                                .take(2)
+                                .map(|(text, conf)| {
+                                    let conf_label = if *conf >= 0.9 {
+                                        "high confidence"
+                                    } else if *conf >= 0.7 {
+                                        "medium confidence"
+                                    } else {
+                                        "suggested"
+                                    };
+                                    format!("[Proactive] {} ({})", text, conf_label)
+                                })
+                                .collect();
+
+                            if !context_lines.is_empty() {
+                                return Ok(Some(context_lines.join("\n")));
+                            }
+                        }
+                    }
+                }
+
+                // 2. Fallback: On-the-fly pattern matching (no LLM, simple templates)
                 let current_context = predictor::CurrentContext {
-                    current_file: recent_files.first().cloned(),
+                    current_file,
                     last_tool: None, // Will be populated by PostToolUse
                     recent_queries: vec![],
                     session_stage: None,
                 };
 
-                // Get predictions
+                // Get predictions from patterns
                 let predictions = predictor::generate_context_predictions(
                     conn,
                     project_id,

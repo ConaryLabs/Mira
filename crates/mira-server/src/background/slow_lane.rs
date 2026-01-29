@@ -11,7 +11,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::{
-    briefings, capabilities, code_health, documentation, pondering, session_summaries, summaries,
+    briefings, capabilities, code_health, documentation, pondering, proactive, session_summaries,
+    summaries,
 };
 
 /// Slow lane worker for LLM-dependent background tasks
@@ -120,7 +121,18 @@ impl SlowLaneWorker {
             processed += self.process_pondering(&client).await?;
         }
 
+        // Process proactive suggestions (pattern mining every 3rd, LLM enhancement every 10th)
+        processed += self.process_proactive(&client).await?;
+
         Ok(processed)
+    }
+
+    async fn process_proactive(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+        let count = proactive::process_proactive(&self.pool, client, self.cycle_count).await?;
+        if count > 0 {
+            tracing::info!("Slow lane: processed {} proactive items", count);
+        }
+        Ok(count)
     }
 
     async fn process_summaries(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {

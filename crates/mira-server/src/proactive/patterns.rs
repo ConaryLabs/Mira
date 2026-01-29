@@ -183,19 +183,38 @@ pub fn get_high_confidence_patterns(
             occurrence_count,
         ) = row;
 
-        if let (Some(pattern_type), Some(pattern_data)) = (
-            PatternType::from_str(&pattern_type_str),
-            PatternData::from_json(&pattern_data_str),
-        ) {
-            patterns.push(BehaviorPattern {
-                id: Some(id),
-                project_id,
-                pattern_type,
-                pattern_key,
-                pattern_data,
-                confidence,
-                occurrence_count,
-            });
+        let pattern_type = PatternType::from_str(&pattern_type_str);
+        let pattern_data = PatternData::from_json(&pattern_data_str);
+
+        match (pattern_type, pattern_data) {
+            (Some(pattern_type), Some(pattern_data)) => {
+                patterns.push(BehaviorPattern {
+                    id: Some(id),
+                    project_id,
+                    pattern_type,
+                    pattern_key,
+                    pattern_data,
+                    confidence,
+                    occurrence_count,
+                });
+            }
+            (None, _) => {
+                // Skip insight patterns (insight_*) silently - they're from pondering, not mining
+                if !pattern_type_str.starts_with("insight_") {
+                    tracing::warn!(
+                        "Skipping pattern with unknown type: {} (key: {})",
+                        pattern_type_str,
+                        pattern_key
+                    );
+                }
+            }
+            (_, None) => {
+                tracing::warn!(
+                    "Skipping pattern with invalid data: type={}, data={}...",
+                    pattern_type_str,
+                    &pattern_data_str[..pattern_data_str.len().min(100)]
+                );
+            }
         }
     }
 

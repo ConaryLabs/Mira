@@ -106,7 +106,7 @@ pub async fn run() -> Result<()> {
         let file_path_clone = file_path.clone();
         let _ = pool_clone
             .interact(move |conn| {
-                let mut tracker = BehaviorTracker::new(session_id, project_id);
+                let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
 
                 // Log tool use
                 let _ = tracker.log_tool_use(conn, &tool_name, None);

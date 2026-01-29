@@ -336,7 +336,7 @@ Respond in JSON format:
 ```json
 [
   {{
-    "pattern_type": "tool_chain|workflow|friction|focus_area",
+    "pattern_type": "insight_tool_chain|insight_workflow|insight_friction|insight_focus_area",
     "description": "Brief description of the pattern",
     "confidence": 0.0-1.0,
     "evidence": ["specific observation 1", "specific observation 2"]
@@ -499,17 +499,17 @@ mod tests {
 
     #[test]
     fn test_parse_insights_json() {
-        let json = r#"[{"pattern_type": "tool_chain", "description": "test", "confidence": 0.8, "evidence": ["a", "b"]}]"#;
+        let json = r#"[{"pattern_type": "insight_tool_chain", "description": "test", "confidence": 0.8, "evidence": ["a", "b"]}]"#;
         let insights = parse_insights(json).unwrap();
         assert_eq!(insights.len(), 1);
-        assert_eq!(insights[0].pattern_type, "tool_chain");
+        assert_eq!(insights[0].pattern_type, "insight_tool_chain");
     }
 
     #[test]
     fn test_parse_insights_markdown() {
         let markdown = r#"Here are the insights:
 ```json
-[{"pattern_type": "workflow", "description": "test", "confidence": 0.7, "evidence": []}]
+[{"pattern_type": "insight_workflow", "description": "test", "confidence": 0.7, "evidence": []}]
 ```"#;
         let insights = parse_insights(markdown).unwrap();
         assert_eq!(insights.len(), 1);

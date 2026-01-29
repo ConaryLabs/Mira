@@ -97,6 +97,77 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
     "#,
     )?;
 
+    // Pre-generated proactive suggestions table - for fast O(1) lookup
+    create_table_if_missing(
+        conn,
+        "proactive_suggestions",
+        r#"
+        CREATE TABLE IF NOT EXISTS proactive_suggestions (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            pattern_id INTEGER REFERENCES behavior_patterns(id),
+            trigger_key TEXT NOT NULL,          -- Fast lookup key (file path or tool name)
+            suggestion_text TEXT NOT NULL,      -- LLM-generated contextual hint
+            confidence REAL,
+            shown_count INTEGER DEFAULT 0,
+            accepted_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT,                    -- Suggestions expire after 7 days
+            UNIQUE(project_id, trigger_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_proactive_suggestions_lookup
+            ON proactive_suggestions(project_id, trigger_key, confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_proactive_suggestions_expire
+            ON proactive_suggestions(expires_at);
+    "#,
+    )?;
+
+    // Migrate existing pondering patterns to use insight_ prefix
+    // This separates pondering insights from prediction patterns
+    migrate_pondering_pattern_types(conn)?;
+
+    Ok(())
+}
+
+/// Migrate pondering patterns to use insight_ prefix for pattern_type
+/// This separates pondering-generated insights from mining-generated patterns
+fn migrate_pondering_pattern_types(conn: &Connection) -> Result<()> {
+    // Check if migration is needed by looking for non-insight pondering patterns
+    let needs_migration: bool = conn
+        .query_row(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM behavior_patterns
+                WHERE json_extract(pattern_data, '$.generated_by') = 'pondering'
+                  AND pattern_type NOT LIKE 'insight_%'
+                LIMIT 1
+            )
+            "#,
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !needs_migration {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating pondering patterns to use insight_ prefix");
+
+    // Prefix pattern_type with 'insight_' for all pondering-generated patterns
+    let updated = conn.execute(
+        r#"
+        UPDATE behavior_patterns
+        SET pattern_type = 'insight_' || pattern_type,
+            updated_at = datetime('now')
+        WHERE json_extract(pattern_data, '$.generated_by') = 'pondering'
+          AND pattern_type NOT LIKE 'insight_%'
+        "#,
+        [],
+    )?;
+
+    tracing::info!("Migrated {} pondering patterns to insight_ prefix", updated);
+
     Ok(())
 }
 

@@ -25,11 +25,31 @@ pub struct BehaviorTracker {
 }
 
 impl BehaviorTracker {
+    /// Create a new tracker - use `for_session` if resuming an existing session
     pub fn new(session_id: String, project_id: i64) -> Self {
         Self {
             session_id,
             project_id,
             sequence_position: 0,
+            last_event_time: None,
+        }
+    }
+
+    /// Create a tracker for an existing session, loading the current sequence position
+    /// from the database to ensure proper incrementing
+    pub fn for_session(conn: &Connection, session_id: String, project_id: i64) -> Self {
+        let current_position = conn
+            .query_row(
+                "SELECT COALESCE(MAX(sequence_position), 0) FROM session_behavior_log WHERE session_id = ?",
+                [&session_id],
+                |row| row.get::<_, i32>(0),
+            )
+            .unwrap_or(0);
+
+        Self {
+            session_id,
+            project_id,
+            sequence_position: current_position,
             last_event_time: None,
         }
     }
@@ -233,4 +253,126 @@ pub fn cleanup_old_logs(conn: &Connection, days_to_keep: i64) -> Result<usize> {
 
     let deleted = conn.execute(sql, [format!("-{}", days_to_keep)])?;
     Ok(deleted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE session_behavior_log (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                event_data TEXT NOT NULL,
+                sequence_position INTEGER,
+                time_since_last_event_ms INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            "#,
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_new_tracker_starts_at_zero() {
+        let tracker = BehaviorTracker::new("test-session".to_string(), 1);
+        assert_eq!(tracker.sequence_position, 0);
+    }
+
+    #[test]
+    fn test_for_session_loads_max_position() {
+        let conn = setup_test_db();
+
+        // Insert some events with sequence positions
+        conn.execute(
+            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position) VALUES (?, ?, ?, ?, ?)",
+            rusqlite::params!["test-session", 1, "tool_use", "{}", 1],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position) VALUES (?, ?, ?, ?, ?)",
+            rusqlite::params!["test-session", 1, "tool_use", "{}", 2],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position) VALUES (?, ?, ?, ?, ?)",
+            rusqlite::params!["test-session", 1, "file_access", "{}", 3],
+        ).unwrap();
+
+        // Create tracker for existing session
+        let tracker = BehaviorTracker::for_session(&conn, "test-session".to_string(), 1);
+        assert_eq!(tracker.sequence_position, 3);
+    }
+
+    #[test]
+    fn test_for_session_empty_session_starts_at_zero() {
+        let conn = setup_test_db();
+
+        // Create tracker for non-existent session
+        let tracker = BehaviorTracker::for_session(&conn, "new-session".to_string(), 1);
+        assert_eq!(tracker.sequence_position, 0);
+    }
+
+    #[test]
+    fn test_log_event_increments_position() {
+        let conn = setup_test_db();
+
+        let mut tracker = BehaviorTracker::new("test-session".to_string(), 1);
+        assert_eq!(tracker.sequence_position, 0);
+
+        tracker.log_event(&conn, EventType::ToolUse, serde_json::json!({"tool": "test"})).unwrap();
+        assert_eq!(tracker.sequence_position, 1);
+
+        tracker.log_event(&conn, EventType::FileAccess, serde_json::json!({"file": "test.rs"})).unwrap();
+        assert_eq!(tracker.sequence_position, 2);
+
+        // Verify data in database
+        let count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_behavior_log WHERE session_id = ?",
+                ["test-session"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_resumed_tracker_continues_sequence() {
+        let conn = setup_test_db();
+
+        // First tracker logs 3 events
+        {
+            let mut tracker = BehaviorTracker::new("test-session".to_string(), 1);
+            tracker.log_tool_use(&conn, "Read", None).unwrap();
+            tracker.log_tool_use(&conn, "Edit", None).unwrap();
+            tracker.log_file_access(&conn, "/path/to/file.rs", "Edit").unwrap();
+            assert_eq!(tracker.sequence_position, 3);
+        }
+
+        // Second tracker resumes and continues from position 3
+        {
+            let mut tracker = BehaviorTracker::for_session(&conn, "test-session".to_string(), 1);
+            assert_eq!(tracker.sequence_position, 3);
+
+            tracker.log_tool_use(&conn, "Write", None).unwrap();
+            assert_eq!(tracker.sequence_position, 4);
+        }
+
+        // Verify sequence positions in database
+        let positions: Vec<i32> = {
+            let mut stmt = conn
+                .prepare("SELECT sequence_position FROM session_behavior_log ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .flatten()
+                .collect()
+        };
+        assert_eq!(positions, vec![1, 2, 3, 4]);
+    }
 }
