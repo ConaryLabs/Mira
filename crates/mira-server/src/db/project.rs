@@ -1,11 +1,10 @@
 // db/project.rs
 // Project management operations
 
-use anyhow::Result;
 use mira_types::MemoryFact;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::{Database, parse_memory_fact_row};
+use super::parse_memory_fact_row;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
@@ -310,197 +309,22 @@ pub fn get_last_active_project_sync(conn: &Connection) -> rusqlite::Result<Optio
     .optional()
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Database impl methods
-// ═══════════════════════════════════════════════════════════════════════════════
-
-impl Database {
-    /// Get or create project by path, returns (id, name)
-    ///
-    /// Uses UPSERT pattern (INSERT ... ON CONFLICT) to be safe under concurrent access.
-    /// If a name is stored, returns it. Otherwise, auto-detects from project files.
-    pub fn get_or_create_project(
-        &self,
-        path: &str,
-        name: Option<&str>,
-    ) -> Result<(i64, Option<String>)> {
-        let conn = self.conn();
-
-        // UPSERT: insert or get existing.
-        // COALESCE(projects.name, excluded.name) keeps existing name if present,
-        // otherwise uses the provided name.
-        let (id, stored_name): (i64, Option<String>) = conn.query_row(
-            "INSERT INTO projects (path, name) VALUES (?, ?)
-             ON CONFLICT(path) DO UPDATE SET
-                 name = COALESCE(projects.name, excluded.name),
-                 created_at = projects.created_at
-             RETURNING id, name",
-            params![path, name],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-
-        // If we have a name (either stored or just provided), return it
-        if stored_name.is_some() {
-            return Ok((id, stored_name));
-        }
-
-        // Auto-detect name from project files (Cargo.toml, package.json, etc.)
-        let detected_name = Self::detect_project_name(path);
-
-        if detected_name.is_some() {
-            // Update with detected name (idempotent, safe to race)
-            conn.execute(
-                "UPDATE projects SET name = ? WHERE id = ?",
-                params![&detected_name, id],
-            )?;
-        }
-
-        Ok((id, detected_name))
-    }
-
-    /// Auto-detect project name from path
-    fn detect_project_name(path: &str) -> Option<String> {
-        use std::path::Path;
-
-        let path = Path::new(path);
-        let dir_name = || {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-        };
-
-        // Try Cargo.toml for Rust projects
-        let cargo_toml = path.join("Cargo.toml");
-        if cargo_toml.exists() {
-            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-                // If it's a workspace, use directory name
-                if content.contains("[workspace]") {
-                    return dir_name();
-                }
-
-                // For single crate, find [package] section and get name
-                let mut in_package = false;
-                for line in content.lines() {
-                    let line = line.trim();
-                    if line.starts_with('[') {
-                        in_package = line == "[package]";
-                    } else if in_package && line.starts_with("name") {
-                        if let Some(name) = line.split('=').nth(1) {
-                            let name = name.trim().trim_matches('"').trim_matches('\'');
-                            if !name.is_empty() {
-                                return Some(name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Try package.json for Node projects
-        let package_json = path.join("package.json");
-        if package_json.exists() {
-            if let Ok(content) = std::fs::read_to_string(&package_json) {
-                // Simple JSON parsing for "name" field at top level
-                for line in content.lines() {
-                    let line = line.trim();
-                    if line.starts_with("\"name\"") {
-                        if let Some(name) = line.split(':').nth(1) {
-                            let name = name.trim().trim_matches(',').trim_matches('"').trim();
-                            if !name.is_empty() {
-                                return Some(name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fall back to directory name
-        dir_name()
-    }
-
-    /// Get project info by ID (name, path)
-    pub fn get_project_info(&self, project_id: i64) -> Result<Option<(Option<String>, String)>> {
-        get_project_info_sync(&self.conn(), project_id).map_err(Into::into)
-    }
-
-    /// Get database file path
-    pub fn path(&self) -> Option<&str> {
-        self.path.as_deref()
-    }
-
-    /// List all projects in the database
-    pub fn list_projects(&self) -> Result<Vec<(i64, String, Option<String>)>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT id, path, name FROM projects ORDER BY id DESC")?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    }
-
-    /// Get project briefing (What's New since last session)
-    pub fn get_project_briefing(
-        &self,
-        project_id: i64,
-    ) -> Result<Option<super::types::ProjectBriefing>> {
-        get_project_briefing_sync(&self.conn(), project_id).map_err(Into::into)
-    }
-
-    /// Update project briefing with new git state and summary
-    pub fn update_project_briefing(
-        &self,
-        project_id: i64,
-        last_known_commit: &str,
-        briefing_text: Option<&str>,
-    ) -> Result<()> {
-        update_project_briefing_sync(&self.conn(), project_id, last_known_commit, briefing_text)
-            .map_err(Into::into)
-    }
-
-    /// Mark that a session occurred for this project (clears the briefing)
-    pub fn mark_session_for_briefing(&self, project_id: i64) -> Result<()> {
-        mark_session_for_briefing_sync(&self.conn(), project_id).map_err(Into::into)
-    }
-
-    /// Get projects that need briefing checks (have had sessions)
-    pub fn get_projects_for_briefing_check(&self) -> Result<Vec<(i64, String, Option<String>)>> {
-        get_projects_for_briefing_check_sync(&self.conn()).map_err(Into::into)
-    }
-
-    // ═══════════════════════════════════════
-    // SERVER STATE (for restart recovery)
-    // ═══════════════════════════════════════
-
-    /// Get a server state value by key
-    pub fn get_server_state(&self, key: &str) -> Result<Option<String>> {
-        get_server_state_sync(&self.conn(), key).map_err(Into::into)
-    }
-
-    /// Set a server state value (upsert)
-    pub fn set_server_state(&self, key: &str, value: &str) -> Result<()> {
-        set_server_state_sync(&self.conn(), key, value).map_err(Into::into)
-    }
-
-    /// Delete a server state value
-    pub fn delete_server_state(&self, key: &str) -> Result<bool> {
-        let conn = self.conn();
-        let deleted = conn.execute("DELETE FROM server_state WHERE key = ?", [key])?;
-        Ok(deleted > 0)
-    }
-
-    /// Get last active project path (for startup recovery)
-    pub fn get_last_active_project(&self) -> Result<Option<String>> {
-        self.get_server_state("active_project_path")
-    }
-
-    /// Save active project path (for restart recovery)
-    pub fn save_active_project(&self, path: &str) -> Result<()> {
-        self.set_server_state("active_project_path", path)
-    }
-
-    /// Clear active project (when switching or closing)
-    pub fn clear_active_project(&self) -> Result<()> {
-        self.delete_server_state("active_project_path")?;
-        Ok(())
-    }
+/// List all projects - sync version
+pub fn list_projects_sync(conn: &Connection) -> rusqlite::Result<Vec<(i64, String, Option<String>)>> {
+    let mut stmt = conn.prepare("SELECT id, path, name FROM projects ORDER BY id DESC")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    rows.collect()
 }
+
+/// Delete a server state by key - sync version
+pub fn delete_server_state_sync(conn: &Connection, key: &str) -> rusqlite::Result<bool> {
+    let deleted = conn.execute("DELETE FROM server_state WHERE key = ?", [key])?;
+    Ok(deleted > 0)
+}
+
+/// Clear active project (for switching/closing) - sync version
+pub fn clear_active_project_sync(conn: &Connection) -> rusqlite::Result<()> {
+    delete_server_state_sync(conn, "active_project")?;
+    Ok(())
+}
+

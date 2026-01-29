@@ -1,11 +1,9 @@
 // db/session.rs
 // Session and tool history operations
 
-use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 
-use super::Database;
 use super::types::{SessionInfo, ToolHistoryEntry};
 
 // ============================================================================
@@ -387,99 +385,40 @@ pub fn log_tool_call_sync(
     Ok(conn.last_insert_rowid())
 }
 
-// ============================================================================
-// Database impl methods
-// ============================================================================
-
-impl Database {
-    /// Create or update a session
-    pub fn create_session(&self, session_id: &str, project_id: Option<i64>) -> Result<()> {
-        create_session_sync(&self.conn(), session_id, project_id).map_err(Into::into)
-    }
-
-    /// Update session's last activity timestamp
-    pub fn touch_session(&self, session_id: &str) -> Result<()> {
-        let conn = self.conn();
-        conn.execute(
-            "UPDATE sessions SET last_activity = datetime('now') WHERE id = ?",
-            [session_id],
-        )?;
-        Ok(())
-    }
-
-    /// Log a tool call to history
-    pub fn log_tool_call(
-        &self,
-        session_id: &str,
-        tool_name: &str,
-        arguments: &str,
-        result_summary: &str,
-        full_result: Option<&str>,
-        success: bool,
-    ) -> Result<i64> {
-        log_tool_call_sync(
-            &self.conn(),
-            session_id,
-            tool_name,
-            arguments,
-            result_summary,
-            full_result,
-            success,
-        )
-        .map_err(Into::into)
-    }
-
-    /// Get recent tool history for a session
-    pub fn get_session_history(
-        &self,
-        session_id: &str,
-        limit: usize,
-    ) -> Result<Vec<ToolHistoryEntry>> {
-        get_session_history_sync(&self.conn(), session_id, limit).map_err(Into::into)
-    }
-
-    /// Get tool history after a specific event ID (for sync/reconnection)
-    pub fn get_history_after(
-        &self,
-        session_id: &str,
-        after_id: i64,
-        limit: usize,
-    ) -> Result<Vec<ToolHistoryEntry>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at
-             FROM tool_history
-             WHERE session_id = ? AND id > ?
-             ORDER BY id ASC
-             LIMIT ?",
-        )?;
-        let rows = stmt.query_map(params![session_id, after_id, limit as i64], |row| {
-            Ok(ToolHistoryEntry {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                tool_name: row.get(2)?,
-                arguments: row.get(3)?,
-                result_summary: row.get(4)?,
-                success: row.get::<_, i32>(5)? != 0,
-                created_at: row.get(6)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-    }
-
-    /// Get recent sessions for a project
-    pub fn get_recent_sessions(&self, project_id: i64, limit: usize) -> Result<Vec<SessionInfo>> {
-        get_recent_sessions_sync(&self.conn(), project_id, limit).map_err(Into::into)
-    }
-
-    /// Get tool call count and unique tools for a session
-    pub fn get_session_stats(&self, session_id: &str) -> Result<(usize, Vec<String>)> {
-        get_session_stats_sync(&self.conn(), session_id).map_err(Into::into)
-    }
-
-    /// Build session recap with recent activity, pending tasks, and active goals
-    /// This is the single source of truth used by both MCP and chat interfaces
-    pub fn build_session_recap(&self, project_id: Option<i64>) -> String {
-        build_session_recap_sync(&self.conn(), project_id)
-    }
+/// Update session's last activity timestamp - sync version
+pub fn touch_session_sync(conn: &Connection, session_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE sessions SET last_activity = datetime('now') WHERE id = ?",
+        [session_id],
+    )?;
+    Ok(())
 }
+
+/// Get tool history entries after a given ID - sync version
+pub fn get_history_after_sync(
+    conn: &Connection,
+    session_id: &str,
+    after_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at
+         FROM tool_history
+         WHERE session_id = ? AND id > ?
+         ORDER BY id ASC
+         LIMIT ?",
+    )?;
+    let rows = stmt.query_map(params![session_id, after_id, limit], |row| {
+        Ok(ToolHistoryEntry {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            tool_name: row.get(2)?,
+            arguments: row.get(3)?,
+            result_summary: row.get(4)?,
+            success: row.get::<_, i32>(5)? != 0,
+            created_at: row.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+

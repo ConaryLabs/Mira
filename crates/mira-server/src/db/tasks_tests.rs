@@ -1,15 +1,29 @@
 // crates/mira-server/src/db/tasks_tests.rs
 // Tests for task and goal database operations
 
-use super::*;
+use super::pool::DatabasePool;
+use super::{
+    create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync, get_active_goals_sync,
+    get_goal_by_id_sync, get_goals_sync, get_or_create_project_sync, get_pending_tasks_sync,
+    get_task_by_id_sync, get_tasks_sync, update_goal_sync, update_task_sync,
+};
+use std::sync::Arc;
 
-/// Helper to create a test database with a project
-fn setup_test_db() -> (Database, i64) {
-    let db = Database::open_in_memory().expect("Failed to open in-memory db");
-    let (project_id, _) = db
-        .get_or_create_project("/test/path", Some("test"))
-        .unwrap();
-    (db, project_id)
+/// Helper to create a test pool with a project
+async fn setup_test_pool() -> (Arc<DatabasePool>, i64) {
+    let pool = Arc::new(
+        DatabasePool::open_in_memory()
+            .await
+            .expect("Failed to open in-memory pool"),
+    );
+    let project_id = pool
+        .interact(|conn| {
+            get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
+        })
+        .await
+        .expect("Failed to create project")
+        .0;
+    (pool, project_id)
 }
 
 #[cfg(test)]
@@ -20,83 +34,118 @@ mod tests {
     // create_task Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_create_task_basic() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_create_task_basic() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Test task",
-                Some("Test description"),
-                Some("pending"),
-                Some("high"),
-            )
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    "Test task",
+                    Some("Test description"),
+                    Some("pending"),
+                    Some("high"),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
     }
 
-    #[test]
-    fn test_create_task_with_defaults() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_create_task_with_defaults() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(Some(project_id), None, "Minimal task", None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(conn, Some(project_id), None, "Minimal task", None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
 
         // Verify defaults
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.title, "Minimal task");
         assert_eq!(task.status, "pending");
         assert_eq!(task.priority, "medium");
     }
 
-    #[test]
-    fn test_create_task_with_goal() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_create_task_with_goal() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Create a goal first
-        let goal_id = db
-            .create_goal(
-                Some(project_id),
-                "Test goal",
-                None,
-                Some("in_progress"),
-                Some("high"),
-                Some(50),
-            )
+        let goal_id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Test goal",
+                    None,
+                    Some("in_progress"),
+                    Some("high"),
+                    Some(50),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let task_id = db
-            .create_task(
-                Some(project_id),
-                Some(goal_id),
-                "Task for goal",
-                None,
-                None,
-                None,
-            )
+        let task_id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    Some(goal_id),
+                    "Task for goal",
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let task = db.get_task_by_id(task_id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, task_id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.goal_id, Some(goal_id));
     }
 
-    #[test]
-    fn test_create_task_global() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_create_task_global() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let id = db
-            .create_task(None, None, "Global task", None, None, None)
+        let id = pool
+            .interact(|conn| {
+                create_task_sync(conn, None, None, "Global task", None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
 
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(task.project_id.is_none());
     }
 
@@ -104,32 +153,44 @@ mod tests {
     // get_task_by_id Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_task_by_id_existing() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_task_by_id_existing() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Find me",
-                Some("Description"),
-                None,
-                None,
-            )
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    "Find me",
+                    Some("Description"),
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.id, id);
         assert_eq!(task.title, "Find me");
         assert_eq!(task.description, Some("Description".to_string()));
     }
 
-    #[test]
-    fn test_get_task_by_id_nonexistent() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_task_by_id_nonexistent() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let task = db.get_task_by_id(99999).unwrap();
+        let task = pool
+            .interact(|conn| get_task_by_id_sync(conn, 99999))
+            .await
+            .unwrap();
         assert!(task.is_none());
     }
 
@@ -137,67 +198,97 @@ mod tests {
     // get_pending_tasks Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_pending_tasks_basic() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_pending_tasks_basic() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Create pending tasks
         for i in 0..3 {
-            db.create_task(
-                Some(project_id),
-                None,
-                &format!("Task {}", i),
-                None,
-                Some("pending"),
-                None,
-            )
+            let title = format!("Task {}", i);
+            pool.interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    &title,
+                    None,
+                    Some("pending"),
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
         }
 
         // Create completed task
-        db.create_task(
-            Some(project_id),
-            None,
-            "Done task",
-            None,
-            Some("completed"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Done task",
+                None,
+                Some("completed"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let pending = db.get_pending_tasks(Some(project_id), 10).unwrap();
+        let pending = pool
+            .interact(move |conn| get_pending_tasks_sync(conn, Some(project_id), 10))
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 3);
         assert!(pending.iter().all(|t| t.status != "completed"));
     }
 
-    #[test]
-    fn test_get_pending_tasks_limit() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_pending_tasks_limit() {
+        let (pool, project_id) = setup_test_pool().await;
 
         for i in 0..10 {
-            db.create_task(
-                Some(project_id),
-                None,
-                &format!("Task {}", i),
-                None,
-                Some("pending"),
-                None,
-            )
+            let title = format!("Task {}", i);
+            pool.interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    &title,
+                    None,
+                    Some("pending"),
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
         }
 
-        let pending = db.get_pending_tasks(Some(project_id), 3).unwrap();
+        let pending = pool
+            .interact(move |conn| get_pending_tasks_sync(conn, Some(project_id), 3))
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 3);
     }
 
-    #[test]
-    fn test_get_pending_tasks_global() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_pending_tasks_global() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        db.create_task(None, None, "Global pending", None, Some("pending"), None)
+        pool.interact(|conn| {
+            create_task_sync(conn, None, None, "Global pending", None, Some("pending"), None)
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+
+        let pending = pool
+            .interact(|conn| get_pending_tasks_sync(conn, None, 10))
+            .await
             .unwrap();
-
-        let pending = db.get_pending_tasks(None, 10).unwrap();
         assert_eq!(pending.len(), 1);
         assert!(pending[0].project_id.is_none());
     }
@@ -206,51 +297,65 @@ mod tests {
     // get_recent_tasks Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_recent_tasks_all_statuses() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_recent_tasks_all_statuses() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.create_task(
-            Some(project_id),
-            None,
-            "Pending",
-            None,
-            Some("pending"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Pending",
+                None,
+                Some("pending"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_task(
-            Some(project_id),
-            None,
-            "Completed",
-            None,
-            Some("completed"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Completed",
+                None,
+                Some("completed"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let tasks = db.get_recent_tasks(Some(project_id), 10).unwrap();
+        let tasks = pool
+            .interact(move |conn| get_tasks_sync(conn, Some(project_id), None).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 2);
     }
 
-    #[test]
-    fn test_get_recent_tasks_ordering() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_recent_tasks_ordering() {
+        let (pool, project_id) = setup_test_pool().await;
 
         for i in 0..3 {
-            db.create_task(
-                Some(project_id),
-                None,
-                &format!("Task {}", i),
-                None,
-                None,
-                None,
-            )
+            let title = format!("Task {}", i);
+            pool.interact(move |conn| {
+                create_task_sync(conn, Some(project_id), None, &title, None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
 
-        let tasks = db.get_recent_tasks(Some(project_id), 10).unwrap();
+        let tasks = pool
+            .interact(move |conn| get_tasks_sync(conn, Some(project_id), None).map_err(Into::into))
+            .await
+            .unwrap();
         // Most recent first
         assert_eq!(tasks[0].title, "Task 2");
         assert_eq!(tasks[2].title, "Task 0");
@@ -260,85 +365,128 @@ mod tests {
     // get_tasks (with filter) Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_tasks_no_filter() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_tasks_no_filter() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.create_task(
-            Some(project_id),
-            None,
-            "Task 1",
-            None,
-            Some("pending"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Task 1",
+                None,
+                Some("pending"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_task(
-            Some(project_id),
-            None,
-            "Task 2",
-            None,
-            Some("completed"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Task 2",
+                None,
+                Some("completed"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let tasks = db.get_tasks(Some(project_id), None).unwrap();
+        let tasks = pool
+            .interact(move |conn| get_tasks_sync(conn, Some(project_id), None).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 2);
     }
 
-    #[test]
-    fn test_get_tasks_with_status() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_tasks_with_status() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.create_task(
-            Some(project_id),
-            None,
-            "Pending",
-            None,
-            Some("pending"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Pending",
+                None,
+                Some("pending"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_task(
-            Some(project_id),
-            None,
-            "In Progress",
-            None,
-            Some("in_progress"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "In Progress",
+                None,
+                Some("in_progress"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let tasks = db.get_tasks(Some(project_id), Some("pending")).unwrap();
+        let tasks = pool
+            .interact(move |conn| {
+                get_tasks_sync(conn, Some(project_id), Some("pending")).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].status, "pending");
     }
 
-    #[test]
-    fn test_get_tasks_with_negation() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_tasks_with_negation() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.create_task(
-            Some(project_id),
-            None,
-            "Pending",
-            None,
-            Some("pending"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Pending",
+                None,
+                Some("pending"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_task(
-            Some(project_id),
-            None,
-            "Completed",
-            None,
-            Some("completed"),
-            None,
-        )
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project_id),
+                None,
+                "Completed",
+                None,
+                Some("completed"),
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let tasks = db.get_tasks(Some(project_id), Some("!completed")).unwrap();
+        let tasks = pool
+            .interact(move |conn| {
+                get_tasks_sync(conn, Some(project_id), Some("!completed")).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].status, "pending");
     }
@@ -347,84 +495,161 @@ mod tests {
     // update_task Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_update_task_title() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_task_title() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(Some(project_id), None, "Old title", None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(conn, Some(project_id), None, "Old title", None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_task(id, Some("New title"), None, None).unwrap();
+        pool.interact(move |conn| {
+            update_task_sync(conn, id, Some("New title"), None, None).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.title, "New title");
     }
 
-    #[test]
-    fn test_update_task_status() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_task_status() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(Some(project_id), None, "Task", None, Some("pending"), None)
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    "Task",
+                    None,
+                    Some("pending"),
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_task(id, None, Some("in_progress"), None).unwrap();
+        pool.interact(move |conn| {
+            update_task_sync(conn, id, None, Some("in_progress"), None).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.status, "in_progress");
     }
 
-    #[test]
-    fn test_update_task_priority() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_task_priority() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(Some(project_id), None, "Task", None, None, Some("low"))
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    "Task",
+                    None,
+                    None,
+                    Some("low"),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_task(id, None, None, Some("urgent")).unwrap();
+        pool.interact(move |conn| {
+            update_task_sync(conn, id, None, None, Some("urgent")).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.priority, "urgent");
     }
 
-    #[test]
-    fn test_update_task_multiple_fields() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_task_multiple_fields() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(
-                Some(project_id),
-                None,
-                "Old",
-                None,
-                Some("pending"),
-                Some("low"),
-            )
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    "Old",
+                    None,
+                    Some("pending"),
+                    Some("low"),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_task(id, Some("New title"), Some("in_progress"), Some("high"))
-            .unwrap();
+        pool.interact(move |conn| {
+            update_task_sync(conn, id, Some("New title"), Some("in_progress"), Some("high"))
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.title, "New title");
         assert_eq!(task.status, "in_progress");
         assert_eq!(task.priority, "high");
     }
 
-    #[test]
-    fn test_update_task_no_changes() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_task_no_changes() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(Some(project_id), None, "Task", None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(conn, Some(project_id), None, "Task", None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         // Update with None for all fields should not error
-        db.update_task(id, None, None, None).unwrap();
+        pool.interact(move |conn| {
+            update_task_sync(conn, id, None, None, None).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let task = db.get_task_by_id(id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.title, "Task");
     }
 
@@ -432,50 +657,70 @@ mod tests {
     // delete_task Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_delete_task() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_delete_task() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_task(Some(project_id), None, "To delete", None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(conn, Some(project_id), None, "To delete", None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.delete_task(id).unwrap();
+        pool.interact(move |conn| delete_task_sync(conn, id).map_err(Into::into))
+            .await
+            .unwrap();
 
-        let task = db.get_task_by_id(id).unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, id))
+            .await
+            .unwrap();
         assert!(task.is_none());
     }
 
-    #[test]
-    fn test_delete_nonexistent_task() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_delete_nonexistent_task() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         // Deleting non-existent task should not error
-        db.delete_task(99999).unwrap();
+        pool.interact(|conn| delete_task_sync(conn, 99999).map_err(Into::into))
+            .await
+            .unwrap();
     }
 
     // ═══════════════════════════════════════
     // create_goal Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_create_goal_basic() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_create_goal_basic() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(
-                Some(project_id),
-                "Test goal",
-                Some("Test description"),
-                Some("planning"),
-                Some("high"),
-                Some(0),
-            )
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Test goal",
+                    Some("Test description"),
+                    Some("planning"),
+                    Some("high"),
+                    Some(0),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.title, "Test goal");
         assert_eq!(goal.description, Some("Test description".to_string()));
         assert_eq!(goal.status, "planning");
@@ -483,30 +728,46 @@ mod tests {
         assert_eq!(goal.progress_percent, 0);
     }
 
-    #[test]
-    fn test_create_goal_with_defaults() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_create_goal_with_defaults() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(Some(project_id), "Minimal goal", None, None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(conn, Some(project_id), "Minimal goal", None, None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.title, "Minimal goal");
         assert_eq!(goal.status, "planning");
         assert_eq!(goal.priority, "medium");
         assert_eq!(goal.progress_percent, 0);
     }
 
-    #[test]
-    fn test_create_goal_global() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_create_goal_global() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let id = db
-            .create_goal(None, "Global goal", None, None, None, None)
+        let id = pool
+            .interact(|conn| {
+                create_goal_sync(conn, None, "Global goal", None, None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(goal.project_id.is_none());
     }
 
@@ -514,31 +775,43 @@ mod tests {
     // get_goal_by_id Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_goal_by_id_existing() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_goal_by_id_existing() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(
-                Some(project_id),
-                "Find me",
-                Some("Description"),
-                None,
-                None,
-                None,
-            )
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Find me",
+                    Some("Description"),
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.id, id);
         assert_eq!(goal.title, "Find me");
     }
 
-    #[test]
-    fn test_get_goal_by_id_nonexistent() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_goal_by_id_nonexistent() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let goal = db.get_goal_by_id(99999).unwrap();
+        let goal = pool
+            .interact(|conn| get_goal_by_id_sync(conn, 99999))
+            .await
+            .unwrap();
         assert!(goal.is_none());
     }
 
@@ -546,53 +819,76 @@ mod tests {
     // get_active_goals Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_active_goals_basic() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_active_goals_basic() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Create active goals
-        db.create_goal(
-            Some(project_id),
-            "In progress",
-            None,
-            Some("in_progress"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "In progress",
+                None,
+                Some("in_progress"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_goal(
-            Some(project_id),
-            "Planning",
-            None,
-            Some("planning"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Planning",
+                None,
+                Some("planning"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
         // Create completed goal
-        db.create_goal(
-            Some(project_id),
-            "Done",
-            None,
-            Some("completed"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Done",
+                None,
+                Some("completed"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
         // Create abandoned goal
-        db.create_goal(
-            Some(project_id),
-            "Abandoned",
-            None,
-            Some("abandoned"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Abandoned",
+                None,
+                Some("abandoned"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let active = db.get_active_goals(Some(project_id), 10).unwrap();
+        let active = pool
+            .interact(move |conn| get_active_goals_sync(conn, Some(project_id), 10))
+            .await
+            .unwrap();
         assert_eq!(active.len(), 2);
         assert!(
             active
@@ -601,23 +897,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_active_goals_limit() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_active_goals_limit() {
+        let (pool, project_id) = setup_test_pool().await;
 
         for i in 0..5 {
-            db.create_goal(
-                Some(project_id),
-                &format!("Goal {}", i),
-                None,
-                Some("in_progress"),
-                None,
-                None,
-            )
+            let title = format!("Goal {}", i);
+            pool.interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    &title,
+                    None,
+                    Some("in_progress"),
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
         }
 
-        let active = db.get_active_goals(Some(project_id), 3).unwrap();
+        let active = pool
+            .interact(move |conn| get_active_goals_sync(conn, Some(project_id), 3))
+            .await
+            .unwrap();
         assert_eq!(active.len(), 3);
     }
 
@@ -625,85 +930,128 @@ mod tests {
     // get_goals (with filter) Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_goals_no_filter() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_goals_no_filter() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.create_goal(
-            Some(project_id),
-            "Goal 1",
-            None,
-            Some("planning"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Goal 1",
+                None,
+                Some("planning"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_goal(
-            Some(project_id),
-            "Goal 2",
-            None,
-            Some("completed"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Goal 2",
+                None,
+                Some("completed"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let goals = db.get_goals(Some(project_id), None).unwrap();
+        let goals = pool
+            .interact(move |conn| get_goals_sync(conn, Some(project_id), None).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(goals.len(), 2);
     }
 
-    #[test]
-    fn test_get_goals_with_status() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_goals_with_status() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.create_goal(
-            Some(project_id),
-            "Planning",
-            None,
-            Some("planning"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Planning",
+                None,
+                Some("planning"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_goal(
-            Some(project_id),
-            "In Progress",
-            None,
-            Some("in_progress"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "In Progress",
+                None,
+                Some("in_progress"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let goals = db.get_goals(Some(project_id), Some("planning")).unwrap();
+        let goals = pool
+            .interact(move |conn| {
+                get_goals_sync(conn, Some(project_id), Some("planning")).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(goals.len(), 1);
         assert_eq!(goals[0].status, "planning");
     }
 
-    #[test]
-    fn test_get_goals_with_negation() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_goals_with_negation() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.create_goal(
-            Some(project_id),
-            "Active",
-            None,
-            Some("in_progress"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Active",
+                None,
+                Some("in_progress"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
-        db.create_goal(
-            Some(project_id),
-            "Completed",
-            None,
-            Some("completed"),
-            None,
-            None,
-        )
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project_id),
+                "Completed",
+                None,
+                Some("completed"),
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let goals = db.get_goals(Some(project_id), Some("!completed")).unwrap();
+        let goals = pool
+            .interact(move |conn| {
+                get_goals_sync(conn, Some(project_id), Some("!completed")).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(goals.len(), 1);
         assert_eq!(goals[0].status, "in_progress");
     }
@@ -712,90 +1060,173 @@ mod tests {
     // update_goal Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_update_goal_title() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_goal_title() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(Some(project_id), "Old title", None, None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(conn, Some(project_id), "Old title", None, None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_goal(id, Some("New title"), None, None, None)
-            .unwrap();
+        pool.interact(move |conn| {
+            update_goal_sync(conn, id, Some("New title"), None, None, None).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.title, "New title");
     }
 
-    #[test]
-    fn test_update_goal_status() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_goal_status() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(Some(project_id), "Goal", None, Some("planning"), None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Goal",
+                    None,
+                    Some("planning"),
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_goal(id, None, Some("in_progress"), None, None)
-            .unwrap();
+        pool.interact(move |conn| {
+            update_goal_sync(conn, id, None, Some("in_progress"), None, None).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.status, "in_progress");
     }
 
-    #[test]
-    fn test_update_goal_priority() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_goal_priority() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(Some(project_id), "Goal", None, None, Some("low"), None)
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Goal",
+                    None,
+                    None,
+                    Some("low"),
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_goal(id, None, None, Some("urgent"), None)
-            .unwrap();
+        pool.interact(move |conn| {
+            update_goal_sync(conn, id, None, None, Some("urgent"), None).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.priority, "urgent");
     }
 
-    #[test]
-    fn test_update_goal_progress() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_goal_progress() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(Some(project_id), "Goal", None, None, None, Some(25))
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Goal",
+                    None,
+                    None,
+                    None,
+                    Some(25),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_goal(id, None, None, None, Some(75)).unwrap();
+        pool.interact(move |conn| {
+            update_goal_sync(conn, id, None, None, None, Some(75)).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.progress_percent, 75);
     }
 
-    #[test]
-    fn test_update_goal_multiple_fields() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_update_goal_multiple_fields() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(
-                Some(project_id),
-                "Old",
-                None,
-                Some("planning"),
-                Some("low"),
-                Some(0),
-            )
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Old",
+                    None,
+                    Some("planning"),
+                    Some("low"),
+                    Some(0),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_goal(
-            id,
-            Some("New title"),
-            Some("in_progress"),
-            Some("high"),
-            Some(50),
-        )
+        pool.interact(move |conn| {
+            update_goal_sync(
+                conn,
+                id,
+                Some("New title"),
+                Some("in_progress"),
+                Some("high"),
+                Some(50),
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.title, "New title");
         assert_eq!(goal.status, "in_progress");
         assert_eq!(goal.priority, "high");
@@ -806,86 +1237,149 @@ mod tests {
     // delete_goal Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_delete_goal() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_delete_goal() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(Some(project_id), "To delete", None, None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(conn, Some(project_id), "To delete", None, None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.delete_goal(id).unwrap();
+        pool.interact(move |conn| delete_goal_sync(conn, id).map_err(Into::into))
+            .await
+            .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap();
         assert!(goal.is_none());
     }
 
-    #[test]
-    fn test_delete_nonexistent_goal() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_delete_nonexistent_goal() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         // Deleting non-existent goal should not error
-        db.delete_goal(99999).unwrap();
+        pool.interact(|conn| delete_goal_sync(conn, 99999).map_err(Into::into))
+            .await
+            .unwrap();
     }
 
     // ═══════════════════════════════════════
     // Task-Goal Relationship Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_task_goal_relationship() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_task_goal_relationship() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let goal_id = db
-            .create_goal(Some(project_id), "Parent goal", None, None, None, None)
+        let goal_id = pool
+            .interact(move |conn| {
+                create_goal_sync(conn, Some(project_id), "Parent goal", None, None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let task1_id = db
-            .create_task(
-                Some(project_id),
-                Some(goal_id),
-                "Subtask 1",
-                None,
-                None,
-                None,
-            )
+        let task1_id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    Some(goal_id),
+                    "Subtask 1",
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let task2_id = db
-            .create_task(
-                Some(project_id),
-                Some(goal_id),
-                "Subtask 2",
-                None,
-                None,
-                None,
-            )
+        let task2_id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    Some(goal_id),
+                    "Subtask 2",
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let task1 = db.get_task_by_id(task1_id).unwrap().unwrap();
-        let task2 = db.get_task_by_id(task2_id).unwrap().unwrap();
+        let task1 = pool
+            .interact(move |conn| get_task_by_id_sync(conn, task1_id))
+            .await
+            .unwrap()
+            .unwrap();
+        let task2 = pool
+            .interact(move |conn| get_task_by_id_sync(conn, task2_id))
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(task1.goal_id, Some(goal_id));
         assert_eq!(task2.goal_id, Some(goal_id));
     }
 
-    #[test]
-    fn test_orphan_tasks() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_orphan_tasks() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Create a task with a goal, then delete the goal
-        let goal_id = db
-            .create_goal(Some(project_id), "Temporary goal", None, None, None, None)
+        let goal_id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Temporary goal",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let task_id = db
-            .create_task(Some(project_id), Some(goal_id), "Task", None, None, None)
+        let task_id = pool
+            .interact(move |conn| {
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    Some(goal_id),
+                    "Task",
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.delete_goal(goal_id).unwrap();
+        pool.interact(move |conn| delete_goal_sync(conn, goal_id).map_err(Into::into))
+            .await
+            .unwrap();
 
         // Task should still exist
-        let task = db.get_task_by_id(task_id).unwrap().unwrap();
+        let task = pool
+            .interact(move |conn| get_task_by_id_sync(conn, task_id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(task.title, "Task");
         // goal_id should be cleared (orphan task)
         assert_eq!(task.goal_id, None);
@@ -895,20 +1389,54 @@ mod tests {
     // Project Isolation Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_task_project_isolation() {
-        let (db, project1) = setup_test_db();
-        let (project2, _) = db
-            .get_or_create_project("/other/path", Some("other"))
-            .unwrap();
+    #[tokio::test]
+    async fn test_task_project_isolation() {
+        let (pool, project1) = setup_test_pool().await;
+        let project2 = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
+            })
+            .await
+            .unwrap()
+            .0;
 
-        db.create_task(Some(project1), None, "Project 1 task", None, None, None)
-            .unwrap();
-        db.create_task(Some(project2), None, "Project 2 task", None, None, None)
-            .unwrap();
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project1),
+                None,
+                "Project 1 task",
+                None,
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+        pool.interact(move |conn| {
+            create_task_sync(
+                conn,
+                Some(project2),
+                None,
+                "Project 2 task",
+                None,
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let tasks1 = db.get_tasks(Some(project1), None).unwrap();
-        let tasks2 = db.get_tasks(Some(project2), None).unwrap();
+        let tasks1 = pool
+            .interact(move |conn| get_tasks_sync(conn, Some(project1), None).map_err(Into::into))
+            .await
+            .unwrap();
+        let tasks2 = pool
+            .interact(move |conn| get_tasks_sync(conn, Some(project2), None).map_err(Into::into))
+            .await
+            .unwrap();
 
         assert_eq!(tasks1.len(), 1);
         assert_eq!(tasks2.len(), 1);
@@ -916,20 +1444,54 @@ mod tests {
         assert_eq!(tasks2[0].title, "Project 2 task");
     }
 
-    #[test]
-    fn test_goal_project_isolation() {
-        let (db, project1) = setup_test_db();
-        let (project2, _) = db
-            .get_or_create_project("/other/path", Some("other"))
-            .unwrap();
+    #[tokio::test]
+    async fn test_goal_project_isolation() {
+        let (pool, project1) = setup_test_pool().await;
+        let project2 = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
+            })
+            .await
+            .unwrap()
+            .0;
 
-        db.create_goal(Some(project1), "Project 1 goal", None, None, None, None)
-            .unwrap();
-        db.create_goal(Some(project2), "Project 2 goal", None, None, None, None)
-            .unwrap();
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project1),
+                "Project 1 goal",
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+        pool.interact(move |conn| {
+            create_goal_sync(
+                conn,
+                Some(project2),
+                "Project 2 goal",
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let goals1 = db.get_goals(Some(project1), None).unwrap();
-        let goals2 = db.get_goals(Some(project2), None).unwrap();
+        let goals1 = pool
+            .interact(move |conn| get_goals_sync(conn, Some(project1), None).map_err(Into::into))
+            .await
+            .unwrap();
+        let goals2 = pool
+            .interact(move |conn| get_goals_sync(conn, Some(project2), None).map_err(Into::into))
+            .await
+            .unwrap();
 
         assert_eq!(goals1.len(), 1);
         assert_eq!(goals2.len(), 1);
@@ -941,52 +1503,92 @@ mod tests {
     // Edge Cases
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_empty_title_task() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_empty_title_task() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Empty title should still work
-        let id = db
-            .create_task(Some(project_id), None, "", None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_task_sync(conn, Some(project_id), None, "", None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
     }
 
-    #[test]
-    fn test_empty_title_goal() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_empty_title_goal() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Empty title should still work
-        let id = db
-            .create_goal(Some(project_id), "", None, None, None, None)
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(conn, Some(project_id), "", None, None, None, None)
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
     }
 
-    #[test]
-    fn test_invalid_progress_percent() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_invalid_progress_percent() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Should handle values outside 0-100 range
-        let id = db
-            .create_goal(Some(project_id), "Goal", None, None, None, Some(150))
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Goal",
+                    None,
+                    None,
+                    None,
+                    Some(150),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.progress_percent, 150);
     }
 
-    #[test]
-    fn test_negative_progress_percent() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_negative_progress_percent() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .create_goal(Some(project_id), "Goal", None, None, None, Some(-10))
+        let id = pool
+            .interact(move |conn| {
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Goal",
+                    None,
+                    None,
+                    None,
+                    Some(-10),
+                )
+                .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let goal = db.get_goal_by_id(id).unwrap().unwrap();
+        let goal = pool
+            .interact(move |conn| get_goal_by_id_sync(conn, id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(goal.progress_percent, -10);
     }
 }

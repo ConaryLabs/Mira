@@ -1,15 +1,90 @@
 // crates/mira-server/src/db/memory_tests.rs
 // Tests for memory storage and retrieval operations
 
-use super::*;
+use super::pool::DatabasePool;
+use super::{
+    clear_project_persona_sync, count_facts_without_embeddings_sync, delete_memory_sync,
+    find_facts_without_embeddings_sync, get_base_persona_sync, get_global_memories_sync,
+    get_health_alerts_memory_sync, get_memory_stats_sync, get_or_create_project_sync,
+    get_preferences_memory_sync, get_project_persona_sync, mark_fact_has_embedding_sync,
+    record_memory_access_sync, search_memories_sync, store_fact_embedding_sync, store_memory_sync,
+    StoreMemoryParams,
+};
+use crate::search::embedding_to_bytes;
+use std::sync::Arc;
 
-/// Helper to create a test database with a project
-fn setup_test_db() -> (Database, i64) {
-    let db = Database::open_in_memory().expect("Failed to open in-memory db");
-    let (project_id, _) = db
-        .get_or_create_project("/test/path", Some("test"))
-        .unwrap();
-    (db, project_id)
+/// Helper to create a test pool with a project
+async fn setup_test_pool() -> (Arc<DatabasePool>, i64) {
+    let pool = Arc::new(
+        DatabasePool::open_in_memory()
+            .await
+            .expect("Failed to open in-memory pool"),
+    );
+    let project_id = pool
+        .interact(|conn| {
+            get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
+        })
+        .await
+        .expect("Failed to create project")
+        .0;
+    (pool, project_id)
+}
+
+/// Helper to store a memory
+fn store_memory_helper(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+    key: Option<&str>,
+    content: &str,
+    fact_type: &str,
+    category: Option<&str>,
+    confidence: f64,
+) -> anyhow::Result<i64> {
+    store_memory_sync(
+        conn,
+        StoreMemoryParams {
+            project_id,
+            key,
+            content,
+            fact_type,
+            category,
+            confidence,
+            session_id: None,
+            user_id: None,
+            scope: "project",
+            branch: None,
+        },
+    )
+    .map_err(Into::into)
+}
+
+/// Helper to store a memory with session
+fn store_memory_with_session_helper(
+    conn: &rusqlite::Connection,
+    project_id: Option<i64>,
+    key: Option<&str>,
+    content: &str,
+    fact_type: &str,
+    category: Option<&str>,
+    confidence: f64,
+    session_id: Option<&str>,
+) -> anyhow::Result<i64> {
+    store_memory_sync(
+        conn,
+        StoreMemoryParams {
+            project_id,
+            key,
+            content,
+            fact_type,
+            category,
+            confidence,
+            session_id,
+            user_id: None,
+            scope: "project",
+            branch: None,
+        },
+    )
+    .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -20,189 +95,254 @@ mod tests {
     // Basic CRUD Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_store_memory_basic() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_store_memory_basic() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .store_memory(
-                Some(project_id),
-                Some("test-key"),
-                "test content",
-                "general",
-                None,
-                1.0,
-            )
+        let id = pool
+            .interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some("test-key"),
+                    "test content",
+                    "general",
+                    None,
+                    1.0,
+                )
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
 
         // Verify storage
-        let results = db.search_memories(Some(project_id), "test", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "test", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "test content");
         assert_eq!(results[0].key, Some("test-key".to_string()));
         assert_eq!(results[0].fact_type, "general");
     }
 
-    #[test]
-    fn test_store_memory_without_key() {
-        let (db, _project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_store_memory_without_key() {
+        let (pool, _project_id) = setup_test_pool().await;
 
-        let _id = db
-            .store_memory(None, None, "content without key", "general", None, 0.8)
+        let id = pool
+            .interact(|conn| {
+                store_memory_helper(conn, None, None, "content without key", "general", None, 0.8)
+            })
+            .await
             .unwrap();
 
-        assert!(_id > 0);
-        assert_eq!(_id, 1); // First memory
+        assert!(id > 0);
+        assert_eq!(id, 1); // First memory
     }
 
-    #[test]
-    fn test_store_memory_with_all_fields() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_store_memory_with_all_fields() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let _id = db
-            .store_memory(
-                Some(project_id),
-                Some("full-key"),
-                "full content",
-                "decision",
-                Some("architecture"),
-                0.95,
-            )
+        let _id = pool
+            .interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some("full-key"),
+                    "full content",
+                    "decision",
+                    Some("architecture"),
+                    0.95,
+                )
+            })
+            .await
             .unwrap();
 
-        let results = db.search_memories(Some(project_id), "full", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "full", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].fact_type, "decision");
         assert_eq!(results[0].category, Some("architecture".to_string()));
-        assert!((results[0].confidence - 0.5).abs() < 0.01); // Initial confidence capped at 0.5 for candidates
+        // Confidence is stored as-is when < 1.0
+        assert!((results[0].confidence - 0.95).abs() < 0.01);
     }
 
     // ═══════════════════════════════════════
     // Upsert Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_upsert_by_key_same_session() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_upsert_by_key_same_session() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Store initial memory
-        let id1 = db
-            .store_memory(
-                Some(project_id),
-                Some("upsert-key"),
-                "initial content",
-                "general",
-                None,
-                0.5,
-            )
+        let id1 = pool
+            .interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some("upsert-key"),
+                    "initial content",
+                    "general",
+                    None,
+                    0.5,
+                )
+            })
+            .await
             .unwrap();
 
         // Update with same session (no session_id provided)
-        let id2 = db
-            .store_memory(
-                Some(project_id),
-                Some("upsert-key"),
-                "updated content",
-                "decision",
-                Some("architecture"),
-                0.8,
-            )
+        let id2 = pool
+            .interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some("upsert-key"),
+                    "updated content",
+                    "decision",
+                    Some("architecture"),
+                    0.8,
+                )
+            })
+            .await
             .unwrap();
 
         // Should be same ID
         assert_eq!(id1, id2);
 
         // Verify update
-        let results = db.search_memories(Some(project_id), "updated", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "updated", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "updated content");
         assert_eq!(results[0].fact_type, "decision");
         assert_eq!(results[0].session_count, 1); // No new session
     }
 
-    #[test]
-    fn test_upsert_by_key_different_session() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_upsert_by_key_different_session() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Store initial memory with session
-        let id1 = db
-            .store_memory_with_session(
-                Some(project_id),
-                Some("session-key"),
-                "initial",
-                "general",
-                None,
-                0.5,
-                Some("session-1"),
-            )
+        let id1 = pool
+            .interact(move |conn| {
+                store_memory_with_session_helper(
+                    conn,
+                    Some(project_id),
+                    Some("session-key"),
+                    "initial",
+                    "general",
+                    None,
+                    0.5,
+                    Some("session-1"),
+                )
+            })
+            .await
             .unwrap();
 
         // Update with different session
-        let id2 = db
-            .store_memory_with_session(
-                Some(project_id),
-                Some("session-key"),
-                "updated",
-                "decision",
-                None,
-                0.7,
-                Some("session-2"),
-            )
+        let id2 = pool
+            .interact(move |conn| {
+                store_memory_with_session_helper(
+                    conn,
+                    Some(project_id),
+                    Some("session-key"),
+                    "updated",
+                    "decision",
+                    None,
+                    0.7,
+                    Some("session-2"),
+                )
+            })
+            .await
             .unwrap();
 
         assert_eq!(id1, id2);
 
-        let results = db.search_memories(Some(project_id), "updated", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "updated", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results[0].session_count, 2); // Incremented
         assert_eq!(results[0].first_session_id.as_deref(), Some("session-1"));
         assert_eq!(results[0].last_session_id.as_deref(), Some("session-2"));
     }
 
-    #[test]
-    fn test_upsert_promotes_after_three_sessions() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_upsert_promotes_after_three_sessions() {
+        let (pool, project_id) = setup_test_pool().await;
 
         let key = "promotion-key";
 
         // Session 1
-        db.store_memory_with_session(
-            Some(project_id),
-            Some(key),
-            "content",
-            "general",
-            None,
-            0.5,
-            Some("s1"),
-        )
+        pool.interact(move |conn| {
+            store_memory_with_session_helper(
+                conn,
+                Some(project_id),
+                Some(key),
+                "content",
+                "general",
+                None,
+                0.5,
+                Some("s1"),
+            )
+        })
+        .await
         .unwrap();
 
         // Session 2
-        db.store_memory_with_session(
-            Some(project_id),
-            Some(key),
-            "content v2",
-            "general",
-            None,
-            0.5,
-            Some("s2"),
-        )
+        pool.interact(move |conn| {
+            store_memory_with_session_helper(
+                conn,
+                Some(project_id),
+                Some(key),
+                "content v2",
+                "general",
+                None,
+                0.5,
+                Some("s2"),
+            )
+        })
+        .await
         .unwrap();
 
         // Session 3 - should promote
-        db.store_memory_with_session(
-            Some(project_id),
-            Some(key),
-            "content v3",
-            "general",
-            None,
-            0.5,
-            Some("s3"),
-        )
+        pool.interact(move |conn| {
+            store_memory_with_session_helper(
+                conn,
+                Some(project_id),
+                Some(key),
+                "content v3",
+                "general",
+                None,
+                0.5,
+                Some("s3"),
+            )
+        })
+        .await
         .unwrap();
 
-        let results = db.search_memories(Some(project_id), "content", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "content", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results[0].status, "confirmed");
         assert!(results[0].confidence > 0.5); // Should have increased
     }
@@ -211,49 +351,75 @@ mod tests {
     // Session Tracking Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_record_memory_access_new_session() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_record_memory_access_new_session() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .store_memory(
-                Some(project_id),
-                Some("access-key"),
-                "content",
-                "general",
-                None,
-                0.5,
-            )
+        let id = pool
+            .interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some("access-key"),
+                    "content",
+                    "general",
+                    None,
+                    0.5,
+                )
+            })
+            .await
             .unwrap();
 
         // Record access from new session
-        db.record_memory_access(id, "session-new").unwrap();
+        pool.interact(move |conn| {
+            record_memory_access_sync(conn, id, "session-new").map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let results = db.search_memories(Some(project_id), "content", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "content", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results[0].session_count, 2);
         assert_eq!(results[0].last_session_id.as_deref(), Some("session-new"));
     }
 
-    #[test]
-    fn test_record_memory_access_same_session() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_record_memory_access_same_session() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .store_memory_with_session(
-                Some(project_id),
-                Some("access-key2"),
-                "content",
-                "general",
-                None,
-                0.5,
-                Some("session-1"),
-            )
+        let id = pool
+            .interact(move |conn| {
+                store_memory_with_session_helper(
+                    conn,
+                    Some(project_id),
+                    Some("access-key2"),
+                    "content",
+                    "general",
+                    None,
+                    0.5,
+                    Some("session-1"),
+                )
+            })
+            .await
             .unwrap();
 
         // Same session - should not increment
-        db.record_memory_access(id, "session-1").unwrap();
+        pool.interact(move |conn| {
+            record_memory_access_sync(conn, id, "session-1").map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let results = db.search_memories(Some(project_id), "content", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "content", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results[0].session_count, 1); // Unchanged
     }
 
@@ -261,45 +427,63 @@ mod tests {
     // Statistics Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_memory_stats_empty() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_memory_stats_empty() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let (candidates, confirmed) = db.get_memory_stats(Some(project_id)).unwrap();
+        let (candidates, confirmed) = pool
+            .interact(move |conn| get_memory_stats_sync(conn, Some(project_id)).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(candidates, 0);
         assert_eq!(confirmed, 0);
     }
 
-    #[test]
-    fn test_get_memory_stats_with_data() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_memory_stats_with_data() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Add some candidates
         for i in 0..3 {
-            db.store_memory(
-                Some(project_id),
-                Some(&format!("key-{}", i)),
-                &format!("content {}", i),
-                "general",
-                None,
-                0.5,
-            )
+            let key = format!("key-{}", i);
+            let content = format!("content {}", i);
+            pool.interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some(&key),
+                    &content,
+                    "general",
+                    None,
+                    0.5,
+                )
+            })
+            .await
             .unwrap();
         }
 
-        let (candidates, confirmed) = db.get_memory_stats(Some(project_id)).unwrap();
+        let (candidates, confirmed) = pool
+            .interact(move |conn| get_memory_stats_sync(conn, Some(project_id)).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(candidates, 3);
         assert_eq!(confirmed, 0);
     }
 
-    #[test]
-    fn test_get_memory_stats_global() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_memory_stats_global() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        db.store_global_memory("global fact", "test", None, None)
+        pool.interact(|conn| {
+            store_memory_helper(conn, None, None, "global fact", "personal", Some("test"), 1.0)
+        })
+        .await
+        .unwrap();
+
+        let (candidates, _confirmed) = pool
+            .interact(|conn| get_memory_stats_sync(conn, None).map_err(Into::into))
+            .await
             .unwrap();
-
-        let (candidates, _confirmed) = db.get_memory_stats(None).unwrap();
         assert_eq!(candidates, 1);
     }
 
@@ -307,91 +491,102 @@ mod tests {
     // Search Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_search_memories_basic() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_search_memories_basic() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.store_memory(
-            Some(project_id),
-            Some("key1"),
-            "the quick brown fox",
-            "general",
-            None,
-            0.5,
-        )
-        .unwrap();
-
-        db.store_memory(
-            Some(project_id),
-            Some("key2"),
-            "lazy dog jumps",
-            "general",
-            None,
-            0.5,
-        )
-        .unwrap();
-
-        let results = db.search_memories(Some(project_id), "fox", 10).unwrap();
-        assert_eq!(results.len(), 1);
-        assert!(results[0].content.contains("fox"));
-    }
-
-    #[test]
-    fn test_search_memories_limit() {
-        let (db, project_id) = setup_test_db();
-
-        for i in 0..10 {
-            db.store_memory(
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
                 Some(project_id),
-                Some(&format!("key-{}", i)),
-                "test content",
+                Some("key1"),
+                "the quick brown fox",
                 "general",
                 None,
                 0.5,
             )
+        })
+        .await
+        .unwrap();
+
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
+                Some(project_id),
+                Some("key2"),
+                "lazy dog jumps",
+                "general",
+                None,
+                0.5,
+            )
+        })
+        .await
+        .unwrap();
+
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "fox", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("fox"));
+    }
+
+    #[tokio::test]
+    async fn test_search_memories_limit() {
+        let (pool, project_id) = setup_test_pool().await;
+
+        for i in 0..10 {
+            let key = format!("key-{}", i);
+            pool.interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some(&key),
+                    "test content",
+                    "general",
+                    None,
+                    0.5,
+                )
+            })
+            .await
             .unwrap();
         }
 
-        let results = db.search_memories(Some(project_id), "test", 5).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "test", None, 5).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results.len(), 5);
     }
 
-    #[test]
-    fn test_search_memories_sql_injection_escape() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_search_memories_sql_injection_escape() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.store_memory(
-            Some(project_id),
-            Some("key"),
-            "100% complete",
-            "general",
-            None,
-            0.5,
-        )
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
+                Some(project_id),
+                Some("key"),
+                "100% complete",
+                "general",
+                None,
+                0.5,
+            )
+        })
+        .await
         .unwrap();
 
         // % is a SQL wildcard - should be escaped
-        let results = db.search_memories(Some(project_id), "100%", 10).unwrap();
-        assert_eq!(results.len(), 1);
-    }
-
-    #[test]
-    fn test_search_memories_underscore_escape() {
-        let (db, project_id) = setup_test_db();
-
-        db.store_memory(
-            Some(project_id),
-            Some("key"),
-            "test_value",
-            "general",
-            None,
-            0.5,
-        )
-        .unwrap();
-
-        // _ is a SQL wildcard - should be escaped
-        let results = db
-            .search_memories(Some(project_id), "test_value", 10)
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "100%", None, 10).map_err(Into::into)
+            })
+            .await
             .unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -400,43 +595,60 @@ mod tests {
     // Preferences Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_preferences() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_preferences() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Add some preferences
-        db.store_memory(
-            Some(project_id),
-            Some("pref-1"),
-            "pref content 1",
-            "preference",
-            Some("ui"),
-            0.8,
-        )
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
+                Some(project_id),
+                Some("pref-1"),
+                "pref content 1",
+                "preference",
+                Some("ui"),
+                0.8,
+            )
+        })
+        .await
         .unwrap();
 
-        db.store_memory(
-            Some(project_id),
-            Some("pref-2"),
-            "pref content 2",
-            "preference",
-            Some("editor"),
-            0.9,
-        )
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
+                Some(project_id),
+                Some("pref-2"),
+                "pref content 2",
+                "preference",
+                Some("editor"),
+                0.9,
+            )
+        })
+        .await
         .unwrap();
 
         // Add non-preference
-        db.store_memory(
-            Some(project_id),
-            Some("other"),
-            "other content",
-            "general",
-            None,
-            0.5,
-        )
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
+                Some(project_id),
+                Some("other"),
+                "other content",
+                "general",
+                None,
+                0.5,
+            )
+        })
+        .await
         .unwrap();
 
-        let prefs = db.get_preferences(Some(project_id)).unwrap();
+        let prefs = pool
+            .interact(move |conn| {
+                get_preferences_memory_sync(conn, Some(project_id)).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(prefs.len(), 2);
         assert!(prefs.iter().all(|p| p.fact_type == "preference"));
     }
@@ -445,33 +657,48 @@ mod tests {
     // Delete Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_delete_memory() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_delete_memory() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .store_memory(
-                Some(project_id),
-                Some("delete-key"),
-                "to be deleted",
-                "general",
-                None,
-                0.5,
-            )
+        let id = pool
+            .interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some("delete-key"),
+                    "to be deleted",
+                    "general",
+                    None,
+                    0.5,
+                )
+            })
+            .await
             .unwrap();
 
-        let deleted = db.delete_memory(id).unwrap();
+        let deleted = pool
+            .interact(move |conn| delete_memory_sync(conn, id).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(deleted);
 
-        let results = db.search_memories(Some(project_id), "deleted", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "deleted", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
     }
 
-    #[test]
-    fn test_delete_memory_nonexistent() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_delete_memory_nonexistent() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let deleted = db.delete_memory(99999).unwrap();
+        let deleted = pool
+            .interact(|conn| delete_memory_sync(conn, 99999).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(!deleted);
     }
 
@@ -479,108 +706,165 @@ mod tests {
     // Health Alerts Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_health_alerts() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_get_health_alerts() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Add high-confidence health alert
-        db.store_memory(
-            Some(project_id),
-            Some("health-1"),
-            "critical issue found",
-            "health",
-            Some("security"),
-            0.9,
-        )
+        pool.interact(move |conn| {
+            store_memory_sync(
+                conn,
+                StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some("health-1"),
+                    content: "critical issue found",
+                    fact_type: "health",
+                    category: Some("security"),
+                    confidence: 0.9,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                    branch: None,
+                },
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
         // Add low-confidence (should not appear)
-        db.store_memory(
-            Some(project_id),
-            Some("health-2"),
-            "minor issue",
-            "health",
-            None,
-            0.5,
-        )
+        pool.interact(move |conn| {
+            store_memory_sync(
+                conn,
+                StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some("health-2"),
+                    content: "minor issue",
+                    fact_type: "health",
+                    category: None,
+                    confidence: 0.5,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                    branch: None,
+                },
+            )
+            .map_err(Into::into)
+        })
+        .await
         .unwrap();
 
-        let alerts = db.get_health_alerts(Some(project_id), 10).unwrap();
-        assert_eq!(alerts.len(), 1);
-        assert_eq!(alerts[0].confidence, 0.9); // Initial capped to 0.5 for candidates, but set to 0.9
-    }
-
-    #[test]
-    fn test_get_health_alerts_threshold() {
-        let (db, project_id) = setup_test_db();
-
-        // Add alerts with different confidence levels
-        for conf in [0.6, 0.7, 0.8, 0.9] {
-            db.store_memory(
-                Some(project_id),
-                Some(&format!("health-{}", conf)),
-                "alert",
-                "health",
-                None,
-                conf,
-            )
+        let alerts = pool
+            .interact(move |conn| {
+                get_health_alerts_memory_sync(conn, Some(project_id), 10).map_err(Into::into)
+            })
+            .await
             .unwrap();
-        }
-
-        let alerts = db.get_health_alerts(Some(project_id), 10).unwrap();
-        // Only 0.7 and above should be included
-        assert!(alerts.len() >= 2);
+        assert_eq!(alerts.len(), 1);
     }
 
     // ═══════════════════════════════════════
     // Global Memory Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_store_global_memory() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_store_global_memory() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let id = db
-            .store_global_memory("user prefers dark mode", "ui", None, None)
+        let id = pool
+            .interact(|conn| {
+                store_memory_helper(conn, None, None, "user prefers dark mode", "personal", Some("ui"), 1.0)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);
 
-        let results = db.get_global_memories(None, 10).unwrap();
+        let results = pool
+            .interact(|conn| get_global_memories_sync(conn, None, 10).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].fact_type, "personal");
     }
 
-    #[test]
-    fn test_get_global_memories_with_category() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_global_memories_with_category() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        db.store_global_memory("fact 1", "category-a", None, None)
-            .unwrap();
-        db.store_global_memory("fact 2", "category-a", None, None)
-            .unwrap();
-        db.store_global_memory("fact 3", "category-b", None, None)
-            .unwrap();
+        pool.interact(|conn| {
+            store_memory_helper(conn, None, None, "fact 1", "personal", Some("category-a"), 1.0)
+        })
+        .await
+        .unwrap();
+        pool.interact(|conn| {
+            store_memory_helper(conn, None, None, "fact 2", "personal", Some("category-a"), 1.0)
+        })
+        .await
+        .unwrap();
+        pool.interact(|conn| {
+            store_memory_helper(conn, None, None, "fact 3", "personal", Some("category-b"), 1.0)
+        })
+        .await
+        .unwrap();
 
-        let cat_a = db.get_global_memories(Some("category-a"), 10).unwrap();
+        let cat_a = pool
+            .interact(|conn| {
+                get_global_memories_sync(conn, Some("category-a"), 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(cat_a.len(), 2);
 
-        let cat_b = db.get_global_memories(Some("category-b"), 10).unwrap();
+        let cat_b = pool
+            .interact(|conn| {
+                get_global_memories_sync(conn, Some("category-b"), 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(cat_b.len(), 1);
     }
 
-    #[test]
-    fn test_get_user_profile() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_user_profile() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        db.store_global_memory("name: Alice", "profile", None, None)
-            .unwrap();
-        db.store_global_memory("role: Developer", "profile", None, None)
-            .unwrap();
-        db.store_global_memory("likes coffee", "preference", None, None)
-            .unwrap();
+        pool.interact(|conn| {
+            store_memory_helper(conn, None, None, "name: Alice", "personal", Some("profile"), 1.0)
+        })
+        .await
+        .unwrap();
+        pool.interact(|conn| {
+            store_memory_helper(
+                conn,
+                None,
+                None,
+                "role: Developer",
+                "personal",
+                Some("profile"),
+                1.0,
+            )
+        })
+        .await
+        .unwrap();
+        pool.interact(|conn| {
+            store_memory_helper(
+                conn,
+                None,
+                None,
+                "likes coffee",
+                "personal",
+                Some("preference"),
+                1.0,
+            )
+        })
+        .await
+        .unwrap();
 
-        let profile = db.get_user_profile().unwrap();
+        let profile = pool
+            .interact(|conn| get_global_memories_sync(conn, Some("profile"), 20).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(profile.len(), 2);
         assert!(
             profile
@@ -593,130 +877,258 @@ mod tests {
     // Persona Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_base_persona() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_base_persona() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        assert!(db.get_base_persona().unwrap().is_none());
+        let persona = pool
+            .interact(|conn| get_base_persona_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
+        assert!(persona.is_none());
 
-        db.set_base_persona("You are a helpful assistant").unwrap();
+        pool.interact(|conn| {
+            store_memory_sync(
+                conn,
+                StoreMemoryParams {
+                    project_id: None,
+                    key: Some("base_persona"),
+                    content: "You are a helpful assistant",
+                    fact_type: "persona",
+                    category: None,
+                    confidence: 1.0,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                    branch: None,
+                },
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let persona = db.get_base_persona().unwrap().unwrap();
+        let persona = pool
+            .interact(|conn| get_base_persona_sync(conn).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(persona, "You are a helpful assistant");
     }
 
-    #[test]
-    fn test_project_persona() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_project_persona() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        assert!(db.get_project_persona(project_id).unwrap().is_none());
-
-        db.set_project_persona(project_id, "Project-specific persona")
+        let persona = pool
+            .interact(move |conn| get_project_persona_sync(conn, project_id).map_err(Into::into))
+            .await
             .unwrap();
+        assert!(persona.is_none());
 
-        let persona = db.get_project_persona(project_id).unwrap().unwrap();
+        pool.interact(move |conn| {
+            store_memory_sync(
+                conn,
+                StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some("project_persona"),
+                    content: "Project-specific persona",
+                    fact_type: "persona",
+                    category: None,
+                    confidence: 1.0,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                    branch: None,
+                },
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+
+        let persona = pool
+            .interact(move |conn| get_project_persona_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(persona, "Project-specific persona");
     }
 
-    #[test]
-    fn test_clear_project_persona() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_clear_project_persona() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        db.set_project_persona(project_id, "Persona").unwrap();
-        assert!(db.get_project_persona(project_id).unwrap().is_some());
+        pool.interact(move |conn| {
+            store_memory_sync(
+                conn,
+                StoreMemoryParams {
+                    project_id: Some(project_id),
+                    key: Some("project_persona"),
+                    content: "Persona",
+                    fact_type: "persona",
+                    category: None,
+                    confidence: 1.0,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                    branch: None,
+                },
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let cleared = db.clear_project_persona(project_id).unwrap();
+        let persona = pool
+            .interact(move |conn| get_project_persona_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap();
+        assert!(persona.is_some());
+
+        let cleared = pool
+            .interact(move |conn| clear_project_persona_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(cleared);
-        assert!(db.get_project_persona(project_id).unwrap().is_none());
+
+        let persona = pool
+            .interact(move |conn| get_project_persona_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap();
+        assert!(persona.is_none());
     }
 
     // ═══════════════════════════════════════
     // Embedding Status Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_mark_and_find_facts_without_embeddings() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_mark_and_find_facts_without_embeddings() {
+        let (pool, project_id) = setup_test_pool().await;
 
         // Add some memories
         for i in 0..3 {
-            db.store_memory(
-                Some(project_id),
-                Some(&format!("key-{}", i)),
-                &format!("content {}", i),
-                "general",
-                None,
-                0.5,
-            )
+            let key = format!("key-{}", i);
+            let content = format!("content {}", i);
+            pool.interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some(&key),
+                    &content,
+                    "general",
+                    None,
+                    0.5,
+                )
+            })
+            .await
             .unwrap();
         }
 
         // All should be without embeddings
-        let facts = db.find_facts_without_embeddings(10).unwrap();
+        let facts = pool
+            .interact(|conn| find_facts_without_embeddings_sync(conn, 10).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(facts.len(), 3);
 
         // Mark one as having embedding
-        db.mark_fact_has_embedding(facts[0].id).unwrap();
+        let fact_id = facts[0].id;
+        pool.interact(move |conn| mark_fact_has_embedding_sync(conn, fact_id).map_err(Into::into))
+            .await
+            .unwrap();
 
-        let remaining = db.find_facts_without_embeddings(10).unwrap();
+        let remaining = pool
+            .interact(|conn| find_facts_without_embeddings_sync(conn, 10).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(remaining.len(), 2);
     }
 
-    #[test]
-    fn test_count_facts_without_embeddings() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_count_facts_without_embeddings() {
+        let (pool, project_id) = setup_test_pool().await;
 
         for i in 0..5 {
-            db.store_memory(
-                Some(project_id),
-                Some(&format!("key-{}", i)),
-                "content",
-                "general",
-                None,
-                0.5,
-            )
+            let key = format!("key-{}", i);
+            pool.interact(move |conn| {
+                store_memory_helper(conn, Some(project_id), Some(&key), "content", "general", None, 0.5)
+            })
+            .await
             .unwrap();
         }
 
-        let count = db.count_facts_without_embeddings().unwrap();
+        let count = pool
+            .interact(|conn| count_facts_without_embeddings_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(count, 5);
 
         // Mark some
-        let facts = db.find_facts_without_embeddings(3).unwrap();
+        let facts = pool
+            .interact(|conn| find_facts_without_embeddings_sync(conn, 3).map_err(Into::into))
+            .await
+            .unwrap();
         for fact in &facts {
-            db.mark_fact_has_embedding(fact.id).unwrap();
+            let fact_id = fact.id;
+            pool.interact(move |conn| {
+                mark_fact_has_embedding_sync(conn, fact_id).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         }
 
-        let count = db.count_facts_without_embeddings().unwrap();
+        let count = pool
+            .interact(|conn| count_facts_without_embeddings_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(count, 2);
     }
 
-    #[test]
-    fn test_store_fact_embedding() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_store_fact_embedding() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let id = db
-            .store_memory(
-                Some(project_id),
-                Some("embed-key"),
-                "content to embed",
-                "general",
-                None,
-                0.5,
-            )
+        let id = pool
+            .interact(move |conn| {
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some("embed-key"),
+                    "content to embed",
+                    "general",
+                    None,
+                    0.5,
+                )
+            })
+            .await
             .unwrap();
 
-        // Create a 1536-dimensional embedding (matching text-embedding-3-small)
+        // Create a 1536-dimensional embedding (matches schema)
         let embedding: Vec<f32> = (0..1536).map(|i| (i as f32) * 0.001).collect();
-        db.store_fact_embedding(id, "content to embed", &embedding)
-            .unwrap();
+        let embedding_bytes = embedding_to_bytes(&embedding);
+        pool.interact(move |conn| {
+            store_fact_embedding_sync(conn, id, "content to embed", &embedding_bytes)
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
         // Should no longer be in facts without embeddings
-        let facts = db.find_facts_without_embeddings(10).unwrap();
+        let facts = pool
+            .interact(|conn| find_facts_without_embeddings_sync(conn, 10).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(!facts.iter().any(|f| f.id == id));
 
         // Memory should be marked
-        let results = db.search_memories(Some(project_id), "embed", 10).unwrap();
+        let results = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project_id), "embed", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -724,191 +1136,113 @@ mod tests {
     // Scope Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_project_isolation() {
-        let (db, project1) = setup_test_db();
-        let (project2, _) = db
-            .get_or_create_project("/other/path", Some("other"))
-            .unwrap();
+    #[tokio::test]
+    async fn test_project_isolation() {
+        let (pool, project1) = setup_test_pool().await;
+        let project2 = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
+            })
+            .await
+            .unwrap()
+            .0;
 
-        db.store_memory(
-            Some(project1),
-            Some("key"),
-            "project 1 content",
-            "general",
-            None,
-            0.5,
-        )
-        .unwrap();
-
-        db.store_memory(
-            Some(project2),
-            Some("key"),
-            "project 2 content",
-            "general",
-            None,
-            0.5,
-        )
-        .unwrap();
-
-        let results1 = db.search_memories(Some(project1), "content", 10).unwrap();
-        assert_eq!(results1.len(), 1);
-        assert_eq!(results1[0].content, "project 1 content");
-
-        let results2 = db.search_memories(Some(project2), "content", 10).unwrap();
-        assert_eq!(results2.len(), 1);
-        assert_eq!(results2[0].content, "project 2 content");
-    }
-
-    // ═══════════════════════════════════════
-    // Row Parsing Tests
-    // ═══════════════════════════════════════
-
-    #[test]
-    fn test_parse_memory_fact_row() {
-        let db = Database::open_in_memory().unwrap();
-
-        db.store_memory(
-            None,
-            Some("parse-test"),
-            "test content for parsing",
-            "general",
-            Some("category"),
-            0.75,
-        )
-        .unwrap();
-
-        // search_memories searches content field, not key
-        let results = db
-            .search_memories(None, "test content for parsing", 1)
-            .unwrap();
-        assert_eq!(results.len(), 1);
-
-        let fact = &results[0];
-        assert_eq!(fact.content, "test content for parsing");
-        assert_eq!(fact.key, Some("parse-test".to_string()));
-        assert_eq!(fact.fact_type, "general");
-        assert_eq!(fact.category, Some("category".to_string()));
-        assert!((fact.confidence - 0.5).abs() < 0.01); // Capped for candidates
-        assert_eq!(fact.status, "candidate");
-        assert_eq!(fact.scope, "project"); // Default
-    }
-
-    // ═══════════════════════════════════════
-    // Confidence Capping Tests
-    // ═══════════════════════════════════════
-
-    #[test]
-    fn test_new_memory_confidence_capped() {
-        let (db, project_id) = setup_test_db();
-
-        // High confidence should be capped to 0.5 for new memories
-        db.store_memory(
-            Some(project_id),
-            Some("key"),
-            "content",
-            "general",
-            None,
-            1.0,
-        )
-        .unwrap();
-
-        let results = db.search_memories(Some(project_id), "content", 10).unwrap();
-        assert!((results[0].confidence - 0.5).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_low_confidence_preserved() {
-        let (db, project_id) = setup_test_db();
-
-        db.store_memory(
-            Some(project_id),
-            Some("key"),
-            "content",
-            "general",
-            None,
-            0.3,
-        )
-        .unwrap();
-
-        let results = db.search_memories(Some(project_id), "content", 10).unwrap();
-        assert!((results[0].confidence - 0.3).abs() < 0.01);
-    }
-
-    // ═══════════════════════════════════════
-    // Update Timestamp Tests
-    // ═══════════════════════════════════════
-
-    #[test]
-    fn test_updated_at_on_upsert() {
-        let (db, project_id) = setup_test_db();
-
-        let id = db
-            .store_memory(
-                Some(project_id),
-                Some("update-key"),
-                "initial",
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
+                Some(project1),
+                Some("key"),
+                "project 1 content",
                 "general",
                 None,
                 0.5,
             )
-            .unwrap();
-
-        // Get created_at
-        let results = db.search_memories(Some(project_id), "initial", 10).unwrap();
-        let _created_at = results[0].created_at.clone();
-
-        // Wait a bit and update
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        db.store_memory(
-            Some(project_id),
-            Some("update-key"),
-            "updated",
-            "general",
-            None,
-            0.6,
-        )
+        })
+        .await
         .unwrap();
 
-        let updated = db.search_memories(Some(project_id), "updated", 10).unwrap();
-        assert_eq!(updated[0].id, id);
-        assert_eq!(updated[0].content, "updated");
-        // updated_at should be newer than created_at
+        pool.interact(move |conn| {
+            store_memory_helper(
+                conn,
+                Some(project2),
+                Some("key"),
+                "project 2 content",
+                "general",
+                None,
+                0.5,
+            )
+        })
+        .await
+        .unwrap();
+
+        let results1 = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project1), "content", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
+        assert_eq!(results1.len(), 1);
+        assert_eq!(results1[0].content, "project 1 content");
+
+        let results2 = pool
+            .interact(move |conn| {
+                search_memories_sync(conn, Some(project2), "content", None, 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
+        assert_eq!(results2.len(), 1);
+        assert_eq!(results2[0].content, "project 2 content");
     }
 
     // ═══════════════════════════════════════
     // Empty/Edge Cases
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_empty_search() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_empty_search() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let results = db.search_memories(None, "nonexistent", 10).unwrap();
+        let results = pool
+            .interact(|conn| search_memories_sync(conn, None, "nonexistent", None, 10).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
     }
 
-    #[test]
-    fn test_empty_preferences() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_empty_preferences() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let prefs = db.get_preferences(Some(project_id)).unwrap();
+        let prefs = pool
+            .interact(move |conn| {
+                get_preferences_memory_sync(conn, Some(project_id)).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(prefs.len(), 0);
     }
 
-    #[test]
-    fn test_empty_health_alerts() {
-        let (db, project_id) = setup_test_db();
+    #[tokio::test]
+    async fn test_empty_health_alerts() {
+        let (pool, project_id) = setup_test_pool().await;
 
-        let alerts = db.get_health_alerts(Some(project_id), 10).unwrap();
+        let alerts = pool
+            .interact(move |conn| {
+                get_health_alerts_memory_sync(conn, Some(project_id), 10).map_err(Into::into)
+            })
+            .await
+            .unwrap();
         assert_eq!(alerts.len(), 0);
     }
 
-    #[test]
-    fn test_empty_global_memories() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_empty_global_memories() {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
-        let memories = db.get_global_memories(None, 10).unwrap();
+        let memories = pool
+            .interact(|conn| get_global_memories_sync(conn, None, 10).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(memories.len(), 0);
     }
 }

@@ -1,7 +1,24 @@
 // crates/mira-server/src/db/project_tests.rs
 // Tests for project and server state operations
 
-use super::*;
+use super::pool::DatabasePool;
+use super::{
+    clear_active_project_sync, delete_server_state_sync, get_last_active_project_sync,
+    get_or_create_project_sync, get_project_briefing_sync, get_project_info_sync,
+    get_projects_for_briefing_check_sync, get_server_state_sync, list_projects_sync,
+    mark_session_for_briefing_sync, save_active_project_sync, set_server_state_sync,
+    update_project_briefing_sync,
+};
+use std::sync::Arc;
+
+/// Helper to create a test pool
+async fn setup_test_pool() -> Arc<DatabasePool> {
+    Arc::new(
+        DatabasePool::open_in_memory()
+            .await
+            .expect("Failed to open in-memory pool"),
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -11,26 +28,38 @@ mod tests {
     // get_or_create_project Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_or_create_project_basic() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_or_create_project_basic() {
+        let pool = setup_test_pool().await;
 
-        let (id, name) = db
-            .get_or_create_project("/test/path", Some("test-project"))
+        let (id, name) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("test-project"))
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
         assert!(id > 0);
         assert_eq!(name, Some("test-project".to_string()));
     }
 
-    #[test]
-    fn test_get_or_create_project_upsert() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_or_create_project_upsert() {
+        let pool = setup_test_pool().await;
 
-        let (id1, name1) = db
-            .get_or_create_project("/test/path", Some("project-one"))
+        let (id1, name1) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("project-one"))
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
-        let (id2, name2) = db
-            .get_or_create_project("/test/path", Some("project-two"))
+        let (id2, name2) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("project-two"))
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         // Should return same ID (upsert behavior)
@@ -40,22 +69,31 @@ mod tests {
         assert_eq!(name2, Some("project-one".to_string()));
     }
 
-    #[test]
-    fn test_get_or_create_project_no_name() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_or_create_project_no_name() {
+        let pool = setup_test_pool().await;
 
-        let (id, name) = db.get_or_create_project("/test/path", None).unwrap();
+        let (id, name) = pool
+            .interact(|conn| get_or_create_project_sync(conn, "/test/path", None).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(id > 0);
-        // Should return directory name as fallback
-        assert_eq!(name, Some("path".to_string()));
+        // The sync function doesn't auto-detect names - returns None when no name provided
+        assert_eq!(name, None);
     }
 
-    #[test]
-    fn test_get_or_create_project_different_paths() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_or_create_project_different_paths() {
+        let pool = setup_test_pool().await;
 
-        let (id1, _) = db.get_or_create_project("/path1", None).unwrap();
-        let (id2, _) = db.get_or_create_project("/path2", None).unwrap();
+        let (id1, _) = pool
+            .interact(|conn| get_or_create_project_sync(conn, "/path1", None).map_err(Into::into))
+            .await
+            .unwrap();
+        let (id2, _) = pool
+            .interact(|conn| get_or_create_project_sync(conn, "/path2", None).map_err(Into::into))
+            .await
+            .unwrap();
 
         assert_ne!(id1, id2);
     }
@@ -64,24 +102,35 @@ mod tests {
     // get_project_info Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_get_project_info_existing() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_project_info_existing() {
+        let pool = setup_test_pool().await;
 
-        let (id, _) = db
-            .get_or_create_project("/test/path", Some("test-project"))
+        let (id, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("test-project"))
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let info = db.get_project_info(id).unwrap().unwrap();
+        let info = pool
+            .interact(move |conn| get_project_info_sync(conn, id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(info.0, Some("test-project".to_string()));
         assert_eq!(info.1, "/test/path");
     }
 
-    #[test]
-    fn test_get_project_info_nonexistent() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_project_info_nonexistent() {
+        let pool = setup_test_pool().await;
 
-        let info = db.get_project_info(99999).unwrap();
+        let info = pool
+            .interact(|conn| get_project_info_sync(conn, 99999).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(info.is_none());
     }
 
@@ -89,26 +138,41 @@ mod tests {
     // list_projects Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_list_projects_empty() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_list_projects_empty() {
+        let pool = setup_test_pool().await;
 
-        let projects = db.list_projects().unwrap();
+        let projects = pool
+            .interact(|conn| list_projects_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(projects.len(), 0);
     }
 
-    #[test]
-    fn test_list_projects_multiple() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_list_projects_multiple() {
+        let pool = setup_test_pool().await;
 
-        db.get_or_create_project("/path1", Some("project1"))
-            .unwrap();
-        db.get_or_create_project("/path2", Some("project2"))
-            .unwrap();
-        db.get_or_create_project("/path3", Some("project3"))
-            .unwrap();
+        pool.interact(|conn| {
+            get_or_create_project_sync(conn, "/path1", Some("project1")).map_err(Into::into)
+        })
+        .await
+        .unwrap();
+        pool.interact(|conn| {
+            get_or_create_project_sync(conn, "/path2", Some("project2")).map_err(Into::into)
+        })
+        .await
+        .unwrap();
+        pool.interact(|conn| {
+            get_or_create_project_sync(conn, "/path3", Some("project3")).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let projects = db.list_projects().unwrap();
+        let projects = pool
+            .interact(|conn| list_projects_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(projects.len(), 3);
         // Should be ordered by id DESC (most recent first)
         assert_eq!(projects[0].1, "/path3");
@@ -116,17 +180,26 @@ mod tests {
         assert_eq!(projects[2].1, "/path1");
     }
 
-    #[test]
-    fn test_list_projects_with_names() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_list_projects_with_names() {
+        let pool = setup_test_pool().await;
 
-        db.get_or_create_project("/path1", Some("First Project"))
+        pool.interact(|conn| {
+            get_or_create_project_sync(conn, "/path1", Some("First Project")).map_err(Into::into)
+        })
+        .await
+        .unwrap();
+        pool.interact(|conn| get_or_create_project_sync(conn, "/path2", None).map_err(Into::into))
+            .await
             .unwrap();
-        db.get_or_create_project("/path2", None).unwrap();
 
-        let projects = db.list_projects().unwrap();
+        let projects = pool
+            .interact(|conn| list_projects_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(projects.len(), 2);
-        assert_eq!(projects[0].2, Some("path2".to_string()));
+        // The sync function doesn't auto-detect names
+        assert_eq!(projects[0].2, None);
         assert_eq!(projects[1].2, Some("First Project".to_string()));
     }
 
@@ -134,18 +207,29 @@ mod tests {
     // project_briefing Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_update_and_get_project_briefing() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_update_and_get_project_briefing() {
+        let pool = setup_test_pool().await;
 
-        let (project_id, _) = db
-            .get_or_create_project("/test/path", Some("test"))
+        let (project_id, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_project_briefing(project_id, "abc123", Some("New changes in the project"))
-            .unwrap();
+        pool.interact(move |conn| {
+            update_project_briefing_sync(conn, project_id, "abc123", Some("New changes in the project"))
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
+        let briefing = pool
+            .interact(move |conn| get_project_briefing_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(briefing.project_id, project_id);
         assert_eq!(briefing.last_known_commit, Some("abc123".to_string()));
         assert_eq!(
@@ -155,83 +239,145 @@ mod tests {
         assert!(briefing.generated_at.is_some());
     }
 
-    #[test]
-    fn test_get_project_briefing_none() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_project_briefing_none() {
+        let pool = setup_test_pool().await;
 
-        let (project_id, _) = db
-            .get_or_create_project("/test/path", Some("test"))
+        let (project_id, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        let briefing = db.get_project_briefing(project_id).unwrap();
+        let briefing = pool
+            .interact(move |conn| get_project_briefing_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(briefing.is_none());
     }
 
-    #[test]
-    fn test_update_project_briefing_upsert() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_update_project_briefing_upsert() {
+        let pool = setup_test_pool().await;
 
-        let (project_id, _) = db
-            .get_or_create_project("/test/path", Some("test"))
+        let (project_id, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_project_briefing(project_id, "commit1", Some("First briefing"))
-            .unwrap();
-        db.update_project_briefing(project_id, "commit2", Some("Second briefing"))
-            .unwrap();
+        pool.interact(move |conn| {
+            update_project_briefing_sync(conn, project_id, "commit1", Some("First briefing"))
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+        pool.interact(move |conn| {
+            update_project_briefing_sync(conn, project_id, "commit2", Some("Second briefing"))
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
+        let briefing = pool
+            .interact(move |conn| get_project_briefing_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(briefing.last_known_commit, Some("commit2".to_string()));
         assert_eq!(briefing.briefing_text, Some("Second briefing".to_string()));
     }
 
-    #[test]
-    fn test_update_project_briefing_no_text() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_update_project_briefing_no_text() {
+        let pool = setup_test_pool().await;
 
-        let (project_id, _) = db
-            .get_or_create_project("/test/path", Some("test"))
+        let (project_id, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
+            })
+            .await
             .unwrap();
 
-        db.update_project_briefing(project_id, "abc123", None)
-            .unwrap();
+        pool.interact(move |conn| {
+            update_project_briefing_sync(conn, project_id, "abc123", None).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
+        let briefing = pool
+            .interact(move |conn| get_project_briefing_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(briefing.last_known_commit, Some("abc123".to_string()));
         assert_eq!(briefing.briefing_text, None);
     }
 
-    #[test]
-    fn test_mark_session_clears_briefing() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_mark_session_clears_briefing() {
+        let pool = setup_test_pool().await;
 
-        let (project_id, _) = db
-            .get_or_create_project("/test/path", Some("test"))
+        let (project_id, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         // Set briefing
-        db.update_project_briefing(project_id, "abc123", Some("Briefing text"))
-            .unwrap();
+        pool.interact(move |conn| {
+            update_project_briefing_sync(conn, project_id, "abc123", Some("Briefing text"))
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
         // Mark session (should clear briefing)
-        db.mark_session_for_briefing(project_id).unwrap();
+        pool.interact(move |conn| {
+            mark_session_for_briefing_sync(conn, project_id).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
+        let briefing = pool
+            .interact(move |conn| get_project_briefing_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(briefing.briefing_text, None);
         assert!(briefing.last_session_at.is_some());
     }
 
-    #[test]
-    fn test_get_projects_for_briefing_check() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_projects_for_briefing_check() {
+        let pool = setup_test_pool().await;
 
-        let (project1, _) = db.get_or_create_project("/path1", Some("p1")).unwrap();
-        let (_project2, _) = db.get_or_create_project("/path2", Some("p2")).unwrap();
+        let (project1, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/path1", Some("p1")).map_err(Into::into)
+            })
+            .await
+            .unwrap();
+        pool.interact(|conn| {
+            get_or_create_project_sync(conn, "/path2", Some("p2")).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
         // Mark one project as having a session
-        db.mark_session_for_briefing(project1).unwrap();
+        pool.interact(move |conn| {
+            mark_session_for_briefing_sync(conn, project1).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let projects = db.get_projects_for_briefing_check().unwrap();
+        let projects = pool
+            .interact(|conn| get_projects_for_briefing_check_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         // Should return all projects with paths
         assert!(projects.len() >= 2);
     }
@@ -240,51 +386,79 @@ mod tests {
     // server_state Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_set_and_get_server_state() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_set_and_get_server_state() {
+        let pool = setup_test_pool().await;
 
-        db.set_server_state("test_key", "test_value").unwrap();
-        let value = db.get_server_state("test_key").unwrap();
+        pool.interact(|conn| {
+            set_server_state_sync(conn, "test_key", "test_value").map_err(Into::into)
+        })
+        .await
+        .unwrap();
+        let value = pool
+            .interact(|conn| get_server_state_sync(conn, "test_key").map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(value, Some("test_value".to_string()));
     }
 
-    #[test]
-    fn test_get_server_state_nonexistent() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_get_server_state_nonexistent() {
+        let pool = setup_test_pool().await;
 
-        let value = db.get_server_state("nonexistent").unwrap();
+        let value = pool
+            .interact(|conn| get_server_state_sync(conn, "nonexistent").map_err(Into::into))
+            .await
+            .unwrap();
         assert!(value.is_none());
     }
 
-    #[test]
-    fn test_set_server_state_upsert() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_set_server_state_upsert() {
+        let pool = setup_test_pool().await;
 
-        db.set_server_state("key", "value1").unwrap();
-        db.set_server_state("key", "value2").unwrap();
+        pool.interact(|conn| set_server_state_sync(conn, "key", "value1").map_err(Into::into))
+            .await
+            .unwrap();
+        pool.interact(|conn| set_server_state_sync(conn, "key", "value2").map_err(Into::into))
+            .await
+            .unwrap();
 
-        let value = db.get_server_state("key").unwrap();
+        let value = pool
+            .interact(|conn| get_server_state_sync(conn, "key").map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(value, Some("value2".to_string()));
     }
 
-    #[test]
-    fn test_delete_server_state() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_delete_server_state() {
+        let pool = setup_test_pool().await;
 
-        db.set_server_state("key", "value").unwrap();
-        let deleted = db.delete_server_state("key").unwrap();
+        pool.interact(|conn| set_server_state_sync(conn, "key", "value").map_err(Into::into))
+            .await
+            .unwrap();
+        let deleted = pool
+            .interact(|conn| delete_server_state_sync(conn, "key").map_err(Into::into))
+            .await
+            .unwrap();
         assert!(deleted);
 
-        let value = db.get_server_state("key").unwrap();
+        let value = pool
+            .interact(|conn| get_server_state_sync(conn, "key").map_err(Into::into))
+            .await
+            .unwrap();
         assert!(value.is_none());
     }
 
-    #[test]
-    fn test_delete_server_state_nonexistent() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_delete_server_state_nonexistent() {
+        let pool = setup_test_pool().await;
 
-        let deleted = db.delete_server_state("nonexistent").unwrap();
+        let deleted = pool
+            .interact(|conn| delete_server_state_sync(conn, "nonexistent").map_err(Into::into))
+            .await
+            .unwrap();
         assert!(!deleted);
     }
 
@@ -292,103 +466,117 @@ mod tests {
     // active_project Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_save_and_get_active_project() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_save_and_get_active_project() {
+        let pool = setup_test_pool().await;
 
-        db.save_active_project("/my/project").unwrap();
-        let project = db.get_last_active_project().unwrap();
+        pool.interact(|conn| save_active_project_sync(conn, "/my/project").map_err(Into::into))
+            .await
+            .unwrap();
+        let project = pool
+            .interact(|conn| get_last_active_project_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(project, Some("/my/project".to_string()));
     }
 
-    #[test]
-    fn test_clear_active_project() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_clear_active_project() {
+        let pool = setup_test_pool().await;
 
-        db.save_active_project("/my/project").unwrap();
-        db.clear_active_project().unwrap();
+        pool.interact(|conn| save_active_project_sync(conn, "/my/project").map_err(Into::into))
+            .await
+            .unwrap();
+        pool.interact(|conn| clear_active_project_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
 
-        let project = db.get_last_active_project().unwrap();
+        let project = pool
+            .interact(|conn| get_last_active_project_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(project.is_none());
     }
 
-    #[test]
-    fn test_update_active_project() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_update_active_project() {
+        let pool = setup_test_pool().await;
 
-        db.save_active_project("/project1").unwrap();
-        db.save_active_project("/project2").unwrap();
+        pool.interact(|conn| save_active_project_sync(conn, "/project1").map_err(Into::into))
+            .await
+            .unwrap();
+        pool.interact(|conn| save_active_project_sync(conn, "/project2").map_err(Into::into))
+            .await
+            .unwrap();
 
-        let project = db.get_last_active_project().unwrap();
+        let project = pool
+            .interact(|conn| get_last_active_project_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(project, Some("/project2".to_string()));
-    }
-
-    // ═══════════════════════════════════════
-    // Database path Tests
-    // ═══════════════════════════════════════
-
-    #[test]
-    fn test_path_in_memory() {
-        let db = Database::open_in_memory().unwrap();
-        assert!(db.path().is_none());
-    }
-
-    #[test]
-    fn test_path_file_based() {
-        let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir.join("test_mira_db_unit_test");
-
-        // Clean up if exists
-        let _ = std::fs::remove_file(&db_path);
-
-        // Skip test if we can't write to temp dir (sandboxed environment)
-        match Database::open(&db_path) {
-            Ok(db) => {
-                assert_eq!(db.path(), Some(db_path.to_str().unwrap()));
-                // Clean up
-                let _ = std::fs::remove_file(&db_path);
-            }
-            Err(e) => {
-                // Sandboxed or permission denied - skip test
-                eprintln!("Skipping test_path_file_based: {}", e);
-            }
-        }
     }
 
     // ═══════════════════════════════════════
     // Integration Tests
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_full_project_lifecycle() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_full_project_lifecycle() {
+        let pool = setup_test_pool().await;
 
         // Create project
-        let (project_id, _) = db
-            .get_or_create_project("/my/project", Some("MyProject"))
+        let (project_id, _) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/my/project", Some("MyProject"))
+                    .map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         // Verify it's in the list
-        let projects = db.list_projects().unwrap();
+        let projects = pool
+            .interact(|conn| list_projects_sync(conn).map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].0, project_id);
 
         // Get project info
-        let info = db.get_project_info(project_id).unwrap().unwrap();
+        let info = pool
+            .interact(move |conn| get_project_info_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(info.0, Some("MyProject".to_string()));
         assert_eq!(info.1, "/my/project");
 
         // Update briefing
-        db.update_project_briefing(project_id, "commit123", Some("Changes made"))
-            .unwrap();
+        pool.interact(move |conn| {
+            update_project_briefing_sync(conn, project_id, "commit123", Some("Changes made"))
+                .map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
+        let briefing = pool
+            .interact(move |conn| get_project_briefing_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(briefing.briefing_text, Some("Changes made".to_string()));
 
         // Mark session (clears briefing)
-        db.mark_session_for_briefing(project_id).unwrap();
+        pool.interact(move |conn| {
+            mark_session_for_briefing_sync(conn, project_id).map_err(Into::into)
+        })
+        .await
+        .unwrap();
 
-        let briefing = db.get_project_briefing(project_id).unwrap().unwrap();
+        let briefing = pool
+            .interact(move |conn| get_project_briefing_sync(conn, project_id).map_err(Into::into))
+            .await
+            .unwrap()
+            .unwrap();
         assert!(briefing.briefing_text.is_none());
     }
 
@@ -396,29 +584,39 @@ mod tests {
     // Edge Cases
     // ═══════════════════════════════════════
 
-    #[test]
-    fn test_empty_project_path() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_empty_project_path() {
+        let pool = setup_test_pool().await;
 
-        let (id, _name) = db.get_or_create_project("", None).unwrap();
+        let (id, _name) = pool
+            .interact(|conn| get_or_create_project_sync(conn, "", None).map_err(Into::into))
+            .await
+            .unwrap();
         assert!(id > 0);
         // Empty path should still work, name would be empty or None
     }
 
-    #[test]
-    fn test_very_long_project_name() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_very_long_project_name() {
+        let pool = setup_test_pool().await;
 
         let long_name = "a".repeat(1000);
-        let (id, stored_name) = db.get_or_create_project("/test", Some(&long_name)).unwrap();
+        let long_name_clone = long_name.clone();
+        let (id, stored_name) = pool
+            .interact(move |conn| {
+                get_or_create_project_sync(conn, "/test", Some(&long_name_clone))
+                    .map_err(Into::into)
+            })
+            .await
+            .unwrap();
 
         assert!(id > 0);
         assert_eq!(stored_name, Some(long_name));
     }
 
-    #[test]
-    fn test_special_characters_in_path() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_special_characters_in_path() {
+        let pool = setup_test_pool().await;
 
         let paths = vec![
             "/path/with spaces",
@@ -428,36 +626,55 @@ mod tests {
         ];
 
         for path in paths {
-            let (id, _) = db.get_or_create_project(path, None).unwrap();
+            let path_str = path.to_string();
+            let (id, _) = pool
+                .interact(move |conn| {
+                    get_or_create_project_sync(conn, &path_str, None).map_err(Into::into)
+                })
+                .await
+                .unwrap();
             assert!(id > 0, "Failed for path: {}", path);
         }
     }
 
-    #[test]
-    fn test_empty_server_state_key() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_empty_server_state_key() {
+        let pool = setup_test_pool().await;
 
-        db.set_server_state("", "value").unwrap();
-        let value = db.get_server_state("").unwrap();
+        pool.interact(|conn| set_server_state_sync(conn, "", "value").map_err(Into::into))
+            .await
+            .unwrap();
+        let value = pool
+            .interact(|conn| get_server_state_sync(conn, "").map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(value, Some("value".to_string()));
     }
 
-    #[test]
-    fn test_empty_server_state_value() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_empty_server_state_value() {
+        let pool = setup_test_pool().await;
 
-        db.set_server_state("key", "").unwrap();
-        let value = db.get_server_state("key").unwrap();
+        pool.interact(|conn| set_server_state_sync(conn, "key", "").map_err(Into::into))
+            .await
+            .unwrap();
+        let value = pool
+            .interact(|conn| get_server_state_sync(conn, "key").map_err(Into::into))
+            .await
+            .unwrap();
         assert_eq!(value, Some("".to_string()));
     }
 
-    #[test]
-    fn test_unicode_project_name() {
-        let db = Database::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn test_unicode_project_name() {
+        let pool = setup_test_pool().await;
 
         let unicode_name = "🎉 项目 🚀";
-        let (id, stored_name) = db
-            .get_or_create_project("/test", Some(unicode_name))
+        let (id, stored_name) = pool
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test", Some(unicode_name)).map_err(Into::into)
+            })
+            .await
             .unwrap();
 
         assert!(id > 0);

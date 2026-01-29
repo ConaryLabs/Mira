@@ -1,11 +1,8 @@
 // crates/mira-server/src/db/embeddings.rs
 // Pending embeddings queue operations
 
-use anyhow::Result;
 use rusqlite::params;
 
-use super::Database;
-use crate::search::embedding_to_bytes;
 
 /// A pending embedding chunk from the queue
 #[derive(Debug, Clone)]
@@ -43,71 +40,3 @@ pub fn get_pending_embeddings_sync(
     rows.collect()
 }
 
-impl Database {
-    /// Fetch pending embeddings from the queue
-    pub fn get_pending_embeddings(&self, limit: usize) -> Result<Vec<PendingEmbedding>> {
-        get_pending_embeddings_sync(&self.conn(), limit).map_err(Into::into)
-    }
-
-    /// Store a code embedding in vec_code
-    pub fn store_code_embedding(
-        &self,
-        project_id: Option<i64>,
-        file_path: &str,
-        chunk_content: &str,
-        start_line: i64,
-        embedding: &[f32],
-    ) -> Result<()> {
-        let conn = self.conn();
-        let embedding_bytes = embedding_to_bytes(embedding);
-
-        conn.execute(
-            "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
-             VALUES (?, ?, ?, ?, ?)",
-            params![
-                embedding_bytes,
-                file_path,
-                chunk_content,
-                project_id,
-                start_line
-            ],
-        )?;
-
-        Ok(())
-    }
-
-    /// Delete a pending embedding by ID (after processing)
-    pub fn delete_pending_embedding(&self, id: i64) -> Result<()> {
-        let conn = self.conn();
-        conn.execute("DELETE FROM pending_embeddings WHERE id = ?", params![id])?;
-        Ok(())
-    }
-
-    /// Queue a chunk for embedding (used by file watcher)
-    pub fn queue_pending_embedding(
-        &self,
-        project_id: i64,
-        file_path: &str,
-        chunk_content: &str,
-        start_line: u32,
-    ) -> Result<i64> {
-        let conn = self.conn();
-        conn.execute(
-            "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line, status)
-             VALUES (?, ?, ?, ?, 'pending')",
-            params![project_id, file_path, chunk_content, start_line as i64],
-        )?;
-        Ok(conn.last_insert_rowid())
-    }
-
-    /// Get count of pending embeddings
-    pub fn count_pending_embeddings(&self) -> Result<i64> {
-        let conn = self.conn();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pending_embeddings WHERE status = 'pending'",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(count)
-    }
-}
