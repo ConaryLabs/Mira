@@ -279,4 +279,3 @@ pub fn delete_goal_sync(conn: &Connection, id: i64) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM goals WHERE id = ?", [id])?;
     Ok(())
 }
-

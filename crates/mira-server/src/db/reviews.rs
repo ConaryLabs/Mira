@@ -3,7 +3,6 @@
 
 use rusqlite::{Connection, params};
 
-
 // ============================================================================
 // Sync functions for pool.interact() usage
 // ============================================================================
@@ -367,4 +366,3 @@ pub fn parse_correction_row(row: &rusqlite::Row) -> rusqlite::Result<Correction>
         created_at: row.get(9)?,
     })
 }
-

@@ -421,4 +421,3 @@ pub fn get_history_after_sync(
     })?;
     rows.collect()
 }
-

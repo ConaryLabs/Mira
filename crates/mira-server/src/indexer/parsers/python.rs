@@ -4,7 +4,9 @@
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, SymbolBuilder, node_text};
+use super::{
+    FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, SymbolBuilder, node_text,
+};
 
 /// Python language parser
 pub struct PythonParser;

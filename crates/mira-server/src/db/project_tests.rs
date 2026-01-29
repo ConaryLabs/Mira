@@ -74,7 +74,9 @@ mod tests {
         let pool = setup_test_pool().await;
 
         let (id, name) = pool
-            .interact(|conn| get_or_create_project_sync(conn, "/test/path", None).map_err(Into::into))
+            .interact(|conn| {
+                get_or_create_project_sync(conn, "/test/path", None).map_err(Into::into)
+            })
             .await
             .unwrap();
         assert!(id > 0);
@@ -219,8 +221,13 @@ mod tests {
             .unwrap();
 
         pool.interact(move |conn| {
-            update_project_briefing_sync(conn, project_id, "abc123", Some("New changes in the project"))
-                .map_err(Into::into)
+            update_project_briefing_sync(
+                conn,
+                project_id,
+                "abc123",
+                Some("New changes in the project"),
+            )
+            .map_err(Into::into)
         })
         .await
         .unwrap();

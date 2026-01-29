@@ -3,7 +3,6 @@
 
 use rusqlite::{Connection, params};
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -184,4 +183,3 @@ pub struct TeamMember {
     pub role: String,
     pub joined_at: String,
 }
-

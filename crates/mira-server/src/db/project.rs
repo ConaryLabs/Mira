@@ -310,7 +310,9 @@ pub fn get_last_active_project_sync(conn: &Connection) -> rusqlite::Result<Optio
 }
 
 /// List all projects - sync version
-pub fn list_projects_sync(conn: &Connection) -> rusqlite::Result<Vec<(i64, String, Option<String>)>> {
+pub fn list_projects_sync(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<(i64, String, Option<String>)>> {
     let mut stmt = conn.prepare("SELECT id, path, name FROM projects ORDER BY id DESC")?;
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     rows.collect()
@@ -327,4 +329,3 @@ pub fn clear_active_project_sync(conn: &Connection) -> rusqlite::Result<()> {
     delete_server_state_sync(conn, "active_project")?;
     Ok(())
 }
-

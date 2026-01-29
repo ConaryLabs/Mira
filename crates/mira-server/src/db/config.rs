@@ -5,7 +5,6 @@ use crate::embeddings::GoogleEmbeddingModel;
 use crate::llm::Provider;
 use rusqlite::{Connection, params};
 
-
 // ============================================================================
 // Sync functions for pool.interact() usage
 // ============================================================================
@@ -136,7 +135,6 @@ impl Default for ExpertConfig {
         }
     }
 }
-
 
 /// Result of embedding model compatibility check
 #[derive(Debug)]

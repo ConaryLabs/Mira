@@ -501,4 +501,3 @@ pub fn get_permission_rules_sync(conn: &Connection, tool_name: &str) -> Vec<(Str
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
 }
-

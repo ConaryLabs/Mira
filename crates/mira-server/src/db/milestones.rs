@@ -129,4 +129,3 @@ pub fn update_goal_progress_from_milestones_sync(
     )?;
     Ok(progress)
 }
-

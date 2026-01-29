@@ -288,7 +288,8 @@ impl<'a> NodeExt<'a> for Node<'a> {
     }
 
     fn field_text(&self, field: &str, source: &[u8]) -> Option<String> {
-        self.child_by_field_name(field).map(|n| node_text(n, source))
+        self.child_by_field_name(field)
+            .map(|n| node_text(n, source))
     }
 
     fn find_child_text(&self, kind: &str, source: &[u8]) -> Option<String> {

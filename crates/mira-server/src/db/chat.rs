@@ -1,9 +1,7 @@
 // db/chat.rs
 // Chat message and summary storage operations
 
-
 use rusqlite::Connection;
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
@@ -24,4 +22,3 @@ pub fn get_last_chat_time_sync(conn: &Connection) -> rusqlite::Result<Option<Str
 // ═══════════════════════════════════════════════════════════════════════════════
 // Database impl methods
 // ═══════════════════════════════════════════════════════════════════════════════
-

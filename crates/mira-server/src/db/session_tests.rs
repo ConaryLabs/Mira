@@ -39,7 +39,9 @@ mod tests {
         let (pool, _project_id) = setup_test_pool().await;
 
         let result = pool
-            .interact(|conn| create_session_sync(conn, "test-session-123", None).map_err(Into::into))
+            .interact(|conn| {
+                create_session_sync(conn, "test-session-123", None).map_err(Into::into)
+            })
             .await;
         assert!(result.is_ok(), "create_session failed: {:?}", result.err());
     }
@@ -293,7 +295,9 @@ mod tests {
         }
 
         let history = pool
-            .interact(|conn| get_session_history_sync(conn, "session-multi", 10).map_err(Into::into))
+            .interact(|conn| {
+                get_session_history_sync(conn, "session-multi", 10).map_err(Into::into)
+            })
             .await
             .unwrap();
         assert_eq!(history.len(), 5);
@@ -429,8 +433,16 @@ mod tests {
         for i in 0..10 {
             let tool_name = format!("tool_{}", i);
             pool.interact(move |conn| {
-                log_tool_call_sync(conn, "after-limit-test", &tool_name, "{}", "result", None, true)
-                    .map_err(Into::into)
+                log_tool_call_sync(
+                    conn,
+                    "after-limit-test",
+                    &tool_name,
+                    "{}",
+                    "result",
+                    None,
+                    true,
+                )
+                .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -557,15 +569,11 @@ mod tests {
         .unwrap();
 
         let sessions1 = pool
-            .interact(move |conn| {
-                get_recent_sessions_sync(conn, project1, 10).map_err(Into::into)
-            })
+            .interact(move |conn| get_recent_sessions_sync(conn, project1, 10).map_err(Into::into))
             .await
             .unwrap();
         let sessions2 = pool
-            .interact(move |conn| {
-                get_recent_sessions_sync(conn, project2, 10).map_err(Into::into)
-            })
+            .interact(move |conn| get_recent_sessions_sync(conn, project2, 10).map_err(Into::into))
             .await
             .unwrap();
 
@@ -965,7 +973,9 @@ mod tests {
         let long_id = "a".repeat(1000);
         let long_id_clone = long_id.clone();
         let result = pool
-            .interact(move |conn| create_session_sync(conn, &long_id_clone, None).map_err(Into::into))
+            .interact(move |conn| {
+                create_session_sync(conn, &long_id_clone, None).map_err(Into::into)
+            })
             .await;
         assert!(result.is_ok());
 

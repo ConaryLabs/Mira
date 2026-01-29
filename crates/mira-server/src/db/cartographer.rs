@@ -198,4 +198,3 @@ pub fn update_module_purposes_sync(
 
     Ok(updated)
 }
-

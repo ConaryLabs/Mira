@@ -3,7 +3,6 @@
 
 use rusqlite::{Connection, params};
 
-
 /// A stored diff analysis result
 #[derive(Debug, Clone)]
 pub struct DiffAnalysis {
@@ -129,4 +128,3 @@ pub fn get_recent_diff_analyses_sync(
     let rows = stmt.query_map(params![project_id, limit as i64], parse_diff_analysis_row)?;
     rows.collect()
 }
-

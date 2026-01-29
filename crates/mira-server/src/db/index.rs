@@ -235,4 +235,3 @@ pub fn queue_pending_embedding_sync(
     )?;
     Ok(())
 }
-

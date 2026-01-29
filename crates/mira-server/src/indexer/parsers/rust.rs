@@ -4,7 +4,9 @@
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, SymbolBuilder, node_text};
+use super::{
+    FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, SymbolBuilder, node_text,
+};
 
 /// Rust language parser
 pub struct RustParser;
@@ -225,7 +227,11 @@ fn extract_trait(node: Node, source: &[u8]) -> Option<Symbol> {
 }
 
 fn extract_const(node: Node, source: &[u8]) -> Option<Symbol> {
-    let symbol_type = if node.kind() == "const_item" { "const" } else { "static" };
+    let symbol_type = if node.kind() == "const_item" {
+        "const"
+    } else {
+        "static"
+    };
     SymbolBuilder::new(node, source, "rust")
         .name_from_field("name")
         .qualified_with_parent(None, "::")

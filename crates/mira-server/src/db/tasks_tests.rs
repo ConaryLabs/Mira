@@ -63,8 +63,16 @@ mod tests {
 
         let id = pool
             .interact(move |conn| {
-                create_task_sync(conn, Some(project_id), None, "Minimal task", None, None, None)
-                    .map_err(Into::into)
+                create_task_sync(
+                    conn,
+                    Some(project_id),
+                    None,
+                    "Minimal task",
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -279,8 +287,16 @@ mod tests {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         pool.interact(|conn| {
-            create_task_sync(conn, None, None, "Global pending", None, Some("pending"), None)
-                .map_err(Into::into)
+            create_task_sync(
+                conn,
+                None,
+                None,
+                "Global pending",
+                None,
+                Some("pending"),
+                None,
+            )
+            .map_err(Into::into)
         })
         .await
         .unwrap();
@@ -610,8 +626,14 @@ mod tests {
             .unwrap();
 
         pool.interact(move |conn| {
-            update_task_sync(conn, id, Some("New title"), Some("in_progress"), Some("high"))
-                .map_err(Into::into)
+            update_task_sync(
+                conn,
+                id,
+                Some("New title"),
+                Some("in_progress"),
+                Some("high"),
+            )
+            .map_err(Into::into)
         })
         .await
         .unwrap();
@@ -639,11 +661,9 @@ mod tests {
             .unwrap();
 
         // Update with None for all fields should not error
-        pool.interact(move |conn| {
-            update_task_sync(conn, id, None, None, None).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        pool.interact(move |conn| update_task_sync(conn, id, None, None, None).map_err(Into::into))
+            .await
+            .unwrap();
 
         let task = pool
             .interact(move |conn| get_task_by_id_sync(conn, id))
@@ -734,8 +754,16 @@ mod tests {
 
         let id = pool
             .interact(move |conn| {
-                create_goal_sync(conn, Some(project_id), "Minimal goal", None, None, None, None)
-                    .map_err(Into::into)
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Minimal goal",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -1160,16 +1188,8 @@ mod tests {
 
         let id = pool
             .interact(move |conn| {
-                create_goal_sync(
-                    conn,
-                    Some(project_id),
-                    "Goal",
-                    None,
-                    None,
-                    None,
-                    Some(25),
-                )
-                .map_err(Into::into)
+                create_goal_sync(conn, Some(project_id), "Goal", None, None, None, Some(25))
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -1280,8 +1300,16 @@ mod tests {
 
         let goal_id = pool
             .interact(move |conn| {
-                create_goal_sync(conn, Some(project_id), "Parent goal", None, None, None, None)
-                    .map_err(Into::into)
+                create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Parent goal",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -1542,16 +1570,8 @@ mod tests {
         // Should handle values outside 0-100 range
         let id = pool
             .interact(move |conn| {
-                create_goal_sync(
-                    conn,
-                    Some(project_id),
-                    "Goal",
-                    None,
-                    None,
-                    None,
-                    Some(150),
-                )
-                .map_err(Into::into)
+                create_goal_sync(conn, Some(project_id), "Goal", None, None, None, Some(150))
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -1570,16 +1590,8 @@ mod tests {
 
         let id = pool
             .interact(move |conn| {
-                create_goal_sync(
-                    conn,
-                    Some(project_id),
-                    "Goal",
-                    None,
-                    None,
-                    None,
-                    Some(-10),
-                )
-                .map_err(Into::into)
+                create_goal_sync(conn, Some(project_id), "Goal", None, None, None, Some(-10))
+                    .map_err(Into::into)
             })
             .await
             .unwrap();

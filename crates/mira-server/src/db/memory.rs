@@ -4,7 +4,6 @@
 use mira_types::MemoryFact;
 use rusqlite::OptionalExtension;
 
-
 // Branch-aware boosting constants (tunable)
 // Lower multiplier = better score (distances are minimized)
 
@@ -59,7 +58,6 @@ pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact
         team_id: row.get(14).ok(),
     })
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SYNC FUNCTIONS FOR POOL.INTERACT() USAGE
@@ -516,7 +514,10 @@ pub fn get_health_alerts_sync(
          LIMIT ?",
     )?;
 
-    let rows = stmt.query_map(rusqlite::params![project_id, limit as i64], parse_memory_fact_row)?;
+    let rows = stmt.query_map(
+        rusqlite::params![project_id, limit as i64],
+        parse_memory_fact_row,
+    )?;
     rows.collect()
 }
 
@@ -556,7 +557,10 @@ pub fn get_global_memories_sync(
 }
 
 /// Mark a fact as having an embedding (sync version for pool.interact())
-pub fn mark_fact_has_embedding_sync(conn: &rusqlite::Connection, fact_id: i64) -> rusqlite::Result<()> {
+pub fn mark_fact_has_embedding_sync(
+    conn: &rusqlite::Connection,
+    fact_id: i64,
+) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE memory_facts SET has_embedding = 1 WHERE id = ?",
         [fact_id],
@@ -602,7 +606,10 @@ pub fn get_base_persona_sync(conn: &rusqlite::Connection) -> rusqlite::Result<Op
 }
 
 /// Get project persona (sync version for pool.interact())
-pub fn get_project_persona_sync(conn: &rusqlite::Connection, project_id: i64) -> rusqlite::Result<Option<String>> {
+pub fn get_project_persona_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+) -> rusqlite::Result<Option<String>> {
     conn.query_row(
         "SELECT content FROM memory_facts WHERE key = 'project_persona' AND project_id = ? AND fact_type = 'persona'",
         [project_id],
@@ -611,7 +618,10 @@ pub fn get_project_persona_sync(conn: &rusqlite::Connection, project_id: i64) ->
 }
 
 /// Clear project persona (sync version for pool.interact())
-pub fn clear_project_persona_sync(conn: &rusqlite::Connection, project_id: i64) -> rusqlite::Result<bool> {
+pub fn clear_project_persona_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+) -> rusqlite::Result<bool> {
     let deleted = conn.execute(
         "DELETE FROM memory_facts WHERE key = 'project_persona' AND project_id = ? AND fact_type = 'persona'",
         [project_id],

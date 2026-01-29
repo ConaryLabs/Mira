@@ -324,10 +324,22 @@ mod tests {
         let mut tracker = BehaviorTracker::new("test-session".to_string(), 1);
         assert_eq!(tracker.sequence_position, 0);
 
-        tracker.log_event(&conn, EventType::ToolUse, serde_json::json!({"tool": "test"})).unwrap();
+        tracker
+            .log_event(
+                &conn,
+                EventType::ToolUse,
+                serde_json::json!({"tool": "test"}),
+            )
+            .unwrap();
         assert_eq!(tracker.sequence_position, 1);
 
-        tracker.log_event(&conn, EventType::FileAccess, serde_json::json!({"file": "test.rs"})).unwrap();
+        tracker
+            .log_event(
+                &conn,
+                EventType::FileAccess,
+                serde_json::json!({"file": "test.rs"}),
+            )
+            .unwrap();
         assert_eq!(tracker.sequence_position, 2);
 
         // Verify data in database
@@ -350,7 +362,9 @@ mod tests {
             let mut tracker = BehaviorTracker::new("test-session".to_string(), 1);
             tracker.log_tool_use(&conn, "Read", None).unwrap();
             tracker.log_tool_use(&conn, "Edit", None).unwrap();
-            tracker.log_file_access(&conn, "/path/to/file.rs", "Edit").unwrap();
+            tracker
+                .log_file_access(&conn, "/path/to/file.rs", "Edit")
+                .unwrap();
             assert_eq!(tracker.sequence_position, 3);
         }
 

@@ -75,4 +75,3 @@ pub fn spawn(
 
     (shutdown_tx, fast_lane_notify)
 }
-

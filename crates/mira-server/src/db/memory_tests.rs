@@ -3,12 +3,12 @@
 
 use super::pool::DatabasePool;
 use super::{
-    clear_project_persona_sync, count_facts_without_embeddings_sync, delete_memory_sync,
-    find_facts_without_embeddings_sync, get_base_persona_sync, get_global_memories_sync,
-    get_health_alerts_memory_sync, get_memory_stats_sync, get_or_create_project_sync,
-    get_preferences_memory_sync, get_project_persona_sync, mark_fact_has_embedding_sync,
-    record_memory_access_sync, search_memories_sync, store_fact_embedding_sync, store_memory_sync,
-    StoreMemoryParams,
+    StoreMemoryParams, clear_project_persona_sync, count_facts_without_embeddings_sync,
+    delete_memory_sync, find_facts_without_embeddings_sync, get_base_persona_sync,
+    get_global_memories_sync, get_health_alerts_memory_sync, get_memory_stats_sync,
+    get_or_create_project_sync, get_preferences_memory_sync, get_project_persona_sync,
+    mark_fact_has_embedding_sync, record_memory_access_sync, search_memories_sync,
+    store_fact_embedding_sync, store_memory_sync,
 };
 use crate::search::embedding_to_bytes;
 use std::sync::Arc;
@@ -135,7 +135,15 @@ mod tests {
 
         let id = pool
             .interact(|conn| {
-                store_memory_helper(conn, None, None, "content without key", "general", None, 0.8)
+                store_memory_helper(
+                    conn,
+                    None,
+                    None,
+                    "content without key",
+                    "general",
+                    None,
+                    0.8,
+                )
             })
             .await
             .unwrap();
@@ -222,7 +230,8 @@ mod tests {
         // Verify update
         let results = pool
             .interact(move |conn| {
-                search_memories_sync(conn, Some(project_id), "updated", None, 10).map_err(Into::into)
+                search_memories_sync(conn, Some(project_id), "updated", None, 10)
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -274,7 +283,8 @@ mod tests {
 
         let results = pool
             .interact(move |conn| {
-                search_memories_sync(conn, Some(project_id), "updated", None, 10).map_err(Into::into)
+                search_memories_sync(conn, Some(project_id), "updated", None, 10)
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -339,7 +349,8 @@ mod tests {
 
         let results = pool
             .interact(move |conn| {
-                search_memories_sync(conn, Some(project_id), "content", None, 10).map_err(Into::into)
+                search_memories_sync(conn, Some(project_id), "content", None, 10)
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -379,7 +390,8 @@ mod tests {
 
         let results = pool
             .interact(move |conn| {
-                search_memories_sync(conn, Some(project_id), "content", None, 10).map_err(Into::into)
+                search_memories_sync(conn, Some(project_id), "content", None, 10)
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -416,7 +428,8 @@ mod tests {
 
         let results = pool
             .interact(move |conn| {
-                search_memories_sync(conn, Some(project_id), "content", None, 10).map_err(Into::into)
+                search_memories_sync(conn, Some(project_id), "content", None, 10)
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -475,7 +488,15 @@ mod tests {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         pool.interact(|conn| {
-            store_memory_helper(conn, None, None, "global fact", "personal", Some("test"), 1.0)
+            store_memory_helper(
+                conn,
+                None,
+                None,
+                "global fact",
+                "personal",
+                Some("test"),
+                1.0,
+            )
         })
         .await
         .unwrap();
@@ -684,7 +705,8 @@ mod tests {
 
         let results = pool
             .interact(move |conn| {
-                search_memories_sync(conn, Some(project_id), "deleted", None, 10).map_err(Into::into)
+                search_memories_sync(conn, Some(project_id), "deleted", None, 10)
+                    .map_err(Into::into)
             })
             .await
             .unwrap();
@@ -773,7 +795,15 @@ mod tests {
 
         let id = pool
             .interact(|conn| {
-                store_memory_helper(conn, None, None, "user prefers dark mode", "personal", Some("ui"), 1.0)
+                store_memory_helper(
+                    conn,
+                    None,
+                    None,
+                    "user prefers dark mode",
+                    "personal",
+                    Some("ui"),
+                    1.0,
+                )
             })
             .await
             .unwrap();
@@ -793,17 +823,41 @@ mod tests {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         pool.interact(|conn| {
-            store_memory_helper(conn, None, None, "fact 1", "personal", Some("category-a"), 1.0)
+            store_memory_helper(
+                conn,
+                None,
+                None,
+                "fact 1",
+                "personal",
+                Some("category-a"),
+                1.0,
+            )
         })
         .await
         .unwrap();
         pool.interact(|conn| {
-            store_memory_helper(conn, None, None, "fact 2", "personal", Some("category-a"), 1.0)
+            store_memory_helper(
+                conn,
+                None,
+                None,
+                "fact 2",
+                "personal",
+                Some("category-a"),
+                1.0,
+            )
         })
         .await
         .unwrap();
         pool.interact(|conn| {
-            store_memory_helper(conn, None, None, "fact 3", "personal", Some("category-b"), 1.0)
+            store_memory_helper(
+                conn,
+                None,
+                None,
+                "fact 3",
+                "personal",
+                Some("category-b"),
+                1.0,
+            )
         })
         .await
         .unwrap();
@@ -830,7 +884,15 @@ mod tests {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         pool.interact(|conn| {
-            store_memory_helper(conn, None, None, "name: Alice", "personal", Some("profile"), 1.0)
+            store_memory_helper(
+                conn,
+                None,
+                None,
+                "name: Alice",
+                "personal",
+                Some("profile"),
+                1.0,
+            )
         })
         .await
         .unwrap();
@@ -862,7 +924,9 @@ mod tests {
         .unwrap();
 
         let profile = pool
-            .interact(|conn| get_global_memories_sync(conn, Some("profile"), 20).map_err(Into::into))
+            .interact(|conn| {
+                get_global_memories_sync(conn, Some("profile"), 20).map_err(Into::into)
+            })
             .await
             .unwrap();
         assert_eq!(profile.len(), 2);
@@ -1053,7 +1117,15 @@ mod tests {
         for i in 0..5 {
             let key = format!("key-{}", i);
             pool.interact(move |conn| {
-                store_memory_helper(conn, Some(project_id), Some(&key), "content", "general", None, 0.5)
+                store_memory_helper(
+                    conn,
+                    Some(project_id),
+                    Some(&key),
+                    "content",
+                    "general",
+                    None,
+                    0.5,
+                )
             })
             .await
             .unwrap();
@@ -1203,7 +1275,9 @@ mod tests {
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
 
         let results = pool
-            .interact(|conn| search_memories_sync(conn, None, "nonexistent", None, 10).map_err(Into::into))
+            .interact(|conn| {
+                search_memories_sync(conn, None, "nonexistent", None, 10).map_err(Into::into)
+            })
             .await
             .unwrap();
         assert_eq!(results.len(), 0);

@@ -355,4 +355,3 @@ pub fn semantic_code_search_sync(
 
     Ok(results)
 }
-

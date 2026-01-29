@@ -7,7 +7,9 @@
 
 use crate::db::pool::DatabasePool;
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
-use crate::proactive::patterns::{run_pattern_mining, get_high_confidence_patterns, BehaviorPattern, PatternData};
+use crate::proactive::patterns::{
+    BehaviorPattern, PatternData, get_high_confidence_patterns, run_pattern_mining,
+};
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -23,12 +25,12 @@ pub async fn process_proactive(
     let mut processed = 0;
 
     // Pattern mining every 3rd cycle (fast, SQL only)
-    if cycle_count % 3 == 0 {
+    if cycle_count.is_multiple_of(3) {
         processed += mine_patterns(pool).await?;
     }
 
     // LLM enhancement every 10th cycle (expensive)
-    if cycle_count % 10 == 0 {
+    if cycle_count.is_multiple_of(10) {
         processed += enhance_suggestions(pool, client).await?;
     }
 
@@ -147,7 +149,8 @@ async fn enhance_suggestions(
         }
 
         // Generate suggestions for patterns
-        let suggestions = generate_suggestions_for_patterns(pool, project_id, &patterns, client).await?;
+        let suggestions =
+            generate_suggestions_for_patterns(pool, project_id, &patterns, client).await?;
 
         // Store suggestions
         let stored = store_suggestions(pool, project_id, &suggestions).await?;
@@ -181,34 +184,32 @@ async fn generate_suggestions_for_patterns(
     let pattern_summaries: Vec<String> = patterns
         .iter()
         .take(10) // Limit to avoid huge prompts
-        .filter_map(|p| {
-            match &p.pattern_data {
-                PatternData::FileSequence { transitions, .. } => {
-                    if transitions.is_empty() {
-                        None
-                    } else {
-                        Some(format!(
-                            "File sequence (confidence: {:.0}%): {} -> {}",
-                            p.confidence * 100.0,
-                            transitions[0].0,
-                            transitions[0].1
-                        ))
-                    }
+        .filter_map(|p| match &p.pattern_data {
+            PatternData::FileSequence { transitions, .. } => {
+                if transitions.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "File sequence (confidence: {:.0}%): {} -> {}",
+                        p.confidence * 100.0,
+                        transitions[0].0,
+                        transitions[0].1
+                    ))
                 }
-                PatternData::ToolChain { tools, .. } => {
-                    if tools.len() < 2 {
-                        None
-                    } else {
-                        Some(format!(
-                            "Tool chain (confidence: {:.0}%): {} -> {}",
-                            p.confidence * 100.0,
-                            tools[0],
-                            tools[1]
-                        ))
-                    }
-                }
-                _ => None,
             }
+            PatternData::ToolChain { tools, .. } => {
+                if tools.len() < 2 {
+                    None
+                } else {
+                    Some(format!(
+                        "Tool chain (confidence: {:.0}%): {} -> {}",
+                        p.confidence * 100.0,
+                        tools[0],
+                        tools[1]
+                    ))
+                }
+            }
+            _ => None,
         })
         .collect();
 
@@ -307,12 +308,12 @@ fn parse_suggestions(
             let (pattern_id, confidence) = patterns
                 .iter()
                 .find(|p| match &p.pattern_data {
-                    PatternData::FileSequence { transitions, .. } => {
-                        transitions.iter().any(|(from, _)| from.contains(&s.trigger) || s.trigger.contains(from))
-                    }
-                    PatternData::ToolChain { tools, .. } => {
-                        tools.first().map_or(false, |t| t == &s.trigger || s.trigger.contains(t))
-                    }
+                    PatternData::FileSequence { transitions, .. } => transitions
+                        .iter()
+                        .any(|(from, _)| from.contains(&s.trigger) || s.trigger.contains(from)),
+                    PatternData::ToolChain { tools, .. } => tools
+                        .first()
+                        .is_some_and(|t| t == &s.trigger || s.trigger.contains(t)),
                     _ => false,
                 })
                 .map(|p| (p.id, p.confidence))

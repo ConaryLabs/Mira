@@ -3,7 +3,6 @@
 
 use rusqlite::params;
 
-
 /// A pending embedding chunk from the queue
 #[derive(Debug, Clone)]
 pub struct PendingEmbedding {
@@ -39,4 +38,3 @@ pub fn get_pending_embeddings_sync(
 
     rows.collect()
 }
-
