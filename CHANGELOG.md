@@ -80,6 +80,21 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-01-28
+
+### Fixed
+- **Behavior tracking sequence_position bug** - Events were always logged with position 1, breaking pattern mining. `BehaviorTracker::for_session()` now loads current max position from DB.
+- **Proactive pattern type collision** - Pondering insights and mined patterns both used `tool_chain` type with incompatible data formats. Pondering now uses `insight_*` prefix (e.g., `insight_tool_chain`).
+- **Silent pattern deserialization failures** - Added logging when patterns fail to deserialize, making debugging easier.
+
+### Added
+- **Background proactive suggestion system**
+  - New `proactive_suggestions` table for pre-generated LLM hints
+  - Pattern mining runs every 3rd slow lane cycle (SQL only, fast)
+  - LLM enhancement runs every 10th cycle (contextual suggestions)
+  - Hybrid lookup in user_prompt hook: pre-generated first, fallback to templates
+- **Migration for existing pondering patterns** - Automatically prefixes old patterns with `insight_`
+
 ## [0.3.2] - 2026-01-28
 
 ### Added
