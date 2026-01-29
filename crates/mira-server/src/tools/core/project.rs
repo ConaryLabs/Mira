@@ -431,7 +431,7 @@ pub async fn session_start<C: ToolContext>(
 
     if pending_doc_count > 0 {
         response.push_str(&format!(
-            "\nDocumentation: {} items need docs\n  Use list_doc_tasks() to see them, write_documentation(task_id) to generate\n",
+            "\nDocumentation: {} items need docs\n  Use `documentation(action=\"list\")` to see them\n",
             pending_doc_count
         ));
     }

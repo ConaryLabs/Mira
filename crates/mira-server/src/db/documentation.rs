@@ -474,3 +474,65 @@ pub fn count_doc_tasks_by_status(
         }
     }
 }
+
+/// Get stale docs that need impact analysis (stale but not yet analyzed)
+pub fn get_stale_docs_needing_analysis(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    limit: usize,
+) -> Result<Vec<DocInventory>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT * FROM documentation_inventory
+             WHERE project_id = ?
+               AND is_stale = 1
+               AND change_impact IS NULL
+             ORDER BY verified_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_map(params![project_id, limit as i64], parse_doc_inventory)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Update impact analysis results for a stale doc
+pub fn update_doc_impact_analysis(
+    conn: &rusqlite::Connection,
+    doc_id: i64,
+    change_impact: &str,
+    change_summary: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE documentation_inventory
+         SET change_impact = ?,
+             change_summary = ?,
+             impact_analyzed_at = CURRENT_TIMESTAMP
+         WHERE id = ?",
+        params![change_impact, change_summary, doc_id],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+/// Clear impact analysis when doc is no longer stale (e.g., after update)
+pub fn clear_doc_impact_analysis(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    doc_path: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE documentation_inventory
+         SET change_impact = NULL,
+             change_summary = NULL,
+             impact_analyzed_at = NULL,
+             is_stale = 0,
+             staleness_reason = NULL
+         WHERE project_id = ? AND doc_path = ?",
+        params![project_id, doc_path],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}

@@ -99,7 +99,6 @@ The plugin bundles the Mira MCP server with these tools:
   - `security` - Security analysis
   - `plan_reviewer` - Validate implementation plans
   - `scope_analyst` - Find missing requirements
-  - `documentation_writer` - Documentation generation
 
 ### Goals
 - `goal` - Create, list, update goals and milestones

@@ -1,5 +1,5 @@
 // crates/mira-server/src/tools/core/documentation.rs
-// Simplified documentation tools - detect gaps, write docs directly
+// Documentation tools - detect gaps, let Claude Code write docs directly
 
 use crate::background::documentation::clear_documentation_scan_marker_sync;
 use crate::db::documentation::{
@@ -8,7 +8,6 @@ use crate::db::documentation::{
 };
 use crate::mcp::requests::DocumentationAction;
 use crate::tools::core::ToolContext;
-use std::path::Path;
 
 /// List documentation that needs to be written or updated
 pub async fn list_doc_tasks(
@@ -17,14 +16,17 @@ pub async fn list_doc_tasks(
     doc_type: Option<String>,
     priority: Option<String>,
 ) -> Result<String, String> {
-    let project_id_opt = ctx.project_id().await;
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Use project(action=\"start\") first.")?;
 
     let tasks = ctx
         .pool()
         .run(move |conn| {
             list_db_doc_tasks(
                 conn,
-                project_id_opt,
+                Some(project_id),
                 status.as_deref(),
                 doc_type.as_deref(),
                 priority.as_deref(),
@@ -33,35 +35,39 @@ pub async fn list_doc_tasks(
         .await?;
 
     if tasks.is_empty() {
-        return Ok("No documentation tasks found.".to_string());
+        return Ok("No documentation tasks found for this project.".to_string());
     }
 
-    let mut output = String::from("## Documentation Needed\n\n");
+    let mut output = String::from("## Documentation Tasks\n\n");
 
     for task in tasks {
         let status_indicator = match task.status.as_str() {
-            "pending" => "[needs docs]",
-            "applied" => "[done]",
-            "skipped" => "[skipped]",
-            _ => "[?]",
+            "pending" => "📝",
+            "applied" => "✅",
+            "skipped" => "⏭️",
+            _ => "❓",
         };
 
         output.push_str(&format!(
-            "{} `{}` -> `{}`\n",
+            "{} **{}** `{}`\n",
             status_indicator, task.doc_category, task.target_doc_path
         ));
         output.push_str(&format!(
-            "  ID: {} | Priority: {}\n",
-            task.id, task.priority
+            "   ID: {} | Priority: {} | Status: {}\n",
+            task.id, task.priority, task.status
         ));
 
+        if let Some(source) = &task.source_file_path {
+            output.push_str(&format!("   Source: `{}`\n", source));
+        }
+
         if let Some(reason) = &task.reason {
-            output.push_str(&format!("  Reason: {}\n", reason));
+            output.push_str(&format!("   Reason: {}\n", reason));
         }
 
         if task.status == "pending" {
             output.push_str(&format!(
-                "  Write with: `write_documentation({})`\n",
+                "   → Get details: `documentation(action=\"get\", task_id={})`\n",
                 task.id
             ));
         }
@@ -83,12 +89,194 @@ fn list_db_doc_tasks(
     crate::db::documentation::list_doc_tasks(conn, project_id, status, doc_type, priority)
 }
 
+/// Get full task details with writing guidelines for Claude to use
+pub async fn get_doc_task_details(
+    ctx: &(impl ToolContext + ?Sized),
+    task_id: i64,
+) -> Result<String, String> {
+    // Require active project
+    let current_project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Use project(action=\"start\") first.")?;
+
+    // Get task
+    let task = ctx
+        .pool()
+        .run(move |conn| get_doc_task(conn, task_id))
+        .await?
+        .ok_or(format!("Task {} not found", task_id))?;
+
+    // Verify task belongs to current project
+    let task_project_id = task.project_id.ok_or("No project_id on task")?;
+    if task_project_id != current_project_id {
+        return Err(format!(
+            "Task {} belongs to a different project. Switch projects first.",
+            task_id
+        ));
+    }
+
+    // Only allow getting pending tasks
+    if task.status != "pending" {
+        return Err(format!(
+            "Task {} is not pending (status: {}). Only pending tasks can be written.",
+            task_id, task.status
+        ));
+    }
+
+    // Get project path
+    let project_id = task_project_id;
+    let project_path: String = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT path FROM projects WHERE id = ?",
+                [project_id],
+                |row| row.get::<_, String>(0),
+            )
+        })
+        .await?;
+
+    // Build response with all info Claude needs
+    let mut output = format!("## Documentation Task #{}\n\n", task.id);
+
+    output.push_str(&format!("**Target Path:** `{}`\n", task.target_doc_path));
+    output.push_str(&format!(
+        "**Full Target:** `{}/{}`\n",
+        project_path, task.target_doc_path
+    ));
+
+    if let Some(source) = &task.source_file_path {
+        output.push_str(&format!("**Source File:** `{}`\n", source));
+        output.push_str(&format!("**Full Source:** `{}/{}`\n", project_path, source));
+    }
+
+    output.push_str(&format!(
+        "**Type:** {} / {}\n",
+        task.doc_type, task.doc_category
+    ));
+    output.push_str(&format!("**Priority:** {}\n", task.priority));
+
+    if let Some(reason) = &task.reason {
+        output.push_str(&format!("**Reason:** {}\n", reason));
+    }
+
+    output.push_str("\n---\n\n");
+
+    // Add category-specific guidelines
+    output.push_str("## Writing Guidelines\n\n");
+
+    match task.doc_category.as_str() {
+        "mcp_tool" => {
+            output.push_str("For MCP tool documentation, include:\n\n");
+            output.push_str("1. **Title** - Tool name as heading\n");
+            output.push_str("2. **Description** - One paragraph explaining what it does\n");
+            output.push_str(
+                "3. **Parameters** - Table with columns: Name, Type, Required, Description\n",
+            );
+            output.push_str("4. **Returns** - What the tool returns on success\n");
+            output.push_str("5. **Examples** - 2-3 realistic usage examples\n");
+            output.push_str("6. **Errors** - Common failure modes\n");
+            output.push_str("7. **See Also** - Related tools (if any)\n");
+        }
+        "module" => {
+            output.push_str("For module documentation, include:\n\n");
+            output.push_str("1. **Overview** - What this module does and why it exists\n");
+            output.push_str("2. **Key Components** - Main structs, functions, traits\n");
+            output.push_str("3. **Usage Patterns** - How to use this module\n");
+            output.push_str("4. **Architecture Notes** - Design decisions, dependencies\n");
+        }
+        "public_api" => {
+            output.push_str("For public API documentation, include:\n\n");
+            output.push_str("1. **Overview** - What this API provides\n");
+            output.push_str("2. **Functions/Methods** - Signature, parameters, return values\n");
+            output.push_str("3. **Examples** - Code snippets showing usage\n");
+            output.push_str("4. **Error Handling** - What errors can occur\n");
+        }
+        _ => {
+            output.push_str("Write clear, concise documentation that explains:\n\n");
+            output.push_str("1. What this code does\n");
+            output.push_str("2. How to use it\n");
+            output.push_str("3. Any important caveats or edge cases\n");
+        }
+    }
+
+    output.push_str("\n---\n\n");
+    output.push_str("## Instructions\n\n");
+    output.push_str("1. Read the source file to understand the implementation\n");
+    output.push_str("2. Write the documentation to the target path\n");
+    output.push_str(&format!(
+        "3. Mark complete: `documentation(action=\"complete\", task_id={})`\n",
+        task.id
+    ));
+
+    Ok(output)
+}
+
+/// Mark a documentation task as complete (after Claude has written the doc)
+pub async fn complete_doc_task(
+    ctx: &(impl ToolContext + ?Sized),
+    task_id: i64,
+) -> Result<String, String> {
+    // Require active project
+    let current_project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Use project(action=\"start\") first.")?;
+
+    // Verify task exists and is pending
+    let task = ctx
+        .pool()
+        .run(move |conn| get_doc_task(conn, task_id))
+        .await?
+        .ok_or(format!("Task {} not found", task_id))?;
+
+    // Verify task belongs to current project
+    if task.project_id != Some(current_project_id) {
+        return Err(format!("Task {} belongs to a different project.", task_id));
+    }
+
+    if task.status != "pending" {
+        return Err(format!(
+            "Task {} is not pending (status: {}). Cannot mark as complete.",
+            task_id, task.status
+        ));
+    }
+
+    // Mark as applied
+    ctx.pool()
+        .run(move |conn| mark_doc_task_applied(conn, task_id))
+        .await?;
+
+    Ok(format!(
+        "Task {} marked complete. Documentation written to `{}`.",
+        task_id, task.target_doc_path
+    ))
+}
+
 /// Skip a documentation task (mark as not needed)
 pub async fn skip_doc_task(
     ctx: &(impl ToolContext + ?Sized),
     task_id: i64,
     reason: Option<String>,
 ) -> Result<String, String> {
+    // Require active project
+    let current_project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Use project(action=\"start\") first.")?;
+
+    // Verify task exists and belongs to current project
+    let task = ctx
+        .pool()
+        .run(move |conn| get_doc_task(conn, task_id))
+        .await?
+        .ok_or(format!("Task {} not found", task_id))?;
+
+    if task.project_id != Some(current_project_id) {
+        return Err(format!("Task {} belongs to a different project.", task_id));
+    }
+
     let skip_reason = reason.unwrap_or_else(|| "Skipped by user".to_string());
     let skip_reason_clone = skip_reason.clone();
 
@@ -132,7 +320,7 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
         output.push_str(&format!("### {}\n\n", doc_type));
 
         for item in items {
-            let stale_indicator = if item.is_stale { " [STALE]" } else { "" };
+            let stale_indicator = if item.is_stale { " ⚠️ STALE" } else { "" };
             output.push_str(&format!("- `{}`{}\n", item.doc_path, stale_indicator));
 
             if let Some(title) = &item.title {
@@ -163,283 +351,13 @@ pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
         .await?;
 
     Ok(
-        "Documentation scan triggered. Check `list_doc_tasks()` for results after scan completes."
+        "Documentation scan triggered. Check `documentation(action=\"list\")` for results after scan completes."
             .to_string(),
     )
 }
 
-/// Write documentation for a detected gap - expert generates and writes directly
-pub async fn write_documentation<C: ToolContext>(ctx: &C, task_id: i64) -> Result<String, String> {
-    use crate::tools::core::experts::{ExpertRole, consult_expert};
-
-    // Get task details
-    let task = ctx
-        .pool()
-        .run(move |conn| get_doc_task(conn, task_id))
-        .await?
-        .ok_or(format!("Task {} not found", task_id))?;
-
-    // Only allow writing for pending tasks
-    if task.status != "pending" {
-        return Err(format!(
-            "Task {} is not pending (status: {}). Only pending tasks can be written.",
-            task_id, task.status
-        ));
-    }
-
-    // Get project path
-    let project_id = task.project_id.ok_or("No project_id on task")?;
-    let project_path = ctx
-        .pool()
-        .run(move |conn| {
-            conn.query_row(
-                "SELECT path FROM projects WHERE id = ?",
-                [project_id],
-                |row| row.get::<_, String>(0),
-            )
-        })
-        .await?;
-
-    // Build context for the expert
-    let context = build_expert_context(ctx, &task, &project_path).await?;
-
-    // Derive source identifier
-    let source_identifier = task
-        .source_file_path
-        .as_deref()
-        .unwrap_or(&task.target_doc_path);
-
-    // Build the instruction
-    let question = format!(
-        "Generate comprehensive markdown documentation for `{}`. \
-         The documentation will be written to `{}`. \
-         Explore the codebase to understand the actual behavior, not just the signatures. \
-         Return ONLY the markdown content, no explanations.",
-        source_identifier, task.target_doc_path
-    );
-
-    // Call the documentation expert
-    let draft = consult_expert(
-        ctx,
-        ExpertRole::DocumentationWriter,
-        context,
-        Some(question),
-    )
-    .await?;
-
-    // Extract just the markdown content
-    let markdown_content = extract_markdown_from_response(&draft);
-
-    // Write directly to file
-    let target_path = Path::new(&project_path).join(&task.target_doc_path);
-
-    // Create parent directories if needed
-    if let Some(parent) = target_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
-    }
-
-    // Write the file
-    tokio::fs::write(&target_path, &markdown_content)
-        .await
-        .map_err(|e| format!("Failed to write file: {}", e))?;
-
-    // Mark task as applied
-    ctx.pool()
-        .run(move |conn| mark_doc_task_applied(conn, task_id))
-        .await?;
-
-    Ok(format!(
-        "Documentation written to `{}`\nTask {} marked complete.",
-        task.target_doc_path, task_id
-    ))
-}
-
-/// Build context for the expert based on the documentation task type
-async fn build_expert_context<C: ToolContext>(
-    _ctx: &C,
-    task: &DocTask,
-    project_path: &str,
-) -> Result<String, String> {
-    let mut context = String::new();
-
-    let source_identifier = task
-        .source_file_path
-        .as_deref()
-        .unwrap_or(&task.target_doc_path);
-
-    context.push_str("# Documentation Task\n\n");
-    context.push_str(&format!(
-        "**Type:** {} / {}\n",
-        task.doc_type, task.doc_category
-    ));
-    context.push_str(&format!("**Target:** {}\n", source_identifier));
-    context.push_str(&format!("**Output Path:** {}\n\n", task.target_doc_path));
-
-    if let Some(reason) = &task.reason {
-        context.push_str(&format!("**Reason:** {}\n\n", reason));
-    }
-
-    // Add source file content if available
-    if let Some(source_path) = &task.source_file_path {
-        let full_path = Path::new(project_path).join(source_path);
-        if let Ok(content) = tokio::fs::read_to_string(&full_path).await {
-            let lang = detect_language(source_path);
-            context.push_str("## Source File\n\n");
-            context.push_str(&format!("```{}\n{}\n```\n\n", lang, content));
-        }
-    }
-
-    // Add guidance based on doc type
-    match task.doc_category.as_str() {
-        "mcp_tool" => {
-            context.push_str("## Guidelines for MCP Tool Documentation\n\n");
-            context.push_str("Include: Purpose, Parameters (with types/defaults), Return Value, Examples, Errors, Related tools.\n");
-        }
-        "module" => {
-            context.push_str("## Guidelines for Module Documentation\n\n");
-            context.push_str(
-                "Include: Overview, Key Components, Usage patterns, Architecture notes.\n",
-            );
-        }
-        _ => {}
-    }
-
-    Ok(context)
-}
-
-/// Detect programming language from file extension
-fn detect_language(path: &str) -> &'static str {
-    if path.ends_with(".rs") {
-        "rust"
-    } else if path.ends_with(".py") {
-        "python"
-    } else if path.ends_with(".ts") {
-        "typescript"
-    } else if path.ends_with(".js") {
-        "javascript"
-    } else if path.ends_with(".go") {
-        "go"
-    } else {
-        ""
-    }
-}
-
-/// Extract markdown content from expert response
-fn extract_markdown_from_response(response: &str) -> String {
-    let mut content = response.to_string();
-
-    // Strip token stats at the end (e.g., "*Tokens: 27196 prompt, 1121 completion*")
-    if let Some(pos) = content.rfind("\n---\n*Tokens:") {
-        content = content[..pos].to_string();
-    } else if let Some(pos) = content.rfind("*Tokens:") {
-        if let Some(line_start) = content[..pos].rfind('\n') {
-            content = content[..line_start].to_string();
-        }
-    }
-
-    // Strip <details> blocks (reasoning sections)
-    while let Some(start) = content.find("<details>") {
-        if let Some(end) = content.find("</details>") {
-            let before = &content[..start];
-            let after = &content[end + 10..];
-            content = format!("{}{}", before.trim(), after);
-        } else {
-            break;
-        }
-    }
-
-    // If response contains a code block with markdown, extract it
-    if let Some(start) = content.find("```md") {
-        if let Some(end) = content[start + 5..].find("```") {
-            return content[start + 5..start + 5 + end].trim().to_string();
-        }
-    }
-
-    if let Some(start) = content.find("```markdown") {
-        if let Some(end) = content[start + 11..].find("```") {
-            return content[start + 11..start + 11 + end].trim().to_string();
-        }
-    }
-
-    // Strip analytical sections that shouldn't be in reference docs
-    let analytical_patterns = [
-        "\n## Key Findings",
-        "\n## Actionable Insights",
-        "\n## Actionable Recommendations",
-        "\n## Recommendations",
-        "\n## Quality Assessment",
-        "\n## Conclusion",
-        "\n## Assessment",
-        "\n## Analysis",
-        "\n## Overall Assessment",
-        "\n## Future Enhancement",
-        "\n### For Documentation",
-        "\n### For Users",
-        "\n### For Developers",
-        "\n### For Implementation",
-    ];
-
-    for pattern in analytical_patterns {
-        // Find the section and remove it along with its content until the next heading
-        while let Some(start) = content.find(pattern) {
-            // Find the next section heading (## or end of content)
-            let after_heading = start + pattern.len();
-            let next_section = content[after_heading..]
-                .find("\n## ")
-                .map(|p| after_heading + p)
-                .unwrap_or(content.len());
-
-            let before = &content[..start];
-            let after = &content[next_section..];
-            content = format!("{}{}", before.trim_end(), after);
-        }
-    }
-
-    // Look for the first proper heading, skipping meta-headings
-    let meta_prefixes = [
-        "# Documentation Writer",
-        "# Analysis",
-        "# Expert",
-        "# Summary",
-    ];
-
-    for pattern in ["# ", "\n# "] {
-        if let Some(pos) = content.find(pattern) {
-            let start = if pattern.starts_with('\n') {
-                pos + 1
-            } else {
-                pos
-            };
-            let heading_line = &content[start..];
-            // Skip meta headings
-            let is_meta = meta_prefixes
-                .iter()
-                .any(|prefix| heading_line.starts_with(prefix));
-            if !is_meta {
-                return content[start..].trim().to_string();
-            }
-        }
-    }
-
-    // Look for ## heading after skipping meta content
-    if let Some(pos) = content.find("\n## ") {
-        let heading_line = &content[pos + 1..];
-        if !heading_line.starts_with("## Documentation Writer")
-            && !heading_line.starts_with("## Analysis")
-            && !heading_line.starts_with("## Summary")
-        {
-            return content[pos + 1..].trim().to_string();
-        }
-    }
-
-    // Fallback: return cleaned content
-    content.trim().to_string()
-}
-
 /// Unified documentation tool with action parameter
-/// Actions: list, skip, inventory, scan, write
+/// Actions: list, get, complete, skip, inventory, scan
 pub async fn documentation<C: ToolContext>(
     ctx: &C,
     action: DocumentationAction,
@@ -451,15 +369,19 @@ pub async fn documentation<C: ToolContext>(
 ) -> Result<String, String> {
     match action {
         DocumentationAction::List => list_doc_tasks(ctx, status, doc_type, priority).await,
+        DocumentationAction::Get => {
+            let id = task_id.ok_or("task_id is required for action 'get'")?;
+            get_doc_task_details(ctx, id).await
+        }
+        DocumentationAction::Complete => {
+            let id = task_id.ok_or("task_id is required for action 'complete'")?;
+            complete_doc_task(ctx, id).await
+        }
         DocumentationAction::Skip => {
             let id = task_id.ok_or("task_id is required for action 'skip'")?;
             skip_doc_task(ctx, id, reason).await
         }
         DocumentationAction::Inventory => show_doc_inventory(ctx).await,
         DocumentationAction::Scan => scan_documentation(ctx).await,
-        DocumentationAction::Write => {
-            let id = task_id.ok_or("task_id is required for action 'write'")?;
-            write_documentation(ctx, id).await
-        }
     }
 }

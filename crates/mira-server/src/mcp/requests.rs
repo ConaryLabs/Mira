@@ -124,14 +124,16 @@ pub enum ExpertConfigAction {
 pub enum DocumentationAction {
     /// List documentation tasks
     List,
+    /// Get full task details with writing guidelines
+    Get,
+    /// Mark a task as complete (after Claude writes the doc)
+    Complete,
     /// Skip a documentation task
     Skip,
     /// Show documentation inventory
     Inventory,
     /// Trigger documentation scan
     Scan,
-    /// Write documentation for a task
-    Write,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -378,9 +380,9 @@ pub struct ConfigureExpertRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DocumentationRequest {
-    #[schemars(description = "Action: list, skip, inventory, scan, write")]
+    #[schemars(description = "Action: list, get, complete, skip, inventory, scan")]
     pub action: DocumentationAction,
-    #[schemars(description = "Task ID (for skip/write actions)")]
+    #[schemars(description = "Task ID (for get/complete/skip actions)")]
     pub task_id: Option<i64>,
     #[schemars(description = "Reason for skipping (for skip action)")]
     pub reason: Option<String>,

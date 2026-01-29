@@ -88,7 +88,7 @@ Recent context:
   - Need to add rate limiting to API endpoints
 
 Documentation: 3 items need docs
-  Use list_doc_tasks() to see them, write_documentation(task_id) to generate
+  Use `documentation(action="list")` to see them
 
 Database: /home/user/.mira/mira.db
 

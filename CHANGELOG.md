@@ -80,6 +80,20 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-01-28
+
+### Changed
+- **Documentation workflow simplified** - Removed expert system for doc generation. Claude Code now writes docs directly using `documentation(action="get")` to get task details and `documentation(action="complete")` to mark done.
+- **Removed `DocumentationWriter` expert role** - No longer needed since Claude Code handles doc writing.
+
+### Added
+- **Documentation interventions** - Stale and missing docs now surface as proactive insights in session start, using `[~]` for stale and `[+]` for missing.
+- **LLM-based change impact analysis** - Background worker analyzes stale docs to classify changes as "significant" (API changes, new functions) or "minor" (internal refactors). Only significant changes are surfaced as interventions.
+- **New database columns** - `documentation_inventory` gains `change_impact`, `change_summary`, and `impact_analyzed_at` for tracking analysis results.
+
+### Removed
+- `documentation(action="write")` - Replaced by `get` + `complete` workflow where Claude Code writes docs directly.
+
 ## [0.3.3] - 2026-01-28
 
 ### Fixed

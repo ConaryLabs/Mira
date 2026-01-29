@@ -13,7 +13,6 @@ pub enum ExpertRole {
     ScopeAnalyst,
     CodeReviewer,
     Security,
-    DocumentationWriter,
     /// Custom role with name and description
     Custom(String, String), // (name, description)
 }
@@ -36,7 +35,6 @@ impl ExpertRole {
                 ExpertRole::ScopeAnalyst => SCOPE_ANALYST_PROMPT,
                 ExpertRole::CodeReviewer => CODE_REVIEWER_PROMPT,
                 ExpertRole::Security => SECURITY_PROMPT,
-                ExpertRole::DocumentationWriter => DOCUMENTATION_WRITER_PROMPT,
                 ExpertRole::Custom(_name, description) => {
                     // For custom roles, build from the description
                     description
@@ -68,7 +66,6 @@ impl ExpertRole {
             ExpertRole::ScopeAnalyst => "scope_analyst".to_string(),
             ExpertRole::CodeReviewer => "code_reviewer".to_string(),
             ExpertRole::Security => "security".to_string(),
-            ExpertRole::DocumentationWriter => "documentation_writer".to_string(),
             ExpertRole::Custom(name, _) => {
                 format!("custom:{}", name.to_lowercase().replace(' ', "_"))
             }
@@ -83,7 +80,6 @@ impl ExpertRole {
             ExpertRole::ScopeAnalyst => "Scope Analyst".to_string(),
             ExpertRole::CodeReviewer => "Code Reviewer".to_string(),
             ExpertRole::Security => "Security Analyst".to_string(),
-            ExpertRole::DocumentationWriter => "Documentation Writer".to_string(),
             ExpertRole::Custom(name, _) => name.clone(),
         }
     }
@@ -96,7 +92,6 @@ impl ExpertRole {
             "scope_analyst" => Some(ExpertRole::ScopeAnalyst),
             "code_reviewer" => Some(ExpertRole::CodeReviewer),
             "security" => Some(ExpertRole::Security),
-            "documentation_writer" => Some(ExpertRole::DocumentationWriter),
             _ => {
                 // Check for custom role pattern
                 if let Some(rest) = key.strip_prefix("custom:") {
@@ -127,7 +122,6 @@ impl ExpertRole {
             ExpertRole::ScopeAnalyst,
             ExpertRole::CodeReviewer,
             ExpertRole::Security,
-            ExpertRole::DocumentationWriter,
         ];
         ROLES
     }

@@ -12,11 +12,11 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.3.3
+## What's New in v0.3.4
 
-- **Behavior Tracking Fix**: Events now log with correct sequence positions, enabling pattern mining
-- **Proactive Suggestions**: Background system pre-generates contextual hints from usage patterns
-- **Pattern Type Fix**: Pondering insights and mined patterns no longer collide
+- **Simplified Documentation Workflow**: Claude Code now writes docs directly - use `documentation(action="get")` for task details and `documentation(action="complete")` when done
+- **Documentation Interventions**: Stale (`[~]`) and missing (`[+]`) docs surface as proactive insights at session start
+- **Smart Change Impact Analysis**: Background LLM classifies stale docs as "significant" or "minor" - only significant changes are surfaced
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
@@ -244,7 +244,6 @@ consult_experts(roles=["code_reviewer", "security"], context="...")
 | `security` | Vulnerabilities, attack vectors |
 | `scope_analyst` | Missing requirements, edge cases |
 | `plan_reviewer` | Validate implementation plans |
-| `documentation_writer` | Generate and review documentation |
 
 Experts have tool access - they can search code, trace call graphs, and explore the codebase to give informed answers.
 
@@ -254,11 +253,12 @@ Mira tracks your codebase and flags documentation that needs attention:
 
 - **Gap detection** - Finds undocumented MCP tools, public APIs, and modules
 - **Staleness tracking** - Flags docs when source code changes
-- **Expert generation** - Documentation expert analyzes code and writes docs
+- **Claude Code writes** - Get task details, read source, write docs directly
 
 ```
-documentation(action="list")           # See what needs documentation
-documentation(action="write", task_id=42)  # Expert generates the doc
+documentation(action="list")               # See what needs documentation
+documentation(action="get", task_id=42)    # Get task details + guidelines
+documentation(action="complete", task_id=42)  # Mark done after writing
 documentation(action="skip", task_id=42)   # Skip if not needed
 ```
 

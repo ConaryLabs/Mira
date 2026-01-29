@@ -360,7 +360,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Manage documentation tasks. Actions: list (show needed docs), skip (mark not needed), inventory (show all docs), scan (trigger scan), write (generate docs for task_id)."
+        description = "Manage documentation tasks. Actions: list (show needed docs), get (full task details for Claude to write), complete (mark done after writing), skip (mark not needed), inventory (show all docs), scan (trigger scan)."
     )]
     async fn documentation(
         &self,

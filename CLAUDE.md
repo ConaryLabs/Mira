@@ -420,13 +420,23 @@ finding(action="extract")                                 # Extract patterns fro
 ```
 
 ### `documentation` - Documentation Tasks
+
+Claude Code writes documentation directly (no expert system).
+
 ```
 documentation(action="list", status="pending")            # List doc tasks
+documentation(action="get", task_id=123)                  # Get task details + guidelines
+documentation(action="complete", task_id=123)             # Mark done after writing
 documentation(action="skip", task_id=123, reason="...")   # Skip a task
 documentation(action="inventory")                         # Show doc inventory
 documentation(action="scan")                              # Trigger doc scan
-documentation(action="write", task_id=123)                # Generate docs for task
 ```
+
+**Workflow:**
+1. `documentation(action="list")` - See what needs docs
+2. `documentation(action="get", task_id=N)` - Get source path, target path, guidelines
+3. Read the source file, write the documentation
+4. `documentation(action="complete", task_id=N)` - Mark done
 
 ### `consult_experts` - Expert Consultation
 ```

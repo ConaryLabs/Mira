@@ -157,6 +157,32 @@ pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
     )
 }
 
+/// Migrate documentation_inventory to add LLM-based change impact analysis columns
+pub fn migrate_documentation_impact_analysis(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "documentation_inventory") {
+        return Ok(());
+    }
+
+    // Add change_impact column: 'significant', 'minor', or NULL (pending analysis)
+    if !column_exists(conn, "documentation_inventory", "change_impact") {
+        tracing::info!("Migrating documentation_inventory to add impact analysis columns");
+        conn.execute(
+            "ALTER TABLE documentation_inventory ADD COLUMN change_impact TEXT",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE documentation_inventory ADD COLUMN change_summary TEXT",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE documentation_inventory ADD COLUMN impact_analyzed_at TEXT",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Migrate to add users table for multi-user support
 pub fn migrate_users_table(conn: &Connection) -> Result<()> {
     create_table_if_missing(

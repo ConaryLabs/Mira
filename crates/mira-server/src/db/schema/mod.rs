@@ -37,6 +37,7 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     fts::migrate_code_fts(conn)?;
     memory::migrate_imports_unique(conn)?;
     memory::migrate_documentation_tables(conn)?;
+    memory::migrate_documentation_impact_analysis(conn)?;
     memory::migrate_users_table(conn)?;
     memory::migrate_memory_user_scope(conn)?;
     memory::migrate_teams_tables(conn)?;

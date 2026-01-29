@@ -322,12 +322,13 @@ Documentation is tracked against the code it describes:
 ### Generation Workflow
 
 ```
-documentation(action="list")           → See what needs documentation
-documentation(action="write", task_id=42)  → Expert generates the doc
+documentation(action="list")               → See what needs documentation
+documentation(action="get", task_id=42)    → Get task details + guidelines
+documentation(action="complete", task_id=42)  → Mark done after Claude writes
 documentation(action="skip", task_id=42)   → Mark as not needed
 ```
 
-The Documentation Writer expert explores the actual implementation to produce accurate, comprehensive docs.
+Claude Code reads the source and writes documentation directly - no expert system overhead.
 
 ---
 

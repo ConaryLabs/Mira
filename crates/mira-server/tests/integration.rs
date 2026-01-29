@@ -1215,3 +1215,843 @@ async fn test_reply_to_mira_not_collaborative() {
         "Non-collaborative mode should not error on missing request"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Documentation System Integration Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use mira::mcp::requests::DocumentationAction;
+use mira::tools::core::documentation;
+
+#[tokio::test]
+async fn test_documentation_list_empty() {
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_list".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc List Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // List documentation tasks - should be empty
+    let result = documentation(
+        &ctx,
+        DocumentationAction::List,
+        None, // task_id
+        None, // reason
+        None, // doc_type
+        None, // priority
+        None, // status
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation list failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("No documentation tasks found"),
+        "Output: {}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_list_requires_project() {
+    let ctx = TestContext::new().await;
+
+    // No project set - should error
+    let result = documentation(
+        &ctx,
+        DocumentationAction::List,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(result.is_err(), "Should fail without active project");
+    let error = result.unwrap_err();
+    assert!(
+        error.contains("No active project"),
+        "Error should mention no active project: {}",
+        error
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_list_with_tasks() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_list_tasks".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc List Tasks Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Create a doc task directly in the database
+    ctx.pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, source_file_path,
+                    target_doc_path, priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    project_id,
+                    "mcp_tool",
+                    "mcp_tool",
+                    "src/tools/example.rs",
+                    "docs/tools/example.md",
+                    "high",
+                    "pending",
+                    "Missing documentation for public API"
+                ],
+            )
+        })
+        .await
+        .expect("Failed to create doc task");
+
+    // List documentation tasks
+    let result = documentation(
+        &ctx,
+        DocumentationAction::List,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation list failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("Documentation Tasks"),
+        "Output should contain header: {}",
+        output
+    );
+    assert!(
+        output.contains("docs/tools/example.md"),
+        "Output should contain task path: {}",
+        output
+    );
+    assert!(
+        output.contains("high"),
+        "Output should contain priority: {}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_get_task_details() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_get".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Get Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Create a doc task
+    let task_id: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, source_file_path,
+                    target_doc_path, priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    project_id,
+                    "mcp_tool",
+                    "mcp_tool",
+                    "src/tools/auth.rs",
+                    "docs/tools/auth.md",
+                    "high",
+                    "pending",
+                    "New tool needs documentation"
+                ],
+            )?;
+            Ok::<i64, rusqlite::Error>(conn.last_insert_rowid())
+        })
+        .await
+        .expect("Failed to create doc task");
+
+    // Get task details
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Get,
+        Some(task_id),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation get failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("Documentation Task"),
+        "Output should contain header: {}",
+        output
+    );
+    assert!(
+        output.contains("docs/tools/auth.md"),
+        "Output should contain target path: {}",
+        output
+    );
+    assert!(
+        output.contains("src/tools/auth.rs"),
+        "Output should contain source path: {}",
+        output
+    );
+    assert!(
+        output.contains("Writing Guidelines"),
+        "Output should contain guidelines: {}",
+        output
+    );
+    assert!(
+        output.contains("MCP tool documentation"),
+        "Output should have MCP-specific guidelines: {}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_get_requires_task_id() {
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_get_no_id".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Get No ID Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Get without task_id should fail
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Get,
+        None, // No task_id
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(result.is_err(), "Should fail without task_id");
+    let error = result.unwrap_err();
+    assert!(
+        error.contains("task_id is required"),
+        "Error should mention task_id required: {}",
+        error
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_get_nonexistent_task() {
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_get_nonexistent".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Get Nonexistent Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Get non-existent task
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Get,
+        Some(99999), // Non-existent ID
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(result.is_err(), "Should fail for non-existent task");
+    let error = result.unwrap_err();
+    assert!(
+        error.contains("not found"),
+        "Error should mention not found: {}",
+        error
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_complete_task() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_complete".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Complete Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Create a pending doc task
+    let task_id: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, target_doc_path,
+                    priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    project_id,
+                    "module",
+                    "module",
+                    "docs/modules/test.md",
+                    "medium",
+                    "pending",
+                    "Module needs docs"
+                ],
+            )?;
+            Ok::<i64, rusqlite::Error>(conn.last_insert_rowid())
+        })
+        .await
+        .expect("Failed to create doc task");
+
+    // Complete the task
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Complete,
+        Some(task_id),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation complete failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("marked complete"),
+        "Output should confirm completion: {}",
+        output
+    );
+
+    // Verify status changed in database
+    let status: String = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT status FROM documentation_tasks WHERE id = ?",
+                [task_id],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .expect("Failed to query status");
+
+    assert_eq!(status, "applied", "Status should be 'applied'");
+}
+
+#[tokio::test]
+async fn test_documentation_complete_already_completed() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_complete_twice".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Complete Twice Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Create an already-applied doc task
+    let task_id: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, target_doc_path,
+                    priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    project_id,
+                    "module",
+                    "module",
+                    "docs/modules/already.md",
+                    "medium",
+                    "applied", // Already applied
+                    "Already done"
+                ],
+            )?;
+            Ok::<i64, rusqlite::Error>(conn.last_insert_rowid())
+        })
+        .await
+        .expect("Failed to create doc task");
+
+    // Try to complete again
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Complete,
+        Some(task_id),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(result.is_err(), "Should fail for already-completed task");
+    let error = result.unwrap_err();
+    assert!(
+        error.contains("not pending"),
+        "Error should mention not pending: {}",
+        error
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_skip_task() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_skip".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Skip Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Create a pending doc task
+    let task_id: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, target_doc_path,
+                    priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    project_id,
+                    "public_api",
+                    "public_api",
+                    "docs/api/skip.md",
+                    "low",
+                    "pending",
+                    "API needs docs"
+                ],
+            )?;
+            Ok::<i64, rusqlite::Error>(conn.last_insert_rowid())
+        })
+        .await
+        .expect("Failed to create doc task");
+
+    // Skip the task with a reason
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Skip,
+        Some(task_id),
+        Some("Internal API, not needed".to_string()),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation skip failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("skipped"),
+        "Output should confirm skip: {}",
+        output
+    );
+    assert!(
+        output.contains("Internal API"),
+        "Output should contain reason: {}",
+        output
+    );
+
+    // Verify status changed in database
+    let (status, reason): (String, String) = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT status, reason FROM documentation_tasks WHERE id = ?",
+                [task_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+        })
+        .await
+        .expect("Failed to query status");
+
+    assert_eq!(status, "skipped", "Status should be 'skipped'");
+    assert!(reason.contains("Internal API"), "Reason should be updated");
+}
+
+#[tokio::test]
+async fn test_documentation_inventory_empty() {
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_inventory".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Inventory Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Show inventory - should be empty
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Inventory,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation inventory failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("No documentation inventory") || output.contains("Run scan"),
+        "Output should indicate empty inventory: {}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_scan() {
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_scan".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Scan Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Trigger scan
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Scan,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation scan failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("scan triggered"),
+        "Output should confirm scan triggered: {}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_project_scoping() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    // Create first project and add a doc task
+    let project1_path = "/tmp/test_doc_scope_1".to_string();
+    session_start(
+        &ctx,
+        project1_path.clone(),
+        Some("Project 1".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let project1_id = ctx.project_id().await.expect("Should have project_id");
+
+    let task1_id: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, target_doc_path,
+                    priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    project1_id,
+                    "module",
+                    "module",
+                    "docs/project1.md",
+                    "high",
+                    "pending",
+                    "Project 1 docs"
+                ],
+            )?;
+            Ok::<i64, rusqlite::Error>(conn.last_insert_rowid())
+        })
+        .await
+        .expect("Failed to create doc task");
+
+    // Switch to second project
+    let project2_path = "/tmp/test_doc_scope_2".to_string();
+    session_start(
+        &ctx,
+        project2_path.clone(),
+        Some("Project 2".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start for project 2 failed");
+
+    let project2_id = ctx.project_id().await.expect("Should have project_id");
+    assert_ne!(project1_id, project2_id, "Should be different projects");
+
+    // Try to get task from project 1 while in project 2 - should fail
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Get,
+        Some(task1_id),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "Should not access task from different project"
+    );
+    let error = result.unwrap_err();
+    assert!(
+        error.contains("different project"),
+        "Error should mention different project: {}",
+        error
+    );
+
+    // Try to complete task from project 1 while in project 2 - should fail
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Complete,
+        Some(task1_id),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "Should not complete task from different project"
+    );
+
+    // Try to skip task from project 1 while in project 2 - should fail
+    let result = documentation(
+        &ctx,
+        DocumentationAction::Skip,
+        Some(task1_id),
+        Some("test".to_string()),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "Should not skip task from different project"
+    );
+
+    // List should only show tasks for current project (project 2 has none)
+    let result = documentation(
+        &ctx,
+        DocumentationAction::List,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation list failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("No documentation tasks found"),
+        "Should not see project 1 tasks: {}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_documentation_list_filter_by_status() {
+    use mira::tools::core::ToolContext;
+
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_doc_filter_status".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Doc Filter Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Create tasks with different statuses
+    ctx.pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, target_doc_path,
+                    priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    project_id,
+                    "module",
+                    "module",
+                    "docs/pending.md",
+                    "high",
+                    "pending",
+                    "Pending task"
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO documentation_tasks (
+                    project_id, doc_type, doc_category, target_doc_path,
+                    priority, status, reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    project_id,
+                    "module",
+                    "module",
+                    "docs/applied.md",
+                    "medium",
+                    "applied",
+                    "Applied task"
+                ],
+            )?;
+            Ok::<(), rusqlite::Error>(())
+        })
+        .await
+        .expect("Failed to create doc tasks");
+
+    // List only pending tasks
+    let result = documentation(
+        &ctx,
+        DocumentationAction::List,
+        None,
+        None,
+        None,
+        None,
+        Some("pending".to_string()),
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "documentation list failed: {:?}",
+        result.err()
+    );
+    let output = result.unwrap();
+    assert!(
+        output.contains("pending.md"),
+        "Should show pending task: {}",
+        output
+    );
+    assert!(
+        !output.contains("applied.md"),
+        "Should not show applied task: {}",
+        output
+    );
+}

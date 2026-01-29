@@ -209,7 +209,6 @@ Mira's experts can be customized per role with different providers, models, and 
 | `scope_analyst` | deepseek | Requirements and edge cases |
 | `code_reviewer` | deepseek | Code quality and bugs |
 | `security` | deepseek | Vulnerability assessment |
-| `documentation_writer` | deepseek | Documentation generation |
 
 ### Using `configure_expert`
 

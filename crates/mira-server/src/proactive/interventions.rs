@@ -21,17 +21,24 @@ pub struct PendingIntervention {
 impl PendingIntervention {
     /// Format for display to user
     pub fn format(&self) -> String {
-        let confidence_pct = (self.confidence * 100.0) as i32;
         let icon = match self.pattern_type.as_str() {
             "friction" => "!",
             "workflow" => "*",
             "focus_area" => "@",
+            "stale_doc" => "~",
+            "missing_doc" => "+",
             _ => ">",
         };
-        format!(
-            "[{}] {} ({}% confidence)",
-            icon, self.content, confidence_pct
-        )
+        // Documentation interventions don't need confidence display
+        if self.pattern_type == "stale_doc" || self.pattern_type == "missing_doc" {
+            format!("[{}] {}", icon, self.content)
+        } else {
+            let confidence_pct = (self.confidence * 100.0) as i32;
+            format!(
+                "[{}] {} ({}% confidence)",
+                icon, self.content, confidence_pct
+            )
+        }
     }
 }
 
@@ -131,6 +138,96 @@ pub fn get_pending_interventions_sync(
             confidence,
             pattern_id: Some(pattern_id),
             pattern_type,
+        });
+    }
+
+    // Also get documentation interventions (stale/missing docs)
+    let doc_interventions = get_documentation_interventions_sync(conn, project_id)?;
+    interventions.extend(doc_interventions);
+
+    // Limit total interventions
+    interventions.truncate(5);
+
+    Ok(interventions)
+}
+
+/// Get interventions for stale or missing documentation
+fn get_documentation_interventions_sync(
+    conn: &Connection,
+    project_id: i64,
+) -> Result<Vec<PendingIntervention>> {
+    let mut interventions = Vec::new();
+
+    // Get stale docs with SIGNIFICANT impact (LLM analyzed)
+    // Only surface docs where the change actually matters
+    let mut stale_stmt = conn.prepare(
+        r#"SELECT doc_path, change_summary
+           FROM documentation_inventory
+           WHERE project_id = ?
+             AND is_stale = 1
+             AND change_impact = 'significant'
+           ORDER BY impact_analyzed_at DESC
+           LIMIT 2"#,
+    )?;
+
+    let stale_rows = stale_stmt.query_map(params![project_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+
+    for row in stale_rows.flatten() {
+        let (doc_path, summary) = row;
+        let content = if let Some(s) = summary {
+            format!("`{}`: {}", doc_path, s)
+        } else {
+            format!("`{}` needs updating (significant API changes)", doc_path)
+        };
+
+        interventions.push(PendingIntervention {
+            id: None,
+            intervention_type: InterventionType::ResourceSuggestion,
+            content,
+            confidence: 0.95, // High confidence - LLM confirmed significant
+            pattern_id: None,
+            pattern_type: "stale_doc".to_string(),
+        });
+    }
+
+    // Get high-priority pending doc tasks (missing docs)
+    let mut pending_stmt = conn.prepare(
+        r#"SELECT target_doc_path, source_file_path, doc_category
+           FROM documentation_tasks
+           WHERE project_id = ?
+             AND status = 'pending'
+             AND priority IN ('high', 'urgent')
+           ORDER BY
+             CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+             created_at DESC
+           LIMIT 2"#,
+    )?;
+
+    let pending_rows = pending_stmt.query_map(params![project_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+
+    for row in pending_rows.flatten() {
+        let (target_path, source_path, category) = row;
+        let content = if let Some(src) = source_path {
+            format!("`{}` needs documentation ({})", src, category)
+        } else {
+            format!("`{}` needs to be written", target_path)
+        };
+
+        interventions.push(PendingIntervention {
+            id: None,
+            intervention_type: InterventionType::ResourceSuggestion,
+            content,
+            confidence: 0.85,
+            pattern_id: None,
+            pattern_type: "missing_doc".to_string(),
         });
     }
 
@@ -271,5 +368,34 @@ mod tests {
 
         let invalid = "not json";
         assert_eq!(extract_description(invalid), None);
+    }
+
+    #[test]
+    fn test_documentation_intervention_format() {
+        // Stale doc - uses ~ icon, no confidence
+        let stale = PendingIntervention {
+            id: None,
+            intervention_type: InterventionType::ResourceSuggestion,
+            content: "`docs/api.md` is stale: source signatures changed".to_string(),
+            confidence: 0.9,
+            pattern_id: None,
+            pattern_type: "stale_doc".to_string(),
+        };
+        let formatted = stale.format();
+        assert!(formatted.contains("[~]"));
+        assert!(!formatted.contains("confidence")); // No confidence display for docs
+
+        // Missing doc - uses + icon
+        let missing = PendingIntervention {
+            id: None,
+            intervention_type: InterventionType::ResourceSuggestion,
+            content: "`src/auth.rs` needs documentation".to_string(),
+            confidence: 0.85,
+            pattern_id: None,
+            pattern_type: "missing_doc".to_string(),
+        };
+        let formatted = missing.format();
+        assert!(formatted.contains("[+]"));
+        assert!(formatted.contains("needs documentation"));
     }
 }

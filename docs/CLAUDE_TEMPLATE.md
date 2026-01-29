@@ -168,7 +168,6 @@ consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple 
 - `code_reviewer` - find bugs, quality issues
 - `security` - vulnerabilities, hardening
 - `scope_analyst` - missing requirements, edge cases
-- `documentation_writer` - generate comprehensive documentation
 
 ### When to Consult Experts
 

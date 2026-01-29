@@ -66,10 +66,10 @@ pub fn calculate_source_signature_hash(symbols: &[CodeSymbol]) -> Option<String>
 
 /// Process documentation detection for a single cycle
 /// Called from SlowLaneWorker
-/// Only detects gaps - Claude decides when to write docs via write_documentation()
+/// Only detects gaps - Claude Code writes docs directly via documentation(action="get/complete")
 pub async fn process_documentation(
     pool: &Arc<DatabasePool>,
-    _llm_factory: &Arc<crate::llm::ProviderFactory>,
+    llm_factory: &Arc<crate::llm::ProviderFactory>,
 ) -> Result<usize, String> {
     // Scan for missing and stale documentation (detection only)
     let scan_count = scan_documentation_gaps(pool).await?;
@@ -77,7 +77,205 @@ pub async fn process_documentation(
         tracing::info!("Documentation scan found {} gaps", scan_count);
     }
 
-    Ok(scan_count)
+    // Analyze impact of stale docs using LLM
+    let analyzed = analyze_stale_doc_impacts(pool, llm_factory).await?;
+    if analyzed > 0 {
+        tracing::info!("Analyzed impact for {} stale docs", analyzed);
+    }
+
+    Ok(scan_count + analyzed)
+}
+
+/// Analyze the impact of changes for stale documentation using LLM
+async fn analyze_stale_doc_impacts(
+    pool: &Arc<DatabasePool>,
+    llm_factory: &Arc<crate::llm::ProviderFactory>,
+) -> Result<usize, String> {
+    use crate::db::documentation::{get_stale_docs_needing_analysis, update_doc_impact_analysis};
+    use crate::llm::{PromptBuilder, record_llm_usage};
+
+    // Get LLM client for background work
+    let client = match llm_factory.client_for_background() {
+        Some(c) => c,
+        None => {
+            tracing::debug!("No LLM client available for doc impact analysis");
+            return Ok(0);
+        }
+    };
+
+    // Get all projects with stale docs needing analysis
+    let projects: Vec<(i64, String)> = pool
+        .run(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT p.id, p.path FROM projects p
+                 JOIN documentation_inventory di ON di.project_id = p.id
+                 WHERE di.is_stale = 1 AND di.change_impact IS NULL
+                 LIMIT 5",
+            )?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut total_analyzed = 0;
+
+    for (project_id, _project_path) in projects {
+        // Get stale docs for this project (limit to avoid overwhelming)
+        let stale_docs = pool
+            .run(move |conn| get_stale_docs_needing_analysis(conn, project_id, 3))
+            .await?;
+
+        for doc in stale_docs {
+            // Build context for LLM
+            let source_file = doc.source_symbols.as_deref().unwrap_or("unknown");
+            let staleness_reason = doc.staleness_reason.as_deref().unwrap_or("source changed");
+
+            // Try to get current source signatures for comparison
+            let current_signatures = get_current_signatures(pool, project_id, source_file).await;
+
+            let prompt = format!(
+                r#"Analyze the impact of source code changes on documentation.
+
+Documentation file: {}
+Source file: {}
+Change detected: {}
+
+Current source signatures:
+{}
+
+Classify the change impact as either "significant" or "minor":
+
+SIGNIFICANT changes (documentation MUST be updated):
+- Public function signatures changed (parameters, return types)
+- New public functions/methods added
+- Functions removed or renamed
+- Behavior changes that affect usage
+- New error conditions or edge cases
+
+MINOR changes (documentation update optional):
+- Internal refactoring (variable renames, code reorganization)
+- Performance optimizations without API changes
+- Comments or formatting changes
+- Private/internal function changes
+
+Respond in this exact format:
+IMPACT: [significant/minor]
+SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
+                doc.doc_path,
+                source_file,
+                staleness_reason,
+                current_signatures.unwrap_or_else(|| "Unable to retrieve".to_string())
+            );
+
+            let messages = PromptBuilder::for_background().build_messages(prompt);
+
+            match client.chat(messages, None).await {
+                Ok(result) => {
+                    // Parse the response
+                    let content = result.content.as_deref().unwrap_or("");
+                    let (impact, summary) = parse_impact_response(content);
+
+                    // Record LLM usage
+                    let _ = record_llm_usage(
+                        pool,
+                        client.provider_type(),
+                        &client.model_name(),
+                        "background:doc_impact_analysis",
+                        &result,
+                        Some(project_id),
+                        None,
+                    )
+                    .await;
+
+                    // Update the database
+                    let doc_id = doc.id;
+                    let impact_clone = impact.clone();
+                    let summary_clone = summary.clone();
+                    pool.run(move |conn| {
+                        update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
+                    })
+                    .await?;
+
+                    tracing::debug!(
+                        "Doc impact analysis for {}: {} - {}",
+                        doc.doc_path,
+                        impact,
+                        summary
+                    );
+                    total_analyzed += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to analyze doc impact for {}: {}", doc.doc_path, e);
+                }
+            }
+        }
+    }
+
+    Ok(total_analyzed)
+}
+
+/// Get current source signatures for a file
+async fn get_current_signatures(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+    source_file: &str,
+) -> Option<String> {
+    let source_file = source_file.to_string();
+    pool.run(move |conn| -> Result<Option<String>, rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT name, symbol_type, signature FROM code_symbols
+             WHERE project_id = ? AND file_path = ?
+             AND symbol_type IN ('function', 'method', 'struct', 'enum', 'trait')
+             ORDER BY start_line",
+        )?;
+
+        let rows: Vec<String> = stmt
+            .query_map(rusqlite::params![project_id, source_file], |row| {
+                let name: String = row.get(0)?;
+                let sym_type: String = row.get(1)?;
+                let sig: Option<String> = row.get(2)?;
+                Ok(format!(
+                    "- {} ({}): {}",
+                    name,
+                    sym_type,
+                    sig.unwrap_or_else(|| "no signature".to_string())
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if rows.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(rows.join("\n")))
+        }
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Parse the LLM response to extract impact and summary
+fn parse_impact_response(response: &str) -> (String, String) {
+    let mut impact = "significant".to_string(); // Default to significant if parsing fails
+    let mut summary = "Unable to determine change impact".to_string();
+
+    for line in response.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("IMPACT:") {
+            let value = rest.trim().to_lowercase();
+            if value == "minor" || value.starts_with("minor") {
+                impact = "minor".to_string();
+            } else {
+                impact = "significant".to_string();
+            }
+        } else if let Some(rest) = line.strip_prefix("SUMMARY:") {
+            summary = rest.trim().to_string();
+        }
+    }
+
+    (impact, summary)
 }
 
 /// Get the current git HEAD commit hash
