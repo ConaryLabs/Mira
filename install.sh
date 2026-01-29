@@ -134,6 +134,106 @@ EOF
     fi
 }
 
+# Configure Claude Code hooks for behavior tracking and proactive features
+setup_hooks() {
+    local settings_dir="$HOME/.claude"
+    local settings_file="$settings_dir/settings.json"
+    local mira_bin="$INSTALL_DIR/mira"
+
+    # Ensure directory exists
+    mkdir -p "$settings_dir"
+
+    # Check if jq is available for JSON manipulation
+    if ! command -v jq &> /dev/null; then
+        warn "jq not found - skipping hook configuration"
+        warn "Install hooks manually by adding to ~/.claude/settings.json:"
+        echo '    "hooks": {'
+        echo '      "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 3000}]}],'
+        echo '      "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 3000}]}]'
+        echo '    }'
+        return
+    fi
+
+    info "Configuring Claude Code hooks..."
+
+    # Define the hooks we want to add
+    local hooks_json
+    hooks_json=$(cat << EOF
+{
+  "PostToolUse": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook post-tool",
+          "timeout": 3000
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook user-prompt",
+          "timeout": 3000
+        }
+      ]
+    }
+  ],
+  "SessionStart": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook session-start",
+          "timeout": 3000
+        }
+      ]
+    }
+  ],
+  "PreCompact": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook pre-compact",
+          "timeout": 5000
+        }
+      ]
+    }
+  ]
+}
+EOF
+)
+
+    if [ -f "$settings_file" ]; then
+        # File exists - merge hooks
+        local existing_hooks
+        existing_hooks=$(jq '.hooks // {}' "$settings_file" 2>/dev/null || echo '{}')
+
+        # Merge: new hooks take precedence for Mira-specific hooks
+        local merged_hooks
+        merged_hooks=$(echo "$existing_hooks" | jq --argjson new "$hooks_json" '. * $new')
+
+        # Update the settings file
+        local updated
+        updated=$(jq --argjson hooks "$merged_hooks" '.hooks = $hooks' "$settings_file")
+        echo "$updated" > "$settings_file"
+
+        info "Updated hooks in $settings_file"
+    else
+        # Create new settings file with hooks
+        echo "{\"hooks\": $hooks_json}" | jq '.' > "$settings_file"
+        info "Created $settings_file with hooks"
+    fi
+}
+
 main() {
     echo ""
     echo "  ╔╦╗╦╦═╗╔═╗"
@@ -152,6 +252,7 @@ main() {
 
     install_binary "$platform" "$version"
     setup_config
+    setup_hooks
     install_plugin
 
     echo ""
@@ -173,7 +274,7 @@ main() {
     echo ""
     echo "       curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/docs/CLAUDE_TEMPLATE.md >> CLAUDE.md"
     echo ""
-    echo "    3. Start Claude Code in your project directory"
+    echo "    3. Restart Claude Code (if running) to enable hooks"
     echo ""
     echo "  Verify: mira --version"
     echo ""

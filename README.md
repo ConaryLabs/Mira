@@ -166,11 +166,31 @@ Then recall("preferences") before writing code.
 
 See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a complete template you can copy into your project.
 
+### Enable Hooks (Required for Full Features)
+
+The quick install script automatically configures hooks. For manual installs, add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 3000}]}],
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 3000}]}],
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 3000}]}],
+    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 5000}]}]
+  }
+}
+```
+
+Hooks enable:
+- **Behavior tracking** - Learns your workflow patterns for proactive suggestions
+- **Session awareness** - Captures session IDs for context persistence
+- **Proactive context** - Injects relevant memories and predictions into prompts
+
 ### Plugin vs MCP Server
 
 The **plugin installation** (Option 1) provides the full Mira experience with proactive context injection - auto-recall on every prompt, hooks for file changes, and session-aware features.
 
-The **MCP server installation** (Options 2-3) provides the core tools without hooks. Use this if you prefer manual control or can't use plugins.
+The **MCP server installation** (Options 2-3) provides the core tools. Add hooks manually (see above) for proactive features.
 
 See [plugin/README.md](plugin/README.md) for advanced plugin configuration.
 
