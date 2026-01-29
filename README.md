@@ -12,11 +12,11 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.3.2
+## What's New in v0.3.3
 
-- **Session Lifecycle**: Sessions now properly close when Claude Code exits
-- **Auto Summaries**: LLM-generated session summaries for sessions with 3+ tool calls
-- **Background Cleanup**: Stale sessions (30+ min inactive) auto-close with summaries
+- **Behavior Tracking Fix**: Events now log with correct sequence positions, enabling pattern mining
+- **Proactive Suggestions**: Background system pre-generates contextual hints from usage patterns
+- **Pattern Type Fix**: Pondering insights and mined patterns no longer collide
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
