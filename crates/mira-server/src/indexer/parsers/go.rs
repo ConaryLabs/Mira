@@ -4,7 +4,7 @@
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
+use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, node_text};
 
 /// Go language parser
 pub struct GoParser;
@@ -181,8 +181,8 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         qualified_name: Some(qualified_name),
         symbol_type: "function".to_string(),
         language: "go".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
+        start_line: node.start_line(),
+        end_line: node.end_line(),
         signature,
         visibility,
         documentation: None,
@@ -223,8 +223,8 @@ fn extract_type(node: Node, source: &[u8]) -> Option<Symbol> {
                 qualified_name: Some(name),
                 symbol_type: symbol_type.to_string(),
                 language: "go".to_string(),
-                start_line: node.start_position().row as u32 + 1,
-                end_line: node.end_position().row as u32 + 1,
+                start_line: node.start_line(),
+                end_line: node.end_line(),
                 signature: None,
                 visibility,
                 documentation: None,
@@ -330,7 +330,7 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     Some(FunctionCall {
         caller_name: caller.to_string(),
         callee_name,
-        call_line: node.start_position().row as u32 + 1,
+        call_line: node.start_line(),
         call_type: call_type.to_string(),
     })
 }

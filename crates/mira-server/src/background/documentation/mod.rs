@@ -65,7 +65,7 @@ pub fn calculate_source_signature_hash(symbols: &[CodeSymbol]) -> Option<String>
 }
 
 /// Process documentation detection for a single cycle
-/// Called from BackgroundWorker::process_batch()
+/// Called from SlowLaneWorker
 /// Only detects gaps - Claude decides when to write docs via write_documentation()
 pub async fn process_documentation(
     pool: &Arc<DatabasePool>,

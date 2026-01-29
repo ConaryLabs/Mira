@@ -4,7 +4,7 @@
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
+use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, SymbolBuilder, node_text};
 
 /// Python language parser
 pub struct PythonParser;
@@ -130,78 +130,38 @@ pub fn walk(
 }
 
 fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    let qualified_name = match parent_name {
-        Some(parent) => format!("{}.{}", parent, name),
-        None => name.clone(),
-    };
-
-    let signature = node
-        .child_by_field_name("parameters")
-        .map(|n| node_text(n, source));
-
-    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
-
+    let name = node.field_text("name", source)?;
     let is_test = name.starts_with("test_") || name.starts_with("test");
-
-    Some(Symbol {
-        name,
-        qualified_name: Some(qualified_name),
-        symbol_type: "function".to_string(),
-        language: "python".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature,
-        visibility: None,
-        documentation: None,
-        is_test,
-        is_async,
-    })
+    SymbolBuilder::new(node, source, "python")
+        .name(name)
+        .qualified_with_parent(parent_name, ".")
+        .symbol_type("function")
+        .signature_from_field("parameters")
+        .is_test(is_test)
+        .is_async(node.has_child_kind("async"))
+        .build()
 }
 
 fn extract_class(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    // Get base classes for signature
-    let superclasses = node
-        .child_by_field_name("superclasses")
-        .map(|n| node_text(n, source));
-
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "class".to_string(),
-        language: "python".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature: superclasses,
-        visibility: None,
-        documentation: None,
-        is_test: false,
-        is_async: false,
-    })
+    SymbolBuilder::new(node, source, "python")
+        .name_from_field("name")
+        .qualified_with_parent(None, ".")
+        .symbol_type("class")
+        .signature_from_field("superclasses")
+        .build()
 }
 
 fn extract_import(node: Node, source: &[u8]) -> Option<Import> {
     let path = if node.kind() == "import_from_statement" {
-        node.child_by_field_name("module_name")
-            .map(|n| node_text(n, source))?
+        node.field_text("module_name", source)?
     } else {
-        node.children(&mut node.walk())
-            .find(|n| n.kind() == "dotted_name")
-            .map(|n| node_text(n, source))?
+        node.find_child_text("dotted_name", source)?
     };
 
-    // Determine if external (doesn't start with .)
-    let is_external = !path.starts_with('.');
-
     Some(Import {
-        import_path: path,
+        import_path: path.clone(),
         imported_symbols: None,
-        is_external,
+        is_external: !path.starts_with('.'),
     })
 }
 
@@ -209,9 +169,7 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     let function_node = node.child_by_field_name("function")?;
     let callee_name = match function_node.kind() {
         "identifier" => node_text(function_node, source),
-        "attribute" => function_node
-            .child_by_field_name("attribute")
-            .map(|n| node_text(n, source))?,
+        "attribute" => function_node.field_text("attribute", source)?,
         _ => return None,
     };
 
@@ -256,7 +214,7 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     Some(FunctionCall {
         caller_name: caller.to_string(),
         callee_name,
-        call_line: node.start_position().row as u32 + 1,
+        call_line: node.start_line(),
         call_type: call_type.to_string(),
     })
 }

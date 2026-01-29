@@ -6,7 +6,7 @@
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
+use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, node_text};
 
 /// TypeScript/JavaScript language parser
 /// Handles .ts, .tsx, .js, .jsx files using the TypeScript grammar
@@ -216,8 +216,8 @@ fn extract_function(
         qualified_name: Some(qualified_name),
         symbol_type: "function".to_string(),
         language: language.to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
+        start_line: node.start_line(),
+        end_line: node.end_line(),
         signature,
         visibility: None,
         documentation: None,
@@ -235,8 +235,8 @@ fn extract_class(node: Node, source: &[u8], language: &str) -> Option<Symbol> {
         qualified_name: Some(name),
         symbol_type: "class".to_string(),
         language: language.to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
+        start_line: node.start_line(),
+        end_line: node.end_line(),
         signature: None,
         visibility: None,
         documentation: None,
@@ -254,8 +254,8 @@ fn extract_interface(node: Node, source: &[u8]) -> Option<Symbol> {
         qualified_name: Some(name),
         symbol_type: "interface".to_string(),
         language: "typescript".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
+        start_line: node.start_line(),
+        end_line: node.end_line(),
         signature: None,
         visibility: None,
         documentation: None,
@@ -273,8 +273,8 @@ fn extract_type_alias(node: Node, source: &[u8]) -> Option<Symbol> {
         qualified_name: Some(name),
         symbol_type: "type".to_string(),
         language: "typescript".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
+        start_line: node.start_line(),
+        end_line: node.end_line(),
         signature: None,
         visibility: None,
         documentation: None,
@@ -340,7 +340,7 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     Some(FunctionCall {
         caller_name: caller.to_string(),
         callee_name,
-        call_line: node.start_position().row as u32 + 1,
+        call_line: node.start_line(),
         call_type: call_type.to_string(),
     })
 }

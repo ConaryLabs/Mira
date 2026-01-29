@@ -4,6 +4,7 @@
 
 use crate::db::{StoreMemoryParams, get_unused_functions_sync, store_memory_sync};
 use crate::project_files::walker;
+use crate::utils::ResultExt;
 use regex::Regex;
 use rusqlite::Connection;
 use std::fs;
@@ -54,7 +55,7 @@ fn is_cfg_test(line: &str) -> bool {
 
 /// Walk Rust files in a project, respecting .gitignore
 fn walk_rust_files(project_path: &str) -> Result<Vec<String>, String> {
-    walker::walk_rust_files(project_path).map_err(|e| e.to_string())
+    walker::walk_rust_files(project_path).str_err()
 }
 
 /// Scan for TODO/FIXME/HACK comments
@@ -63,7 +64,7 @@ pub fn scan_todo_comments(
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    let pattern = Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").map_err(|e| e.to_string())?;
+    let pattern = Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").str_err()?;
 
     let mut stored = 0;
 
@@ -97,7 +98,7 @@ pub fn scan_todo_comments(
                         branch: None,
                     },
                 )
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
 
                 stored += 1;
 
@@ -118,7 +119,7 @@ pub fn scan_unimplemented(
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    let pattern = Regex::new(r"(unimplemented!|todo!)\s*\(").map_err(|e| e.to_string())?;
+    let pattern = Regex::new(r"(unimplemented!|todo!)\s*\(").str_err()?;
 
     let mut stored = 0;
 
@@ -157,7 +158,7 @@ pub fn scan_unimplemented(
                         branch: None,
                     },
                 )
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
 
                 stored += 1;
 
@@ -174,7 +175,7 @@ pub fn scan_unimplemented(
 /// Find functions that are never called (using indexed call graph)
 /// Note: This is heuristic-based since the call graph doesn't capture self.method() calls
 pub fn scan_unused_functions(conn: &Connection, project_id: i64) -> Result<usize, String> {
-    let unused = get_unused_functions_sync(conn, project_id).map_err(|e| e.to_string())?;
+    let unused = get_unused_functions_sync(conn, project_id).str_err()?;
 
     let mut stored = 0;
 
@@ -200,7 +201,7 @@ pub fn scan_unused_functions(conn: &Connection, project_id: i64) -> Result<usize
                 branch: None,
             },
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
         stored += 1;
     }
@@ -308,7 +309,7 @@ pub fn scan_unwrap_usage(
                         branch: None,
                     },
                 )
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
 
                 stored += 1;
 
@@ -449,7 +450,7 @@ pub fn scan_error_handling(
                         branch: None,
                     },
                 )
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
 
                 stored += 1;
 

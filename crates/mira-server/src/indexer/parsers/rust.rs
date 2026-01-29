@@ -4,7 +4,7 @@
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, ParseResult, Symbol, node_text};
+use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, SymbolBuilder, node_text};
 
 /// Rust language parser
 pub struct RustParser;
@@ -185,168 +185,62 @@ pub fn walk(
 }
 
 fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    let qualified_name = match parent_name {
-        Some(parent) => format!("{}::{}", parent, name),
-        None => name.clone(),
-    };
-
-    let signature = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "parameters")
-        .map(|n| node_text(n, source));
-
-    let visibility = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "visibility_modifier")
-        .map(|n| node_text(n, source));
-
-    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
-
-    let is_test = has_test_attribute(node, source);
-    let documentation = get_doc_comment(node, source);
-
-    Some(Symbol {
-        name,
-        qualified_name: Some(qualified_name),
-        symbol_type: "function".to_string(),
-        language: "rust".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature,
-        visibility,
-        documentation,
-        is_test,
-        is_async,
-    })
+    SymbolBuilder::new(node, source, "rust")
+        .name_from_field("name")
+        .qualified_with_parent(parent_name, "::")
+        .symbol_type("function")
+        .signature_from_field("parameters")
+        .visibility_from_child("visibility_modifier")
+        .documentation(get_doc_comment(node, source))
+        .is_test(has_test_attribute(node, source))
+        .is_async(node.has_child_kind("async"))
+        .build()
 }
 
 fn extract_struct(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    let visibility = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "visibility_modifier")
-        .map(|n| node_text(n, source));
-
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "struct".to_string(),
-        language: "rust".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature: None,
-        visibility,
-        documentation: None,
-        is_test: false,
-        is_async: false,
-    })
+    SymbolBuilder::new(node, source, "rust")
+        .name_from_field("name")
+        .qualified_with_parent(None, "::")
+        .symbol_type("struct")
+        .visibility_from_child("visibility_modifier")
+        .build()
 }
 
 fn extract_enum(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    let visibility = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "visibility_modifier")
-        .map(|n| node_text(n, source));
-
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "enum".to_string(),
-        language: "rust".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature: None,
-        visibility,
-        documentation: None,
-        is_test: false,
-        is_async: false,
-    })
+    SymbolBuilder::new(node, source, "rust")
+        .name_from_field("name")
+        .qualified_with_parent(None, "::")
+        .symbol_type("enum")
+        .visibility_from_child("visibility_modifier")
+        .build()
 }
 
 fn extract_trait(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    let visibility = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "visibility_modifier")
-        .map(|n| node_text(n, source));
-
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "trait".to_string(),
-        language: "rust".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature: None,
-        visibility,
-        documentation: None,
-        is_test: false,
-        is_async: false,
-    })
+    SymbolBuilder::new(node, source, "rust")
+        .name_from_field("name")
+        .qualified_with_parent(None, "::")
+        .symbol_type("trait")
+        .visibility_from_child("visibility_modifier")
+        .build()
 }
 
 fn extract_const(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    let visibility = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "visibility_modifier")
-        .map(|n| node_text(n, source));
-
-    let symbol_type = if node.kind() == "const_item" {
-        "const"
-    } else {
-        "static"
-    };
-
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: symbol_type.to_string(),
-        language: "rust".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature: None,
-        visibility,
-        documentation: None,
-        is_test: false,
-        is_async: false,
-    })
+    let symbol_type = if node.kind() == "const_item" { "const" } else { "static" };
+    SymbolBuilder::new(node, source, "rust")
+        .name_from_field("name")
+        .qualified_with_parent(None, "::")
+        .symbol_type(symbol_type)
+        .visibility_from_child("visibility_modifier")
+        .build()
 }
 
 fn extract_mod(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
-
-    let visibility = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "visibility_modifier")
-        .map(|n| node_text(n, source));
-
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "module".to_string(),
-        language: "rust".to_string(),
-        start_line: node.start_position().row as u32 + 1,
-        end_line: node.end_position().row as u32 + 1,
-        signature: None,
-        visibility,
-        documentation: None,
-        is_test: false,
-        is_async: false,
-    })
+    SymbolBuilder::new(node, source, "rust")
+        .name_from_field("name")
+        .qualified_with_parent(None, "::")
+        .symbol_type("module")
+        .visibility_from_child("visibility_modifier")
+        .build()
 }
 
 fn extract_use(node: Node, source: &[u8]) -> Option<Import> {
@@ -368,9 +262,7 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     let function_node = node.child_by_field_name("function")?;
     let callee_name = match function_node.kind() {
         "identifier" => node_text(function_node, source),
-        "field_expression" => function_node
-            .child_by_field_name("field")
-            .map(|n| node_text(n, source))?,
+        "field_expression" => function_node.field_text("field", source)?,
         "scoped_identifier" => node_text(function_node, source),
         _ => return None,
     };
@@ -384,14 +276,13 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
     Some(FunctionCall {
         caller_name: caller.to_string(),
         callee_name,
-        call_line: node.start_position().row as u32 + 1,
+        call_line: node.start_line(),
         call_type: call_type.to_string(),
     })
 }
 
 fn extract_macro_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
-    let macro_node = node.child_by_field_name("macro")?;
-    let callee_name = node_text(macro_node, source);
+    let callee_name = node.field_text("macro", source)?;
 
     // Skip common macros that aren't interesting for call graphs
     if matches!(
@@ -431,7 +322,7 @@ fn extract_macro_call(node: Node, source: &[u8], caller: &str) -> Option<Functio
     Some(FunctionCall {
         caller_name: caller.to_string(),
         callee_name,
-        call_line: node.start_position().row as u32 + 1,
+        call_line: node.start_line(),
         call_type: "macro".to_string(),
     })
 }

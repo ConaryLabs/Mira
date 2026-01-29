@@ -11,6 +11,7 @@ use crate::db::{
     is_time_older_than_sync, mark_health_scanned_sync, memory_key_exists_sync, store_memory_sync,
 };
 use crate::llm::LlmClient;
+use crate::utils::ResultExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -25,7 +26,7 @@ pub async fn process_code_health(
             get_projects_needing_health_check(conn).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
     if !projects.is_empty() {
         tracing::info!(
             "Code health: found {} projects needing scan",
@@ -52,7 +53,7 @@ pub async fn process_code_health(
                     mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
                 })
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             }
             Err(e) => {
                 tracing::warn!("Failed to scan health for {}: {}", project_path, e);
@@ -68,7 +69,7 @@ fn get_projects_needing_health_check(
     conn: &rusqlite::Connection,
 ) -> Result<Vec<(i64, String)>, String> {
     // Get all indexed projects
-    let all_projects = get_indexed_projects_sync(conn).map_err(|e| e.to_string())?;
+    let all_projects = get_indexed_projects_sync(conn).str_err()?;
 
     let mut needing_scan = Vec::new();
 
@@ -107,7 +108,7 @@ fn needs_health_scan(conn: &rusqlite::Connection, project_id: i64) -> Result<boo
 
 /// Mark project as health-scanned and clear the "needs scan" flag
 fn mark_health_scanned(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
-    mark_health_scanned_sync(conn, project_id).map_err(|e| e.to_string())
+    mark_health_scanned_sync(conn, project_id).str_err()
 }
 
 /// Mark project as needing a health scan (called by file watcher)
@@ -131,7 +132,7 @@ pub fn mark_health_scan_needed_sync(
             branch: None,
         },
     )
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
     tracing::debug!("Marked project {} for health rescan", project_id);
     Ok(())
 }
@@ -150,7 +151,7 @@ async fn scan_project_health(
         clear_old_health_issues(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
 
     let mut total = 0;
 
@@ -216,7 +217,7 @@ async fn scan_project_health(
             },
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let (warnings, todos, unimpl, unused, unwraps, error_handling) = detection_results;
     total += warnings + todos + unimpl + unused + unwraps + error_handling;
@@ -249,5 +250,5 @@ async fn scan_project_health(
 
 /// Clear old health issues before refresh
 fn clear_old_health_issues(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
-    clear_old_health_issues_sync(conn, project_id).map_err(|e| e.to_string())
+    clear_old_health_issues_sync(conn, project_id).str_err()
 }

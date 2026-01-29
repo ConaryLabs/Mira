@@ -6,6 +6,7 @@ use crate::db::{
     StoreMemoryParams, get_error_heavy_functions_sync, get_large_functions_sync, store_memory_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::utils::ResultExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -94,7 +95,7 @@ where
             query_fn(conn, project_id, &project_path_owned).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if functions.is_empty() {
         return Ok(0);
@@ -186,7 +187,7 @@ where
                         .map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
                     })
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .str_err()?;
 
                     tracing::info!("Code health: {} issue found in {}", category, name);
                     stored += 1;
@@ -258,7 +259,7 @@ fn get_large_functions(
     project_id: i64,
     min_lines: i64,
 ) -> Result<Vec<(String, String, i64, i64)>, String> {
-    get_large_functions_sync(conn, project_id, min_lines).map_err(|e| e.to_string())
+    get_large_functions_sync(conn, project_id, min_lines).str_err()
 }
 
 /// LLM-powered analysis of error handling quality in complex functions
@@ -330,7 +331,7 @@ fn get_error_heavy_functions(
     use std::fs;
 
     // Get functions from symbols (uses db function)
-    let functions = get_error_heavy_functions_sync(conn, project_id).map_err(|e| e.to_string())?;
+    let functions = get_error_heavy_functions_sync(conn, project_id).str_err()?;
 
     // Count ? operators in each function
     let mut results = Vec::new();
