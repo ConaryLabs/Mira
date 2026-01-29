@@ -365,6 +365,9 @@ The schema is "product-shaped," not purely technical:
 | Background | `pending_embeddings`, `project_briefings` | Work queues |
 | Workflow | `goals`, `milestones` | Goal and milestone tracking |
 | Learning | `review_findings`, `corrections` | Expert feedback loop |
+| Proactive | `behavior_patterns`, `proactive_suggestions` | Behavior mining and predictions |
+| Expert Evolution | `expert_consultations`, `problem_patterns` | Consultation history and learning |
+| Cross-Project | `cross_project_patterns`, `cross_project_preferences` | Privacy-preserving pattern sharing |
 
 ### Embeddings and Search
 
@@ -389,6 +392,45 @@ Mira detects and writes missing documentation:
 - Gap detection for undocumented tools, APIs, modules
 - Staleness tracking when source changes
 - Expert generation that analyzes actual code behavior
+
+### Session Hooks
+
+Mira integrates with Claude Code via hooks that trigger at key moments:
+
+| Hook | Purpose |
+|------|---------|
+| `SessionStart` | Captures session ID for tracking |
+| `UserPromptSubmit` | Injects proactive context into prompts |
+| `PostToolUse` | Tracks behavior for pattern mining |
+| `PreCompact` | Preserves context before summarization |
+
+Hooks are auto-configured by the installer.
+
+### Proactive Intelligence
+
+A two-tier system that predicts and surfaces relevant context:
+
+1. **Behavior Mining** (SQL-based, every ~15 minutes)
+   - File access sequences
+   - Tool usage chains
+   - Query patterns
+
+2. **LLM Enhancement** (every ~50 minutes)
+   - Generates contextual suggestions
+   - Pre-computes hints for fast lookup
+
+The `UserPromptSubmit` hook injects relevant suggestions automatically.
+
+### Cross-Project Intelligence
+
+Privacy-preserving pattern sharing across projects:
+
+- **K-Anonymity**: Patterns only shared when observed in 3+ projects
+- **Differential Privacy**: Noise added to protect individual projects
+- **Opt-In**: Disabled by default, per-project preferences
+- **Anonymous Provenance**: Contribution tracking without project identification
+
+Managed via `cross_project` tool with `enable_sharing`, `sync`, and `get_stats` actions.
 
 ---
 
@@ -436,17 +478,27 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 
 ## Future Direction
 
-### Near-Term: Consolidate the Core
+### Recently Implemented ✓
 
-- Finish migrating all paths to async database pool
-- Standardize tool result storage
-- Tighten watcher/indexer reliability
+The following were previously planned and are now complete:
+- ✓ Async database pool migration
+- ✓ Session hooks for Claude Code integration
+- ✓ Proactive intelligence (behavior tracking, pattern mining)
+- ✓ Cross-project intelligence sharing with privacy protections
+- ✓ Memory evidence with session tracking
+- ✓ Expert consultation history and outcome tracking
 
-### Medium-Term: Provenance and Graphs
+### Near-Term: Polish and Reliability
 
-- Memory evidence with citations (which tool call, which file)
-- Conflict detection for contradicting memories
-- Richer code capability graph
+- Improve watcher/indexer reliability for large codebases
+- Better conflict resolution for contradicting memories
+- Enhanced pattern mining accuracy
+
+### Medium-Term: Deeper Intelligence
+
+- Richer code capability graph with dependency analysis
+- More sophisticated behavior prediction models
+- Team collaboration features beyond pattern sharing
 
 ### Long-Term: Safe Autonomy
 

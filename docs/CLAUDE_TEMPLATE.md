@@ -9,11 +9,19 @@ Copy the sections below into your project's `CLAUDE.md` file to get the most out
 At minimum, add this to your `CLAUDE.md`:
 
 ```markdown
+# CLAUDE.md
+
+This project uses **Mira** for persistent memory and code intelligence.
+
 ## Session Start
 
-project(action="start", project_path="/path/to/your/project")
+Project context is **auto-initialized** from Claude Code's working directory.
+No manual `project(action="start")` call is needed.
 
-Then recall("preferences") before writing code.
+For full session context (preferences, insights, etc.), call:
+get_session_recap()
+
+Or use `recall("preferences")` before writing code.
 ```
 
 ---
@@ -29,9 +37,13 @@ This project uses **Mira** for persistent memory and code intelligence.
 
 ## Session Start
 
-project(action="start", project_path="/path/to/your/project")
+Project context is **auto-initialized** from Claude Code's working directory.
+No manual `project(action="start")` call is needed.
 
-Then recall("preferences") before writing code.
+For full session context (preferences, insights, etc.), call:
+get_session_recap()
+
+Or use `recall("preferences")` before writing code.
 
 ---
 
@@ -43,7 +55,7 @@ STOP before using Grep or Glob. Use Mira tools instead.
 
 Use Mira tools proactively in these scenarios:
 
-1. **Searching for code by intent** - Use `semantic_code_search` instead of Grep
+1. **Searching for code by intent** - Use `search_code` instead of Grep
 2. **Understanding file structure** - Use `get_symbols` instead of grepping for definitions
 3. **Tracing call relationships** - Use `find_callers` / `find_callees` instead of grepping function names
 4. **Checking if a feature exists** - Use `check_capability` instead of exploratory grep
@@ -62,13 +74,13 @@ Use Grep/Glob directly only when:
 
 | Task | Wrong | Right |
 |------|-------|-------|
-| Find authentication code | `grep -r "auth"` | `semantic_code_search("authentication")` |
+| Find authentication code | `grep -r "auth"` | `search_code("authentication")` |
 | What calls this function? | `grep -r "function_name"` | `find_callers("function_name")` |
 | List functions in file | `grep "fn " file.rs` | `get_symbols(file_path="file.rs")` |
 | Check if feature exists | `grep -r "feature"` | `check_capability("feature description")` |
 | Use external library | Guess from training data | Context7: `resolve-library-id` -> `query-docs` |
 | Find config files | `find . -name "*.toml"` | `glob("**/*.toml")` - OK, exact pattern |
-| Find error message | `semantic_code_search("error 404")` | `grep "error 404"` - OK, literal string |
+| Find error message | `search_code("error 404")` | `grep "error 404"` - OK, literal string |
 
 ---
 
@@ -156,6 +168,7 @@ consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple 
 - `code_reviewer` - find bugs, quality issues
 - `security` - vulnerabilities, hardening
 - `scope_analyst` - missing requirements, edge cases
+- `documentation_writer` - generate comprehensive documentation
 
 ### When to Consult Experts
 
@@ -171,7 +184,7 @@ consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple 
 
 | Need | Tool |
 |------|------|
-| Search by meaning | `semantic_code_search` |
+| Search by meaning | `search_code` |
 | File structure | `get_symbols` |
 | What calls X? | `find_callers` |
 | What does X call? | `find_callees` |

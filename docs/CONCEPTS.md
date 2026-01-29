@@ -24,6 +24,7 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 | **team_id** | Team reference for team-scoped memories |
 | **session_count** | Number of sessions where this memory was accessed |
 | **has_embedding** | Whether the memory has a vector embedding |
+| **branch** | Git branch for branch-aware context boosting |
 
 ### Fact Types
 
@@ -42,15 +43,15 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 Memories follow a lifecycle based on evidence:
 
 ```
-New Memory → Candidate (max 0.5 confidence)
+New Memory → Candidate
                 ↓
         Used across 3+ sessions
                 ↓
-         Confirmed (boosted confidence)
+         Confirmed (confidence + 0.2, capped at 1.0)
 ```
 
-1. **Candidate**: New memories start here with capped confidence
-2. **Confirmed**: If a memory is accessed across 3+ distinct sessions, it's promoted
+1. **Candidate**: New memories start here
+2. **Confirmed**: If a memory is accessed across 3+ distinct sessions, it's promoted with boosted confidence
 
 This ensures only useful, recurring information becomes permanent.
 
@@ -63,6 +64,18 @@ This ensures only useful, recurring information becomes permanent.
 | `team` | Shared with team members (requires team membership) |
 
 **Note:** Personal scope requires a user identity (from git config or `MIRA_USER_ID`). Team scope requires team membership configured via the `team` tool.
+
+### Branch-Aware Context
+
+Memories are boosted based on branch relevance during recall:
+
+| Branch Match | Boost |
+|--------------|-------|
+| Same branch as current | 15% priority boost (distance × 0.85) |
+| Main/master branch | 5% priority boost (distance × 0.95) |
+| Different branch | No boost (still accessible) |
+
+This ensures branch-specific knowledge is prioritized while maintaining cross-branch access.
 
 ---
 
@@ -219,7 +232,73 @@ Sessions serve as the "evidence" unit for the Memory System. Memories are only p
 
 ---
 
-## 6. Documentation System
+## 6. Session Hooks
+
+Mira integrates with Claude Code via **hooks** that trigger at key moments during a session.
+
+### Available Hooks
+
+| Hook | When It Runs | Purpose |
+|------|--------------|---------|
+| **SessionStart** | When session begins | Captures session ID, initializes tracking |
+| **UserPromptSubmit** | When user submits a prompt | Injects proactive context automatically |
+| **PostToolUse** | After any tool call | Tracks behavior for pattern mining |
+| **PreCompact** | Before context compaction | Preserves important context before summarization |
+
+### Auto-Configuration
+
+Hooks are automatically configured by the installer in `~/.claude/settings.json`. No manual setup required.
+
+### What Hooks Enable
+
+- **Session tracking**: Links tool history and memories to sessions
+- **Proactive context**: Automatically surfaces relevant memories and suggestions
+- **Behavior learning**: Mines patterns from tool usage for future predictions
+- **Context preservation**: Extracts decisions before Claude Code compacts context
+
+---
+
+## 7. Proactive Intelligence
+
+Mira proactively analyzes behavior to predict and inject helpful context before you ask.
+
+### Behavior Tracking
+
+The system tracks:
+- **User queries**: Questions and search patterns
+- **File sequences**: Common file access patterns
+- **Tool chains**: Frequently used tool combinations
+
+### Pattern Mining
+
+Patterns are mined in two tiers:
+
+| Tier | Method | Frequency | Purpose |
+|------|--------|-----------|---------|
+| **SQL Mining** | Database analysis | Every ~15 minutes | Fast, local pattern detection |
+| **LLM Enhancement** | DeepSeek analysis | Every ~50 minutes | Deeper insight generation |
+
+### Automatic Context Injection
+
+When you submit a prompt, the `UserPromptSubmit` hook:
+
+1. Performs semantic search for relevant memories
+2. Checks for pre-generated suggestions matching your context
+3. Runs on-the-fly pattern matching
+4. Injects combined context into your session
+
+This happens transparently - relevant context appears without explicit `recall()` calls.
+
+### Proactive Suggestions
+
+The system generates suggestions based on:
+- Recurring file access patterns
+- Common tool sequences
+- Previously useful context retrievals
+
+---
+
+## 8. Documentation System
 
 Mira actively manages project documentation to keep it in sync with code.
 
@@ -252,7 +331,7 @@ The Documentation Writer expert explores the actual implementation to produce ac
 
 ---
 
-## 7. Goals and Milestones
+## 9. Goals and Milestones
 
 Mira provides persistent goal tracking that survives across sessions. For in-session task tracking, use Claude Code's native task system.
 

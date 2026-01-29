@@ -105,16 +105,31 @@ Configure Mira as an MCP server in `.mcp.json`:
 
 Hooks allow Mira to automatically capture context from Claude Code sessions.
 
+### Auto-Configuration
+
+**Good news:** Hooks are automatically configured when you install Mira via the installer script. No manual setup required.
+
+The installer adds all hooks to `~/.claude/settings.json` using `jq` for JSON manipulation.
+
 ### Available Hooks
+
+| Hook | Command | Timeout | Purpose |
+|------|---------|---------|---------|
+| `SessionStart` | `mira hook session-start` | 3s | Captures session ID for tracking |
+| `UserPromptSubmit` | `mira hook user-prompt` | 3s | Injects proactive context into prompts |
+| `PostToolUse` | `mira hook post-tool` | 3s | Tracks behavior for pattern mining |
+| `PreCompact` | `mira hook pre-compact` | 5s | Preserves context before summarization |
+
+Additional hooks (not auto-configured):
 
 | Hook | Command | Purpose |
 |------|---------|---------|
-| `SessionStart` | `mira hook session-start` | Captures session ID for tracking |
-| `PreCompact` | `mira hook pre-compact` | Extracts decisions/TODOs before summarization |
+| `Permission` | `mira hook permission` | Auto-approve tools based on stored rules |
+| `Stop` | `mira hook stop` | Save session state when Claude finishes |
 
-### Configuration
+### Manual Configuration
 
-Add to `~/.claude/settings.json`:
+If you need to configure hooks manually, add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -124,6 +139,22 @@ Add to `~/.claude/settings.json`:
       "hooks": [{
         "type": "command",
         "command": "/path/to/mira hook session-start",
+        "timeout": 3000
+      }]
+    }],
+    "UserPromptSubmit": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/mira hook user-prompt",
+        "timeout": 3000
+      }]
+    }],
+    "PostToolUse": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/mira hook post-tool",
         "timeout": 3000
       }]
     }],
@@ -145,6 +176,18 @@ Add to `~/.claude/settings.json`:
 - Captures Claude's session ID
 - Enables cross-session memory tracking
 - Links tool history to sessions
+
+**UserPromptSubmit**
+- Fires when user submits a prompt
+- Performs semantic search for relevant memories
+- Injects proactive suggestions based on behavior patterns
+- Context appears automatically without explicit `recall()` calls
+
+**PostToolUse**
+- Fires after Write/Edit/Read tools complete
+- Tracks file access patterns for behavior mining
+- Queues modified files for re-indexing
+- Provides contextual hints about changed files
 
 **PreCompact**
 - Fires before context summarization
@@ -306,6 +349,6 @@ export DEEPSEEK_API_KEY="sk-..."
 DEEPSEEK_API_KEY=sk-...
 GEMINI_API_KEY=...
 
-# Install hooks in ~/.claude/settings.json
+# Hooks are auto-configured by installer
 # Configure experts per project as needed
 ```

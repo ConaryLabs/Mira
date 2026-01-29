@@ -38,6 +38,7 @@ Semantic memory storage with evidence-based confidence tracking.
 | first_session_id | TEXT | Session when first created |
 | last_session_id | TEXT | Most recent session that referenced this |
 | status | TEXT | `candidate` or `confirmed` (evidence-based promotion) |
+| branch | TEXT | Git branch for branch-aware context boosting |
 | created_at | TEXT | Timestamp |
 | updated_at | TEXT | Last modification |
 
@@ -307,6 +308,266 @@ Semantic analysis of git diffs and commits.
 | created_at | TEXT | Timestamp |
 
 Used by `analyze_diff` tool to cache semantic analysis of git changes.
+
+---
+
+## Proactive Intelligence
+
+Tables for behavior tracking, pattern mining, and proactive context injection.
+
+### behavior_patterns
+
+Tracks file sequences, tool chains, and session flows for pattern mining.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| pattern_type | TEXT | `file_sequence`, `tool_chain`, `session_flow`, `query_pattern` |
+| pattern_key | TEXT | Unique identifier (hash of sequence) |
+| pattern_data | TEXT | JSON: sequence details, items, transitions |
+| confidence | REAL | Reliability score (0.0-1.0) |
+| occurrence_count | INTEGER | Times pattern observed |
+| last_triggered_at | TEXT | Last trigger time |
+| first_seen_at | TEXT | First observation |
+| updated_at | TEXT | Last update |
+
+### proactive_interventions
+
+Tracks suggestions made and user responses for learning.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| session_id | TEXT | Session reference |
+| intervention_type | TEXT | `context_prediction`, `security_alert`, `bug_warning`, `resource_suggestion` |
+| trigger_pattern_id | INTEGER FK | Pattern that triggered this |
+| trigger_context | TEXT | What triggered intervention |
+| suggestion_content | TEXT | What was suggested |
+| confidence | REAL | Confidence in suggestion |
+| user_response | TEXT | `accepted`, `dismissed`, `acted_upon`, `ignored`, NULL |
+| response_time_ms | INTEGER | Time to respond |
+| effectiveness_score | REAL | Computed effectiveness |
+| created_at | TEXT | Timestamp |
+| responded_at | TEXT | Response time |
+
+### session_behavior_log
+
+Raw events for pattern mining.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| session_id | TEXT | Session reference |
+| event_type | TEXT | `file_access`, `tool_use`, `query`, `context_switch` |
+| event_data | TEXT | JSON: file_path, tool_name, query_text, etc. |
+| sequence_position | INTEGER | Position in session sequence |
+| time_since_last_event_ms | INTEGER | Milliseconds since previous event |
+| created_at | TEXT | Timestamp |
+
+### proactive_preferences
+
+User preferences for proactive features.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| user_id | TEXT | User reference |
+| project_id | INTEGER FK | Project reference |
+| preference_key | TEXT | `proactivity_level`, `max_alerts_per_hour`, `min_confidence` |
+| preference_value | TEXT | JSON value |
+| updated_at | TEXT | Last update |
+
+### proactive_suggestions
+
+Pre-generated suggestions for fast lookup during UserPromptSubmit hook.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| pattern_id | INTEGER FK | Source pattern |
+| trigger_key | TEXT | Fast lookup key (file path or tool name) |
+| suggestion_text | TEXT | LLM-generated contextual hint |
+| confidence | REAL | Suggestion confidence |
+| shown_count | INTEGER | Times shown |
+| accepted_count | INTEGER | Times accepted |
+| created_at | TEXT | Timestamp |
+| expires_at | TEXT | Expiration (7 days) |
+
+---
+
+## Evolutionary Expert System
+
+Tables for tracking expert consultation history, problem patterns, and prompt evolution.
+
+### expert_consultations
+
+Detailed history of each expert consultation.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| expert_role | TEXT | Expert role used |
+| project_id | INTEGER FK | Project reference |
+| session_id | TEXT | Session reference |
+| context_hash | TEXT | Hash of context for pattern matching |
+| problem_category | TEXT | Categorized problem type |
+| context_summary | TEXT | Brief summary of context |
+| tools_used | TEXT | JSON array of tools called |
+| tool_call_count | INTEGER | Number of tool calls |
+| consultation_duration_ms | INTEGER | Duration in milliseconds |
+| initial_confidence | REAL | Expert's stated confidence |
+| calibrated_confidence | REAL | Adjusted based on history |
+| prompt_version | INTEGER | Which prompt version was used |
+| created_at | TEXT | Timestamp |
+
+### problem_patterns
+
+Recurring problem signatures per expert.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| expert_role | TEXT | Expert role |
+| pattern_signature | TEXT | Hash of problem characteristics |
+| pattern_description | TEXT | Human-readable description |
+| common_context_elements | TEXT | JSON: context elements that appear together |
+| successful_approaches | TEXT | JSON: which analysis approaches work best |
+| recommended_tools | TEXT | JSON: which tools yield best results |
+| success_rate | REAL | Success rate |
+| occurrence_count | INTEGER | Times observed |
+| avg_confidence | REAL | Average confidence |
+| avg_acceptance_rate | REAL | Average acceptance rate |
+| last_seen_at | TEXT | Last observation |
+| created_at | TEXT | Timestamp |
+
+### expert_outcomes
+
+Tracks whether expert advice led to good results.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| consultation_id | INTEGER FK | Consultation reference |
+| finding_id | INTEGER FK | Finding reference |
+| outcome_type | TEXT | `code_change`, `design_adoption`, `bug_fix`, `security_fix` |
+| git_commit_hash | TEXT | If advice led to code change |
+| files_changed | TEXT | JSON array of changed files |
+| change_similarity_score | REAL | How closely change matches suggestion |
+| user_outcome_rating | REAL | User-provided rating (0-1) |
+| outcome_evidence | TEXT | JSON: links to tests, metrics, etc. |
+| time_to_outcome_seconds | INTEGER | Time until outcome realized |
+| learned_lesson | TEXT | What pattern we learned |
+| created_at | TEXT | Timestamp |
+| verified_at | TEXT | Verification time |
+
+### expert_prompt_versions
+
+Tracks prompt versions and their performance.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| expert_role | TEXT | Expert role |
+| version | INTEGER | Version number |
+| prompt_additions | TEXT | Additional context added to base prompt |
+| performance_metrics | TEXT | JSON: acceptance_rate, outcome_success, etc. |
+| adaptation_reason | TEXT | Why this version was created |
+| consultation_count | INTEGER | Number of consultations |
+| acceptance_rate | REAL | Acceptance rate |
+| is_active | INTEGER | 1 if active |
+| created_at | TEXT | Timestamp |
+
+### collaboration_patterns
+
+When experts should work together.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| problem_domains | TEXT | JSON: which expertise domains involved |
+| complexity_threshold | REAL | Min complexity score to trigger |
+| recommended_experts | TEXT | JSON: which experts to involve |
+| collaboration_mode | TEXT | `parallel`, `sequential`, `hierarchical` |
+| synthesis_method | TEXT | How to combine outputs |
+| success_rate | REAL | Success rate |
+| time_saved_percent | REAL | Efficiency vs individual consultations |
+| occurrence_count | INTEGER | Times used |
+| last_used_at | TEXT | Last use |
+| created_at | TEXT | Timestamp |
+
+---
+
+## Cross-Project Intelligence
+
+Tables for privacy-preserving pattern sharing across projects.
+
+### cross_project_patterns
+
+Anonymized patterns that can be shared across projects.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| pattern_type | TEXT | `file_sequence`, `tool_chain`, `problem_pattern`, `collaboration` |
+| pattern_hash | TEXT UNIQUE | Hash for deduplication |
+| anonymized_data | TEXT | JSON: pattern data with identifiers removed |
+| category | TEXT | High-level category (e.g., `rust`, `web`, `database`) |
+| confidence | REAL | Aggregated confidence across projects |
+| occurrence_count | INTEGER | Projects showing this pattern |
+| noise_added | REAL | Differential privacy noise level |
+| min_projects_required | INTEGER | K-anonymity threshold (default: 3) |
+| source_project_count | INTEGER | Contributing project count |
+| last_updated_at | TEXT | Last update |
+| created_at | TEXT | Timestamp |
+
+### pattern_sharing_log
+
+Tracks pattern exports and imports.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| direction | TEXT | `exported` or `imported` |
+| pattern_type | TEXT | Pattern type |
+| pattern_hash | TEXT | Pattern hash |
+| anonymization_level | TEXT | `full`, `partial`, `none` |
+| differential_privacy_epsilon | REAL | Privacy budget used |
+| created_at | TEXT | Timestamp |
+
+### cross_project_preferences
+
+Per-project sharing preferences.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK UNIQUE | Project reference |
+| sharing_enabled | INTEGER | Master opt-in switch |
+| export_patterns | INTEGER | Allow exporting patterns |
+| import_patterns | INTEGER | Allow importing patterns |
+| min_anonymization_level | TEXT | `full`, `partial`, `none` |
+| allowed_pattern_types | TEXT | JSON array of allowed types |
+| privacy_epsilon_budget | REAL | Total differential privacy budget |
+| privacy_epsilon_used | REAL | Privacy budget consumed |
+| created_at | TEXT | Timestamp |
+| updated_at | TEXT | Last update |
+
+### pattern_provenance
+
+Tracks which projects contributed (anonymously).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| pattern_id | INTEGER FK | Cross-project pattern reference |
+| contribution_hash | TEXT | Hash of project contribution (not project id) |
+| contribution_weight | REAL | How much this contribution affects pattern |
+| contributed_at | TEXT | Timestamp |
 
 ---
 
