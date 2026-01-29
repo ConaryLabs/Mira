@@ -3,6 +3,7 @@
 
 use super::super::types::Module;
 use crate::project_files::walker::FileWalker;
+use crate::utils::{path_to_string, relative_to};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -59,13 +60,13 @@ fn detect_in_package(
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        let relative = path.strip_prefix(project_path).unwrap_or(path);
+        let relative = relative_to(path, project_path);
 
         // Directory with index.ts/js is a module
         if path.is_dir() {
             let has_index = has_index_file(path);
             if has_index {
-                let module_path = relative.to_string_lossy().to_string();
+                let module_path = path_to_string(relative);
                 if !seen_dirs.contains(&module_path) && !module_path.is_empty() {
                     seen_dirs.insert(module_path.clone());
 
@@ -75,7 +76,7 @@ fn detect_in_package(
                         .unwrap_or("unknown");
 
                     // Create module ID: package_name/relative_path
-                    let pkg_relative = path.strip_prefix(package_path).unwrap_or(path);
+                    let pkg_relative = relative_to(path, package_path);
                     let module_id = if pkg_relative.as_os_str().is_empty() {
                         package_name.to_string()
                     } else {
@@ -118,7 +119,7 @@ fn detect_in_package(
             let is_direct_child = parent == Some(&search_root);
 
             if is_direct_child {
-                let module_path = relative.to_string_lossy().to_string();
+                let module_path = path_to_string(relative);
                 if !seen_dirs.contains(&module_path) {
                     seen_dirs.insert(module_path.clone());
 

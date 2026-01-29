@@ -3,6 +3,7 @@
 
 use crate::db::pool::DatabasePool;
 use crate::db::{EmbeddingUsageRecord, insert_embedding_usage_sync};
+use crate::http::create_fast_client;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -25,8 +26,6 @@ const MAX_TEXT_CHARS: usize = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
 /// Max batch size for batch embedding
 const MAX_BATCH_SIZE: usize = 100;
 
-/// HTTP timeout
-const TIMEOUT_SECS: u64 = 30;
 
 /// Retry attempts
 const RETRY_ATTEMPTS: usize = 2;
@@ -160,12 +159,7 @@ impl GoogleEmbeddings {
         task_type: TaskType,
         pool: Option<Arc<DatabasePool>>,
     ) -> Self {
-        let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(TIMEOUT_SECS))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
-        Self::with_http_client(api_key, model, dimensions, task_type, pool, http_client)
+        Self::with_http_client(api_key, model, dimensions, task_type, pool, create_fast_client())
     }
 
     /// Create embeddings client with a shared HTTP client

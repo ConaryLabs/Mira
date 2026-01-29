@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use mira::{
     background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient,
-    llm::DeepSeekClient, llm::ProviderFactory,
+    llm::ProviderFactory,
 };
 use mira_types::{ProjectContext, WsEvent};
 use std::collections::HashMap;
@@ -74,10 +74,6 @@ impl mira::tools::core::ToolContext for TestContext {
 
     fn embeddings(&self) -> Option<&Arc<EmbeddingClient>> {
         None // No embeddings client for tests
-    }
-
-    fn deepseek(&self) -> Option<&Arc<DeepSeekClient>> {
-        None // No DeepSeek client for tests
     }
 
     fn llm_factory(&self) -> &ProviderFactory {

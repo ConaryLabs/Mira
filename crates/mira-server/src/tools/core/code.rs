@@ -377,8 +377,8 @@ pub async fn index<C: ToolContext>(
 
             // Auto-summarize modules that don't have descriptions yet
             if let Some(pid) = project_id {
-                if let Some(deepseek) = ctx.deepseek() {
-                    match auto_summarize_modules(ctx.pool(), pid, &project_path, deepseek).await {
+                if let Some(llm_client) = ctx.llm_factory().client_for_background() {
+                    match auto_summarize_modules(ctx.pool(), pid, &project_path, &*llm_client).await {
                         Ok(count) if count > 0 => {
                             response.push_str(&format!(", summarized {} modules", count));
                         }
@@ -420,7 +420,7 @@ async fn auto_summarize_modules(
     pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
     project_id: i64,
     project_path: &str,
-    deepseek: &crate::llm::DeepSeekClient,
+    llm_client: &dyn LlmClient,
 ) -> Result<usize, String> {
     // Get modules needing summaries
     let mut modules = pool
@@ -437,19 +437,19 @@ async fn auto_summarize_modules(
         module.code_preview = cartographer::get_module_code_preview(path, &module.path);
     }
 
-    // Build prompt and call DeepSeek
+    // Build prompt and call LLM
     let prompt = cartographer::build_summary_prompt(&modules);
     let messages = vec![Message::user(prompt)];
-    let result = deepseek
+    let result = llm_client
         .chat(messages, None)
         .await
-        .map_err(|e| format!("DeepSeek request failed: {}", e))?;
+        .map_err(|e| format!("LLM request failed: {}", e))?;
 
     // Record usage
     record_llm_usage(
         pool,
-        deepseek.provider_type(),
-        &deepseek.model_name(),
+        llm_client.provider_type(),
+        &llm_client.model_name(),
         "tool:auto_summarize",
         &result,
         Some(project_id),
@@ -457,7 +457,7 @@ async fn auto_summarize_modules(
     )
     .await;
 
-    let content = result.content.ok_or("No content in DeepSeek response")?;
+    let content = result.content.ok_or("No content in LLM response")?;
 
     // Parse and update
     let summaries = cartographer::parse_summary_response(&content);
@@ -472,7 +472,7 @@ async fn auto_summarize_modules(
     Ok(updated)
 }
 
-/// Summarize codebase modules using DeepSeek
+/// Summarize codebase modules using LLM
 pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, String> {
     // Get project context
     let project = ctx.get_project().await;
@@ -481,10 +481,11 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         None => return Err("No active project. Call session_start first.".to_string()),
     };
 
-    // Get DeepSeek client
-    let deepseek = ctx
-        .deepseek()
-        .ok_or("DeepSeek not configured. Set DEEPSEEK_API_KEY.")?;
+    // Get LLM client
+    let llm_client = ctx
+        .llm_factory()
+        .client_for_background()
+        .ok_or("No LLM provider configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.")?;
 
     // Get modules needing summaries
     let mut modules = ctx
@@ -505,18 +506,18 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
     // Build prompt
     let prompt = cartographer::build_summary_prompt(&modules);
 
-    // Call DeepSeek using shared client (no tools needed for summarization)
+    // Call LLM (no tools needed for summarization)
     let messages = vec![Message::user(prompt)];
-    let result = deepseek
+    let result = llm_client
         .chat(messages, None)
         .await
-        .map_err(|e| format!("DeepSeek request failed: {}", e))?;
+        .map_err(|e| format!("LLM request failed: {}", e))?;
 
     // Record usage
     record_llm_usage(
         ctx.pool(),
-        deepseek.provider_type(),
-        &deepseek.model_name(),
+        llm_client.provider_type(),
+        &llm_client.model_name(),
         "tool:summarize_codebase",
         &result,
         Some(project_id),
@@ -524,7 +525,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
     )
     .await;
 
-    let content = result.content.ok_or("No content in DeepSeek response")?;
+    let content = result.content.ok_or("No content in LLM response")?;
 
     // Parse summaries from response
     let summaries = cartographer::parse_summary_response(&content);

@@ -3,6 +3,7 @@
 
 use super::super::types::Module;
 use crate::project_files::walker::FileWalker;
+use crate::utils::{path_to_string, relative_to};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -45,8 +46,8 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
             continue;
         }
 
-        let relative = path.strip_prefix(project_path).unwrap_or(path);
-        let module_path = relative.to_string_lossy().to_string();
+        let relative = relative_to(path, project_path);
+        let module_path = path_to_string(relative);
 
         if seen_dirs.contains(&module_path) {
             continue;
@@ -140,7 +141,7 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
                 .to_string_lossy();
             if name == "main.go" {
                 if let Ok(rel) = path.strip_prefix(project_path) {
-                    entries.push(rel.to_string_lossy().to_string());
+                    entries.push(path_to_string(rel));
                 }
             }
         }
@@ -156,7 +157,7 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
                     let main_go = path.join("main.go");
                     if main_go.exists() {
                         if let Ok(rel) = main_go.strip_prefix(project_path) {
-                            entries.push(rel.to_string_lossy().to_string());
+                            entries.push(path_to_string(rel));
                         }
                     }
                 }

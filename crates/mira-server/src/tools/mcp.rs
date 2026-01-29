@@ -21,10 +21,6 @@ impl ToolContext for MiraServer {
         self.embeddings.as_ref()
     }
 
-    fn deepseek(&self) -> Option<&Arc<crate::llm::DeepSeekClient>> {
-        self.deepseek.as_ref()
-    }
-
     fn llm_factory(&self) -> &crate::llm::ProviderFactory {
         &self.llm_factory
     }

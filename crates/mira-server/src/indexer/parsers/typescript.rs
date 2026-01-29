@@ -1,12 +1,13 @@
 // src/indexer/parsers/typescript.rs
 // TypeScript/JavaScript language parser using tree-sitter
 
-#![allow(clippy::too_many_arguments)]
-
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, node_text};
+use super::{
+    FunctionCall, Import, LanguageParser, NodeExt, ParseContext, ParseResult, Symbol,
+    default_parse, node_text,
+};
 
 /// TypeScript/JavaScript language parser
 /// Handles .ts, .tsx, .js, .jsx files using the TypeScript grammar
@@ -28,121 +29,71 @@ impl LanguageParser for TypeScriptParser {
     }
 
     fn parse(&self, parser: &mut Parser, content: &str) -> Result<ParseResult> {
-        let tree = parser
-            .parse(content, None)
-            .ok_or_else(|| anyhow!("Failed to parse TypeScript/JavaScript code"))?;
-
-        let mut symbols = Vec::new();
-        let mut imports = Vec::new();
-        let mut calls = Vec::new();
-        let bytes = content.as_bytes();
-
-        walk(
-            tree.root_node(),
-            bytes,
-            &mut symbols,
-            &mut imports,
-            &mut calls,
-            None,
-            None,
-            "typescript",
-        );
-        Ok((symbols, imports, calls))
+        default_parse(parser, content, "typescript", walk)
     }
 }
 
 /// Walk the AST and extract symbols, imports, and calls
 pub fn walk(
     node: Node,
-    source: &[u8],
-    symbols: &mut Vec<Symbol>,
-    imports: &mut Vec<Import>,
-    calls: &mut Vec<FunctionCall>,
+    ctx: &mut ParseContext,
     parent_name: Option<&str>,
     current_function: Option<&str>,
-    language: &str,
 ) {
     match node.kind() {
         "function_declaration" | "method_definition" | "arrow_function" => {
-            if let Some(sym) = extract_function(node, source, parent_name, language) {
+            if let Some(sym) = extract_function(node, ctx.source, parent_name, ctx.language) {
                 let func_name = sym
                     .qualified_name
                     .clone()
                     .unwrap_or_else(|| sym.name.clone());
-                symbols.push(sym);
+                ctx.symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(
-                            child,
-                            source,
-                            symbols,
-                            imports,
-                            calls,
-                            parent_name,
-                            Some(&func_name),
-                            language,
-                        );
+                        walk(child, ctx, parent_name, Some(&func_name));
                     }
                 }
                 return;
             }
         }
         "class_declaration" => {
-            if let Some(sym) = extract_class(node, source, language) {
+            if let Some(sym) = extract_class(node, ctx.source, ctx.language) {
                 let name = sym.name.clone();
-                symbols.push(sym);
+                ctx.symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(
-                            child,
-                            source,
-                            symbols,
-                            imports,
-                            calls,
-                            Some(&name),
-                            current_function,
-                            language,
-                        );
+                        walk(child, ctx, Some(&name), current_function);
                     }
                 }
                 return;
             }
         }
         "interface_declaration" => {
-            if let Some(sym) = extract_interface(node, source) {
-                symbols.push(sym);
+            if let Some(sym) = extract_interface(node, ctx.source) {
+                ctx.symbols.push(sym);
             }
         }
         "type_alias_declaration" => {
-            if let Some(sym) = extract_type_alias(node, source) {
-                symbols.push(sym);
+            if let Some(sym) = extract_type_alias(node, ctx.source) {
+                ctx.symbols.push(sym);
             }
         }
         "import_statement" => {
-            if let Some(import) = extract_import(node, source) {
-                imports.push(import);
+            if let Some(import) = extract_import(node, ctx.source) {
+                ctx.imports.push(import);
             }
         }
         "call_expression" => {
             if let Some(caller) = current_function {
-                if let Some(call) = extract_call(node, source, caller) {
-                    calls.push(call);
+                if let Some(call) = extract_call(node, ctx.source, caller) {
+                    ctx.calls.push(call);
                 }
             }
         }
         "export_statement" => {
             // Handle exported declarations
             for child in node.children(&mut node.walk()) {
-                walk(
-                    child,
-                    source,
-                    symbols,
-                    imports,
-                    calls,
-                    parent_name,
-                    current_function,
-                    language,
-                );
+                walk(child, ctx, parent_name, current_function);
             }
             return;
         }
@@ -153,13 +104,13 @@ pub fn walk(
                     if let Some(value) = declarator.child_by_field_name("value") {
                         if value.kind() == "arrow_function" || value.kind() == "function" {
                             if let Some(name_node) = declarator.child_by_field_name("name") {
-                                let name = node_text(name_node, source);
+                                let name = node_text(name_node, ctx.source);
                                 if let Some(mut sym) =
-                                    extract_function(value, source, parent_name, language)
+                                    extract_function(value, ctx.source, parent_name, ctx.language)
                                 {
                                     sym.name = name.clone();
                                     sym.qualified_name = Some(name);
-                                    symbols.push(sym);
+                                    ctx.symbols.push(sym);
                                 }
                             }
                         }
@@ -171,16 +122,7 @@ pub fn walk(
     }
 
     for child in node.children(&mut node.walk()) {
-        walk(
-            child,
-            source,
-            symbols,
-            imports,
-            calls,
-            parent_name,
-            current_function,
-            language,
-        );
+        walk(child, ctx, parent_name, current_function);
     }
 }
 

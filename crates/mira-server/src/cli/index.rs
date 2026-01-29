@@ -6,6 +6,7 @@ use super::get_db_path;
 use anyhow::Result;
 use mira::db::pool::DatabasePool;
 use mira::http::create_shared_client;
+use mira::utils::path_to_string;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
@@ -30,7 +31,7 @@ pub async fn run_index(path: Option<PathBuf>, no_embed: bool, _quiet: bool) -> R
     };
 
     // Get or create project
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = path_to_string(&path);
     let project_name = path
         .file_name()
         .and_then(|n| n.to_str())

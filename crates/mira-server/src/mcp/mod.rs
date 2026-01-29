@@ -15,7 +15,7 @@ use crate::config::ApiKeys;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
-use crate::llm::{DeepSeekClient, ProviderFactory};
+use crate::llm::ProviderFactory;
 use mira_types::ProjectContext;
 use rmcp::{
     ErrorData, ServerHandler,
@@ -38,7 +38,6 @@ pub struct MiraServer {
     /// Async connection pool for database operations
     pub pool: Arc<DatabasePool>,
     pub embeddings: Option<Arc<EmbeddingClient>>,
-    pub deepseek: Option<Arc<DeepSeekClient>>,
     pub llm_factory: Arc<ProviderFactory>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
     /// Current session ID (generated on first tool call or session_start)
@@ -61,19 +60,12 @@ impl MiraServer {
         embeddings: Option<Arc<EmbeddingClient>>,
         api_keys: &ApiKeys,
     ) -> Self {
-        // Create DeepSeek client from pre-loaded keys
-        let deepseek = api_keys
-            .deepseek
-            .as_ref()
-            .map(|key| Arc::new(DeepSeekClient::new(key.clone())));
-
         // Create provider factory from pre-loaded keys
         let llm_factory = Arc::new(ProviderFactory::from_api_keys(api_keys.clone()));
 
         Self {
             pool,
             embeddings,
-            deepseek,
             llm_factory,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
@@ -441,6 +433,64 @@ impl MiraServer {
             .map(|t| t.name.to_string())
             .collect()
     }
+
+    /// Extract result text and success status from a tool call result
+    fn extract_result_text(result: &Result<CallToolResult, ErrorData>) -> (bool, String) {
+        match result {
+            Ok(r) => {
+                let text = r
+                    .content
+                    .first()
+                    .and_then(|c| c.as_text())
+                    .map(|t| t.text.to_string())
+                    .unwrap_or_default();
+                (true, text)
+            }
+            Err(e) => (false, e.message.to_string()),
+        }
+    }
+
+    /// Persist a tool call to the database for history tracking
+    async fn log_tool_call(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        args_json: &str,
+        result_text: &str,
+        success: bool,
+    ) {
+        let summary = if result_text.len() > 2000 {
+            format!("{}...", &result_text[..2000])
+        } else {
+            result_text.to_string()
+        };
+        let full_result_str = if result_text.len() > 100 {
+            Some(result_text.to_string())
+        } else {
+            None
+        };
+        let session_id = session_id.to_string();
+        let tool_name = tool_name.to_string();
+        let args_json = args_json.to_string();
+        if let Err(e) = self
+            .pool
+            .interact(move |conn| {
+                crate::db::log_tool_call_sync(
+                    conn,
+                    &session_id,
+                    &tool_name,
+                    &args_json,
+                    &summary,
+                    full_result_str.as_deref(),
+                    success,
+                )
+                .map_err(|e| anyhow::anyhow!(e))
+            })
+            .await
+        {
+            eprintln!("[HISTORY] Failed to log tool call: {}", e);
+        }
+    }
 }
 
 impl ServerHandler for MiraServer {
@@ -510,20 +560,9 @@ impl ServerHandler for MiraServer {
             let ctx = ToolCallContext::new(self, request, context);
             let result = self.tool_router.call(ctx).await;
 
-            // Broadcast tool result
+            // Extract result and broadcast
             let duration_ms = start.elapsed().as_millis() as u64;
-            let (success, result_text) = match &result {
-                Ok(r) => {
-                    let text = r
-                        .content
-                        .first()
-                        .and_then(|c| c.as_text())
-                        .map(|t| t.text.to_string())
-                        .unwrap_or_default();
-                    (true, text)
-                }
-                Err(e) => (false, e.message.to_string()),
-            };
+            let (success, result_text) = Self::extract_result_text(&result);
 
             self.broadcast(mira_types::WsEvent::ToolResult {
                 tool_name: tool_name.clone(),
@@ -533,39 +572,9 @@ impl ServerHandler for MiraServer {
                 duration_ms,
             });
 
-            // Persist to tool_history (summary for quick display, full result for recall)
-            let summary = if result_text.len() > 2000 {
-                format!("{}...", &result_text[..2000])
-            } else {
-                result_text.clone()
-            };
-            let full_result_str = if result_text.len() > 100 {
-                Some(result_text.clone())
-            } else {
-                None
-            };
-            let session_id_clone = session_id.clone();
-            let tool_name_clone = tool_name.clone();
-            let args_json_clone = args_json.clone();
-            let summary_clone = summary.clone();
-            if let Err(e) = self
-                .pool
-                .interact(move |conn| {
-                    crate::db::log_tool_call_sync(
-                        conn,
-                        &session_id_clone,
-                        &tool_name_clone,
-                        &args_json_clone,
-                        &summary_clone,
-                        full_result_str.as_deref(),
-                        success,
-                    )
-                    .map_err(|e| anyhow::anyhow!(e))
-                })
-                .await
-            {
-                eprintln!("[HISTORY] Failed to log tool call: {}", e);
-            }
+            // Persist to tool_history
+            self.log_tool_call(&session_id, &tool_name, &args_json, &result_text, success)
+                .await;
 
             // Extract meaningful outcomes from tool results (async, non-blocking)
             if success {
@@ -573,7 +582,7 @@ impl ServerHandler for MiraServer {
                 extraction::spawn_tool_extraction(
                     self.pool.clone(),
                     self.embeddings.clone(),
-                    self.deepseek.clone(),
+                    self.llm_factory.client_for_background(),
                     project_id,
                     tool_name,
                     args_json,

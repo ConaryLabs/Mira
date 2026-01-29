@@ -15,6 +15,19 @@ use super::{
     summaries,
 };
 
+/// Delay before first cycle to let the service start up
+const INITIAL_DELAY_SECS: u64 = 30;
+/// Delay between batches when there's active work
+const ACTIVE_DELAY_SECS: u64 = 10;
+/// Delay when no work is found (idle polling)
+const IDLE_DELAY_SECS: u64 = 60;
+/// Delay after an error (backoff)
+const ERROR_DELAY_SECS: u64 = 120;
+/// Run documentation tasks every Nth cycle
+const DOCUMENTATION_CYCLE_INTERVAL: u64 = 3;
+/// Run pondering tasks every Nth cycle
+const PONDERING_CYCLE_INTERVAL: u64 = 10;
+
 /// Slow lane worker for LLM-dependent background tasks
 pub struct SlowLaneWorker {
     pool: Arc<DatabasePool>,
@@ -42,7 +55,7 @@ impl SlowLaneWorker {
         tracing::info!("Slow lane worker started");
 
         // Initial delay to let the service start up
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::sleep(Duration::from_secs(INITIAL_DELAY_SECS)).await;
 
         loop {
             // Check for shutdown
@@ -56,16 +69,16 @@ impl SlowLaneWorker {
                 Ok(processed) if processed > 0 => {
                     tracing::info!("Slow lane: processed {} items", processed);
                     // Short delay between batches when there's work
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    tokio::time::sleep(Duration::from_secs(ACTIVE_DELAY_SECS)).await;
                 }
                 Ok(_) => {
                     // No work found, sleep longer
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(Duration::from_secs(IDLE_DELAY_SECS)).await;
                 }
                 Err(e) => {
                     tracing::warn!("Slow lane error: {}", e);
                     // Back off on errors
-                    tokio::time::sleep(Duration::from_secs(120)).await;
+                    tokio::time::sleep(Duration::from_secs(ERROR_DELAY_SECS)).await;
                 }
             }
 
@@ -108,16 +121,16 @@ impl SlowLaneWorker {
         // Process capabilities inventory
         processed += self.process_capabilities(&client).await?;
 
-        // Process documentation tasks (every 3rd cycle)
-        if self.cycle_count.is_multiple_of(3) {
+        // Process documentation tasks (every Nth cycle)
+        if self.cycle_count.is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL) {
             processed += self.process_documentation().await?;
         }
 
         // Process code health
         processed += self.process_code_health(&client).await?;
 
-        // Process pondering (every 10th cycle)
-        if self.cycle_count.is_multiple_of(10) {
+        // Process pondering (every Nth cycle)
+        if self.cycle_count.is_multiple_of(PONDERING_CYCLE_INTERVAL) {
             processed += self.process_pondering(&client).await?;
         }
 

@@ -10,6 +10,7 @@ use mira::db::pool::DatabasePool;
 use mira::http::create_shared_client;
 use mira::mcp::MiraServer;
 use mira::tools::core::ToolContext;
+use mira::utils::path_to_string;
 use mira_types::ProjectContext;
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -55,7 +56,7 @@ pub async fn setup_server_context() -> Result<MiraServer> {
             }
             // Fallback: Check if CWD is a project
             if let Ok(cwd) = std::env::current_dir() {
-                let path_str = cwd.to_string_lossy().to_string();
+                let path_str = path_to_string(&cwd);
                 if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None)
                 {
                     return Ok(Some(ProjectContext {
@@ -164,7 +165,7 @@ pub async fn run_mcp_server() -> Result<()> {
             }
             // Fallback: Check if CWD is a project
             if let Ok(cwd) = std::env::current_dir() {
-                let path_str = cwd.to_string_lossy().to_string();
+                let path_str = path_to_string(&cwd);
                 if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None)
                 {
                     return Ok(Some((

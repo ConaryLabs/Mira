@@ -456,14 +456,14 @@ async fn test_summarize_codebase_no_deepseek() {
     .expect("session_start failed");
 
     let result = summarize_codebase(&ctx).await;
-    // Should error because DeepSeek client not configured
+    // Should error because no LLM provider is configured
     assert!(
         result.is_err(),
-        "summarize_codebase should fail without DeepSeek client"
+        "summarize_codebase should fail without LLM provider"
     );
     let error = result.unwrap_err();
     assert!(
-        error.contains("DeepSeek not configured") || error.contains("No active project"),
+        error.contains("No LLM provider configured") || error.contains("No active project"),
         "Error: {}",
         error
     );

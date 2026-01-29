@@ -68,6 +68,14 @@ fn extract_function_code(
     Some(lines[start..end].join("\n"))
 }
 
+/// Configuration for a code health analysis pass
+struct AnalysisConfig {
+    key_prefix: &'static str,
+    content_prefix: &'static str,
+    category: &'static str,
+    limit: usize,
+}
+
 /// Generic LLM analysis function that abstracts the common pattern
 async fn analyze_functions<F, P>(
     pool: &Arc<DatabasePool>,
@@ -76,10 +84,7 @@ async fn analyze_functions<F, P>(
     project_path: &str,
     query_fn: F,
     prompt_builder: P,
-    key_prefix: &'static str,
-    content_prefix: &'static str,
-    category: &'static str,
-    limit: usize,
+    config: AnalysisConfig,
 ) -> Result<usize, String>
 where
     F: Fn(&rusqlite::Connection, i64, &str) -> Result<Vec<(String, String, i64, i64)>, String>
@@ -88,6 +93,12 @@ where
         + 'static,
     P: Fn(&str, &str, i64, i64, &str) -> String + Send + Sync + 'static,
 {
+    let AnalysisConfig {
+        key_prefix,
+        content_prefix,
+        category,
+        limit,
+    } = config;
     // Query database for functions to analyze
     let project_path_owned = project_path.to_string();
     let functions = pool
@@ -246,10 +257,12 @@ SUGGESTION: <what to do>"#,
                 name, file_path, function_code
             )
         },
-        "health:complexity",
-        "complexity",
-        "complexity",
-        3,
+        AnalysisConfig {
+            key_prefix: "health:complexity",
+            content_prefix: "complexity",
+            category: "complexity",
+            limit: 3,
+        },
     ).await
 }
 
@@ -314,10 +327,12 @@ SUGGESTION: <what to do>"#,
                 name, file_path, question_marks, function_code
             )
         },
-        "health:error_quality",
-        "error_quality",
-        "error_quality",
-        2,
+        AnalysisConfig {
+            key_prefix: "health:error_quality",
+            content_prefix: "error_quality",
+            category: "error_quality",
+            limit: 2,
+        },
     )
     .await
 }

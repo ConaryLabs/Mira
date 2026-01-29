@@ -2,6 +2,7 @@
 //! Shared utility functions used across the codebase
 
 use std::fmt::Display;
+use std::path::Path;
 
 /// Extension trait for Result to simplify error conversion to String.
 ///
@@ -28,6 +29,16 @@ impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
     }
 }
 
+/// Convert a Path to an owned String, replacing invalid UTF-8 with U+FFFD.
+pub fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+/// Get a path relative to a base, falling back to the original path if not a prefix.
+pub fn relative_to<'a>(path: &'a Path, base: &Path) -> &'a Path {
+    path.strip_prefix(base).unwrap_or(path)
+}
+
 /// Truncate a string to max length with ellipsis.
 ///
 /// If the string is longer than `max_len`, it will be truncated and
@@ -43,6 +54,32 @@ pub fn truncate(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_path_to_string() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("/home/user/project");
+        assert_eq!(path_to_string(&path), "/home/user/project");
+    }
+
+    #[test]
+    fn test_relative_to_with_prefix() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("/home/user/project/src/main.rs");
+        let base = PathBuf::from("/home/user/project");
+        assert_eq!(
+            relative_to(&path, &base),
+            Path::new("src/main.rs")
+        );
+    }
+
+    #[test]
+    fn test_relative_to_without_prefix() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("/other/path/file.rs");
+        let base = PathBuf::from("/home/user/project");
+        assert_eq!(relative_to(&path, &base), Path::new("/other/path/file.rs"));
+    }
 
     #[test]
     fn test_truncate_short_string() {

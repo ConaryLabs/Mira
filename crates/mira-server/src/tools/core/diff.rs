@@ -30,10 +30,11 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     let context_header = format_project_header(project.as_ref());
     let path = Path::new(&project_path);
 
-    // Get DeepSeek client for semantic analysis
-    let deepseek = ctx
-        .deepseek()
-        .ok_or("DeepSeek not configured. Set DEEPSEEK_API_KEY for semantic analysis.")?;
+    // Get LLM client for semantic analysis
+    let llm_client = ctx
+        .llm_factory()
+        .client_for_background()
+        .ok_or("No LLM provider configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.")?;
 
     let include_impact = include_impact.unwrap_or(true);
 
@@ -93,7 +94,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     // Perform full analysis
     let result = analyze_diff(
         ctx.pool(),
-        deepseek,
+        &llm_client,
         path,
         project_id,
         &from,
@@ -121,9 +122,10 @@ async fn analyze_staged_or_working<C: ToolContext>(
 ) -> Result<String, String> {
     use crate::background::diff_analysis::{analyze_diff_semantic, calculate_risk_level};
 
-    let deepseek = ctx
-        .deepseek()
-        .ok_or("DeepSeek not configured. Set DEEPSEEK_API_KEY for semantic analysis.")?;
+    let llm_client = ctx
+        .llm_factory()
+        .client_for_background()
+        .ok_or("No LLM provider configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.")?;
 
     // Get stats
     let stats = if analysis_type == "staged" {
@@ -141,7 +143,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
 
     // Semantic analysis
     let (changes, summary, risk_flags) =
-        analyze_diff_semantic(diff_content, deepseek, ctx.pool(), project_id).await?;
+        analyze_diff_semantic(diff_content, &llm_client, ctx.pool(), project_id).await?;
 
     // Build impact if requested
     let impact = if include_impact && !changes.is_empty() {

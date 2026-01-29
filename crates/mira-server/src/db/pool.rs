@@ -44,6 +44,7 @@ use anyhow::{Context, Result};
 use deadpool_sqlite::{Config, Hook, Pool, Runtime};
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
+use crate::utils::path_to_string;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
@@ -101,7 +102,7 @@ impl DatabasePool {
         }
 
         let path_buf = path.to_path_buf();
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path_to_string(path);
 
         // Step 3: Create pool with post_create hook
         let cfg = Config::new(&path_str);

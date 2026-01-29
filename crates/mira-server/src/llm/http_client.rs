@@ -6,6 +6,15 @@ use reqwest::Client;
 use std::time::Duration;
 use tracing::warn;
 
+/// Default maximum retry attempts for transient failures
+const DEFAULT_MAX_ATTEMPTS: u32 = 3;
+/// Default base backoff duration between retries (doubles each attempt)
+const DEFAULT_BASE_BACKOFF_SECS: u64 = 1;
+/// Default request timeout when creating from an existing client
+const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 300;
+/// Default connect timeout when creating from an existing client
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
+
 /// Shared HTTP client configuration for all LLM providers
 pub struct LlmHttpClient {
     client: Client,
@@ -27,8 +36,8 @@ impl LlmHttpClient {
             client,
             request_timeout,
             connect_timeout,
-            max_attempts: 3,
-            base_backoff: Duration::from_secs(1),
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
+            base_backoff: Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS),
         }
     }
 
@@ -36,10 +45,10 @@ impl LlmHttpClient {
     pub fn from_client(client: Client) -> Self {
         Self {
             client,
-            request_timeout: Duration::from_secs(300),
-            connect_timeout: Duration::from_secs(30),
-            max_attempts: 3,
-            base_backoff: Duration::from_secs(1),
+            request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
+            connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
+            base_backoff: Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS),
         }
     }
 
@@ -125,8 +134,11 @@ mod tests {
     fn test_client_creation() {
         let client = LlmHttpClient::new(Duration::from_secs(10), Duration::from_secs(5));
 
-        assert_eq!(client.max_attempts, 3);
-        assert_eq!(client.base_backoff, Duration::from_secs(1));
+        assert_eq!(client.max_attempts, DEFAULT_MAX_ATTEMPTS);
+        assert_eq!(
+            client.base_backoff,
+            Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS)
+        );
     }
 
     #[test]
@@ -134,8 +146,11 @@ mod tests {
         let reqwest_client = Client::new();
         let client = LlmHttpClient::from_client(reqwest_client);
 
-        assert_eq!(client.max_attempts, 3);
-        assert_eq!(client.base_backoff, Duration::from_secs(1));
+        assert_eq!(client.max_attempts, DEFAULT_MAX_ATTEMPTS);
+        assert_eq!(
+            client.base_backoff,
+            Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS)
+        );
     }
 
     #[test]

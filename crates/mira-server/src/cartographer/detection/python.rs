@@ -3,6 +3,7 @@
 
 use super::super::types::Module;
 use crate::project_files::walker::FileWalker;
+use crate::utils::{path_to_string, relative_to};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -25,13 +26,13 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        let relative = path.strip_prefix(project_path).unwrap_or(path);
+        let relative = relative_to(path, project_path);
 
         // Directory with __init__.py is a package
         if path.is_dir() {
             let init_py = path.join("__init__.py");
             if init_py.exists() {
-                let module_path = relative.to_string_lossy().to_string();
+                let module_path = path_to_string(relative);
                 if !seen_dirs.contains(&module_path) && !module_path.is_empty() {
                     seen_dirs.insert(module_path.clone());
 
@@ -76,7 +77,7 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
                 parent == Some(project_path) || parent == Some(&project_path.join("src"));
 
             if is_top_level {
-                let module_path = relative.to_string_lossy().to_string();
+                let module_path = path_to_string(relative);
                 if !seen_dirs.contains(&module_path) {
                     seen_dirs.insert(module_path.clone());
 
@@ -134,12 +135,12 @@ fn detect_in_src(
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        let relative = path.strip_prefix(project_path).unwrap_or(path);
+        let relative = relative_to(path, project_path);
 
         if path.is_dir() {
             let init_py = path.join("__init__.py");
             if init_py.exists() {
-                let module_path = relative.to_string_lossy().to_string();
+                let module_path = path_to_string(relative);
                 if !seen_dirs.contains(&module_path) {
                     seen_dirs.insert(module_path.clone());
 
@@ -259,7 +260,7 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
             .unwrap_or("");
         if candidates.contains(&name) {
             if let Ok(rel) = entry.path().strip_prefix(project_path) {
-                entries.push(rel.to_string_lossy().to_string());
+                entries.push(path_to_string(rel));
             }
         }
     }

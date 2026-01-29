@@ -13,7 +13,7 @@ use tokio::sync::{RwLock, oneshot};
 use crate::background::watcher::WatcherHandle;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{DeepSeekClient, ProviderFactory};
+use crate::llm::ProviderFactory;
 
 /// Information about an MCP tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,9 +33,6 @@ pub trait ToolContext: Send + Sync {
 
     /// Embeddings client for semantic search (optional)
     fn embeddings(&self) -> Option<&Arc<EmbeddingClient>>;
-
-    /// DeepSeek client for chat/completion (optional, deprecated - use llm_factory)
-    fn deepseek(&self) -> Option<&Arc<DeepSeekClient>>;
 
     /// LLM provider factory for multi-provider support
     fn llm_factory(&self) -> &ProviderFactory;

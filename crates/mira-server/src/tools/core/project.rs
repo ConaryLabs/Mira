@@ -172,6 +172,105 @@ pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<String, String> {
     }
 }
 
+/// Format recent sessions for display
+fn format_recent_sessions(
+    sessions: &[(String, String, Option<String>, usize, Vec<String>)],
+) -> String {
+    let mut out = String::from("\nRecent sessions:\n");
+    for (sess_id, last_activity, summary, tool_count, tools) in sessions {
+        let short_id = &sess_id[..8.min(sess_id.len())];
+        let timestamp = &last_activity[..16.min(last_activity.len())];
+
+        if let Some(sum) = summary {
+            out.push_str(&format!("  [{}] {} - {}\n", short_id, timestamp, sum));
+        } else if *tool_count > 0 {
+            let tools_str = tools.join(", ");
+            out.push_str(&format!(
+                "  [{}] {} - {} tool calls ({})\n",
+                short_id, timestamp, tool_count, tools_str
+            ));
+        } else {
+            out.push_str(&format!("  [{}] {} - (no activity)\n", short_id, timestamp));
+        }
+    }
+    out.push_str(
+        "  Use session_history(action=\"get_history\", session_id=\"...\") to view details\n",
+    );
+    out
+}
+
+/// Format preferences, context, health alerts, and interventions for display
+fn format_session_insights(
+    preferences: &[MemoryFact],
+    memories: &[MemoryFact],
+    health_alerts: &[MemoryFact],
+    pending_interventions: &[interventions::PendingIntervention],
+    doc_task_counts: &[(String, i64)],
+) -> String {
+    let mut out = String::new();
+
+    if !preferences.is_empty() {
+        out.push_str("\nPreferences:\n");
+        for pref in preferences {
+            let category = pref.category.as_deref().unwrap_or("general");
+            out.push_str(&format!("  [{}] {}\n", category, pref.content));
+        }
+    }
+
+    let non_pref_memories: Vec<_> = memories
+        .iter()
+        .filter(|m| m.fact_type != "preference")
+        .take(5)
+        .collect();
+
+    if !non_pref_memories.is_empty() {
+        out.push_str("\nRecent context:\n");
+        for mem in non_pref_memories {
+            let preview = if mem.content.len() > 80 {
+                format!("{}...", &mem.content[..80])
+            } else {
+                mem.content.clone()
+            };
+            out.push_str(&format!("  - {}\n", preview));
+        }
+    }
+
+    if !health_alerts.is_empty() {
+        out.push_str("\nHealth alerts:\n");
+        for alert in health_alerts {
+            let category = alert.category.as_deref().unwrap_or("issue");
+            let preview = if alert.content.len() > 100 {
+                format!("{}...", &alert.content[..100])
+            } else {
+                alert.content.clone()
+            };
+            out.push_str(&format!("  [{}] {}\n", category, preview));
+        }
+    }
+
+    if !pending_interventions.is_empty() {
+        out.push_str("\nInsights (from background analysis):\n");
+        for intervention in pending_interventions {
+            out.push_str(&format!("  {}\n", intervention.format()));
+        }
+    }
+
+    let pending_doc_count = doc_task_counts
+        .iter()
+        .find(|(status, _)| status == "pending")
+        .map(|(_, count)| *count)
+        .unwrap_or(0);
+
+    if pending_doc_count > 0 {
+        out.push_str(&format!(
+            "\nDocumentation: {} items need docs\n  Use `documentation(action=\"list\")` to see them\n",
+            pending_doc_count
+        ));
+    }
+
+    out
+}
+
 /// Initialize session with project
 pub async fn session_start<C: ToolContext>(
     ctx: &C,
@@ -294,26 +393,7 @@ pub async fn session_start<C: ToolContext>(
         .await?;
 
     if !recent_session_data.is_empty() {
-        response.push_str("\nRecent sessions:\n");
-        for (sess_id, last_activity, summary, tool_count, tools) in &recent_session_data {
-            let short_id = &sess_id[..8.min(sess_id.len())];
-            let timestamp = &last_activity[..16.min(last_activity.len())];
-
-            if let Some(sum) = summary {
-                response.push_str(&format!("  [{}] {} - {}\n", short_id, timestamp, sum));
-            } else if *tool_count > 0 {
-                let tools_str = tools.join(", ");
-                response.push_str(&format!(
-                    "  [{}] {} - {} tool calls ({})\n",
-                    short_id, timestamp, tool_count, tools_str
-                ));
-            } else {
-                response.push_str(&format!("  [{}] {} - (no activity)\n", short_id, timestamp));
-            }
-        }
-        response.push_str(
-            "  Use session_history(action=\"get_history\", session_id=\"...\") to view details\n",
-        );
+        response.push_str(&format_recent_sessions(&recent_session_data));
     }
 
     // Load preferences, memories, health alerts, doc task counts, and interventions in a single pool call
@@ -357,53 +437,16 @@ pub async fn session_start<C: ToolContext>(
         })
         .await?;
 
-    if !preferences.is_empty() {
-        response.push_str("\nPreferences:\n");
-        for pref in &preferences {
-            let category = pref.category.as_deref().unwrap_or("general");
-            response.push_str(&format!("  [{}] {}\n", category, pref.content));
-        }
-    }
+    response.push_str(&format_session_insights(
+        &preferences,
+        &memories,
+        &health_alerts,
+        &pending_interventions,
+        &doc_task_counts,
+    ));
 
-    let non_pref_memories: Vec<_> = memories
-        .iter()
-        .filter(|m| m.fact_type != "preference")
-        .take(5)
-        .collect();
-
-    if !non_pref_memories.is_empty() {
-        response.push_str("\nRecent context:\n");
-        for mem in non_pref_memories {
-            let preview = if mem.content.len() > 80 {
-                format!("{}...", &mem.content[..80])
-            } else {
-                mem.content.clone()
-            };
-            response.push_str(&format!("  - {}\n", preview));
-        }
-    }
-
-    if !health_alerts.is_empty() {
-        response.push_str("\nHealth alerts:\n");
-        for alert in health_alerts {
-            let category = alert.category.as_deref().unwrap_or("issue");
-            let preview = if alert.content.len() > 100 {
-                format!("{}...", &alert.content[..100])
-            } else {
-                alert.content.clone()
-            };
-            response.push_str(&format!("  [{}] {}\n", category, preview));
-        }
-    }
-
-    // Show proactive interventions from pondering insights
+    // Record that interventions were shown
     if !pending_interventions.is_empty() {
-        response.push_str("\nInsights (from background analysis):\n");
-        for intervention in &pending_interventions {
-            response.push_str(&format!("  {}\n", intervention.format()));
-        }
-
-        // Record that these interventions were shown
         let interventions_to_record = pending_interventions.clone();
         let sid_for_record = sid.clone();
         let _ = ctx
@@ -420,20 +463,6 @@ pub async fn session_start<C: ToolContext>(
                 Ok::<_, String>(())
             })
             .await;
-    }
-
-    // Show documentation task notifications (pending tasks that need docs written)
-    let pending_doc_count = doc_task_counts
-        .iter()
-        .find(|(status, _)| status == "pending")
-        .map(|(_, count)| *count)
-        .unwrap_or(0);
-
-    if pending_doc_count > 0 {
-        response.push_str(&format!(
-            "\nDocumentation: {} items need docs\n  Use `documentation(action=\"list\")` to see them\n",
-            pending_doc_count
-        ));
     }
 
     // Load codebase map (only for Rust projects for now)

@@ -12,6 +12,13 @@ use tokio::sync::{Notify, watch};
 
 use super::embeddings;
 
+/// Delay before first cycle
+const INITIAL_DELAY_SECS: u64 = 5;
+/// Delay between batches when there's active work
+const ACTIVE_DELAY_MS: u64 = 100;
+/// Periodic check interval when idle (no notification)
+const IDLE_CHECK_SECS: u64 = 10;
+
 /// Fast lane worker for time-sensitive background tasks
 pub struct FastLaneWorker {
     pool: Arc<DatabasePool>,
@@ -40,7 +47,7 @@ impl FastLaneWorker {
         tracing::info!("Fast lane worker started");
 
         // Short initial delay
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(INITIAL_DELAY_SECS)).await;
 
         loop {
             // Check for shutdown
@@ -55,14 +62,14 @@ impl FastLaneWorker {
             if processed > 0 {
                 tracing::info!("Fast lane: processed {} embeddings", processed);
                 // Quick loop back if there's work
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(ACTIVE_DELAY_MS)).await;
             } else {
                 // Wait for notification or timeout
                 tokio::select! {
                     _ = self.notify.notified() => {
                         tracing::debug!("Fast lane: woken by notify");
                     }
-                    _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                    _ = tokio::time::sleep(Duration::from_secs(IDLE_CHECK_SECS)) => {
                         // Periodic check even without notification
                     }
                     _ = self.shutdown.changed() => {

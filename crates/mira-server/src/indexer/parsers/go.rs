@@ -4,7 +4,10 @@
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Parser};
 
-use super::{FunctionCall, Import, LanguageParser, NodeExt, ParseResult, Symbol, node_text};
+use super::{
+    FunctionCall, Import, LanguageParser, NodeExt, ParseContext, ParseResult, Symbol,
+    default_parse, node_text,
+};
 
 /// Go language parser
 pub struct GoParser;
@@ -25,89 +28,52 @@ impl LanguageParser for GoParser {
     }
 
     fn parse(&self, parser: &mut Parser, content: &str) -> Result<ParseResult> {
-        let tree = parser
-            .parse(content, None)
-            .ok_or_else(|| anyhow!("Failed to parse Go code"))?;
-
-        let mut symbols = Vec::new();
-        let mut imports = Vec::new();
-        let mut calls = Vec::new();
-        let bytes = content.as_bytes();
-
-        walk(
-            tree.root_node(),
-            bytes,
-            &mut symbols,
-            &mut imports,
-            &mut calls,
-            None,
-            None,
-        );
-        Ok((symbols, imports, calls))
+        default_parse(parser, content, "go", walk)
     }
 }
 
 /// Walk the AST and extract symbols, imports, and calls
 pub fn walk(
     node: Node,
-    source: &[u8],
-    symbols: &mut Vec<Symbol>,
-    imports: &mut Vec<Import>,
-    calls: &mut Vec<FunctionCall>,
+    ctx: &mut ParseContext,
     parent_name: Option<&str>,
     current_function: Option<&str>,
 ) {
     match node.kind() {
         "function_declaration" | "method_declaration" => {
-            if let Some(sym) = extract_function(node, source, parent_name) {
+            if let Some(sym) = extract_function(node, ctx.source, parent_name) {
                 let func_name = sym
                     .qualified_name
                     .clone()
                     .unwrap_or_else(|| sym.name.clone());
-                symbols.push(sym);
+                ctx.symbols.push(sym);
                 if let Some(body) = node.child_by_field_name("body") {
                     for child in body.children(&mut body.walk()) {
-                        walk(
-                            child,
-                            source,
-                            symbols,
-                            imports,
-                            calls,
-                            parent_name,
-                            Some(&func_name),
-                        );
+                        walk(child, ctx, parent_name, Some(&func_name));
                     }
                 }
                 return;
             }
         }
         "type_declaration" => {
-            if let Some(sym) = extract_type(node, source) {
+            if let Some(sym) = extract_type(node, ctx.source) {
                 let name = sym.name.clone();
-                symbols.push(sym);
+                ctx.symbols.push(sym);
                 for child in node.children(&mut node.walk()) {
-                    walk(
-                        child,
-                        source,
-                        symbols,
-                        imports,
-                        calls,
-                        Some(&name),
-                        current_function,
-                    );
+                    walk(child, ctx, Some(&name), current_function);
                 }
                 return;
             }
         }
         "import_declaration" => {
-            for import in extract_imports(node, source) {
-                imports.push(import);
+            for import in extract_imports(node, ctx.source) {
+                ctx.imports.push(import);
             }
         }
         "call_expression" => {
             if let Some(caller) = current_function {
-                if let Some(call) = extract_call(node, source, caller) {
-                    calls.push(call);
+                if let Some(call) = extract_call(node, ctx.source, caller) {
+                    ctx.calls.push(call);
                 }
             }
         }
@@ -119,15 +85,7 @@ pub fn walk(
     }
 
     for child in node.children(&mut node.walk()) {
-        walk(
-            child,
-            source,
-            symbols,
-            imports,
-            calls,
-            parent_name,
-            current_function,
-        );
+        walk(child, ctx, parent_name, current_function);
     }
 }
 

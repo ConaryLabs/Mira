@@ -25,6 +25,17 @@ pub fn create_shared_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
+/// Create a client tuned for fast operations (embeddings, quick API calls).
+///
+/// Uses shorter timeouts than the shared client.
+pub fn create_fast_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(FAST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

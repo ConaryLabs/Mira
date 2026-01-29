@@ -9,6 +9,7 @@ use crate::llm::gemini::types::{
     GeminiContent, GeminiRequest, GeminiResponse, GeminiTool, GenerationConfig, ThinkingConfig,
 };
 use crate::llm::provider::{LlmClient, Provider};
+use crate::http::create_shared_client;
 use crate::llm::{ChatResult, Message, Tool, Usage};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -17,10 +18,6 @@ use tracing::{Span, debug, info, instrument};
 use uuid::Uuid;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
-
-/// Request timeout
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default model - use preview for Gemini 3
 const DEFAULT_MODEL: &str = "gemini-3-pro-preview";
@@ -45,13 +42,7 @@ impl GeminiClient {
 
     /// Create a new Gemini client with custom model
     pub fn with_model(api_key: String, model: String) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
-        Self::with_http_client(api_key, model, client)
+        Self::with_http_client(api_key, model, create_shared_client())
     }
 
     /// Create a new Gemini client with a shared HTTP client
@@ -314,8 +305,9 @@ mod tests {
     }
 
     #[test]
-    fn test_timeouts() {
-        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(300));
+    fn test_shared_timeouts() {
+        use crate::http::{CONNECT_TIMEOUT, DEFAULT_TIMEOUT};
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(300));
         assert_eq!(CONNECT_TIMEOUT, Duration::from_secs(30));
     }
 

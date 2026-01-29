@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use crate::db::pool::DatabasePool;
 use crate::db::{StoreMemoryParams, store_fact_embedding_sync, store_memory_sync};
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{DeepSeekClient, LlmClient, PromptBuilder, record_llm_usage};
+use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::embedding_to_bytes;
 
 /// Tools that produce outcomes worth remembering
@@ -24,7 +24,7 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
 pub fn spawn_tool_extraction(
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
-    deepseek: Option<Arc<DeepSeekClient>>,
+    llm_client: Option<Arc<dyn LlmClient>>,
     project_id: Option<i64>,
     tool_name: String,
     args: String,
@@ -46,10 +46,10 @@ pub fn spawn_tool_extraction(
         return;
     }
 
-    // Need DeepSeek for extraction
-    let Some(deepseek) = deepseek else {
+    // Need LLM client for extraction
+    let Some(llm_client) = llm_client else {
         debug!(
-            "Tool extraction: skipping {} (no DeepSeek configured)",
+            "Tool extraction: skipping {} (no LLM provider configured)",
             tool_name
         );
         return;
@@ -65,7 +65,7 @@ pub fn spawn_tool_extraction(
         if let Err(e) = extract_and_store(
             &pool,
             embeddings.as_ref(),
-            &deepseek,
+            &*llm_client,
             project_id,
             &tool_name,
             &args,
@@ -82,7 +82,7 @@ pub fn spawn_tool_extraction(
 async fn extract_and_store(
     pool: &Arc<DatabasePool>,
     embeddings: Option<&Arc<EmbeddingClient>>,
-    deepseek: &DeepSeekClient,
+    llm_client: &dyn LlmClient,
     project_id: Option<i64>,
     tool_name: &str,
     args: &str,
@@ -103,14 +103,14 @@ async fn extract_and_store(
 
     let messages = PromptBuilder::for_tool_extraction().build_messages(tool_context);
 
-    // Call DeepSeek for extraction
-    let response = deepseek.chat(messages, None).await?;
+    // Call LLM for extraction
+    let response = llm_client.chat(messages, None).await?;
 
     // Record usage
     record_llm_usage(
         pool,
-        deepseek.provider_type(),
-        &deepseek.model_name(),
+        llm_client.provider_type(),
+        &llm_client.model_name(),
         "background:extraction",
         &response,
         project_id,

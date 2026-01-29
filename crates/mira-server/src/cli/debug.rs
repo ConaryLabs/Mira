@@ -4,6 +4,7 @@
 use super::get_db_path;
 use anyhow::Result;
 use mira::db::pool::DatabasePool;
+use mira::utils::path_to_string;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -25,7 +26,7 @@ pub async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
     // Call session_start
     let result = mira::tools::session_start(
         &server,
-        project_path.to_string_lossy().to_string(),
+        path_to_string(&project_path),
         None,
         None,
     )
@@ -69,7 +70,7 @@ pub async fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
-    let project_path_str = project_path.to_string_lossy().to_string();
+    let project_path_str = path_to_string(&project_path);
     let (project_id, name) = {
         let path_clone = project_path_str.clone();
         pool.interact(move |conn| {

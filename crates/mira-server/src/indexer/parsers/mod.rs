@@ -6,7 +6,7 @@ pub mod python;
 pub mod rust;
 pub mod typescript;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -128,6 +128,58 @@ pub struct ParsedFile {
 
 /// Result of parsing source code
 pub type ParseResult = (Vec<Symbol>, Vec<Import>, Vec<FunctionCall>);
+
+/// Parsing context that bundles source bytes, language, and result collectors.
+///
+/// Replaces the 5-7 separate parameters previously passed through every
+/// `walk()` call in each language parser.
+pub struct ParseContext<'a> {
+    pub source: &'a [u8],
+    pub language: &'static str,
+    pub symbols: Vec<Symbol>,
+    pub imports: Vec<Import>,
+    pub calls: Vec<FunctionCall>,
+}
+
+impl<'a> ParseContext<'a> {
+    /// Create a new parse context for the given source code
+    pub fn new(source: &'a [u8], language: &'static str) -> Self {
+        Self {
+            source,
+            language,
+            symbols: Vec::new(),
+            imports: Vec::new(),
+            calls: Vec::new(),
+        }
+    }
+
+    /// Consume the context and return the parse result tuple
+    pub fn into_result(self) -> ParseResult {
+        (self.symbols, self.imports, self.calls)
+    }
+}
+
+/// Shared parse implementation for all language parsers.
+///
+/// Handles the common boilerplate: parse content into AST, create context,
+/// call the language-specific walk function, return results.
+pub fn default_parse<F>(
+    parser: &mut Parser,
+    content: &str,
+    language: &'static str,
+    walk_fn: F,
+) -> Result<ParseResult>
+where
+    F: FnOnce(Node, &mut ParseContext, Option<&str>, Option<&str>),
+{
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse {} code", language))?;
+
+    let mut ctx = ParseContext::new(content.as_bytes(), language);
+    walk_fn(tree.root_node(), &mut ctx, None, None);
+    Ok(ctx.into_result())
+}
 
 /// Builder for constructing Symbol structs with sensible defaults.
 /// Reduces boilerplate in language-specific extraction functions.

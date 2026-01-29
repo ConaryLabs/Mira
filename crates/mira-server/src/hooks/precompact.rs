@@ -10,6 +10,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Confidence level for compaction log entries
+const COMPACTION_CONFIDENCE: f64 = 0.3;
+/// Maximum number of important lines to extract from a transcript
+const MAX_IMPORTANT_LINES: usize = 10;
+/// Minimum content length for extracted lines (skip trivial entries)
+const MIN_CONTENT_LEN: usize = 10;
+/// Maximum content length for extracted lines (skip code pastes)
+const MAX_CONTENT_LEN: usize = 500;
+
 /// Get database path (same as main.rs)
 fn get_db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -104,7 +113,7 @@ async fn save_pre_compaction_state(
                         content: &note_content,
                         fact_type: "session_event",
                         category: Some("compaction"),
-                        confidence: 0.3, // Low confidence - just a log
+                        confidence: COMPACTION_CONFIDENCE,
                         session_id: None,
                         user_id: None,
                         scope: "project",
@@ -169,12 +178,12 @@ async fn extract_and_save_context(
     }
 
     // Store extracted context
-    let count = important_lines.len().min(10); // Limit to 10 items
+    let count = important_lines.len().min(MAX_IMPORTANT_LINES);
     let session_id_owned = session_id.to_string();
 
-    for (category, content) in important_lines.into_iter().take(10) {
+    for (category, content) in important_lines.into_iter().take(MAX_IMPORTANT_LINES) {
         // Skip very short or very long lines
-        if content.len() < 10 || content.len() > 500 {
+        if content.len() < MIN_CONTENT_LEN || content.len() > MAX_CONTENT_LEN {
             continue;
         }
 

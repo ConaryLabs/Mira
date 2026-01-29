@@ -262,7 +262,7 @@ impl FileWatcher {
             found.ok_or_else(|| format!("No project found for path {:?}", path))?
         };
 
-        let rel_path_str = relative_path.to_string_lossy().to_string();
+        let rel_path_str = crate::utils::path_to_string(&relative_path);
 
         match change_type {
             ChangeType::Deleted => {

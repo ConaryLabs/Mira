@@ -3,6 +3,7 @@
 
 use super::super::types::Module;
 use crate::project_files::walker::FileWalker;
+use crate::utils::{path_to_string, relative_to};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -102,14 +103,14 @@ fn detect_modules_in_src(
         .walk_paths()
         .filter_map(|p| p.ok())
     {
-        let relative = path.strip_prefix(project_path).unwrap_or(&path);
+        let relative = relative_to(&path, project_path);
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         // Entry points become top-level modules
         if file_name == "lib.rs" || file_name == "main.rs" {
             let module_path = relative
                 .parent()
-                .map(|p| p.to_string_lossy().to_string())
+                .map(|p| path_to_string(p))
                 .unwrap_or_default();
 
             if !seen_dirs.contains(&module_path) {
@@ -133,14 +134,10 @@ fn detect_modules_in_src(
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                let module_path = parent
-                    .strip_prefix(project_path)
-                    .unwrap_or(parent)
-                    .to_string_lossy()
-                    .to_string();
+                let module_path = path_to_string(relative_to(parent, project_path));
 
                 // Create module ID: crate_name/relative_module_path
-                let src_relative = parent.strip_prefix(src_dir).unwrap_or(parent);
+                let src_relative = relative_to(parent, src_dir);
                 let module_id = if src_relative.as_os_str().is_empty() {
                     crate_name.to_string()
                 } else {
@@ -167,7 +164,7 @@ fn detect_modules_in_src(
         {
             let module_name = file_name.trim_end_matches(".rs");
             let module_id = format!("{}/{}", crate_name, module_name);
-            let module_path = relative.to_string_lossy().to_string();
+            let module_path = path_to_string(relative);
 
             if !seen_dirs.contains(&module_path) {
                 seen_dirs.insert(module_path.clone());
@@ -199,7 +196,7 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name == "main.rs" || name == "lib.rs" {
             if let Ok(rel) = path.strip_prefix(project_path) {
-                entries.push(rel.to_string_lossy().to_string());
+                entries.push(path_to_string(rel));
             }
         }
     }

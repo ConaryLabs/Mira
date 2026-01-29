@@ -10,6 +10,30 @@ use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
 
+/// Maximum TODO/FIXME/HACK findings to store per scan
+const MAX_TODO_FINDINGS: usize = 50;
+/// Maximum unimplemented!() / todo!() findings to store per scan
+const MAX_UNIMPLEMENTED_FINDINGS: usize = 20;
+/// Maximum .unwrap() / .expect() findings to store per scan
+const MAX_UNWRAP_FINDINGS: usize = 30;
+/// Maximum error handling findings to store per scan
+const MAX_ERROR_HANDLING_FINDINGS: usize = 20;
+
+/// Confidence level for TODO comment findings
+const CONFIDENCE_TODO: f64 = 0.7;
+/// Confidence level for unimplemented macro findings
+const CONFIDENCE_UNIMPLEMENTED: f64 = 0.8;
+/// Confidence level for unused function findings (heuristic-based)
+const CONFIDENCE_UNUSED: f64 = 0.5;
+/// Confidence level for high-severity unwrap findings
+const CONFIDENCE_UNWRAP_HIGH: f64 = 0.85;
+/// Confidence level for medium-severity unwrap findings
+const CONFIDENCE_UNWRAP_MEDIUM: f64 = 0.7;
+/// Confidence level for high-severity error handling findings
+const CONFIDENCE_ERROR_HIGH: f64 = 0.8;
+/// Confidence level for lower-severity error handling findings
+const CONFIDENCE_ERROR_LOW: f64 = 0.6;
+
 /// Check if a line contains a #[cfg(...)] attribute that includes `test`
 fn is_cfg_test(line: &str) -> bool {
     let line = line.trim();
@@ -91,7 +115,7 @@ pub fn scan_todo_comments(
                         content: &content,
                         fact_type: "health",
                         category: Some("todo"),
-                        confidence: 0.7,
+                        confidence: CONFIDENCE_TODO,
                         session_id: None,
                         user_id: None,
                         scope: "project",
@@ -103,7 +127,7 @@ pub fn scan_todo_comments(
                 stored += 1;
 
                 // Limit to prevent flooding
-                if stored >= 50 {
+                if stored >= MAX_TODO_FINDINGS {
                     return Ok(stored);
                 }
             }
@@ -151,7 +175,7 @@ pub fn scan_unimplemented(
                         content: &content,
                         fact_type: "health",
                         category: Some("unimplemented"),
-                        confidence: 0.8,
+                        confidence: CONFIDENCE_UNIMPLEMENTED,
                         session_id: None,
                         user_id: None,
                         scope: "project",
@@ -162,7 +186,7 @@ pub fn scan_unimplemented(
 
                 stored += 1;
 
-                if stored >= 20 {
+                if stored >= MAX_UNIMPLEMENTED_FINDINGS {
                     return Ok(stored);
                 }
             }
@@ -194,7 +218,7 @@ pub fn scan_unused_functions(conn: &Connection, project_id: i64) -> Result<usize
                 content: &content,
                 fact_type: "health",
                 category: Some("unused"),
-                confidence: 0.5,
+                confidence: CONFIDENCE_UNUSED,
                 session_id: None,
                 user_id: None,
                 scope: "project",
@@ -302,7 +326,11 @@ pub fn scan_unwrap_usage(
                         content: &content_str,
                         fact_type: "health",
                         category: Some("unwrap"),
-                        confidence: if severity == "high" { 0.85 } else { 0.7 },
+                        confidence: if severity == "high" {
+                            CONFIDENCE_UNWRAP_HIGH
+                        } else {
+                            CONFIDENCE_UNWRAP_MEDIUM
+                        },
                         session_id: None,
                         user_id: None,
                         scope: "project",
@@ -314,7 +342,7 @@ pub fn scan_unwrap_usage(
                 stored += 1;
 
                 // Limit to prevent flooding
-                if stored >= 30 {
+                if stored >= MAX_UNWRAP_FINDINGS {
                     return Ok(stored);
                 }
             }
@@ -443,7 +471,11 @@ pub fn scan_error_handling(
                         content: &content_str,
                         fact_type: "health",
                         category: Some("error_handling"),
-                        confidence: if severity == "high" { 0.8 } else { 0.6 },
+                        confidence: if severity == "high" {
+                            CONFIDENCE_ERROR_HIGH
+                        } else {
+                            CONFIDENCE_ERROR_LOW
+                        },
                         session_id: None,
                         user_id: None,
                         scope: "project",
@@ -454,7 +486,7 @@ pub fn scan_error_handling(
 
                 stored += 1;
 
-                if stored >= 20 {
+                if stored >= MAX_ERROR_HANDLING_FINDINGS {
                     return Ok(stored);
                 }
             }
