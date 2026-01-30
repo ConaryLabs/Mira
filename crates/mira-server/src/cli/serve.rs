@@ -9,6 +9,7 @@ use mira::config::EnvConfig;
 use mira::db::pool::DatabasePool;
 use mira::http::create_shared_client;
 use mira::mcp::MiraServer;
+use mira::mcp_client::McpClientManager;
 use mira::tools::core::ToolContext;
 use mira::utils::path_to_string;
 use mira_types::ProjectContext;
@@ -43,7 +44,16 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     );
 
     // Create server context from centralized config
-    let server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
+    let mut server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
+
+    // Initialize MCP client manager for external MCP server access (expert tools)
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| path_to_string(&p));
+    let mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
+    if mcp_manager.has_servers() {
+        server.mcp_client_manager = Some(Arc::new(mcp_manager));
+    }
 
     // Restore context (Project & Session)
     let restored_project = pool
@@ -152,6 +162,17 @@ pub async fn run_mcp_server() -> Result<()> {
     // Create MCP server with watcher from centralized config
     let mut server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
     server.watcher = Some(watcher_handle);
+
+    // Initialize MCP client manager for external MCP server access (expert tools)
+    // We initialize with CWD initially; project path will be used when available
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| path_to_string(&p));
+    let mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
+    if mcp_manager.has_servers() {
+        info!("MCP client manager initialized for expert tool access");
+        server.mcp_client_manager = Some(Arc::new(mcp_manager));
+    }
 
     // Restore context (Project & Session)
     let restore_pool = pool.clone();

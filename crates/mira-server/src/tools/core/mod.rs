@@ -103,6 +103,22 @@ pub trait ToolContext: Send + Sync {
     async fn list_mcp_tools(&self) -> Vec<(String, Vec<McpToolInfo>)> {
         Vec::new()
     }
+
+    /// Call an MCP tool on a specific server (optional, for expert tool execution)
+    async fn mcp_call_tool(
+        &self,
+        _server_name: &str,
+        _tool_name: &str,
+        _args: serde_json::Value,
+    ) -> Result<String, String> {
+        Err("MCP tool calling not available".to_string())
+    }
+
+    /// Get MCP tools as expert Tool definitions with full schemas (optional)
+    /// Returns tools with prefixed names: mcp__{server}__{tool_name}
+    async fn mcp_expert_tools(&self) -> Vec<crate::llm::Tool> {
+        Vec::new()
+    }
 }
 
 // Sub-modules with tool implementations

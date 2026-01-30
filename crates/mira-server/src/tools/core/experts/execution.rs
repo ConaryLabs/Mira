@@ -4,7 +4,7 @@
 use super::context::{build_user_prompt, format_expert_response, get_patterns_context};
 use super::findings::{parse_expert_findings, store_findings};
 use super::role::ExpertRole;
-use super::tools::{execute_tool, get_expert_tools};
+use super::tools::{execute_tool, get_expert_tools, web_fetch_tool, web_search_tool};
 use super::{
     EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
     PARALLEL_EXPERT_TIMEOUT, ToolContext,
@@ -12,6 +12,7 @@ use super::{
 use crate::llm::{Message, record_llm_usage};
 use std::sync::Arc;
 use tokio::time::timeout;
+use tracing::debug;
 
 /// Core function to consult an expert with agentic tool access
 pub async fn consult_expert<C: ToolContext>(
@@ -51,7 +52,30 @@ pub async fn consult_expert<C: ToolContext>(
     };
 
     let user_prompt = build_user_prompt(&enriched_context, question.as_deref());
-    let tools = get_expert_tools();
+
+    // Build dynamic tool list: built-in + web + MCP tools
+    let mut tools = get_expert_tools();
+
+    // Always add web_fetch
+    tools.push(web_fetch_tool());
+
+    // Add web_search if BRAVE_API_KEY is configured
+    if std::env::var("BRAVE_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .is_some()
+    {
+        tools.push(web_search_tool());
+    }
+
+    // Add MCP tools from configured external servers (with full schemas)
+    let mcp_tools = ctx.mcp_expert_tools().await;
+    if !mcp_tools.is_empty() {
+        debug!(mcp_tool_count = mcp_tools.len(), "Adding MCP tools to expert tool set");
+        tools.extend(mcp_tools);
+    }
+
+    debug!(total_tools = tools.len(), "Expert tool set built");
 
     let mut messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 

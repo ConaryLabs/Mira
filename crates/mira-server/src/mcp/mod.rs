@@ -4,6 +4,7 @@
 mod extraction;
 pub mod requests;
 
+use crate::mcp_client::McpClientManager;
 use crate::tools::core as tools;
 use crate::tools::core::ToolContext;
 
@@ -50,6 +51,8 @@ pub struct MiraServer {
     pub watcher: Option<WatcherHandle>,
     /// Pending responses for agent collaboration (message_id -> response sender)
     pub pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>,
+    /// MCP client manager for connecting to external MCP servers (expert tool access)
+    pub mcp_client_manager: Option<Arc<McpClientManager>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -73,6 +76,7 @@ impl MiraServer {
             ws_tx: None,
             watcher: None,
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
+            mcp_client_manager: None,
             tool_router: Self::tool_router(),
         }
     }

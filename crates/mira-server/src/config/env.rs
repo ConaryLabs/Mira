@@ -11,6 +11,8 @@ pub struct ApiKeys {
     pub deepseek: Option<String>,
     /// Gemini/Google API key (GEMINI_API_KEY or GOOGLE_API_KEY)
     pub gemini: Option<String>,
+    /// Brave Search API key (BRAVE_API_KEY)
+    pub brave: Option<String>,
 }
 
 impl ApiKeys {
@@ -18,8 +20,13 @@ impl ApiKeys {
     pub fn from_env() -> Self {
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
         let gemini = Self::read_key("GEMINI_API_KEY").or_else(|| Self::read_key("GOOGLE_API_KEY"));
+        let brave = Self::read_key("BRAVE_API_KEY");
 
-        let keys = Self { deepseek, gemini };
+        let keys = Self {
+            deepseek,
+            gemini,
+            brave,
+        };
         keys.log_status();
         keys
     }
@@ -27,6 +34,11 @@ impl ApiKeys {
     /// Read a single API key from environment, filtering empty values
     fn read_key(name: &str) -> Option<String> {
         std::env::var(name).ok().filter(|k| !k.trim().is_empty())
+    }
+
+    /// Check if web search is available (requires Brave key)
+    pub fn has_web_search(&self) -> bool {
+        self.brave.is_some()
     }
 
     /// Log which API keys are available (without exposing values)
@@ -37,6 +49,9 @@ impl ApiKeys {
         }
         if self.gemini.is_some() {
             available.push("Gemini");
+        }
+        if self.brave.is_some() {
+            available.push("Brave Search");
         }
 
         if available.is_empty() {
@@ -64,6 +79,9 @@ impl ApiKeys {
         }
         if self.gemini.is_some() {
             providers.push("Gemini");
+        }
+        if self.brave.is_some() {
+            providers.push("Brave Search");
         }
         if providers.is_empty() {
             "None".to_string()
@@ -260,6 +278,7 @@ mod tests {
         let keys = ApiKeys {
             deepseek: Some("test-key".to_string()),
             gemini: None,
+            brave: None,
         };
         assert!(keys.has_llm_provider());
         assert!(!keys.has_embeddings());

@@ -130,6 +130,10 @@ DEEPSEEK_API_KEY=PASTE_YOUR_DEEPSEEK_KEY_HERE
 # Google Gemini (for embeddings/semantic search)
 # Get your key: https://aistudio.google.com/app/apikey
 GEMINI_API_KEY=PASTE_YOUR_GEMINI_KEY_HERE
+
+# Brave Search (optional - enables web search for experts)
+# Get your key: https://brave.com/search/api/
+# BRAVE_API_KEY=PASTE_YOUR_BRAVE_KEY_HERE
 EOF
     fi
 }

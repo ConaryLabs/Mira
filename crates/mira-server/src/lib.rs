@@ -24,6 +24,7 @@ pub mod identity;
 pub mod indexer;
 pub mod llm;
 pub mod mcp;
+pub mod mcp_client;
 pub mod proactive;
 pub mod project_files;
 pub mod search;

@@ -14,13 +14,16 @@ pub async fn get_mcp_tools_context<C: ToolContext>(ctx: &C) -> String {
         return String::new();
     }
 
-    let mut context = String::from("\n\n## Available MCP Tools\n\n");
+    let mut context = String::from("\n\n## Available MCP Tools\n\nThese tools connect to external services. Call them with the prefixed name `mcp__{server}__{tool}` and appropriate arguments.\n\n");
 
     // Limit to top 5 tools per server to save tokens
     for (server, tools) in mcp_tools {
         context.push_str(&format!("**{}:**\n", server));
         for tool in tools.iter().take(5) {
-            context.push_str(&format!("  - `{}`: {}\n", tool.name, tool.description));
+            context.push_str(&format!(
+                "  - `mcp__{}__{}`: {}\n",
+                server, tool.name, tool.description
+            ));
         }
         if tools.len() > 5 {
             context.push_str(&format!("  ... and {} more tools\n", tools.len() - 5));

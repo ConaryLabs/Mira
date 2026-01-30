@@ -21,12 +21,25 @@ Safety guidelines:
 /// Tool usage guidance (appended when tools are available)
 const TOOL_GUIDANCE: &str = r#"Use tools to explore codebase before analysis. Don't ask for context - use tools:
 
+Code exploration:
 - search_code: Find code by meaning (e.g., "authentication", "error handling")
 - get_symbols: See file structure (functions, structs)
 - read_file: Read file contents
 - find_callers: See what calls a function
 - find_callees: See what a function calls
 - recall: Retrieve past decisions and context
+
+Web access:
+- web_fetch: Fetch and read a web page (pass a URL to retrieve documentation, articles, references)
+- web_search: Search the web for current information (queries return titles, URLs, and snippets)
+
+When to use web tools:
+- To look up library/API documentation you're unsure about
+- When the task involves recent developments or tools that may be past your knowledge cutoff
+- To verify best practices, check for known vulnerabilities (CVEs), or confirm API signatures
+- When the user's question references external resources or URLs
+
+MCP tools: Additional tools from configured MCP servers may be listed below. Use them for specialized tasks like looking up library documentation (e.g., Context7 tools for up-to-date API docs).
 
 Explore proactively based on task. Verify code with tools before making assumptions."#;
 
@@ -410,5 +423,10 @@ mod tests {
         assert!(TOOL_GUIDANCE.contains("find_callers"));
         assert!(TOOL_GUIDANCE.contains("find_callees"));
         assert!(TOOL_GUIDANCE.contains("recall"));
+        // Web tools
+        assert!(TOOL_GUIDANCE.contains("web_fetch"));
+        assert!(TOOL_GUIDANCE.contains("web_search"));
+        // MCP tools guidance
+        assert!(TOOL_GUIDANCE.contains("MCP tools"));
     }
 }

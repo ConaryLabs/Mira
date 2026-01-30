@@ -106,4 +106,33 @@ impl ToolContext for MiraServer {
     fn watcher(&self) -> Option<&crate::background::watcher::WatcherHandle> {
         self.watcher.as_ref()
     }
+
+    async fn list_mcp_tools(&self) -> Vec<(String, Vec<crate::tools::core::McpToolInfo>)> {
+        if let Some(ref manager) = self.mcp_client_manager {
+            manager.list_tools().await
+        } else {
+            Vec::new()
+        }
+    }
+
+    async fn mcp_call_tool(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> Result<String, String> {
+        if let Some(ref manager) = self.mcp_client_manager {
+            manager.call_tool(server_name, tool_name, args).await
+        } else {
+            Err("MCP client manager not configured".to_string())
+        }
+    }
+
+    async fn mcp_expert_tools(&self) -> Vec<crate::llm::Tool> {
+        if let Some(ref manager) = self.mcp_client_manager {
+            manager.get_expert_tools().await
+        } else {
+            Vec::new()
+        }
+    }
 }
