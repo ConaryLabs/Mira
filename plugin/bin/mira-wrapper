@@ -1,0 +1,108 @@
+#!/bin/sh
+# Mira auto-download wrapper for Claude Code plugin marketplace installs.
+# Downloads the mira binary on first invocation; execs immediately on subsequent runs.
+# All output goes to stderr — MCP uses stdout for the JSON protocol.
+
+set -e
+
+MIRA_VERSION="0.3.7"
+REPO="ConaryLabs/Mira"
+MIRA_HOME="${HOME}/.mira"
+BIN_DIR="${MIRA_HOME}/bin"
+MIRA_BIN="${BIN_DIR}/mira"
+VERSION_FILE="${BIN_DIR}/.mira-version"
+
+# --- Fast path: binary exists and version matches ---
+if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ] && [ "$(cat "$VERSION_FILE")" = "$MIRA_VERSION" ]; then
+    exec "$MIRA_BIN" "$@"
+fi
+
+# --- Slow path: download or update binary ---
+log() { printf '%s\n' "$1" >&2; }
+
+log "[mira-wrapper] Mira v${MIRA_VERSION} not found at ${MIRA_BIN} — downloading..."
+
+# Detect platform
+detect_platform() {
+    case "$(uname -s)" in
+        Linux*)  os="unknown-linux-gnu" ;;
+        Darwin*) os="apple-darwin" ;;
+        *)       log "[mira-wrapper] Unsupported OS: $(uname -s). Install manually: https://github.com/${REPO}"; exit 1 ;;
+    esac
+
+    case "$(uname -m)" in
+        x86_64|amd64)   arch="x86_64" ;;
+        arm64|aarch64)
+            if [ "$os" = "apple-darwin" ]; then
+                arch="aarch64"
+            else
+                log "[mira-wrapper] ARM64 Linux is not yet supported."; exit 1
+            fi
+            ;;
+        *) log "[mira-wrapper] Unsupported architecture: $(uname -m)"; exit 1 ;;
+    esac
+
+    printf '%s' "${arch}-${os}"
+}
+
+# Pick a download tool
+fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$1"
+    else
+        log "[mira-wrapper] Neither curl nor wget found. Install one and retry."; exit 1
+    fi
+}
+
+platform="$(detect_platform)"
+url="https://github.com/${REPO}/releases/download/v${MIRA_VERSION}/mira-${platform}.tar.gz"
+
+log "[mira-wrapper] Platform: ${platform}"
+log "[mira-wrapper] Downloading from: ${url}"
+
+# Create directories
+mkdir -p "$BIN_DIR"
+
+# Download and extract to a temp file, then atomically move into place
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+fetch "$url" | tar -xz -C "$tmp_dir"
+
+chmod +x "${tmp_dir}/mira"
+
+# Atomic install — safe if multiple wrapper instances race
+mv -f "${tmp_dir}/mira" "$MIRA_BIN"
+printf '%s' "$MIRA_VERSION" > "$VERSION_FILE"
+
+# Strip macOS quarantine attribute if present
+case "$(uname -s)" in
+    Darwin*) xattr -d com.apple.quarantine "$MIRA_BIN" 2>/dev/null || true ;;
+esac
+
+# Create ~/.mira/.env with placeholder keys if missing
+if [ ! -f "${MIRA_HOME}/.env" ]; then
+    log "[mira-wrapper] Creating ${MIRA_HOME}/.env with placeholder API keys..."
+    cat > "${MIRA_HOME}/.env" << 'ENVEOF'
+# ============================================
+# MIRA API KEYS - Replace the values below
+# ============================================
+
+# DeepSeek (for expert consultations)
+# Get your key: https://platform.deepseek.com/api_keys
+DEEPSEEK_API_KEY=PASTE_YOUR_DEEPSEEK_KEY_HERE
+
+# Google Gemini (for embeddings/semantic search)
+# Get your key: https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=PASTE_YOUR_GEMINI_KEY_HERE
+
+# Brave Search (optional - enables web search for experts)
+# Get your key: https://brave.com/search/api/
+# BRAVE_API_KEY=PASTE_YOUR_BRAVE_KEY_HERE
+ENVEOF
+fi
+
+log "[mira-wrapper] Installed mira v${MIRA_VERSION} to ${MIRA_BIN}"
+exec "$MIRA_BIN" "$@"

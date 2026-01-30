@@ -14,8 +14,8 @@ Think of it as giving Claude Code long-term memory, deep code understanding, and
 
 ## What's New in v0.3.7
 
+- **Auto-Download**: Marketplace installs now auto-download the `mira` binary on first launch — no manual installation needed
 - **Plugin Fix**: Hooks and MCP config now ship with portable paths — marketplace installs work correctly
-- **Plugin Manifest**: Explicit `hooks`, `mcpServers`, and `skills` references for reliable component discovery
 - **Stop Hook**: Session cleanup hook added to all installation paths (was plugin-only)
 - **PostToolUse Scoped**: Hook now only fires on file mutations (`Write|Edit|NotebookEdit`), not every tool call
 

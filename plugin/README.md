@@ -12,60 +12,45 @@ Semantic memory and code intelligence for Claude Code. Provides persistent memor
 
 ## Installation
 
-### Quick Install (Recommended)
+### Plugin Marketplace (Recommended)
+
+Install via the Claude Code plugin marketplace:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
+claude plugin marketplace add ConaryLabs/Mira
+claude plugin install mira@mira
 ```
 
-Then add your API keys to `~/.mira/.env`:
+The `mira` binary is **auto-downloaded** on first launch — no manual installation needed. The wrapper script (`plugin/bin/mira-wrapper`) handles downloading the correct binary for your platform to `~/.mira/bin/mira`.
+
+After the first launch, add your API keys to `~/.mira/.env`:
+
 ```bash
 DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
 GEMINI_API_KEY=your-key-here    # https://aistudio.google.com/app/apikey
 ```
 
-### Option 2: Build from Source
+### Alternative: Standalone Install
 
-#### 1. Build Mira
+If you prefer to install the binary system-wide (adds `mira` to your PATH):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
+```
+
+### Alternative: Build from Source
 
 ```bash
 git clone https://github.com/ConaryLabs/Mira.git
 cd Mira
 cargo build --release
-
-# Add to PATH
 sudo cp target/release/mira /usr/local/bin/
 ```
 
-#### 2. Configure Plugin Files
-
-Copy the example config files:
+Then run Claude Code with the plugin directory:
 
 ```bash
-cd plugin
-
-# MCP server config
-cp .mcp.json.example .mcp.json
-
-# Hooks config
-cp hooks/hooks.json.example hooks/hooks.json
-```
-
-The config files expect `mira` to be in your PATH. If you installed to a different location, edit both files to use the full path.
-
-#### 3. Set Environment Variables
-
-Add to your shell profile (`~/.bashrc` or `~/.zshrc`):
-
-```bash
-export DEEPSEEK_API_KEY="your-key"    # For expert consultations
-export GEMINI_API_KEY="your-key"       # For embeddings
-```
-
-#### 4. Run Claude Code with Plugin
-
-```bash
-claude --plugin-dir /path/to/mira/plugin
+claude --plugin-dir /path/to/Mira/plugin
 ```
 
 ## Skills

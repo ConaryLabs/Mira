@@ -82,16 +82,18 @@ Where it all began - a personal AI assistant with memory.
 
 ## [0.3.7] - 2026-01-30
 
+### Added
+- **Auto-download wrapper** - Plugin marketplace installs now auto-download the `mira` binary on first launch via `plugin/bin/mira-wrapper`. No manual binary installation needed — the wrapper detects platform, downloads from GitHub Releases, and caches to `~/.mira/bin/mira` with version pinning and atomic installs.
+- **Plugin manifest component refs** - `plugin.json` now declares `hooks`, `mcpServers`, `skills`, and `category` fields for explicit component discovery.
+
 ### Fixed
+- **Marketplace installs broken** - `claude plugin install mira@mira` downloaded plugin files but not the `mira` binary, causing all hooks and MCP server to fail. The wrapper script resolves this completely.
 - **Plugin configs not shipping** - `plugin/hooks/hooks.json` and `plugin/.mcp.json` were gitignored, so marketplace installs got no hook or MCP config. Now tracked with portable paths.
-- **Hardcoded dev paths in plugin configs** - Plugin hook commands and MCP server pointed to `/home/peter/...` instead of bare `mira`. Fixed to use PATH-resolved `mira` command.
+- **Hardcoded dev paths in plugin configs** - Plugin hook commands and MCP server pointed to `/home/peter/...` instead of bare `mira`. Fixed to use `${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper`.
 - **Dead `MIRA_DB` env var** - Removed unused environment variable from plugin `.mcp.json` (db path is always `~/.mira/mira.db`, resolved internally).
 - **PostToolUse hook too broad** - Matcher was empty (fired on every tool call). Now scoped to `Write|Edit|NotebookEdit` across all installation paths.
 - **Missing Stop hook in install.sh** - Session cleanup hook was only configured via plugin install, not via the installer script or manual setup docs.
 - **Timeout inconsistencies** - Aligned all hook timeouts across plugin, installer, README, and CONFIGURATION docs (SessionStart 10s, PostToolUse/UserPrompt/Stop 5s, PreCompact 30s).
-
-### Added
-- **Plugin manifest component refs** - `plugin.json` now declares `hooks`, `mcpServers`, `skills`, and `category` fields for explicit component discovery.
 
 ## [0.3.6] - 2026-01-30
 
