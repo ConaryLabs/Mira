@@ -80,6 +80,23 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-01-29
+
+### Added
+- **Code index sharding** - Code intelligence tables (`code_symbols`, `call_graph`, `imports`, `codebase_modules`, `pending_embeddings`, `vec_code`, `code_fts`) moved to a separate `mira-code.db` database with its own connection pool. Eliminates write contention between indexing and normal tool calls.
+- **`PRAGMA busy_timeout=5000`** - SQLite now retries for up to 5 seconds on write contention instead of failing immediately with `SQLITE_BUSY`.
+- **`interact_with_retry()`** - New retry wrapper with exponential backoff (3 attempts: 100ms/500ms/2s) for critical database writes.
+- **Automatic migration** - On first run, existing code tables are detected in the main database and a fresh `mira-code.db` is created alongside it. Old tables are dropped after successful migration.
+- **`code_pool()` on ToolContext** - Tool handlers can now access the code database directly via a dedicated pool.
+
+### Changed
+- **`log_tool_call` is now fire-and-forget** - Tool history logging no longer blocks tool responses. Uses `tokio::spawn` instead of awaiting the write.
+- **Background workers use dual pools** - Slow lane workers (summaries, code health, documentation) route reads/writes to the appropriate database pool.
+- **Cross-DB JOINs eliminated** - Queries that previously joined code and main tables now use two-step application-level lookups.
+
+### Fixed
+- **SQLite concurrent write failures** - All write contention issues resolved through busy_timeout, retry logic, and database sharding.
+
 ## [0.3.4] - 2026-01-28
 
 ### Changed
