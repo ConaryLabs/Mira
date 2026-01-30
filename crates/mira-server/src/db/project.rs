@@ -92,18 +92,69 @@ pub fn upsert_session_with_branch_sync(
 }
 
 /// Get indexed projects (projects with codebase_modules) - sync version
+///
+/// NOTE: After code DB sharding, codebase_modules lives in the code database.
+/// This function requires a connection to the code DB. Callers that need
+/// project paths should use `get_indexed_project_ids_sync` on the code pool,
+/// then `get_project_paths_by_ids_sync` on the main pool.
 pub fn get_indexed_projects_sync(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
-    let mut stmt = conn.prepare(
+    // Try the old single-DB JOIN first (for backwards compat / tests)
+    let result = conn.prepare(
         "SELECT DISTINCT p.id, p.path
          FROM projects p
          JOIN codebase_modules m ON m.project_id = p.id",
-    )?;
+    );
 
-    let projects = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+    match result {
+        Ok(mut stmt) => {
+            let projects = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok(projects)
+        }
+        Err(_) => {
+            // Fallback: projects table doesn't exist in this DB (sharded layout).
+            // Return empty - caller should use the two-step approach.
+            Ok(vec![])
+        }
+    }
+}
+
+/// Get project IDs that have indexed code (from codebase_modules).
+/// Run this on the code database pool.
+pub fn get_indexed_project_ids_sync(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT project_id FROM codebase_modules WHERE project_id IS NOT NULL",
+    )?;
+    let ids = stmt
+        .query_map([], |row| row.get(0))?
         .filter_map(|r| r.ok())
         .collect();
+    Ok(ids)
+}
 
+/// Get project paths for a list of project IDs.
+/// Run this on the main database pool.
+pub fn get_project_paths_by_ids_sync(
+    conn: &Connection,
+    ids: &[i64],
+) -> rusqlite::Result<Vec<(i64, String)>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let placeholders: Vec<String> = ids.iter().map(|_| "?".to_string()).collect();
+    let sql = format!(
+        "SELECT id, path FROM projects WHERE id IN ({})",
+        placeholders.join(",")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let projects = stmt
+        .query_map(params.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
     Ok(projects)
 }
 

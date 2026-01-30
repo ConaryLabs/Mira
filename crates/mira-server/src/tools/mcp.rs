@@ -17,6 +17,10 @@ impl ToolContext for MiraServer {
         &self.pool
     }
 
+    fn code_pool(&self) -> &Arc<crate::db::pool::DatabasePool> {
+        &self.code_pool
+    }
+
     fn embeddings(&self) -> Option<&Arc<crate::embeddings::EmbeddingClient>> {
         self.embeddings.as_ref()
     }

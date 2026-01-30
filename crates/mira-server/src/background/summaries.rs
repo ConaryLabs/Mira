@@ -4,8 +4,8 @@
 use crate::cartographer;
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    get_modules_needing_summaries_sync, get_projects_with_pending_summaries_sync,
-    update_module_purposes_sync,
+    get_modules_needing_summaries_sync, get_project_ids_needing_summaries_sync,
+    get_project_paths_by_ids_sync, update_module_purposes_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use std::path::Path;
@@ -18,16 +18,34 @@ const BATCH_SIZE: usize = 5;
 /// Delay between API calls (rate limiting)
 const RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
 
-/// Process pending summaries with rate limiting
+/// Process pending summaries with rate limiting.
+///
+/// - `code_pool`: for reading/writing codebase_modules
+/// - `main_pool`: for recording LLM usage
 pub async fn process_queue(
-    pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    main_pool: &Arc<DatabasePool>,
     client: &Arc<dyn LlmClient>,
 ) -> Result<usize, String> {
-    // Get all projects with pending summaries
-    let projects = pool
+    // Step 1: Get project IDs with pending summaries (from code DB)
+    let project_ids = code_pool
         .interact(move |conn| {
-            get_projects_with_pending_summaries_sync(conn)
-                .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
+            get_project_ids_needing_summaries_sync(conn)
+                .map_err(|e| anyhow::anyhow!("Failed to get project IDs: {}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if project_ids.is_empty() {
+        return Ok(0);
+    }
+
+    // Step 2: Get project paths from main DB
+    let ids_clone = project_ids.clone();
+    let projects = main_pool
+        .interact(move |conn| {
+            get_project_paths_by_ids_sync(conn, &ids_clone)
+                .map_err(|e| anyhow::anyhow!("Failed to get project paths: {}", e))
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -39,8 +57,8 @@ pub async fn process_queue(
     let mut total_processed = 0;
 
     for (project_id, project_path) in projects {
-        // Get modules needing summaries for this project
-        let mut modules = pool
+        // Get modules needing summaries for this project (from code DB)
+        let mut modules = code_pool
             .interact(move |conn| {
                 get_modules_needing_summaries_sync(conn, project_id)
                     .map_err(|e| anyhow::anyhow!("Failed to get modules: {}", e))
@@ -74,9 +92,9 @@ pub async fn process_queue(
         let messages = PromptBuilder::for_summaries().build_messages(prompt);
         match client.chat(messages, None).await {
             Ok(result) => {
-                // Record usage
+                // Record usage (main DB)
                 record_llm_usage(
-                    pool,
+                    main_pool,
                     client.provider_type(),
                     &client.model_name(),
                     "background:summaries",
@@ -89,7 +107,8 @@ pub async fn process_queue(
                 if let Some(content) = result.content {
                     let summaries = cartographer::parse_summary_response(&content);
                     if !summaries.is_empty() {
-                        match pool
+                        // Update module purposes (code DB)
+                        match code_pool
                             .interact(move |conn| {
                                 update_module_purposes_sync(conn, project_id, &summaries)
                                     .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))

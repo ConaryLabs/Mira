@@ -14,6 +14,7 @@ use uuid::Uuid;
 /// Test context that implements ToolContext for integration testing
 pub struct TestContext {
     pool: Arc<DatabasePool>,
+    code_pool: Arc<DatabasePool>,
     llm_factory: Arc<ProviderFactory>,
     project_state: Arc<RwLock<Option<ProjectContext>>>,
     session_state: Arc<RwLock<Option<String>>>,
@@ -23,11 +24,16 @@ pub struct TestContext {
 impl TestContext {
     /// Create a new test context with in-memory database
     pub async fn new() -> Self {
-        // Create pool with in-memory database
+        // Create pools with in-memory databases
         let pool = Arc::new(
             DatabasePool::open_in_memory()
                 .await
                 .expect("Failed to create in-memory pool"),
+        );
+        let code_pool = Arc::new(
+            DatabasePool::open_code_db_in_memory()
+                .await
+                .expect("Failed to create in-memory code pool"),
         );
 
         // Create LLM factory (will have no clients since no API keys are set in test env)
@@ -35,6 +41,7 @@ impl TestContext {
 
         Self {
             pool,
+            code_pool,
             llm_factory,
             project_state: Arc::new(RwLock::new(None)),
             session_state: Arc::new(RwLock::new(None)),
@@ -70,6 +77,10 @@ impl TestContext {
 impl mira::tools::core::ToolContext for TestContext {
     fn pool(&self) -> &Arc<DatabasePool> {
         &self.pool
+    }
+
+    fn code_pool(&self) -> &Arc<DatabasePool> {
+        &self.code_pool
     }
 
     fn embeddings(&self) -> Option<&Arc<EmbeddingClient>> {

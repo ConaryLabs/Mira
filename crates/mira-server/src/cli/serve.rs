@@ -17,6 +17,62 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+/// Migrate code tables from main DB to code DB on first run after sharding.
+///
+/// Checks if code_symbols still has data in the main DB. If so, it means
+/// this is the first run with the sharded layout. We don't copy data
+/// (re-indexing is cheap and safer) - we just drop the old tables from the
+/// main DB to reclaim space.
+async fn migrate_code_tables_if_needed(
+    main_pool: &Arc<DatabasePool>,
+    _code_pool: &Arc<DatabasePool>,
+) {
+    let has_old_code_tables = main_pool
+        .interact(|conn| {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='code_symbols'",
+                    [],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            Ok(exists)
+        })
+        .await
+        .unwrap_or(false);
+
+    if has_old_code_tables {
+        info!("Migrating: dropping code index tables from main DB (will re-index into mira-code.db)");
+        if let Err(e) = main_pool
+            .interact(|conn| {
+                // Drop in dependency order. Ignore errors for tables that may not exist.
+                let tables = [
+                    "DROP TABLE IF EXISTS code_fts",
+                    "DROP TABLE IF EXISTS pending_embeddings",
+                    "DROP TABLE IF EXISTS call_graph",
+                    "DROP TABLE IF EXISTS imports",
+                    "DROP TABLE IF EXISTS codebase_modules",
+                    "DROP TABLE IF EXISTS vec_code",
+                    "DROP TABLE IF EXISTS code_symbols",
+                ];
+                for sql in &tables {
+                    if let Err(e) = conn.execute_batch(sql) {
+                        tracing::warn!("Migration warning (non-fatal): {} - {}", sql, e);
+                    }
+                }
+                // Reclaim space
+                if let Err(e) = conn.execute_batch("VACUUM") {
+                    tracing::warn!("VACUUM after migration failed (non-fatal): {}", e);
+                }
+                Ok(())
+            })
+            .await
+        {
+            warn!("Code table migration failed (non-fatal, will retry next start): {}", e);
+        }
+    }
+}
+
 /// Setup server context with database, embeddings, and restored project/session state
 pub async fn setup_server_context() -> Result<MiraServer> {
     // Load configuration once (single source of truth)
@@ -31,9 +87,14 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     // Create shared HTTP client for all network operations
     let http_client = create_shared_client();
 
-    // Open database pool
+    // Open database pools (main + code index)
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let code_db_path = db_path.with_file_name("mira-code.db");
+    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
+
+    // Migrate code tables from main DB to code DB if needed
+    migrate_code_tables_if_needed(&pool, &code_pool).await;
 
     // Create embeddings from centralized config
     let embeddings = get_embeddings_from_config(
@@ -44,7 +105,8 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     );
 
     // Create server context from centralized config
-    let mut server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
+    let mut server =
+        MiraServer::from_api_keys(pool.clone(), code_pool, embeddings, &env_config.api_keys);
 
     // Initialize MCP client manager for external MCP server access (expert tools)
     let cwd = std::env::current_dir()
@@ -112,9 +174,14 @@ pub async fn run_mcp_server() -> Result<()> {
     // Create shared HTTP client for all network operations
     let http_client = create_shared_client();
 
-    // Open database pool
+    // Open database pools (main + code index)
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let code_db_path = db_path.with_file_name("mira-code.db");
+    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
+
+    // Migrate code tables from main DB to code DB if needed
+    migrate_code_tables_if_needed(&pool, &code_pool).await;
 
     // Initialize embeddings from centralized config
     let embeddings = get_embeddings_from_config(
@@ -146,21 +213,32 @@ pub async fn run_mcp_server() -> Result<()> {
         info!("No LLM providers configured (set DEEPSEEK_API_KEY or GEMINI_API_KEY)");
     }
 
-    // Spawn background worker for batch processing
-    let bg_pool = pool.clone();
+    // Spawn background workers with separate pools
     let bg_embeddings = embeddings.clone();
-    let (_shutdown_tx, fast_lane_notify) =
-        background::spawn(bg_pool, bg_embeddings, llm_factory.clone());
+    let (_shutdown_tx, fast_lane_notify) = background::spawn_with_pools(
+        code_pool.clone(),
+        pool.clone(),
+        bg_embeddings,
+        llm_factory.clone(),
+    );
     info!("Background worker started");
 
-    // Spawn file watcher for incremental indexing
+    // Spawn file watcher for incremental indexing (uses code_pool)
     let (_watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
-    let watcher_handle =
-        background::watcher::spawn(pool.clone(), watcher_shutdown_rx, Some(fast_lane_notify));
+    let watcher_handle = background::watcher::spawn(
+        code_pool.clone(),
+        watcher_shutdown_rx,
+        Some(fast_lane_notify),
+    );
     info!("File watcher started");
 
     // Create MCP server with watcher from centralized config
-    let mut server = MiraServer::from_api_keys(pool.clone(), embeddings, &env_config.api_keys);
+    let mut server = MiraServer::from_api_keys(
+        pool.clone(),
+        code_pool,
+        embeddings,
+        &env_config.api_keys,
+    );
     server.watcher = Some(watcher_handle);
 
     // Initialize MCP client manager for external MCP server access (expert tools)

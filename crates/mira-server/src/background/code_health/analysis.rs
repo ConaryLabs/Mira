@@ -76,9 +76,13 @@ struct AnalysisConfig {
     limit: usize,
 }
 
-/// Generic LLM analysis function that abstracts the common pattern
+/// Generic LLM analysis function that abstracts the common pattern.
+///
+/// - `code_pool`: for querying code_symbols (query_fn)
+/// - `main_pool`: for storing findings (memory_facts) and recording LLM usage
 async fn analyze_functions<F, P>(
-    pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    main_pool: &Arc<DatabasePool>,
     client: &Arc<dyn LlmClient>,
     project_id: i64,
     project_path: &str,
@@ -99,9 +103,9 @@ where
         category,
         limit,
     } = config;
-    // Query database for functions to analyze
+    // Query code database for functions to analyze
     let project_path_owned = project_path.to_string();
-    let functions = pool
+    let functions = code_pool
         .interact(move |conn| {
             query_fn(conn, project_id, &project_path_owned).map_err(|e| anyhow::anyhow!("{}", e))
         })
@@ -151,9 +155,9 @@ where
 
         match client.chat(messages, None).await {
             Ok(result) => {
-                // Record usage
+                // Record usage (main DB)
                 record_llm_usage(
-                    pool,
+                    main_pool,
                     client.provider_type(),
                     &client.model_name(),
                     &format!("background:code_health:{}", category),
@@ -172,14 +176,14 @@ where
                         continue;
                     }
 
-                    // Store the issue
+                    // Store the issue (main DB)
                     let issue_content = format!(
                         "[{}] {}:{} `{}`\n{}",
                         content_prefix, file_path, start_line, name, content
                     );
                     let key = format!("{}:{}:{}", key_prefix, file_path, name);
 
-                    pool.interact(move |conn| {
+                    main_pool.interact(move |conn| {
                         store_memory_sync(
                             conn,
                             StoreMemoryParams {
@@ -223,13 +227,15 @@ where
 
 /// Use LLM to analyze large/complex functions
 pub async fn scan_complexity(
-    pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    main_pool: &Arc<DatabasePool>,
     client: &Arc<dyn LlmClient>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
     analyze_functions(
-        pool,
+        code_pool,
+        main_pool,
         client,
         project_id,
         project_path,
@@ -277,7 +283,8 @@ fn get_large_functions(
 
 /// LLM-powered analysis of error handling quality in complex functions
 pub async fn scan_error_quality(
-    pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    main_pool: &Arc<DatabasePool>,
     client: &Arc<dyn LlmClient>,
     project_id: i64,
     project_path: &str,
@@ -297,7 +304,8 @@ pub async fn scan_error_quality(
     };
 
     analyze_functions(
-        pool,
+        code_pool,
+        main_pool,
         client,
         project_id,
         project_path,

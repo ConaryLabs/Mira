@@ -44,7 +44,7 @@ pub use background::{
     // Permission hooks
     get_permission_rules_sync,
     // Summaries processor
-    get_projects_with_pending_summaries_sync,
+    get_project_ids_needing_summaries_sync, get_projects_with_pending_summaries_sync,
     get_scan_info_sync,
     get_symbols_for_file_sync,
     get_unused_functions_sync,
@@ -119,8 +119,9 @@ pub use milestones::{
 };
 pub use project::{
     clear_active_project_sync, delete_server_state_sync, get_health_alerts_sync,
-    get_indexed_projects_sync, get_last_active_project_sync, get_or_create_project_sync,
-    get_preferences_sync, get_project_briefing_sync, get_project_info_sync,
+    get_indexed_project_ids_sync, get_indexed_projects_sync, get_last_active_project_sync,
+    get_or_create_project_sync, get_preferences_sync, get_project_briefing_sync,
+    get_project_info_sync, get_project_paths_by_ids_sync,
     get_projects_for_briefing_check_sync, get_server_state_sync, list_projects_sync,
     mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
     set_server_state_sync, update_project_briefing_sync, update_project_name_sync,

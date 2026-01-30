@@ -30,7 +30,10 @@ const PONDERING_CYCLE_INTERVAL: u64 = 10;
 
 /// Slow lane worker for LLM-dependent background tasks
 pub struct SlowLaneWorker {
+    /// Main database pool (sessions, memory, LLM usage, etc.)
     pool: Arc<DatabasePool>,
+    /// Code index database pool (code_symbols, vec_code, codebase_modules, etc.)
+    code_pool: Arc<DatabasePool>,
     llm_factory: Arc<ProviderFactory>,
     shutdown: watch::Receiver<bool>,
     cycle_count: u64,
@@ -39,11 +42,13 @@ pub struct SlowLaneWorker {
 impl SlowLaneWorker {
     pub fn new(
         pool: Arc<DatabasePool>,
+        code_pool: Arc<DatabasePool>,
         llm_factory: Arc<ProviderFactory>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         Self {
             pool,
+            code_pool,
             llm_factory,
             shutdown,
             cycle_count: 0,
@@ -112,7 +117,7 @@ impl SlowLaneWorker {
         // Process stale sessions (close and summarize)
         processed += self.process_stale_sessions(&client).await?;
 
-        // Process summaries (rate limited)
+        // Process summaries (rate limited) - uses code DB for module data
         processed += self.process_summaries(&client).await?;
 
         // Process project briefings
@@ -146,7 +151,7 @@ impl SlowLaneWorker {
     }
 
     async fn process_summaries(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
-        let count = summaries::process_queue(&self.pool, client).await?;
+        let count = summaries::process_queue(&self.code_pool, &self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} summaries", count);
         }
@@ -162,7 +167,7 @@ impl SlowLaneWorker {
     }
 
     async fn process_documentation(&self) -> Result<usize, String> {
-        let count = documentation::process_documentation(&self.pool, &self.llm_factory).await?;
+        let count = documentation::process_documentation(&self.pool, &self.code_pool, &self.llm_factory).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} documentation tasks", count);
         }
@@ -170,7 +175,8 @@ impl SlowLaneWorker {
     }
 
     async fn process_code_health(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
-        let count = code_health::process_code_health(&self.pool, Some(client)).await?;
+        let count =
+            code_health::process_code_health(&self.pool, &self.code_pool, Some(client)).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} health issues", count);
         }

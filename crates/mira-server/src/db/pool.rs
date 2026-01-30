@@ -156,6 +156,117 @@ impl DatabasePool {
         Ok(db_pool)
     }
 
+    /// Open a pooled database for the code index at the given path.
+    ///
+    /// Same setup as `open()` but runs code-specific migrations instead
+    /// of the main schema migrations. The code database holds:
+    /// code_symbols, call_graph, imports, codebase_modules, vec_code,
+    /// code_fts, and pending_embeddings.
+    pub async fn open_code_db(path: &Path) -> Result<Self> {
+        ensure_sqlite_vec_registered();
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                let mut perms = std::fs::metadata(parent)?.permissions();
+                perms.set_mode(0o700);
+                std::fs::set_permissions(parent, perms)?;
+            }
+        }
+
+        let path_buf = path.to_path_buf();
+        let path_str = path_to_string(path);
+
+        let cfg = Config::new(&path_str);
+        let pool = cfg
+            .builder(Runtime::Tokio1)
+            .context("Failed to create pool builder for code DB")?
+            .post_create(Hook::async_fn(move |conn, _metrics| {
+                let path_for_perms = path_buf.clone();
+                Box::pin(async move {
+                    conn.interact(move |conn| {
+                        setup_connection(conn)?;
+
+                        #[cfg(unix)]
+                        if let Ok(metadata) = std::fs::metadata(&path_for_perms) {
+                            let mut perms = metadata.permissions();
+                            perms.set_mode(0o600);
+                            if let Err(e) = std::fs::set_permissions(&path_for_perms, perms) {
+                                tracing::warn!(
+                                    "Failed to set code DB file permissions to 0600: {}",
+                                    e
+                                );
+                            }
+                        }
+
+                        Ok::<_, rusqlite::Error>(())
+                    })
+                    .await
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
+                    })?
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(
+                            format!("connection setup failed: {e}").into(),
+                        )
+                    })
+                })
+            }))
+            .build()
+            .context("Failed to build code DB connection pool")?;
+
+        let db_pool = Self {
+            pool,
+            path: Some(path.to_path_buf()),
+            memory_uri: None,
+        };
+
+        db_pool.run_code_migrations().await?;
+
+        Ok(db_pool)
+    }
+
+    /// Open a pooled in-memory database for the code index (for tests).
+    pub async fn open_code_db_in_memory() -> Result<Self> {
+        ensure_sqlite_vec_registered();
+
+        let unique_id = uuid::Uuid::new_v4();
+        let uri = format!("file:memdb_code_{unique_id}?mode=memory&cache=shared");
+
+        let cfg = Config::new(&uri);
+        let pool = cfg
+            .builder(Runtime::Tokio1)
+            .context("Failed to create pool builder for in-memory code DB")?
+            .post_create(Hook::async_fn(|conn, _metrics| {
+                Box::pin(async move {
+                    conn.interact(|conn| {
+                        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+                        Ok::<_, rusqlite::Error>(())
+                    })
+                    .await
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
+                    })?
+                    .map_err(|e| {
+                        deadpool_sqlite::HookError::Message(
+                            format!("connection setup failed: {e}").into(),
+                        )
+                    })
+                })
+            }))
+            .build()
+            .context("Failed to build in-memory code DB pool")?;
+
+        let db_pool = Self {
+            pool,
+            path: None,
+            memory_uri: Some(uri),
+        };
+        db_pool.run_code_migrations().await?;
+        Ok(db_pool)
+    }
+
     /// Open a pooled in-memory database.
     ///
     /// Uses a shared cache URI so all connections access the same in-memory database.
@@ -284,17 +395,70 @@ impl DatabasePool {
             .map_err(|e| e.to_string())
     }
 
+    /// Run a closure with retry on SQLITE_BUSY errors.
+    ///
+    /// Uses exponential backoff (100ms, 500ms, 2000ms) for up to 3 attempts.
+    /// Use this for critical writes that must not be lost (session creation,
+    /// memory storage, goal updates). For non-critical writes (tool history,
+    /// analytics), prefer fire-and-forget with `tokio::spawn`.
+    pub async fn interact_with_retry<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + Clone + 'static,
+        R: Send + 'static,
+    {
+        let delays = [
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(2000),
+        ];
+
+        for (attempt, delay) in delays.iter().enumerate() {
+            let f_clone = f.clone();
+            match self.interact(f_clone).await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("database is locked") || err_str.contains("SQLITE_BUSY") {
+                        tracing::warn!(
+                            "SQLITE_BUSY on attempt {}/{}, retrying in {:?}",
+                            attempt + 1,
+                            delays.len(),
+                            delay
+                        );
+                        tokio::time::sleep(*delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        // Final attempt (no retry after this)
+        self.interact(f).await
+    }
+
     /// Get the database file path (None for in-memory).
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
 
-    /// Run schema migrations.
+    /// Run main schema migrations.
     ///
     /// Called during pool creation, but can also be called explicitly if needed.
     async fn run_migrations(&self) -> Result<()> {
         self.interact(|conn| {
             super::schema::run_all_migrations(conn)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Run code database schema migrations.
+    ///
+    /// Called during code pool creation for the separate code index database.
+    async fn run_code_migrations(&self) -> Result<()> {
+        self.interact(|conn| {
+            super::schema::run_code_migrations(conn)?;
             Ok(())
         })
         .await
@@ -403,8 +567,16 @@ pub struct PoolStatus {
 /// Configure a connection after it's created.
 /// Called from the post_create hook.
 fn setup_connection(conn: &Connection) -> rusqlite::Result<()> {
-    // Enable WAL mode for better concurrency and foreign key enforcement
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    // Enable WAL mode for better concurrency, foreign key enforcement,
+    // busy timeout for write contention (5s retry window), and
+    // NORMAL synchronous mode (safe with WAL, reduces fsync overhead).
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; \
+         PRAGMA foreign_keys=ON; \
+         PRAGMA busy_timeout=5000; \
+         PRAGMA synchronous=NORMAL; \
+         PRAGMA journal_size_limit=32768;",
+    )?;
     Ok(())
 }
 
@@ -487,6 +659,88 @@ mod tests {
         }
 
         // Verify all inserted
+        let count: i64 = pool
+            .interact(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+                    .map_err(Into::into)
+            })
+            .await
+            .expect("Count failed");
+
+        assert_eq!(count, 10);
+    }
+
+    #[tokio::test]
+    async fn test_interact_with_retry_succeeds() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("Failed to open pool");
+
+        // A normal operation should succeed on first attempt
+        let result = pool
+            .interact_with_retry(|conn| {
+                conn.execute(
+                    "INSERT INTO projects (path, name) VALUES (?, ?)",
+                    rusqlite::params!["/retry/test", "retry-test"],
+                )?;
+                Ok(conn.last_insert_rowid())
+            })
+            .await
+            .expect("interact_with_retry should succeed");
+
+        assert!(result > 0);
+    }
+
+    #[tokio::test]
+    async fn test_interact_with_retry_non_busy_error_fails_fast() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("Failed to open pool");
+
+        // A SQL error (not SQLITE_BUSY) should fail immediately without retrying
+        let result = pool
+            .interact_with_retry(|conn| {
+                conn.execute("INSERT INTO nonexistent_table VALUES (?)", rusqlite::params![1])?;
+                Ok(())
+            })
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_writes_with_busy_timeout() {
+        let pool = std::sync::Arc::new(
+            DatabasePool::open_in_memory()
+                .await
+                .expect("Failed to open pool"),
+        );
+
+        // Spawn 10 concurrent write operations - all should succeed
+        // thanks to busy_timeout PRAGMA
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                pool.interact_with_retry(move |conn| {
+                    conn.execute(
+                        "INSERT INTO projects (path, name) VALUES (?, ?)",
+                        rusqlite::params![
+                            format!("/concurrent/{i}"),
+                            format!("project-{i}")
+                        ],
+                    )?;
+                    Ok(())
+                })
+                .await
+            }));
+        }
+
+        // All should succeed
+        for handle in handles {
+            handle.await.unwrap().expect("Concurrent write failed");
+        }
+
         let count: i64 = pool
             .interact(|conn| {
                 conn.query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))

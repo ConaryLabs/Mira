@@ -64,21 +64,26 @@ pub fn calculate_source_signature_hash(symbols: &[CodeSymbol]) -> Option<String>
     Some(format!("{:x}", hasher.finalize()))
 }
 
-/// Process documentation detection for a single cycle
-/// Called from SlowLaneWorker
+/// Process documentation detection for a single cycle.
+/// Called from SlowLaneWorker.
+///
+/// - `main_pool`: for documentation_inventory, memory_facts, doc tasks, LLM usage
+/// - `code_pool`: for code_symbols, codebase_modules
+///
 /// Only detects gaps - Claude Code writes docs directly via documentation(action="get/complete")
 pub async fn process_documentation(
-    pool: &Arc<DatabasePool>,
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
     llm_factory: &Arc<crate::llm::ProviderFactory>,
 ) -> Result<usize, String> {
     // Scan for missing and stale documentation (detection only)
-    let scan_count = scan_documentation_gaps(pool).await?;
+    let scan_count = scan_documentation_gaps(main_pool, code_pool).await?;
     if scan_count > 0 {
         tracing::info!("Documentation scan found {} gaps", scan_count);
     }
 
     // Analyze impact of stale docs using LLM
-    let analyzed = analyze_stale_doc_impacts(pool, llm_factory).await?;
+    let analyzed = analyze_stale_doc_impacts(main_pool, code_pool, llm_factory).await?;
     if analyzed > 0 {
         tracing::info!("Analyzed impact for {} stale docs", analyzed);
     }
@@ -86,9 +91,13 @@ pub async fn process_documentation(
     Ok(scan_count + analyzed)
 }
 
-/// Analyze the impact of changes for stale documentation using LLM
+/// Analyze the impact of changes for stale documentation using LLM.
+///
+/// - `main_pool`: for documentation_inventory, LLM usage
+/// - `code_pool`: for code_symbols (current signatures)
 async fn analyze_stale_doc_impacts(
-    pool: &Arc<DatabasePool>,
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
     llm_factory: &Arc<crate::llm::ProviderFactory>,
 ) -> Result<usize, String> {
     use crate::db::documentation::{get_stale_docs_needing_analysis, update_doc_impact_analysis};
@@ -104,7 +113,7 @@ async fn analyze_stale_doc_impacts(
     };
 
     // Get all projects with stale docs needing analysis
-    let projects: Vec<(i64, String)> = pool
+    let projects: Vec<(i64, String)> = main_pool
         .run(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT DISTINCT p.id, p.path FROM projects p
@@ -122,7 +131,7 @@ async fn analyze_stale_doc_impacts(
 
     for (project_id, _project_path) in projects {
         // Get stale docs for this project (limit to avoid overwhelming)
-        let stale_docs = pool
+        let stale_docs = main_pool
             .run(move |conn| get_stale_docs_needing_analysis(conn, project_id, 3))
             .await?;
 
@@ -132,7 +141,7 @@ async fn analyze_stale_doc_impacts(
             let staleness_reason = doc.staleness_reason.as_deref().unwrap_or("source changed");
 
             // Try to get current source signatures for comparison
-            let current_signatures = get_current_signatures(pool, project_id, source_file).await;
+            let current_signatures = get_current_signatures(code_pool, project_id, source_file).await;
 
             let prompt = format!(
                 r#"Analyze the impact of source code changes on documentation.
@@ -178,7 +187,7 @@ SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
 
                     // Record LLM usage
                     let _ = record_llm_usage(
-                        pool,
+                        main_pool,
                         client.provider_type(),
                         &client.model_name(),
                         "background:doc_impact_analysis",
@@ -192,7 +201,7 @@ SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
                     let doc_id = doc.id;
                     let impact_clone = impact.clone();
                     let summary_clone = summary.clone();
-                    pool.run(move |conn| {
+                    main_pool.run(move |conn| {
                         update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
                     })
                     .await?;
@@ -215,14 +224,14 @@ SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
     Ok(total_analyzed)
 }
 
-/// Get current source signatures for a file
+/// Get current source signatures for a file (reads from code_symbols in code DB)
 async fn get_current_signatures(
-    pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
     project_id: i64,
     source_file: &str,
 ) -> Option<String> {
     let source_file = source_file.to_string();
-    pool.run(move |conn| -> Result<Option<String>, rusqlite::Error> {
+    code_pool.run(move |conn| -> Result<Option<String>, rusqlite::Error> {
         let mut stmt = conn.prepare(
             "SELECT name, symbol_type, signature FROM code_symbols
              WHERE project_id = ? AND file_path = ?

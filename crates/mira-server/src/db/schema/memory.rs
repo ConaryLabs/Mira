@@ -58,41 +58,8 @@ pub fn migrate_memory_facts_evidence_tracking(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Migrate imports table to add unique constraint and deduplicate
-pub fn migrate_imports_unique(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "imports") {
-        return Ok(());
-    }
-
-    let index_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='uniq_imports'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if index_exists {
-        return Ok(());
-    }
-
-    tracing::info!("Deduplicating imports and adding unique constraint");
-
-    conn.execute_batch(
-        "DELETE FROM imports
-         WHERE id NOT IN (
-             SELECT MIN(id)
-             FROM imports
-             GROUP BY project_id, file_path, import_path
-         )",
-    )?;
-
-    conn.execute_batch(
-        "CREATE UNIQUE INDEX uniq_imports ON imports(project_id, file_path, import_path)",
-    )?;
-
-    Ok(())
-}
+// Note: migrate_imports_unique is now in db/schema/code.rs
+// (imports table is in the separate code database)
 
 /// Migrate to add documentation tracking tables
 pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {

@@ -447,6 +447,11 @@ pub fn map_files_to_symbols_sync(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Get projects that have modules needing summaries
+///
+/// NOTE: After code DB sharding, this cross-DB JOIN only works when both
+/// tables are in the same database (tests, pre-sharding). For sharded layout,
+/// use `get_project_ids_needing_summaries_sync` on code pool +
+/// `get_project_paths_by_ids_sync` on main pool.
 pub fn get_projects_with_pending_summaries_sync(
     conn: &Connection,
 ) -> rusqlite::Result<Vec<(i64, String)>> {
@@ -463,6 +468,23 @@ pub fn get_projects_with_pending_summaries_sync(
         .map(|r| r.filter_map(|row| row.ok()).collect())?;
 
     Ok(results)
+}
+
+/// Get project IDs that have modules needing summaries.
+/// Run this on the code database pool.
+pub fn get_project_ids_needing_summaries_sync(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT project_id FROM codebase_modules
+         WHERE (purpose IS NULL OR purpose = '') AND project_id IS NOT NULL
+         LIMIT 10",
+    )?;
+    let ids = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(ids)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

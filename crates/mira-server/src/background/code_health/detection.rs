@@ -2,7 +2,7 @@
 // Pattern-based detection for code health issues
 // Uses pure Rust implementation (no shell commands) for cross-platform support
 
-use crate::db::{StoreMemoryParams, get_unused_functions_sync, store_memory_sync};
+use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::project_files::walker;
 use crate::utils::ResultExt;
 use regex::Regex;
@@ -23,8 +23,6 @@ const MAX_ERROR_HANDLING_FINDINGS: usize = 20;
 const CONFIDENCE_TODO: f64 = 0.7;
 /// Confidence level for unimplemented macro findings
 const CONFIDENCE_UNIMPLEMENTED: f64 = 0.8;
-/// Confidence level for unused function findings (heuristic-based)
-const CONFIDENCE_UNUSED: f64 = 0.5;
 /// Confidence level for high-severity unwrap findings
 const CONFIDENCE_UNWRAP_HIGH: f64 = 0.85;
 /// Confidence level for medium-severity unwrap findings
@@ -191,43 +189,6 @@ pub fn scan_unimplemented(
                 }
             }
         }
-    }
-
-    Ok(stored)
-}
-
-/// Find functions that are never called (using indexed call graph)
-/// Note: This is heuristic-based since the call graph doesn't capture self.method() calls
-pub fn scan_unused_functions(conn: &Connection, project_id: i64) -> Result<usize, String> {
-    let unused = get_unused_functions_sync(conn, project_id).str_err()?;
-
-    let mut stored = 0;
-
-    for (name, file_path, line) in unused {
-        let content = format!(
-            "[unused] Function `{}` at {}:{} appears to have no callers",
-            name, file_path, line
-        );
-        let key = format!("health:unused:{}:{}", file_path, name);
-
-        store_memory_sync(
-            conn,
-            StoreMemoryParams {
-                project_id: Some(project_id),
-                key: Some(&key),
-                content: &content,
-                fact_type: "health",
-                category: Some("unused"),
-                confidence: CONFIDENCE_UNUSED,
-                session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
-            },
-        )
-        .str_err()?;
-
-        stored += 1;
     }
 
     Ok(stored)

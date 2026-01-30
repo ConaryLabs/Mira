@@ -242,7 +242,8 @@ mod tests {
     async fn cli_tools_match_mcp_tools() {
         // Create a minimal server to get tool list
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
-        let server = MiraServer::new(pool, None);
+        let code_pool = Arc::new(DatabasePool::open_code_db_in_memory().await.unwrap());
+        let server = MiraServer::new(pool, code_pool, None);
 
         let mcp_tools: std::collections::HashSet<String> =
             server.list_tool_names().into_iter().collect();

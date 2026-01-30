@@ -30,7 +30,7 @@ pub async fn search_code<C: ToolContext>(
     // Check for cross-reference query patterns first ("who calls X", "callers of X", etc.)
     let query_clone = query.clone();
     let crossref_result = ctx
-        .pool()
+        .code_pool()
         .run(move |conn| Ok::<_, String>(crossref_search(conn, &query_clone, project_id, limit)))
         .await?;
 
@@ -44,7 +44,7 @@ pub async fn search_code<C: ToolContext>(
 
     // Use shared hybrid search
     let result = hybrid_search(
-        ctx.pool(),
+        ctx.code_pool(),
         ctx.embeddings(),
         &query,
         project_id,
@@ -76,7 +76,7 @@ pub async fn search_code<C: ToolContext>(
     let project_path_clone = project_path.clone();
     type ExpandedResult = (String, String, f32, Option<(Option<String>, String)>);
     let expanded_results: Vec<ExpandedResult> = ctx
-        .pool()
+        .code_pool()
         .run(move |conn| -> Result<Vec<ExpandedResult>, String> {
             Ok(results_data
                 .iter()
@@ -137,7 +137,7 @@ pub async fn find_function_callers<C: ToolContext>(
 
     let fn_name = function_name.clone();
     let results = ctx
-        .pool()
+        .code_pool()
         .run(move |conn| Ok::<_, String>(find_callers(conn, project_id, &fn_name, limit)))
         .await?;
 
@@ -172,7 +172,7 @@ pub async fn find_function_callees<C: ToolContext>(
 
     let fn_name = function_name.clone();
     let results = ctx
-        .pool()
+        .code_pool()
         .run(move |conn| Ok::<_, String>(find_callees(conn, project_id, &fn_name, limit)))
         .await?;
 
@@ -262,7 +262,7 @@ pub async fn index<C: ToolContext>(
             } else {
                 ctx.embeddings().cloned()
             };
-            let stats = indexer::index_project(path, ctx.pool().clone(), embeddings, project_id)
+            let stats = indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -274,7 +274,7 @@ pub async fn index<C: ToolContext>(
             // Auto-summarize modules that don't have descriptions yet
             if let Some(pid) = project_id {
                 if let Some(llm_client) = ctx.llm_factory().client_for_background() {
-                    match auto_summarize_modules(ctx.pool(), pid, &project_path, &*llm_client).await {
+                    match auto_summarize_modules(ctx.code_pool(), ctx.pool(), pid, &project_path, &*llm_client).await {
                         Ok(count) if count > 0 => {
                             response.push_str(&format!(", summarized {} modules", count));
                         }
@@ -295,7 +295,7 @@ pub async fn index<C: ToolContext>(
             let project_id = project.as_ref().map(|p| p.id);
 
             let (symbols, embedded) = ctx
-                .pool()
+                .code_pool()
                 .run(move |conn| {
                     let symbols = count_symbols_sync(conn, project_id);
                     let embedded = count_embedded_chunks_sync(conn, project_id);
@@ -313,13 +313,14 @@ pub async fn index<C: ToolContext>(
 
 /// Auto-summarize modules that don't have descriptions (called after indexing)
 async fn auto_summarize_modules(
-    pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
+    code_pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
+    main_pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
     project_id: i64,
     project_path: &str,
     llm_client: &dyn LlmClient,
 ) -> Result<usize, String> {
-    // Get modules needing summaries
-    let mut modules = pool
+    // Get modules needing summaries (from code DB)
+    let mut modules = code_pool
         .run(move |conn| cartographer::get_modules_needing_summaries(conn, project_id))
         .await?;
 
@@ -341,9 +342,9 @@ async fn auto_summarize_modules(
         .await
         .map_err(|e| format!("LLM request failed: {}", e))?;
 
-    // Record usage
+    // Record usage (main DB)
     record_llm_usage(
-        pool,
+        main_pool,
         llm_client.provider_type(),
         &llm_client.model_name(),
         "tool:auto_summarize",
@@ -355,13 +356,13 @@ async fn auto_summarize_modules(
 
     let content = result.content.ok_or("No content in LLM response")?;
 
-    // Parse and update
+    // Parse and update (code DB)
     let summaries = cartographer::parse_summary_response(&content);
     if summaries.is_empty() {
         return Err("Failed to parse summaries".to_string());
     }
 
-    let updated = pool
+    let updated = code_pool
         .run(move |conn| cartographer::update_module_purposes(conn, project_id, &summaries))
         .await?;
 
@@ -383,9 +384,9 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         .client_for_background()
         .ok_or("No LLM provider configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.")?;
 
-    // Get modules needing summaries
+    // Get modules needing summaries (from code DB)
     let mut modules = ctx
-        .pool()
+        .code_pool()
         .run(move |conn| cartographer::get_modules_needing_summaries(conn, project_id))
         .await?;
 
@@ -433,12 +434,12 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         ));
     }
 
-    // Update database and clear cached modules
+    // Update database and clear cached modules (code DB)
     use crate::db::clear_modules_without_purpose_sync;
 
     let summaries_clone = summaries.clone();
     let updated: usize = ctx
-        .pool()
+        .code_pool()
         .run(move |conn| {
             let count = cartographer::update_module_purposes(conn, project_id, &summaries_clone)
                 .map_err(|e| e.to_string())?;

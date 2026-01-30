@@ -19,9 +19,11 @@ pub async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
 
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let code_db_path = db_path.with_file_name("mira-code.db");
+    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
 
     // Create a minimal MCP server context
-    let server = mira::mcp::MiraServer::new(pool, None);
+    let server = mira::mcp::MiraServer::new(pool, code_pool, None);
 
     // Call session_start
     let result = mira::tools::session_start(

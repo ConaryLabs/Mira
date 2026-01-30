@@ -4,37 +4,6 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-/// Migrate to add FTS5 full-text search table
-pub fn migrate_code_fts(conn: &Connection) -> Result<()> {
-    // Check if code_fts exists
-    let fts_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='code_fts'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !fts_exists {
-        tracing::info!("Creating FTS5 full-text search table for code");
-        conn.execute_batch(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
-                file_path,
-                chunk_content,
-                project_id UNINDEXED,
-                start_line UNINDEXED,
-                content='',
-                tokenize='porter unicode61 remove_diacritics 1'
-            );",
-        )?;
-
-        // Populate from existing vec_code data
-        rebuild_code_fts(conn)?;
-    }
-
-    Ok(())
-}
-
 /// Rebuild the FTS5 index from vec_code
 /// Call this after indexing or when FTS index needs refreshing
 pub fn rebuild_code_fts(conn: &Connection) -> Result<()> {

@@ -36,8 +36,10 @@ use requests::*;
 /// MCP Server state
 #[derive(Clone)]
 pub struct MiraServer {
-    /// Async connection pool for database operations
+    /// Async connection pool for main database operations (memory, sessions, goals, etc.)
     pub pool: Arc<DatabasePool>,
+    /// Async connection pool for code index database (code_symbols, vec_code, etc.)
+    pub code_pool: Arc<DatabasePool>,
     pub embeddings: Option<Arc<EmbeddingClient>>,
     pub llm_factory: Arc<ProviderFactory>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
@@ -60,6 +62,7 @@ impl MiraServer {
     /// Create a new server from pre-loaded API keys (avoids duplicate env reads)
     pub fn from_api_keys(
         pool: Arc<DatabasePool>,
+        code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         api_keys: &ApiKeys,
     ) -> Self {
@@ -68,6 +71,7 @@ impl MiraServer {
 
         Self {
             pool,
+            code_pool,
             embeddings,
             llm_factory,
             project: Arc::new(RwLock::new(None)),
@@ -81,20 +85,12 @@ impl MiraServer {
         }
     }
 
-    pub fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
-        Self::from_api_keys(pool, embeddings, &ApiKeys::from_env())
-    }
-
-    /// Create with a file watcher for incremental indexing
-    pub fn with_watcher(
+    pub fn new(
         pool: Arc<DatabasePool>,
+        code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
-        watcher: WatcherHandle,
     ) -> Self {
-        let api_keys = ApiKeys::from_env();
-        let mut server = Self::from_api_keys(pool, embeddings, &api_keys);
-        server.watcher = Some(watcher);
-        server
+        Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env())
     }
 
     /// Auto-initialize project from Claude's cwd if not already set or mismatched
@@ -568,9 +564,17 @@ impl ServerHandler for MiraServer {
                 duration_ms,
             });
 
-            // Persist to tool_history
-            self.log_tool_call(&session_id, &tool_name, &args_json, &result_text, success)
-                .await;
+            // Persist to tool_history (fire-and-forget, never blocks tool response)
+            {
+                let server = self.clone();
+                let sid = session_id.clone();
+                let tn = tool_name.clone();
+                let aj = args_json.clone();
+                let rt = result_text.clone();
+                tokio::spawn(async move {
+                    server.log_tool_call(&sid, &tn, &aj, &rt, success).await;
+                });
+            }
 
             // Extract meaningful outcomes from tool results (async, non-blocking)
             if success {

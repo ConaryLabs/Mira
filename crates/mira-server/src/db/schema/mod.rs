@@ -4,6 +4,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+pub mod code;
 mod fts;
 mod intelligence;
 mod memory;
@@ -14,6 +15,8 @@ mod vectors;
 
 // Re-export FTS functions that are used elsewhere
 pub use fts::{rebuild_code_fts, rebuild_code_fts_for_project};
+// Re-export code schema migrations for the code database pool
+pub use code::run_code_migrations;
 
 /// Run all schema setup and migrations.
 ///
@@ -24,9 +27,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA)?;
 
     // Run migrations in order
+    // Note: code-DB-specific migrations (vec_code, pending_embeddings, code_fts, imports)
+    // are handled by run_code_migrations() on the separate code database.
     vectors::migrate_vec_tables(conn)?;
-    vectors::migrate_pending_embeddings_line_numbers(conn)?;
-    vectors::migrate_vec_code_line_numbers(conn)?;
     session::migrate_tool_history_full_result(conn)?;
     session::migrate_chat_summaries_project_id(conn)?;
     session::migrate_chat_messages_summary_id(conn)?;
@@ -34,8 +37,6 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     memory::migrate_memory_facts_evidence_tracking(conn)?;
     system::migrate_system_prompts_provider(conn)?;
     system::migrate_system_prompts_strip_tool_suffix(conn)?;
-    fts::migrate_code_fts(conn)?;
-    memory::migrate_imports_unique(conn)?;
     memory::migrate_documentation_tables(conn)?;
     memory::migrate_documentation_impact_analysis(conn)?;
     memory::migrate_users_table(conn)?;
@@ -125,58 +126,6 @@ CREATE TABLE IF NOT EXISTS corrections (
 );
 
 -- =======================================
--- CODE INTELLIGENCE
--- =======================================
-CREATE TABLE IF NOT EXISTS code_symbols (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER REFERENCES projects(id),
-    file_path TEXT NOT NULL,
-    name TEXT NOT NULL,
-    symbol_type TEXT NOT NULL,
-    start_line INTEGER,
-    end_line INTEGER,
-    signature TEXT,
-    indexed_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_symbols_file ON code_symbols(project_id, file_path);
-CREATE INDEX IF NOT EXISTS idx_symbols_name ON code_symbols(name);
-
-CREATE TABLE IF NOT EXISTS call_graph (
-    id INTEGER PRIMARY KEY,
-    caller_id INTEGER REFERENCES code_symbols(id),
-    callee_name TEXT NOT NULL,
-    callee_id INTEGER REFERENCES code_symbols(id),
-    call_count INTEGER DEFAULT 1
-);
-CREATE INDEX IF NOT EXISTS idx_calls_caller ON call_graph(caller_id);
-CREATE INDEX IF NOT EXISTS idx_calls_callee ON call_graph(callee_id);
-
-CREATE TABLE IF NOT EXISTS imports (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER REFERENCES projects(id),
-    file_path TEXT NOT NULL,
-    import_path TEXT NOT NULL,
-    is_external INTEGER DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(project_id, file_path);
-
-CREATE TABLE IF NOT EXISTS codebase_modules (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER REFERENCES projects(id),
-    module_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    path TEXT NOT NULL,
-    purpose TEXT,
-    exports TEXT,
-    depends_on TEXT,
-    symbol_count INTEGER DEFAULT 0,
-    line_count INTEGER DEFAULT 0,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(project_id, module_id)
-);
-CREATE INDEX IF NOT EXISTS idx_modules_project ON codebase_modules(project_id);
-
--- =======================================
 -- SESSIONS & HISTORY
 -- =======================================
 CREATE TABLE IF NOT EXISTS sessions (
@@ -249,20 +198,6 @@ CREATE TABLE IF NOT EXISTS permission_rules (
 );
 
 -- =======================================
--- BACKGROUND PROCESSING
--- =======================================
-CREATE TABLE IF NOT EXISTS pending_embeddings (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER,
-    file_path TEXT NOT NULL,
-    chunk_content TEXT NOT NULL,
-    start_line INTEGER NOT NULL DEFAULT 1,
-    status TEXT DEFAULT 'pending',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_pending_embeddings_status ON pending_embeddings(status);
-
--- =======================================
 -- PROJECT BRIEFINGS (What's New)
 -- =======================================
 CREATE TABLE IF NOT EXISTS project_briefings (
@@ -329,14 +264,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
     +content TEXT
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
-    embedding float[1536],
-    +file_path TEXT,
-    +chunk_content TEXT,
-    +project_id INTEGER,
-    +start_line INTEGER
-);
-
 -- =======================================
 -- CONFIGURATION
 -- =======================================
@@ -348,17 +275,4 @@ CREATE TABLE IF NOT EXISTS system_prompts (
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
--- =======================================
--- FULL-TEXT SEARCH (FTS5)
--- =======================================
--- High-performance keyword search for code
--- Rebuilt from vec_code after indexing
-CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
-    file_path,
-    chunk_content,
-    project_id UNINDEXED,  -- not searchable, just for filtering
-    start_line UNINDEXED,
-    content='',            -- contentless (we rebuild from vec_code)
-    tokenize='porter unicode61 remove_diacritics 1'
-);
 "#;

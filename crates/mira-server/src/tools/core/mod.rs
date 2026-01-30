@@ -28,8 +28,12 @@ pub struct McpToolInfo {
 pub trait ToolContext: Send + Sync {
     // === Core Resources (always available) ===
 
-    /// Async connection pool for database operations
+    /// Async connection pool for main database operations (memory, sessions, goals, etc.)
     fn pool(&self) -> &Arc<DatabasePool>;
+
+    /// Async connection pool for code index database operations
+    /// (code_symbols, call_graph, imports, codebase_modules, vec_code, code_fts, pending_embeddings)
+    fn code_pool(&self) -> &Arc<DatabasePool>;
 
     /// Embeddings client for semantic search (optional)
     fn embeddings(&self) -> Option<&Arc<EmbeddingClient>>;
