@@ -11,8 +11,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::{
-    briefings, code_health, documentation, pondering, proactive, session_summaries,
-    summaries,
+    briefings, code_health, documentation, pondering, proactive, session_summaries, summaries,
 };
 
 /// Delay before first cycle to let the service start up
@@ -124,7 +123,10 @@ impl SlowLaneWorker {
         processed += self.process_briefings(&client).await?;
 
         // Process documentation tasks (every Nth cycle)
-        if self.cycle_count.is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL) {
+        if self
+            .cycle_count
+            .is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL)
+        {
             processed += self.process_documentation().await?;
         }
 
@@ -167,7 +169,9 @@ impl SlowLaneWorker {
     }
 
     async fn process_documentation(&self) -> Result<usize, String> {
-        let count = documentation::process_documentation(&self.pool, &self.code_pool, &self.llm_factory).await?;
+        let count =
+            documentation::process_documentation(&self.pool, &self.code_pool, &self.llm_factory)
+                .await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} documentation tasks", count);
         }

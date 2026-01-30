@@ -157,7 +157,7 @@ impl FileWalker {
             path_result.and_then(|path| {
                 path.strip_prefix(&root)
                     .map_err(|e| anyhow!("Failed to strip prefix: {}", e))
-                    .map(|p| crate::utils::path_to_string(p))
+                    .map(crate::utils::path_to_string)
             })
         })
     }

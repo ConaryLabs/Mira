@@ -110,7 +110,7 @@ fn detect_modules_in_src(
         if file_name == "lib.rs" || file_name == "main.rs" {
             let module_path = relative
                 .parent()
-                .map(|p| path_to_string(p))
+                .map(path_to_string)
                 .unwrap_or_default();
 
             if !seen_dirs.contains(&module_path) {

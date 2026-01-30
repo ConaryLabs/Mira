@@ -105,7 +105,7 @@ pub fn get_module_full_code(project_path: &Path, module_path: &str, max_bytes: u
             // Get relative path for header
             let relative = file_path
                 .strip_prefix(project_path)
-                .map(|p| crate::utils::path_to_string(p))
+                .map(crate::utils::path_to_string)
                 .unwrap_or_else(|_| crate::utils::path_to_string(&file_path));
 
             let header = format!("\n// ═══ {} ═══\n", relative);

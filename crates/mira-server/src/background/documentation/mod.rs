@@ -141,7 +141,8 @@ async fn analyze_stale_doc_impacts(
             let staleness_reason = doc.staleness_reason.as_deref().unwrap_or("source changed");
 
             // Try to get current source signatures for comparison
-            let current_signatures = get_current_signatures(code_pool, project_id, source_file).await;
+            let current_signatures =
+                get_current_signatures(code_pool, project_id, source_file).await;
 
             let prompt = format!(
                 r#"Analyze the impact of source code changes on documentation.
@@ -201,10 +202,11 @@ SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
                     let doc_id = doc.id;
                     let impact_clone = impact.clone();
                     let summary_clone = summary.clone();
-                    main_pool.run(move |conn| {
-                        update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
-                    })
-                    .await?;
+                    main_pool
+                        .run(move |conn| {
+                            update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
+                        })
+                        .await?;
 
                     tracing::debug!(
                         "Doc impact analysis for {}: {} - {}",
@@ -231,38 +233,39 @@ async fn get_current_signatures(
     source_file: &str,
 ) -> Option<String> {
     let source_file = source_file.to_string();
-    code_pool.run(move |conn| -> Result<Option<String>, rusqlite::Error> {
-        let mut stmt = conn.prepare(
-            "SELECT name, symbol_type, signature FROM code_symbols
+    code_pool
+        .run(move |conn| -> Result<Option<String>, rusqlite::Error> {
+            let mut stmt = conn.prepare(
+                "SELECT name, symbol_type, signature FROM code_symbols
              WHERE project_id = ? AND file_path = ?
              AND symbol_type IN ('function', 'method', 'struct', 'enum', 'trait')
              ORDER BY start_line",
-        )?;
+            )?;
 
-        let rows: Vec<String> = stmt
-            .query_map(rusqlite::params![project_id, source_file], |row| {
-                let name: String = row.get(0)?;
-                let sym_type: String = row.get(1)?;
-                let sig: Option<String> = row.get(2)?;
-                Ok(format!(
-                    "- {} ({}): {}",
-                    name,
-                    sym_type,
-                    sig.unwrap_or_else(|| "no signature".to_string())
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+            let rows: Vec<String> = stmt
+                .query_map(rusqlite::params![project_id, source_file], |row| {
+                    let name: String = row.get(0)?;
+                    let sym_type: String = row.get(1)?;
+                    let sig: Option<String> = row.get(2)?;
+                    Ok(format!(
+                        "- {} ({}): {}",
+                        name,
+                        sym_type,
+                        sig.unwrap_or_else(|| "no signature".to_string())
+                    ))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        if rows.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(rows.join("\n")))
-        }
-    })
-    .await
-    .ok()
-    .flatten()
+            if rows.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rows.join("\n")))
+            }
+        })
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Parse the LLM response to extract impact and summary
