@@ -12,15 +12,16 @@ use regex::Regex;
 
 /// Patterns that look like secrets/credentials.
 /// Each tuple is (description, regex).
+#[allow(clippy::expect_used)] // Static regex patterns are compile-time known; panic on invalid regex is correct
 static SECRET_PATTERNS: Lazy<Vec<(&str, Regex)>> = Lazy::new(|| {
     vec![
-        ("API key", Regex::new(r"(?i)(sk-[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*\S{10,})").unwrap()),
-        ("AWS key", Regex::new(r"AKIA[0-9A-Z]{16}").unwrap()),
-        ("Private key", Regex::new(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----").unwrap()),
-        ("Bearer token", Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-.]{20,}").unwrap()),
-        ("Password assignment", Regex::new(r"(?i)(password|passwd|pwd)\s*[:=]\s*\S{6,}").unwrap()),
-        ("GitHub token", Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").unwrap()),
-        ("Generic secret", Regex::new(r#"(?i)(secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-/.]{20,}"#).unwrap()),
+        ("API key", Regex::new(r"(?i)(sk-[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*\S{10,})").expect("valid regex")),
+        ("AWS key", Regex::new(r"AKIA[0-9A-Z]{16}").expect("valid regex")),
+        ("Private key", Regex::new(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----").expect("valid regex")),
+        ("Bearer token", Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-.]{20,}").expect("valid regex")),
+        ("Password assignment", Regex::new(r"(?i)(password|passwd|pwd)\s*[:=]\s*\S{6,}").expect("valid regex")),
+        ("GitHub token", Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").expect("valid regex")),
+        ("Generic secret", Regex::new(r#"(?i)(secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-/.]{20,}"#).expect("valid regex")),
     ]
 });
 
@@ -298,5 +299,97 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, Strin
         Ok(format!("Memory {} deleted.", id))
     } else {
         Ok(format!("Memory {} not found.", id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_secret_catches_api_key_prefix() {
+        assert_eq!(
+            detect_secret("sk-abcdefghijklmnopqrstuvwxyz"),
+            Some("API key")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_api_key_assignment() {
+        assert_eq!(
+            detect_secret("api_key = supersecretvalue123"),
+            Some("API key")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_aws_key() {
+        assert_eq!(
+            detect_secret("AKIAIOSFODNN7EXAMPLE"),
+            Some("AWS key")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_private_key() {
+        assert_eq!(
+            detect_secret("-----BEGIN RSA PRIVATE KEY-----"),
+            Some("Private key")
+        );
+        assert_eq!(
+            detect_secret("-----BEGIN PRIVATE KEY-----"),
+            Some("Private key")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_bearer_token() {
+        assert_eq!(
+            detect_secret("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"),
+            Some("Bearer token")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_password_assignment() {
+        assert_eq!(
+            detect_secret("password = hunter2abc"),
+            Some("Password assignment")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_github_token() {
+        assert_eq!(
+            detect_secret("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl"),
+            Some("GitHub token")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_generic_secret() {
+        assert_eq!(
+            detect_secret("secret = abcdefghijklmnopqrstuvwxyz"),
+            Some("Generic secret")
+        );
+    }
+
+    #[test]
+    fn detect_secret_allows_normal_content() {
+        assert_eq!(detect_secret("Use the builder pattern for Config"), None);
+        assert_eq!(detect_secret("API design uses REST conventions"), None);
+        assert_eq!(detect_secret("Remember to check the password field"), None);
+    }
+
+    #[test]
+    fn detect_secret_allows_short_values() {
+        // Too short to trigger password pattern (< 6 chars)
+        assert_eq!(detect_secret("pwd = abc"), None);
+    }
+
+    #[test]
+    fn secret_patterns_static_initializes() {
+        // Verify all regex patterns compile without panic
+        assert!(!SECRET_PATTERNS.is_empty());
     }
 }
