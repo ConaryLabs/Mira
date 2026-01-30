@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::{
-    briefings, capabilities, code_health, documentation, pondering, proactive, session_summaries,
+    briefings, code_health, documentation, pondering, proactive, session_summaries,
     summaries,
 };
 
@@ -118,9 +118,6 @@ impl SlowLaneWorker {
         // Process project briefings
         processed += self.process_briefings(&client).await?;
 
-        // Process capabilities inventory
-        processed += self.process_capabilities(&client).await?;
-
         // Process documentation tasks (every Nth cycle)
         if self.cycle_count.is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL) {
             processed += self.process_documentation().await?;
@@ -160,14 +157,6 @@ impl SlowLaneWorker {
         let count = briefings::process_briefings(&self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} briefings", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_capabilities(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
-        let count = capabilities::process_capabilities(&self.pool, client, None).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: processed {} capabilities", count);
         }
         Ok(count)
     }

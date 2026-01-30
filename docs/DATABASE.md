@@ -30,7 +30,7 @@ Semantic memory storage with evidence-based confidence tracking.
 | scope | TEXT | `project`, `personal`, or `team` |
 | key | TEXT | Unique key for upsert operations |
 | content | TEXT | The fact/preference content |
-| fact_type | TEXT | `general`, `preference`, `decision`, `context`, `health`, `capability` |
+| fact_type | TEXT | `general`, `preference`, `decision`, `context`, `health` |
 | category | TEXT | Optional grouping (e.g., `coding`, `tooling`) |
 | confidence | REAL | 0.0-1.0, starts at 0.5 for candidates |
 | has_embedding | INTEGER | 1 if fact has embedding in vec_memory |

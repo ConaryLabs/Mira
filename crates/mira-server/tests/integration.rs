@@ -8,7 +8,7 @@ mod test_utils;
 use mira::mcp::requests::{ExpertConfigAction, GoalAction, IndexAction, SessionHistoryAction};
 #[allow(unused_imports)]
 use mira::tools::core::{
-    ToolContext, check_capability, configure_expert, ensure_session, find_function_callees,
+    ToolContext, configure_expert, ensure_session, find_function_callees,
     find_function_callers, forget, get_project, get_session_recap, get_symbols, goal, index,
     recall, remember, reply_to_mira, search_code, session_history, session_start, set_project,
     summarize_codebase,
@@ -347,30 +347,6 @@ async fn test_find_function_callees_empty() {
     );
     let output = result.unwrap();
     assert!(output.contains("No callees found"), "Output: {}", output);
-}
-
-#[tokio::test]
-async fn test_check_capability_empty() {
-    let ctx = TestContext::new().await;
-
-    let project_path = "/tmp/test_capability".to_string();
-    session_start(
-        &ctx,
-        project_path.clone(),
-        Some("Capability Test".to_string()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    let result = check_capability(&ctx, "authentication system".to_string()).await;
-    assert!(
-        result.is_ok(),
-        "check_capability failed: {:?}",
-        result.err()
-    );
-    let output = result.unwrap();
-    assert!(output.contains("No capability found"), "Output: {}", output);
 }
 
 #[tokio::test]

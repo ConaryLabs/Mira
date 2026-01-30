@@ -115,17 +115,7 @@ else
 fi
 
 # ============================================================================
-header "6. Check capabilities - does this codebase have X?"
-# ============================================================================
-
-if [[ "$MODE" == "auto" ]]; then
-    type_cmd auto "$MIRA tool check_capability '{\"description\": \"semantic search using embeddings\"}'"
-else
-    echo "# Run: $MIRA tool check_capability '{\"description\": \"semantic search using embeddings\"}'"
-fi
-
-# ============================================================================
-header "7. Track goals across sessions"
+header "6. Track goals across sessions"
 # ============================================================================
 
 if [[ "$MODE" == "auto" ]]; then

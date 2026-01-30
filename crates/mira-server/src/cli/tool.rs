@@ -5,7 +5,7 @@ use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    AnalyzeDiffRequest, CheckCapabilityRequest, ConfigureExpertRequest, ConsultExpertsRequest,
+    AnalyzeDiffRequest, ConfigureExpertRequest, ConsultExpertsRequest,
     CrossProjectRequest, DocumentationRequest, FindCalleesRequest, FindCallersRequest,
     FindingRequest, ForgetRequest, GetSymbolsRequest, GoalRequest, IndexRequest, ProjectRequest,
     RecallRequest, RememberRequest, ReplyToMiraRequest, SemanticCodeSearchRequest,
@@ -61,10 +61,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         "find_callees" => {
             let req: FindCalleesRequest = serde_json::from_str(&args)?;
             mira::tools::find_function_callees(&server, req.function_name, req.limit).await
-        }
-        "check_capability" => {
-            let req: CheckCapabilityRequest = serde_json::from_str(&args)?;
-            mira::tools::check_capability(&server, req.description).await
         }
         "goal" => {
             let req: GoalRequest = serde_json::from_str(&args)?;
@@ -215,7 +211,6 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "search_code",
         "find_callers",
         "find_callees",
-        "check_capability",
         "goal",
         "index",
         "summarize_codebase",

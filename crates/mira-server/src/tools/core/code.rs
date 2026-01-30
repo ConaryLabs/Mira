@@ -4,12 +4,12 @@
 use std::path::Path;
 
 use crate::cartographer;
-use crate::db::search_capabilities_sync;
+
 use crate::indexer;
 use crate::llm::{LlmClient, Message, record_llm_usage};
 use crate::mcp::requests::IndexAction;
 use crate::search::{
-    CrossRefType, crossref_search, embedding_to_bytes, expand_context_with_conn, find_callees,
+    CrossRefType, crossref_search, expand_context_with_conn, find_callees,
     find_callers, format_crossref_results, format_project_header, hybrid_search,
 };
 use crate::tools::core::ToolContext;
@@ -188,110 +188,6 @@ pub async fn find_function_callees<C: ToolContext>(
         context_header,
         format_crossref_results(&function_name, CrossRefType::Callee, &results)
     ))
-}
-
-/// Check if a capability/feature exists in the codebase.
-/// First searches cached capability memories, then falls back to live code search.
-pub async fn check_capability<C: ToolContext>(
-    ctx: &C,
-    description: String,
-) -> Result<String, String> {
-    if description.is_empty() {
-        return Err("description is required".to_string());
-    }
-
-    let project_id = ctx.project_id().await;
-    let project = ctx.get_project().await;
-    let context_header = format_project_header(project.as_ref());
-    let project_path = project.as_ref().map(|p| p.path.clone());
-
-    // Step 1: Search capability memories (using RETRIEVAL_QUERY for optimal search)
-    if let Some(embeddings) = ctx.embeddings() {
-        if let Ok(query_embedding) = embeddings.embed_for_query(&description).await {
-            let embedding_bytes = embedding_to_bytes(&query_embedding);
-
-            // Run vector search via connection pool
-            let capability_results: Result<Vec<(i64, String, String, f32)>, String> = ctx
-                .pool()
-                .run(move |conn| search_capabilities_sync(conn, &embedding_bytes, project_id, 5))
-                .await;
-
-            if let Ok(capability_results) = capability_results {
-                // Check if we have good matches (similarity > 0.6)
-                let good_matches: Vec<_> = capability_results
-                    .iter()
-                    .filter(|(_, _, _, dist)| (1.0 - dist) > 0.6)
-                    .collect();
-
-                if !good_matches.is_empty() {
-                    let mut response = format!(
-                        "{}Found {} matching capabilities:\n\n",
-                        context_header,
-                        good_matches.len()
-                    );
-
-                    for (id, content, fact_type, distance) in &good_matches {
-                        let score = 1.0 - distance;
-                        let type_label = if *fact_type == "issue" {
-                            "[ISSUE]"
-                        } else {
-                            "[CAPABILITY]"
-                        };
-                        response.push_str(&format!(
-                            "  {} (score: {:.2}, id: {}) {}\n",
-                            type_label, score, id, content
-                        ));
-                    }
-
-                    return Ok(response);
-                }
-            }
-        }
-    }
-
-    // Step 2: Fall back to live code search
-    let search_result = hybrid_search(
-        ctx.pool(),
-        ctx.embeddings(),
-        &format!("feature capability {}", description),
-        project_id,
-        project_path.as_deref(),
-        5,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    if search_result.results.is_empty() {
-        return Ok(format!(
-            "{}No capability found matching: \"{}\"\n\nThis feature may not exist in the codebase.",
-            context_header, description
-        ));
-    }
-
-    // Format the search results
-    let mut response = format!(
-        "{}No cached capability found, but code search found {} potentially related locations:\n\n",
-        context_header,
-        search_result.results.len()
-    );
-
-    for r in &search_result.results {
-        let preview = if r.content.len() > 200 {
-            format!("{}...", &r.content[..200])
-        } else {
-            r.content.clone()
-        };
-        response.push_str(&format!(
-            "  - {} (score: {:.2})\n    {}\n\n",
-            r.file_path,
-            r.score,
-            preview.replace('\n', "\n    ")
-        ));
-    }
-
-    response.push_str("Note: Run `recall(\"capabilities\")` to see the full capabilities inventory, or wait for the next background scan.");
-
-    Ok(response)
 }
 
 /// Get symbols from a file

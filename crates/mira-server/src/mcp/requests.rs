@@ -253,12 +253,6 @@ pub struct FindCalleesRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct CheckCapabilityRequest {
-    #[schemars(description = "Description of capability to check")]
-    pub description: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoalRequest {
     #[schemars(
         description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress"

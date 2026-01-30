@@ -70,6 +70,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     memory::migrate_memory_facts_branch(conn)?;
     session::migrate_sessions_branch(conn)?;
 
+    // Remove orphaned capability data (check_capability tool removed)
+    memory::migrate_remove_capability_data(conn)?;
+
     Ok(())
 }
 

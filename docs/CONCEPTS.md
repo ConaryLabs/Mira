@@ -113,15 +113,6 @@ Code chunks and memories are embedded into vector space using Google's gemini-em
 "error handling"           → finds try/catch, Result types, etc.
 ```
 
-### Capability Detection
-
-Mira proactively discovers what your codebase can do:
-
-```
-check_capability("caching")     → "Found Redis caching in src/cache/"
-check_capability("auth")        → "JWT auth in src/middleware/auth.rs"
-```
-
 ---
 
 ## 3. Intelligence Engine

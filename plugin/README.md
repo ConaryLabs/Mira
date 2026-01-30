@@ -90,7 +90,6 @@ The plugin bundles the Mira MCP server with these tools:
 - `get_symbols` - Extract symbols from a file
 - `find_callers` - Find functions that call a given function
 - `find_callees` - Find functions called by a given function
-- `check_capability` - Check if a feature exists in codebase
 
 ### Expert Consultation
 - `consult_experts` - Get advice from specialized experts:

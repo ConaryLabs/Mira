@@ -17,7 +17,6 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
     "semantic_code_search", // Code discoveries
     "find_callers",         // Call graph insights
     "find_callees",         // Call graph insights
-    "check_capability",     // Feature existence checks
 ];
 
 /// Spawn background extraction for a tool call
@@ -238,11 +237,6 @@ mod tests {
     fn test_extractable_tools_contains_call_graph() {
         assert!(EXTRACTABLE_TOOLS.contains(&"find_callers"));
         assert!(EXTRACTABLE_TOOLS.contains(&"find_callees"));
-    }
-
-    #[test]
-    fn test_extractable_tools_contains_capability() {
-        assert!(EXTRACTABLE_TOOLS.contains(&"check_capability"));
     }
 
     #[test]

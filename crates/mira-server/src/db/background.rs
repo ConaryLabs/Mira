@@ -71,24 +71,6 @@ pub fn insert_system_marker_sync(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Capabilities scanner
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Clear old capabilities for a project
-pub fn clear_old_capabilities_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'capability' AND category = 'codebase'",
-        [project_id],
-    )?;
-    // Clean up orphaned embeddings
-    conn.execute(
-        "DELETE FROM vec_memory WHERE fact_id NOT IN (SELECT id FROM memory_facts)",
-        [],
-    )?;
-    Ok(())
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // Health scanner
 // ═══════════════════════════════════════════════════════════════════════════════
 

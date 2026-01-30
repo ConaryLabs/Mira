@@ -123,12 +123,6 @@ You are advisory - analyze and recommend, not implement."#
         Self::new(instructions)
     }
 
-    /// Factory method for capabilities scanning
-    pub fn for_capabilities() -> Self {
-        let instructions = "You are a codebase analyst extracting implemented capabilities. List what users and developers can DO with the codebase, focusing on working features.";
-        Self::new(instructions)
-    }
-
     /// Factory method for summaries and briefings
     pub fn for_summaries() -> Self {
         let instructions = "You are a technical writer creating concise summaries of codebases, sessions, or discussions. Focus on key points, decisions, and actionable information.";
@@ -339,15 +333,6 @@ mod tests {
 
         assert!(prompt.contains("error handling"));
         assert!(prompt.contains("debuggability"));
-    }
-
-    #[test]
-    fn test_for_capabilities() {
-        let builder = PromptBuilder::for_capabilities();
-        let prompt = builder.build_system_prompt();
-
-        assert!(prompt.contains("capabilities"));
-        assert!(prompt.contains("working features"));
     }
 
     #[test]

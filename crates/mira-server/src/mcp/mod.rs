@@ -236,14 +236,6 @@ impl MiraServer {
         tools::find_function_callees(self, req.function_name, req.limit).await
     }
 
-    #[tool(description = "Check if a capability exists in codebase (cached first).")]
-    async fn check_capability(
-        &self,
-        Parameters(req): Parameters<CheckCapabilityRequest>,
-    ) -> Result<String, String> {
-        tools::check_capability(self, req.description).await
-    }
-
     #[tool(
         description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations."
     )]

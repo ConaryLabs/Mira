@@ -58,9 +58,8 @@ Use Mira tools proactively in these scenarios:
 1. **Searching for code by intent** - Use `search_code` instead of Grep
 2. **Understanding file structure** - Use `get_symbols` instead of grepping for definitions
 3. **Tracing call relationships** - Use `find_callers` / `find_callees` instead of grepping function names
-4. **Checking if a feature exists** - Use `check_capability` instead of exploratory grep
-5. **Recalling past decisions** - Use `recall` before making architectural changes
-6. **Storing decisions for future sessions** - Use `remember` after important choices
+4. **Recalling past decisions** - Use `recall` before making architectural changes
+5. **Storing decisions for future sessions** - Use `remember` after important choices
 
 ### When NOT to Use Mira Tools
 
@@ -77,7 +76,6 @@ Use Grep/Glob directly only when:
 | Find authentication code | `grep -r "auth"` | `search_code("authentication")` |
 | What calls this function? | `grep -r "function_name"` | `find_callers("function_name")` |
 | List functions in file | `grep "fn " file.rs` | `get_symbols(file_path="file.rs")` |
-| Check if feature exists | `grep -r "feature"` | `check_capability("feature description")` |
 | Use external library | Guess from training data | Context7: `resolve-library-id` -> `query-docs` |
 | Find config files | `find . -name "*.toml"` | `glob("**/*.toml")` - OK, exact pattern |
 | Find error message | `search_code("error 404")` | `grep "error 404"` - OK, literal string |
@@ -188,7 +186,6 @@ consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple 
 | What calls X? | `find_callers` |
 | What does X call? | `find_callees` |
 | Past decisions | `recall` |
-| Feature exists? | `check_capability` |
 | Codebase overview | `project(action="start")` output |
 | External library API | Context7: `resolve-library-id` -> `query-docs` |
 | Literal string search | `Grep` (OK for this) |

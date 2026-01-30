@@ -6,7 +6,7 @@
 // - Slow lane: LLM tasks (summaries, pondering, code health)
 
 mod briefings;
-mod capabilities;
+
 pub mod code_health;
 pub mod diff_analysis;
 pub mod documentation;

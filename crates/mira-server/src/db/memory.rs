@@ -157,35 +157,6 @@ pub fn store_memory_sync(
     Ok(conn.last_insert_rowid())
 }
 
-/// Search for capabilities and issues by vector similarity (sync version for pool.interact())
-/// Returns (fact_id, content, fact_type, distance) tuples
-pub fn search_capabilities_sync(
-    conn: &rusqlite::Connection,
-    embedding_bytes: &[u8],
-    project_id: Option<i64>,
-    limit: usize,
-) -> rusqlite::Result<Vec<(i64, String, String, f32)>> {
-    let mut stmt = conn.prepare(
-        "SELECT f.id, f.content, f.fact_type, vec_distance_cosine(v.embedding, ?1) as distance
-         FROM vec_memory v
-         JOIN memory_facts f ON v.fact_id = f.id
-         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-           AND f.fact_type IN ('capability', 'issue')
-         ORDER BY distance
-         LIMIT ?3",
-    )?;
-
-    let results = stmt
-        .query_map(
-            rusqlite::params![embedding_bytes, project_id, limit as i64],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(results)
-}
-
 /// Import a confirmed memory (bypasses evidence-based promotion)
 /// Used for importing from CLAUDE.local.md where entries are already high-confidence
 pub fn import_confirmed_memory_sync(

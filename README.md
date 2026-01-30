@@ -213,7 +213,6 @@ Memories are evidence-based: new facts start as candidates, gain confidence thro
 | `search_code` | Find code by meaning, not just text |
 | `find_callers` / `find_callees` | Trace call relationships |
 | `get_symbols` | Extract functions, structs, classes |
-| `check_capability` | "Does this codebase have caching?" |
 
 Supports Rust, Python, TypeScript, JavaScript, and Go via tree-sitter parsing.
 

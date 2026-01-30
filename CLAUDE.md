@@ -41,9 +41,8 @@ Use Mira tools proactively in these scenarios:
 1. **Searching for code by intent** - Use `semantic_code_search` instead of Grep
 2. **Understanding file structure** - Use `get_symbols` instead of grepping for definitions
 3. **Tracing call relationships** - Use `find_callers` / `find_callees` instead of grepping function names
-4. **Checking if a feature exists** - Use `check_capability` instead of exploratory grep
-5. **Recalling past decisions** - Use `recall` before making architectural changes
-6. **Storing decisions for future sessions** - Use `remember` after important choices
+4. **Recalling past decisions** - Use `recall` before making architectural changes
+5. **Storing decisions for future sessions** - Use `remember` after important choices
 
 ### When NOT to Use Mira Tools
 
@@ -60,7 +59,6 @@ Use Grep/Glob directly only when:
 | Find authentication code | `grep -r "auth"` | `semantic_code_search("authentication")` |
 | What calls this function? | `grep -r "function_name"` | `find_callers("function_name")` |
 | List functions in file | `grep "fn " file.rs` | `get_symbols(file_path="file.rs")` |
-| Check if feature exists | `grep -r "feature"` | `check_capability("feature description")` |
 | Use external library | Guess from training data | Context7: `resolve-library-id` → `query-docs` |
 | Find config files | `find . -name "*.toml"` | `glob("**/*.toml")` - OK, exact pattern |
 | Find error message | `semantic_code_search("error 404")` | `grep "error 404"` - OK, literal string |
@@ -94,21 +92,6 @@ The assistant used find_callers because:
 2. Grep would find the definition and string mentions, not actual calls
 3. find_callers uses code analysis to identify real invocations
 4. This is faster and more accurate than manual grep + filtering
-</reasoning>
-</example>
-
-<example>
-User: Does this project have caching implemented?
-Assistant: Let me check if caching capability exists.
-*Uses check_capability("caching layer for database queries or API responses")*
-Found: Redis caching in `src/cache/redis.rs`, in-memory LRU cache in `src/cache/memory.rs`.
-
-<reasoning>
-The assistant used check_capability because:
-1. The user wants to know IF something exists, not find a specific string
-2. Caching could be implemented in many ways with different terms
-3. check_capability searches semantically and returns a summary
-4. Grep -r "cache" would return too many false positives
 </reasoning>
 </example>
 
@@ -331,7 +314,7 @@ User: Plan out implementing a new caching layer
 Assistant: Let me gather context before planning.
 *Uses recall("caching architecture performance")*
 *Uses recall("database layer design")*
-*Uses check_capability("existing caching")*
+*Uses search_code("caching layer")*
 
 Now I'll launch a Plan agent with this context.
 *Uses Task tool with Plan agent:*
@@ -389,7 +372,6 @@ consult_experts(roles=["code_reviewer", "security"], context="...", question="..
 | What calls X? | `find_callers` |
 | What does X call? | `find_callees` |
 | Past decisions | `recall` |
-| Feature exists? | `check_capability` |
 | Codebase overview | `project(action="start")` output |
 | External library API | Context7: `resolve-library-id` → `query-docs` |
 | Literal string search | `Grep` (OK for this) |

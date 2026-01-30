@@ -32,7 +32,6 @@ mod types;
 mod usage;
 
 pub use background::{
-    clear_old_capabilities_sync,
     clear_old_health_issues_sync,
     delete_memory_by_key_sync,
     delete_pending_embedding_sync,
@@ -107,7 +106,6 @@ pub use memory::{
     recall_semantic_sync,
     recall_semantic_with_branch_info_sync,
     record_memory_access_sync,
-    search_capabilities_sync,
     search_memories_sync,
     store_embedding_sync,
     store_fact_embedding_sync,
