@@ -108,10 +108,7 @@ fn detect_modules_in_src(
 
         // Entry points become top-level modules
         if file_name == "lib.rs" || file_name == "main.rs" {
-            let module_path = relative
-                .parent()
-                .map(path_to_string)
-                .unwrap_or_default();
+            let module_path = relative.parent().map(path_to_string).unwrap_or_default();
 
             if !seen_dirs.contains(&module_path) {
                 seen_dirs.insert(module_path.clone());

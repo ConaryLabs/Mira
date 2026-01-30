@@ -88,14 +88,23 @@ Where it all began - a personal AI assistant with memory.
 - **`interact_with_retry()`** - New retry wrapper with exponential backoff (3 attempts: 100ms/500ms/2s) for critical database writes.
 - **Automatic migration** - On first run, existing code tables are detected in the main database and a fresh `mira-code.db` is created alongside it. Old tables are dropped after successful migration.
 - **`code_pool()` on ToolContext** - Tool handlers can now access the code database directly via a dedicated pool.
+- **MCP client manager** - Experts can now access MCP tools from the host environment, enabling codebase-aware consultations with real tool access.
+- **Secret detection in `remember` tool** - Blocks storage of API keys, tokens, passwords, and other sensitive patterns in memory facts.
+- **MCP spawn logging** - Server startup logs now include the full command and arguments for debugging.
 
 ### Changed
 - **`log_tool_call` is now fire-and-forget** - Tool history logging no longer blocks tool responses. Uses `tokio::spawn` instead of awaiting the write.
 - **Background workers use dual pools** - Slow lane workers (summaries, code health, documentation) route reads/writes to the appropriate database pool.
 - **Cross-DB JOINs eliminated** - Queries that previously joined code and main tables now use two-step application-level lookups.
+- **Consolidated utilities** - Simplified parsers, reduced function complexity across 37 files.
+
+### Removed
+- **`check_capability` tool** - Removed along with the background capabilities scanner. Capabilities are now inferred from code intelligence.
+- **Unused `with_http_client` on DeepSeekClient** - Dead code cleanup.
 
 ### Fixed
 - **SQLite concurrent write failures** - All write contention issues resolved through busy_timeout, retry logic, and database sharding.
+- **Clippy warnings in memory.rs** - Resolved all warnings with added test coverage (100 lines of new tests).
 
 ## [0.3.4] - 2026-01-28
 
