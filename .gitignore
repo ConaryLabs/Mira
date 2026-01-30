@@ -82,4 +82,5 @@ snapshots/
 MCP_DEBUG_STATUS.md
 .ralph/
 .ralphrc
+.ralphy/
 release.sh
