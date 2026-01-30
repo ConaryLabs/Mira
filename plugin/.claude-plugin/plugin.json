@@ -14,5 +14,13 @@
     "code-intelligence",
     "semantic-search",
     "goals"
+  ],
+  "category": "productivity",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "skills": [
+    "./skills/goals",
+    "./skills/recap",
+    "./skills/search"
   ]
 }

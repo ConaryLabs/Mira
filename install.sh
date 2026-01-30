@@ -152,8 +152,11 @@ setup_hooks() {
         warn "jq not found - skipping hook configuration"
         warn "Install hooks manually by adding to ~/.claude/settings.json:"
         echo '    "hooks": {'
-        echo '      "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 3000}]}],'
-        echo '      "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 3000}]}]'
+        echo '      "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000}]}],'
+        echo '      "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],'
+        echo '      "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],'
+        echo '      "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],'
+        echo '      "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}]'
         echo '    }'
         return
     fi
@@ -166,12 +169,12 @@ setup_hooks() {
 {
   "PostToolUse": [
     {
-      "matcher": "",
+      "matcher": "Write|Edit|NotebookEdit",
       "hooks": [
         {
           "type": "command",
           "command": "${mira_bin} hook post-tool",
-          "timeout": 3000
+          "timeout": 5000
         }
       ]
     }
@@ -183,7 +186,7 @@ setup_hooks() {
         {
           "type": "command",
           "command": "${mira_bin} hook user-prompt",
-          "timeout": 3000
+          "timeout": 5000
         }
       ]
     }
@@ -195,7 +198,7 @@ setup_hooks() {
         {
           "type": "command",
           "command": "${mira_bin} hook session-start",
-          "timeout": 3000
+          "timeout": 10000
         }
       ]
     }
@@ -207,6 +210,18 @@ setup_hooks() {
         {
           "type": "command",
           "command": "${mira_bin} hook pre-compact",
+          "timeout": 30000
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook stop",
           "timeout": 5000
         }
       ]

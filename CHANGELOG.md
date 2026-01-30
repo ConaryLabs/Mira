@@ -80,6 +80,19 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-01-30
+
+### Fixed
+- **Plugin configs not shipping** - `plugin/hooks/hooks.json` and `plugin/.mcp.json` were gitignored, so marketplace installs got no hook or MCP config. Now tracked with portable paths.
+- **Hardcoded dev paths in plugin configs** - Plugin hook commands and MCP server pointed to `/home/peter/...` instead of bare `mira`. Fixed to use PATH-resolved `mira` command.
+- **Dead `MIRA_DB` env var** - Removed unused environment variable from plugin `.mcp.json` (db path is always `~/.mira/mira.db`, resolved internally).
+- **PostToolUse hook too broad** - Matcher was empty (fired on every tool call). Now scoped to `Write|Edit|NotebookEdit` across all installation paths.
+- **Missing Stop hook in install.sh** - Session cleanup hook was only configured via plugin install, not via the installer script or manual setup docs.
+- **Timeout inconsistencies** - Aligned all hook timeouts across plugin, installer, README, and CONFIGURATION docs (SessionStart 10s, PostToolUse/UserPrompt/Stop 5s, PreCompact 30s).
+
+### Added
+- **Plugin manifest component refs** - `plugin.json` now declares `hooks`, `mcpServers`, `skills`, and `category` fields for explicit component discovery.
+
 ## [0.3.6] - 2026-01-30
 
 ### Changed

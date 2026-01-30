@@ -12,11 +12,12 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.3.6
+## What's New in v0.3.7
 
-- **Stale Suggestion Fixes**: Proactive suggestions, file predictions, and doc interventions now expire and verify files exist on disk
-- **Lighter Build**: 9 unused dependencies removed, dead code cleaned up
-- **Modular CLAUDE.md**: Instructions restructured into `.claude/rules/` and `.claude/skills/` — 59% less always-loaded context
+- **Plugin Fix**: Hooks and MCP config now ship with portable paths — marketplace installs work correctly
+- **Plugin Manifest**: Explicit `hooks`, `mcpServers`, and `skills` references for reliable component discovery
+- **Stop Hook**: Session cleanup hook added to all installation paths (was plugin-only)
+- **PostToolUse Scoped**: Hook now only fires on file mutations (`Write|Edit|NotebookEdit`), not every tool call
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
@@ -169,10 +170,11 @@ The quick install script automatically configures hooks. For manual installs, ad
 ```json
 {
   "hooks": {
-    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 3000}]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 3000}]}],
-    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 3000}]}],
-    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 5000}]}]
+    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000}]}],
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
+    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}]
   }
 }
 ```
