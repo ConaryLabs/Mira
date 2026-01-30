@@ -15,7 +15,6 @@
     "semantic-search",
     "goals"
   ],
-  "category": "productivity",
   "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
   "skills": [

@@ -18,12 +18,18 @@
       },
       "homepage": "https://github.com/ConaryLabs/Mira",
       "license": "Apache-2.0",
+      "category": "productivity",
       "keywords": [
         "memory",
         "context",
         "code-intelligence",
         "semantic-search",
-        "goals"
+        "goals",
+        "mcp",
+        "persistent-memory",
+        "expert-consultation",
+        "code-review",
+        "session-history"
       ]
     }
   ]
