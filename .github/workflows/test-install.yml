@@ -1,0 +1,173 @@
+name: Test Install
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to test (e.g. 0.3.7). Defaults to latest release tag.'
+        required: false
+        type: string
+
+env:
+  REPO: ConaryLabs/Mira
+
+jobs:
+  test-wrapper:
+    name: Test wrapper (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+              | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+            echo "VERSION=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify wrapper version matches release
+        run: |
+          WRAPPER_VERSION=$(grep '^MIRA_VERSION=' plugin/bin/mira-wrapper | cut -d'"' -f2)
+          EXPECTED="${{ steps.ver.outputs.VERSION }}"
+          echo "Wrapper MIRA_VERSION: $WRAPPER_VERSION"
+          echo "Expected version:     $EXPECTED"
+          if [ "$WRAPPER_VERSION" != "$EXPECTED" ]; then
+            echo "::error::Wrapper MIRA_VERSION ($WRAPPER_VERSION) does not match release ($EXPECTED)"
+            exit 1
+          fi
+
+      - name: First run — download path
+        id: first_run
+        run: |
+          # Capture stderr separately
+          STDERR_FILE=$(mktemp)
+          OUTPUT=$(sh plugin/bin/mira-wrapper --version 2>"$STDERR_FILE") || true
+          STDERR=$(cat "$STDERR_FILE")
+          rm -f "$STDERR_FILE"
+
+          echo "--- stdout ---"
+          echo "$OUTPUT"
+          echo "--- stderr ---"
+          echo "$STDERR"
+
+          EXPECTED="${{ steps.ver.outputs.VERSION }}"
+          FAIL=0
+
+          # Assert binary exists and is executable
+          if [ ! -x "$HOME/.mira/bin/mira" ]; then
+            echo "::error::Binary not found or not executable at ~/.mira/bin/mira"
+            FAIL=1
+          fi
+
+          # Assert version file matches
+          if [ -f "$HOME/.mira/bin/.mira-version" ]; then
+            ACTUAL=$(cat "$HOME/.mira/bin/.mira-version")
+            if [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo "::error::Version file ($ACTUAL) does not match expected ($EXPECTED)"
+              FAIL=1
+            fi
+          else
+            echo "::error::Version file not found at ~/.mira/bin/.mira-version"
+            FAIL=1
+          fi
+
+          # Assert .env was created
+          if [ ! -f "$HOME/.mira/.env" ]; then
+            echo "::error::.env not created at ~/.mira/.env"
+            FAIL=1
+          fi
+
+          # Assert stderr contains download log
+          if ! echo "$STDERR" | grep -q "downloading"; then
+            echo "::error::stderr missing download log on first run"
+            FAIL=1
+          fi
+
+          # Assert --version output contains version string
+          if ! echo "$OUTPUT" | grep -q "$EXPECTED"; then
+            echo "::error::--version output does not contain $EXPECTED"
+            FAIL=1
+          fi
+
+          exit $FAIL
+
+      - name: Second run — fast path (no download)
+        run: |
+          STDERR_FILE=$(mktemp)
+          sh plugin/bin/mira-wrapper --version 2>"$STDERR_FILE" || true
+          STDERR=$(cat "$STDERR_FILE")
+          rm -f "$STDERR_FILE"
+
+          echo "--- stderr ---"
+          echo "$STDERR"
+
+          if echo "$STDERR" | grep -qi "download"; then
+            echo "::error::Second run should not download again, but stderr contains download log"
+            exit 1
+          fi
+          echo "Fast path confirmed — no download on second run"
+
+  test-installer:
+    name: Test install.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+              | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+            echo "VERSION=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run install.sh
+        run: |
+          export MIRA_INSTALL_DIR="$HOME/.local/bin"
+          mkdir -p "$MIRA_INSTALL_DIR"
+          # Run installer non-interactively (skip plugin install since claude CLI not present)
+          bash install.sh
+
+      - name: Verify installation
+        run: |
+          EXPECTED="${{ steps.ver.outputs.VERSION }}"
+          FAIL=0
+
+          # Assert binary exists and is executable
+          BIN="$HOME/.local/bin/mira"
+          if [ ! -x "$BIN" ]; then
+            echo "::error::Binary not found or not executable at $BIN"
+            FAIL=1
+          fi
+
+          # Assert .env was created
+          if [ ! -f "$HOME/.mira/.env" ]; then
+            echo "::error::.env not created at ~/.mira/.env"
+            FAIL=1
+          fi
+
+          # Assert binary runs
+          OUTPUT=$("$BIN" --version 2>/dev/null) || true
+          echo "mira --version output: $OUTPUT"
+          if ! echo "$OUTPUT" | grep -q "$EXPECTED"; then
+            echo "::error::--version output does not contain $EXPECTED"
+            FAIL=1
+          fi
+
+          exit $FAIL
