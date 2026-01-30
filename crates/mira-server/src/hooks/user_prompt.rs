@@ -7,7 +7,7 @@ use crate::embeddings::EmbeddingClient;
 use crate::hooks::{read_hook_input, write_hook_output};
 use crate::proactive::{behavior::BehaviorTracker, predictor};
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Get database path (same as other hooks)
@@ -102,6 +102,11 @@ pub async fn run() -> Result<()> {
                     return Ok::<Option<String>, anyhow::Error>(None);
                 }
 
+                // Resolve project path for file existence checks
+                let project_path = crate::db::get_last_active_project_sync(conn)
+                    .ok()
+                    .flatten();
+
                 // Build current context from recent behavior
                 let recent_files =
                     crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
@@ -145,13 +150,33 @@ pub async fn run() -> Result<()> {
                 };
 
                 // Get predictions from patterns
-                let predictions = predictor::generate_context_predictions(
+                let mut predictions = predictor::generate_context_predictions(
                     conn,
                     project_id,
                     &current_context,
                     &config,
                 )
                 .unwrap_or_default();
+
+                // Filter out file predictions for files that no longer exist
+                if let Some(ref base) = project_path {
+                    predictions.retain(|p| {
+                        match p.prediction_type {
+                            predictor::PredictionType::NextFile
+                            | predictor::PredictionType::RelatedFiles => {
+                                let exists = Path::new(base).join(&p.content).exists();
+                                if !exists {
+                                    tracing::debug!(
+                                        "Dropping stale file prediction: {}",
+                                        p.content
+                                    );
+                                }
+                                exists
+                            }
+                            _ => true,
+                        }
+                    });
+                }
 
                 if predictions.is_empty() {
                     return Ok(None);

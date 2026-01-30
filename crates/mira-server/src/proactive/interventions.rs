@@ -1,6 +1,8 @@
 // crates/mira-server/src/proactive/interventions.rs
 // Intervention generation from pondering insights
 
+use std::path::Path;
+
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -141,8 +143,15 @@ pub fn get_pending_interventions_sync(
         });
     }
 
+    // Resolve project path for file existence checks
+    let project_path = crate::db::get_project_info_sync(conn, project_id)
+        .ok()
+        .flatten()
+        .map(|(_, path)| path);
+
     // Also get documentation interventions (stale/missing docs)
-    let doc_interventions = get_documentation_interventions_sync(conn, project_id)?;
+    let doc_interventions =
+        get_documentation_interventions_sync(conn, project_id, project_path.as_deref())?;
     interventions.extend(doc_interventions);
 
     // Limit total interventions
@@ -155,6 +164,7 @@ pub fn get_pending_interventions_sync(
 fn get_documentation_interventions_sync(
     conn: &Connection,
     project_id: i64,
+    project_path: Option<&str>,
 ) -> Result<Vec<PendingIntervention>> {
     let mut interventions = Vec::new();
 
@@ -166,6 +176,7 @@ fn get_documentation_interventions_sync(
            WHERE project_id = ?
              AND is_stale = 1
              AND change_impact = 'significant'
+             AND impact_analyzed_at > datetime('now', '-2 hours')
            ORDER BY impact_analyzed_at DESC
            LIMIT 2"#,
     )?;
@@ -176,6 +187,15 @@ fn get_documentation_interventions_sync(
 
     for row in stale_rows.flatten() {
         let (doc_path, summary) = row;
+
+        // Skip if the doc file no longer exists on disk
+        if let Some(base) = project_path {
+            if !Path::new(base).join(&doc_path).exists() {
+                tracing::debug!("Skipping stale doc intervention: file gone: {}", doc_path);
+                continue;
+            }
+        }
+
         let content = if let Some(s) = summary {
             format!("`{}`: {}", doc_path, s)
         } else {
@@ -215,6 +235,20 @@ fn get_documentation_interventions_sync(
 
     for row in pending_rows.flatten() {
         let (target_path, source_path, category) = row;
+
+        // Skip if the source file no longer exists on disk
+        if let Some(base) = project_path {
+            if let Some(ref src) = source_path {
+                if !Path::new(base).join(src).exists() {
+                    tracing::debug!(
+                        "Skipping missing doc intervention: source gone: {}",
+                        src
+                    );
+                    continue;
+                }
+            }
+        }
+
         let content = if let Some(src) = source_path {
             format!("`{}` needs documentation ({})", src, category)
         } else {

@@ -401,6 +401,7 @@ pub fn get_pre_generated_suggestions(
         WHERE project_id = ?
           AND trigger_key = ?
           AND (expires_at IS NULL OR expires_at > datetime('now'))
+          AND created_at > datetime('now', '-4 hours')
         ORDER BY confidence DESC
         LIMIT 3
     "#,
