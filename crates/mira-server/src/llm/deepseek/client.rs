@@ -8,7 +8,6 @@ use crate::llm::truncate_messages_to_budget;
 use crate::llm::{ChatResult, Message, Tool};
 use anyhow::Result;
 use async_trait::async_trait;
-use reqwest::Client;
 use std::time::{Duration, Instant};
 use tracing::{Span, debug, info, instrument};
 use uuid::Uuid;
@@ -35,15 +34,6 @@ impl DeepSeekClient {
             api_key,
             model,
             http,
-        }
-    }
-
-    /// Create a new DeepSeek client with a shared HTTP client
-    pub fn with_http_client(api_key: String, model: String, client: Client) -> Self {
-        Self {
-            api_key,
-            model,
-            http: LlmHttpClient::from_client(client),
         }
     }
 
