@@ -244,7 +244,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_summary ON chat_messages(summary_id
 
 CREATE TABLE IF NOT EXISTS chat_summaries (
     id INTEGER PRIMARY KEY,
-    project_id INTEGER,  -- NULL for global/legacy summaries
+    project_id INTEGER,  -- NULL for global summaries
     summary TEXT NOT NULL,
     message_range_start INTEGER,  -- first message id covered
     message_range_end INTEGER,    -- last message id covered

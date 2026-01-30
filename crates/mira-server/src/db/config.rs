@@ -1,7 +1,6 @@
 // crates/mira-server/src/db/config.rs
 // Configuration storage (custom system prompts, LLM provider config, etc.)
 
-use crate::embeddings::GoogleEmbeddingModel;
 use crate::llm::Provider;
 use rusqlite::{Connection, params};
 
@@ -134,19 +133,4 @@ impl Default for ExpertConfig {
             model: None,
         }
     }
-}
-
-/// Result of embedding model compatibility check
-#[derive(Debug)]
-pub enum EmbeddingModelCheck {
-    /// First time using embeddings - no prior model configured
-    FirstUse,
-    /// Requested model matches stored model
-    Matches,
-    /// Model mismatch detected
-    Mismatch {
-        stored: GoogleEmbeddingModel,
-        requested: GoogleEmbeddingModel,
-        has_vectors: bool,
-    },
 }

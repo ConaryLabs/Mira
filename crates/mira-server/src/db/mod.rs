@@ -64,8 +64,8 @@ pub use cartographer::{
 };
 pub use chat::get_last_chat_time_sync;
 pub use config::{
-    EmbeddingModelCheck, ExpertConfig, delete_custom_prompt_sync, get_expert_config_sync,
-    list_custom_prompts_sync, set_expert_config_sync,
+    ExpertConfig, delete_custom_prompt_sync, get_expert_config_sync, list_custom_prompts_sync,
+    set_expert_config_sync,
 };
 pub use diff_analysis::{
     DiffAnalysis, get_cached_diff_analysis_sync, get_recent_diff_analyses_sync,
@@ -74,7 +74,6 @@ pub use diff_analysis::{
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
 pub use index::{
-    CallInsert,
     ImportInsert,
     // Batch insert operations
     SymbolInsert,
@@ -160,6 +159,5 @@ pub use usage::{
     insert_embedding_usage_sync, insert_llm_usage_sync, query_llm_usage_stats,
 };
 
-// Note: The legacy Database struct has been removed.
-// Use DatabasePool from db::pool for all database operations.
+// All database access goes through DatabasePool (db::pool).
 // All functions are available as _sync variants that take &Connection directly.

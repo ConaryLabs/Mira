@@ -18,7 +18,7 @@ const MAIN_BRANCH_BOOST: f32 = 0.95;
 /// Returns a boosted (lower) distance for:
 /// - Same branch: 15% reduction (multiply by 0.85)
 /// - main/master: 5% reduction (multiply by 0.95)
-/// - NULL branch (legacy data): no change
+/// - NULL branch (pre-branch-tracking data): no change
 /// - Different branch: no change (keeps cross-branch knowledge accessible)
 pub fn apply_branch_boost(
     distance: f32,
@@ -30,7 +30,7 @@ pub fn apply_branch_boost(
         (Some(m), Some(c)) if m == c => distance * SAME_BRANCH_BOOST,
         // main/master memories get a small boost (stable/shared knowledge)
         (Some(m), _) if m == "main" || m == "master" => distance * MAIN_BRANCH_BOOST,
-        // NULL branch (legacy data) or different branch: no boost
+        // NULL branch (pre-branch-tracking data) or different branch: no boost
         // Cross-branch knowledge remains accessible, just not prioritized
         _ => distance,
     }
@@ -634,7 +634,7 @@ mod branch_boost_tests {
 
     #[test]
     fn test_null_branch_no_boost() {
-        // NULL branch (legacy data) should get no boost
+        // NULL branch (pre-branch-tracking data) should get no boost
         let distance = 1.0;
 
         // Memory has no branch

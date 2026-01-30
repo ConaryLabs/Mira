@@ -28,7 +28,6 @@ serde_json = "1.0"
 # Database (rusqlite + sqlite-vec for embeddings)
 rusqlite = { version = "0.37", features = ["bundled"] }
 sqlite-vec = "0.1"
-zerocopy = "0.8"
 deadpool-sqlite = { version = "0.12", features = ["rt_tokio_1", "tracing"] }
 
 # MCP Server
@@ -54,7 +53,6 @@ tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
 tree-sitter-python = "0.23"
 tree-sitter-typescript = "0.23"
-tree-sitter-javascript = "0.23"
 tree-sitter-go = "0.25.0"
 
 # Git operations
@@ -64,19 +62,11 @@ git2 = "0.20"
 walkdir = "2.5"
 notify = "8.0"
 ignore = "0.4"
-libc = "0.2"
-md5 = "0.8.0"
 dirs = "6.0.0"
 regex = "1.12.2"
 
-# Document processing
-pdf-extract = "0.10"
-pulldown-cmark = "0.13"
-
 # Additional utilities
-glob = "0.3"
 urlencoding = "2.1"
-similar = "2.6"
 dotenvy = "0.15.7"
 toml = "0.8"
 scraper = "0.20"
@@ -93,4 +83,3 @@ rayon = "1.10"
 
 [dev-dependencies]
 tempfile = "3.8"
-dotenv = "0.15"

@@ -134,13 +134,6 @@ pub struct ImportInsert<'a> {
     pub is_external: bool,
 }
 
-/// Function call data for batch insertion
-pub struct CallInsert<'a> {
-    pub caller_name: &'a str,
-    pub callee_name: &'a str,
-    pub call_line: u32,
-}
-
 /// Insert a symbol and return its ID
 /// Uses transaction for batch operations
 pub fn insert_symbol_sync(

@@ -11,24 +11,9 @@
 // }).await?;
 // ```
 //
-// ## Background Worker Pattern: tokio::task::spawn_blocking()
-// Use `tokio::task::spawn_blocking()` for background workers that use the legacy `Database` struct:
-// ```ignore
-// let db_clone = db.clone();
-// let result = tokio::task::spawn_blocking(move || {
-//     let conn = db_clone.conn();
-//     some_sync_function(&conn, arg1, arg2)
-// }).await.map_err(|e| format!("spawn_blocking panicked: {}", e))??;
-// ```
-//
-// Note the double `?`:
-// - First `?` handles the JoinError from spawn_blocking
-// - Second `?` handles the inner Result from the closure
-//
 // ## Common Pitfalls
 //
-// 1. **Don't block the async runtime**: Never call `db.conn()` directly in async code.
-//    Always wrap in `spawn_blocking()` or use `pool.interact()`.
+// 1. **Don't block the async runtime**: Always use `pool.interact()` for database access.
 //
 // 2. **Type inference**: Rust needs help inferring types for closures. If you get
 //    "type annotations needed", add explicit types to the return value:
@@ -69,12 +54,11 @@ fn ensure_sqlite_vec_registered() {
 
 /// Database pool wrapper with sqlite-vec support and per-connection setup.
 ///
-/// This replaces the old `Database` struct's single Mutex<Connection> with
-/// a proper connection pool that scales for concurrent access.
+/// Connection pool that scales for concurrent access.
 pub struct DatabasePool {
     pool: Pool,
     path: Option<PathBuf>,
-    /// URI for in-memory databases (used to share state with legacy Database)
+    /// URI for in-memory databases (used to share state in tests)
     memory_uri: Option<String>,
 }
 
@@ -314,7 +298,7 @@ impl DatabasePool {
         Ok(db_pool)
     }
 
-    /// Get the memory URI (for sharing with legacy Database in tests)
+    /// Get the memory URI (for sharing state in tests)
     pub fn memory_uri(&self) -> Option<&str> {
         self.memory_uri.as_deref()
     }
