@@ -1,7 +1,7 @@
 {
   "name": "mira",
   "description": "Semantic memory and code intelligence for Claude Code. Persistent memory across sessions, expert consultations, goal tracking, and proactive context injection.",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "author": {
     "name": "Peter Permenter"
   },
