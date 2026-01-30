@@ -26,13 +26,8 @@ pub async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
     let server = mira::mcp::MiraServer::new(pool, code_pool, None);
 
     // Call session_start
-    let result = mira::tools::session_start(
-        &server,
-        path_to_string(&project_path),
-        None,
-        None,
-    )
-    .await;
+    let result =
+        mira::tools::session_start(&server, path_to_string(&project_path), None, None).await;
 
     match result {
         Ok(output) => {

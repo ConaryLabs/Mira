@@ -124,9 +124,8 @@ pub fn get_indexed_projects_sync(conn: &Connection) -> rusqlite::Result<Vec<(i64
 /// Get project IDs that have indexed code (from codebase_modules).
 /// Run this on the code database pool.
 pub fn get_indexed_project_ids_sync(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT project_id FROM codebase_modules WHERE project_id IS NOT NULL",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT project_id FROM codebase_modules WHERE project_id IS NOT NULL")?;
     let ids = stmt
         .query_map([], |row| row.get(0))?
         .filter_map(|r| r.ok())
@@ -149,8 +148,10 @@ pub fn get_project_paths_by_ids_sync(
         placeholders.join(",")
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> =
-        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let params: Vec<&dyn rusqlite::types::ToSql> = ids
+        .iter()
+        .map(|id| id as &dyn rusqlite::types::ToSql)
+        .collect();
     let projects = stmt
         .query_map(params.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
         .filter_map(|r| r.ok())

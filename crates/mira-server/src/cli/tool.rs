@@ -5,11 +5,11 @@ use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    AnalyzeDiffRequest, ConfigureExpertRequest, ConsultExpertsRequest,
-    CrossProjectRequest, DocumentationRequest, FindCalleesRequest, FindCallersRequest,
-    FindingRequest, ForgetRequest, GetSymbolsRequest, GoalRequest, IndexRequest, ProjectRequest,
-    RecallRequest, RememberRequest, ReplyToMiraRequest, SemanticCodeSearchRequest,
-    SessionHistoryRequest, TeamRequest, UsageRequest,
+    AnalyzeDiffRequest, ConfigureExpertRequest, ConsultExpertsRequest, CrossProjectRequest,
+    DocumentationRequest, FindCalleesRequest, FindCallersRequest, FindingRequest, ForgetRequest,
+    GetSymbolsRequest, GoalRequest, IndexRequest, ProjectRequest, RecallRequest, RememberRequest,
+    ReplyToMiraRequest, SemanticCodeSearchRequest, SessionHistoryRequest, TeamRequest,
+    UsageRequest,
 };
 
 /// Execute a tool directly from the command line

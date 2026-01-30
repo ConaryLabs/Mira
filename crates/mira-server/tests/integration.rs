@@ -8,10 +8,9 @@ mod test_utils;
 use mira::mcp::requests::{ExpertConfigAction, GoalAction, IndexAction, SessionHistoryAction};
 #[allow(unused_imports)]
 use mira::tools::core::{
-    ToolContext, configure_expert, ensure_session, find_function_callees,
-    find_function_callers, forget, get_project, get_session_recap, get_symbols, goal, index,
-    recall, remember, reply_to_mira, search_code, session_history, session_start, set_project,
-    summarize_codebase,
+    ToolContext, configure_expert, ensure_session, find_function_callees, find_function_callers,
+    forget, get_project, get_session_recap, get_symbols, goal, index, recall, remember,
+    reply_to_mira, search_code, session_history, session_start, set_project, summarize_codebase,
 };
 use test_utils::TestContext;
 

@@ -42,7 +42,9 @@ async fn migrate_code_tables_if_needed(
         .unwrap_or(false);
 
     if has_old_code_tables {
-        info!("Migrating: dropping code index tables from main DB (will re-index into mira-code.db)");
+        info!(
+            "Migrating: dropping code index tables from main DB (will re-index into mira-code.db)"
+        );
         if let Err(e) = main_pool
             .interact(|conn| {
                 // Drop in dependency order. Ignore errors for tables that may not exist.
@@ -68,7 +70,10 @@ async fn migrate_code_tables_if_needed(
             })
             .await
         {
-            warn!("Code table migration failed (non-fatal, will retry next start): {}", e);
+            warn!(
+                "Code table migration failed (non-fatal, will retry next start): {}",
+                e
+            );
         }
     }
 }
@@ -109,9 +114,7 @@ pub async fn setup_server_context() -> Result<MiraServer> {
         MiraServer::from_api_keys(pool.clone(), code_pool, embeddings, &env_config.api_keys);
 
     // Initialize MCP client manager for external MCP server access (expert tools)
-    let cwd = std::env::current_dir()
-        .ok()
-        .map(|p| path_to_string(&p));
+    let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
     let mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
     if mcp_manager.has_servers() {
         server.mcp_client_manager = Some(Arc::new(mcp_manager));
@@ -233,19 +236,13 @@ pub async fn run_mcp_server() -> Result<()> {
     info!("File watcher started");
 
     // Create MCP server with watcher from centralized config
-    let mut server = MiraServer::from_api_keys(
-        pool.clone(),
-        code_pool,
-        embeddings,
-        &env_config.api_keys,
-    );
+    let mut server =
+        MiraServer::from_api_keys(pool.clone(), code_pool, embeddings, &env_config.api_keys);
     server.watcher = Some(watcher_handle);
 
     // Initialize MCP client manager for external MCP server access (expert tools)
     // We initialize with CWD initially; project path will be used when available
-    let cwd = std::env::current_dir()
-        .ok()
-        .map(|p| path_to_string(&p));
+    let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
     let mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
     if mcp_manager.has_servers() {
         info!("MCP client manager initialized for expert tool access");

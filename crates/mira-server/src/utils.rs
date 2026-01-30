@@ -67,10 +67,7 @@ mod tests {
         use std::path::PathBuf;
         let path = PathBuf::from("/home/user/project/src/main.rs");
         let base = PathBuf::from("/home/user/project");
-        assert_eq!(
-            relative_to(&path, &base),
-            Path::new("src/main.rs")
-        );
+        assert_eq!(relative_to(&path, &base), Path::new("src/main.rs"));
     }
 
     #[test]

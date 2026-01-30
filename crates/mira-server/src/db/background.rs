@@ -472,9 +472,7 @@ pub fn get_projects_with_pending_summaries_sync(
 
 /// Get project IDs that have modules needing summaries.
 /// Run this on the code database pool.
-pub fn get_project_ids_needing_summaries_sync(
-    conn: &Connection,
-) -> rusqlite::Result<Vec<i64>> {
+pub fn get_project_ids_needing_summaries_sync(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT project_id FROM codebase_modules
          WHERE (purpose IS NULL OR purpose = '') AND project_id IS NOT NULL

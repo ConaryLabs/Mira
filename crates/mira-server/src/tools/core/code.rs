@@ -9,8 +9,8 @@ use crate::indexer;
 use crate::llm::{LlmClient, Message, record_llm_usage};
 use crate::mcp::requests::IndexAction;
 use crate::search::{
-    CrossRefType, crossref_search, expand_context_with_conn, find_callees,
-    find_callers, format_crossref_results, format_project_header, hybrid_search,
+    CrossRefType, crossref_search, expand_context_with_conn, find_callees, find_callers,
+    format_crossref_results, format_project_header, hybrid_search,
 };
 use crate::tools::core::ToolContext;
 
@@ -262,9 +262,10 @@ pub async fn index<C: ToolContext>(
             } else {
                 ctx.embeddings().cloned()
             };
-            let stats = indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
-                .await
-                .map_err(|e| e.to_string())?;
+            let stats =
+                indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
 
             let mut response = format!(
                 "Indexed {} files, {} symbols, {} chunks",
@@ -274,7 +275,15 @@ pub async fn index<C: ToolContext>(
             // Auto-summarize modules that don't have descriptions yet
             if let Some(pid) = project_id {
                 if let Some(llm_client) = ctx.llm_factory().client_for_background() {
-                    match auto_summarize_modules(ctx.code_pool(), ctx.pool(), pid, &project_path, &*llm_client).await {
+                    match auto_summarize_modules(
+                        ctx.code_pool(),
+                        ctx.pool(),
+                        pid,
+                        &project_path,
+                        &*llm_client,
+                    )
+                    .await
+                    {
                         Ok(count) if count > 0 => {
                             response.push_str(&format!(", summarized {} modules", count));
                         }

@@ -3,13 +3,13 @@
 // Handles internal translation between Mira's format and Google's format
 // Note: Built-in tools (Google Search) cannot combine with custom function tools
 
+use crate::http::create_shared_client;
 use crate::llm::gemini::conversion::{convert_message, convert_tools, google_search_tool};
 use crate::llm::gemini::extraction::{extract_content, extract_thoughts, extract_tool_calls};
 use crate::llm::gemini::types::{
     GeminiContent, GeminiRequest, GeminiResponse, GeminiTool, GenerationConfig, ThinkingConfig,
 };
 use crate::llm::provider::{LlmClient, Provider};
-use crate::http::create_shared_client;
 use crate::llm::{ChatResult, Message, Tool, Usage};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;

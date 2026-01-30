@@ -196,9 +196,12 @@ impl McpClientManager {
             },
         };
 
-        let service = serve_client(client_info, transport)
-            .await
-            .map_err(|e| format!("Failed to initialize MCP client for '{}': {}", server_name, e))?;
+        let service = serve_client(client_info, transport).await.map_err(|e| {
+            format!(
+                "Failed to initialize MCP client for '{}': {}",
+                server_name, e
+            )
+        })?;
 
         let peer = service.peer().clone();
 
@@ -218,7 +221,11 @@ impl McpClientManager {
         let mut clients = self.clients.write().await;
         clients.insert(
             server_name.to_string(),
-            ConnectedServer { peer, tools, _service: service },
+            ConnectedServer {
+                peer,
+                tools,
+                _service: service,
+            },
         );
 
         Ok(())
@@ -269,7 +276,7 @@ impl McpClientManager {
             let clients = self.clients.read().await;
             if let Some(server) = clients.get(&config.name) {
                 for mcp_tool in &server.tools {
-                    let prefixed_name = format!("mcp__{}__{}",config.name, mcp_tool.name);
+                    let prefixed_name = format!("mcp__{}__{}", config.name, mcp_tool.name);
                     let description = mcp_tool
                         .description
                         .as_deref()

@@ -26,7 +26,6 @@ const MAX_TEXT_CHARS: usize = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
 /// Max batch size for batch embedding
 const MAX_BATCH_SIZE: usize = 100;
 
-
 /// Retry attempts
 const RETRY_ATTEMPTS: usize = 2;
 
@@ -159,7 +158,14 @@ impl GoogleEmbeddings {
         task_type: TaskType,
         pool: Option<Arc<DatabasePool>>,
     ) -> Self {
-        Self::with_http_client(api_key, model, dimensions, task_type, pool, create_fast_client())
+        Self::with_http_client(
+            api_key,
+            model,
+            dimensions,
+            task_type,
+            pool,
+            create_fast_client(),
+        )
     }
 
     /// Create embeddings client with a shared HTTP client

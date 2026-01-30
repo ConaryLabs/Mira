@@ -341,16 +341,11 @@ pub fn calculate_risk_level(flags: &[String], changes: &[SemanticChange]) -> Str
 }
 
 /// Reconstruct a DiffAnalysisResult from cached database row
-fn result_from_cache(
-    cached: DiffAnalysis,
-    from_ref: String,
-    to_ref: String,
-) -> DiffAnalysisResult {
+fn result_from_cache(cached: DiffAnalysis, from_ref: String, to_ref: String) -> DiffAnalysisResult {
     DiffAnalysisResult {
         from_ref,
         to_ref,
-        changes: serde_json::from_str(&cached.changes_json.unwrap_or_default())
-            .unwrap_or_default(),
+        changes: serde_json::from_str(&cached.changes_json.unwrap_or_default()).unwrap_or_default(),
         impact: cached
             .impact_json
             .and_then(|j| serde_json::from_str(&j).ok()),
@@ -584,7 +579,10 @@ fn format_changes_section(changes: &[SemanticChange]) -> String {
             output.push_str(&format!("**{}**\n", title));
             for c in &matching {
                 let markers = format_change_markers(c);
-                output.push_str(&format!("- {}: {}{}\n", c.file_path, c.description, markers));
+                output.push_str(&format!(
+                    "- {}: {}{}\n",
+                    c.file_path, c.description, markers
+                ));
                 classified.insert(&c.description);
             }
             output.push('\n');
@@ -601,7 +599,10 @@ fn format_changes_section(changes: &[SemanticChange]) -> String {
         output.push_str("**Other Changes**\n");
         for c in other {
             let markers = format_change_markers(c);
-            output.push_str(&format!("- {}: {}{}\n", c.file_path, c.description, markers));
+            output.push_str(&format!(
+                "- {}: {}{}\n",
+                c.file_path, c.description, markers
+            ));
         }
         output.push('\n');
     }
@@ -628,7 +629,9 @@ fn format_impact_section(impact: &ImpactAnalysis) -> String {
 
     format!(
         "### Impact\n- Directly affected: {} functions\n- Transitively affected: {} functions\n- Affected files: {}\n\n",
-        direct, transitive, impact.affected_files.len()
+        direct,
+        transitive,
+        impact.affected_files.len()
     )
 }
 

@@ -219,9 +219,7 @@ pub async fn execute_tool<C: ToolContext>(ctx: &C, tool_call: &ToolCall) -> Stri
             let count = args["count"].as_u64().unwrap_or(5).min(10) as u32;
             execute_web_search(query, count).await
         }
-        name if name.starts_with("mcp__") => {
-            execute_mcp_tool(ctx, name, args).await
-        }
+        name if name.starts_with("mcp__") => execute_mcp_tool(ctx, name, args).await,
         _ => format!("Unknown tool: {}", tool_call.function.name),
     }
 }
@@ -437,7 +435,10 @@ async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
 
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
-        return format!("Error: Only http:// and https:// URLs are supported, got {}", scheme);
+        return format!(
+            "Error: Only http:// and https:// URLs are supported, got {}",
+            scheme
+        );
     }
 
     // Build HTTP client with browser-like settings
@@ -523,14 +524,18 @@ fn extract_text_from_html(html: &str) -> String {
     let document = Html::parse_document(html);
 
     // Try to get main content area first
-    let selectors = ["main", "article", "[role=main]", ".content", "#content", "body"];
+    let selectors = [
+        "main",
+        "article",
+        "[role=main]",
+        ".content",
+        "#content",
+        "body",
+    ];
     for sel_str in &selectors {
         if let Ok(selector) = Selector::parse(sel_str) {
             if let Some(element) = document.select(&selector).next() {
-                let text = element
-                    .text()
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let text = element.text().collect::<Vec<_>>().join(" ");
                 let cleaned = clean_extracted_text(&text);
                 if !cleaned.is_empty() && cleaned.len() > 100 {
                     return cleaned;
@@ -631,7 +636,11 @@ async fn execute_web_search(query: &str, count: u32) -> String {
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return format!("Error: Brave Search returned HTTP {}: {}", status.as_u16(), body);
+        return format!(
+            "Error: Brave Search returned HTTP {}: {}",
+            status.as_u16(),
+            body
+        );
     }
 
     let body: Value = match response.json().await {
@@ -700,16 +709,24 @@ async fn execute_mcp_tool<C: ToolContext>(ctx: &C, prefixed_name: &str, args: Va
     // Verify the server exists
     let server_exists = mcp_tools.iter().any(|(name, _)| name == server_name);
     if !server_exists {
-        return format!("Error: MCP server '{}' not found. Available: {}",
+        return format!(
+            "Error: MCP server '{}' not found. Available: {}",
             server_name,
-            mcp_tools.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
+            mcp_tools
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
     // Call the MCP tool via the context's mcp_call_tool method
     match ctx.mcp_call_tool(server_name, tool_name, args).await {
         Ok(result) => result,
-        Err(e) => format!("Error calling MCP tool {}/{}: {}", server_name, tool_name, e),
+        Err(e) => format!(
+            "Error calling MCP tool {}/{}: {}",
+            server_name, tool_name, e
+        ),
     }
 }
 
@@ -819,7 +836,11 @@ mod tests {
     #[tokio::test]
     async fn test_execute_web_search_no_api_key() {
         // Only run this test if BRAVE_API_KEY is not set (to avoid unsafe env manipulation)
-        if std::env::var("BRAVE_API_KEY").ok().filter(|k| !k.trim().is_empty()).is_some() {
+        if std::env::var("BRAVE_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .is_some()
+        {
             // Skip test when key is present - we don't want to manipulate env unsafely
             return;
         }

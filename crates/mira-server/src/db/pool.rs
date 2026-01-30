@@ -40,11 +40,11 @@
 // 4. **In-memory testing**: Use shared cache URI (`file:memdb_xxx?mode=memory&cache=shared`)
 //    so multiple pool connections share the same database state.
 
+use crate::utils::path_to_string;
 use anyhow::{Context, Result};
 use deadpool_sqlite::{Config, Hook, Pool, Runtime};
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
-use crate::utils::path_to_string;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
@@ -700,7 +700,10 @@ mod tests {
         // A SQL error (not SQLITE_BUSY) should fail immediately without retrying
         let result = pool
             .interact_with_retry(|conn| {
-                conn.execute("INSERT INTO nonexistent_table VALUES (?)", rusqlite::params![1])?;
+                conn.execute(
+                    "INSERT INTO nonexistent_table VALUES (?)",
+                    rusqlite::params![1],
+                )?;
                 Ok(())
             })
             .await;
@@ -725,10 +728,7 @@ mod tests {
                 pool.interact_with_retry(move |conn| {
                     conn.execute(
                         "INSERT INTO projects (path, name) VALUES (?, ?)",
-                        rusqlite::params![
-                            format!("/concurrent/{i}"),
-                            format!("project-{i}")
-                        ],
+                        rusqlite::params![format!("/concurrent/{i}"), format!("project-{i}")],
                     )?;
                     Ok(())
                 })

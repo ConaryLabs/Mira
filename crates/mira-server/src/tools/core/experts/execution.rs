@@ -71,7 +71,10 @@ pub async fn consult_expert<C: ToolContext>(
     // Add MCP tools from configured external servers (with full schemas)
     let mcp_tools = ctx.mcp_expert_tools().await;
     if !mcp_tools.is_empty() {
-        debug!(mcp_tool_count = mcp_tools.len(), "Adding MCP tools to expert tool set");
+        debug!(
+            mcp_tool_count = mcp_tools.len(),
+            "Adding MCP tools to expert tool set"
+        );
         tools.extend(mcp_tools);
     }
 

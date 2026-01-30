@@ -183,26 +183,27 @@ where
                     );
                     let key = format!("{}:{}:{}", key_prefix, file_path, name);
 
-                    main_pool.interact(move |conn| {
-                        store_memory_sync(
-                            conn,
-                            StoreMemoryParams {
-                                project_id: Some(project_id),
-                                key: Some(&key),
-                                content: &issue_content,
-                                fact_type: "health",
-                                category: Some(category),
-                                confidence: 0.75,
-                                session_id: None,
-                                user_id: None,
-                                scope: "project",
-                                branch: None,
-                            },
-                        )
-                        .map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
-                    })
-                    .await
-                    .str_err()?;
+                    main_pool
+                        .interact(move |conn| {
+                            store_memory_sync(
+                                conn,
+                                StoreMemoryParams {
+                                    project_id: Some(project_id),
+                                    key: Some(&key),
+                                    content: &issue_content,
+                                    fact_type: "health",
+                                    category: Some(category),
+                                    confidence: 0.75,
+                                    session_id: None,
+                                    user_id: None,
+                                    scope: "project",
+                                    branch: None,
+                                },
+                            )
+                            .map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
+                        })
+                        .await
+                        .str_err()?;
 
                     tracing::info!("Code health: {} issue found in {}", category, name);
                     stored += 1;

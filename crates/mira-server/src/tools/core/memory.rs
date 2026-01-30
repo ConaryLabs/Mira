@@ -15,13 +15,36 @@ use regex::Regex;
 #[allow(clippy::expect_used)] // Static regex patterns are compile-time known; panic on invalid regex is correct
 static SECRET_PATTERNS: Lazy<Vec<(&str, Regex)>> = Lazy::new(|| {
     vec![
-        ("API key", Regex::new(r"(?i)(sk-[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*\S{10,})").expect("valid regex")),
-        ("AWS key", Regex::new(r"AKIA[0-9A-Z]{16}").expect("valid regex")),
-        ("Private key", Regex::new(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----").expect("valid regex")),
-        ("Bearer token", Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-.]{20,}").expect("valid regex")),
-        ("Password assignment", Regex::new(r"(?i)(password|passwd|pwd)\s*[:=]\s*\S{6,}").expect("valid regex")),
-        ("GitHub token", Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").expect("valid regex")),
-        ("Generic secret", Regex::new(r#"(?i)(secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-/.]{20,}"#).expect("valid regex")),
+        (
+            "API key",
+            Regex::new(r"(?i)(sk-[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*\S{10,})")
+                .expect("valid regex"),
+        ),
+        (
+            "AWS key",
+            Regex::new(r"AKIA[0-9A-Z]{16}").expect("valid regex"),
+        ),
+        (
+            "Private key",
+            Regex::new(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----").expect("valid regex"),
+        ),
+        (
+            "Bearer token",
+            Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-.]{20,}").expect("valid regex"),
+        ),
+        (
+            "Password assignment",
+            Regex::new(r"(?i)(password|passwd|pwd)\s*[:=]\s*\S{6,}").expect("valid regex"),
+        ),
+        (
+            "GitHub token",
+            Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").expect("valid regex"),
+        ),
+        (
+            "Generic secret",
+            Regex::new(r#"(?i)(secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-/.]{20,}"#)
+                .expect("valid regex"),
+        ),
     ]
 });
 
@@ -324,10 +347,7 @@ mod tests {
 
     #[test]
     fn detect_secret_catches_aws_key() {
-        assert_eq!(
-            detect_secret("AKIAIOSFODNN7EXAMPLE"),
-            Some("AWS key")
-        );
+        assert_eq!(detect_secret("AKIAIOSFODNN7EXAMPLE"), Some("AWS key"));
     }
 
     #[test]

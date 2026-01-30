@@ -210,9 +210,8 @@ async fn scan_project_health(
                 }
 
                 // 4. Unwrap/expect audit (panic risks)
-                let unwraps =
-                    detection::scan_unwrap_usage(conn, project_id, &project_path_owned)
-                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let unwraps = detection::scan_unwrap_usage(conn, project_id, &project_path_owned)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
                 if unwraps > 0 {
                     tracing::info!(
                         "Code health: found {} unwrap/expect calls in non-test code",
