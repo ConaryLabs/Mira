@@ -212,47 +212,18 @@ impl ProviderFactory {
         !self.clients.is_empty()
     }
 
-    /// Get chat and reasoner clients for DeepSeek dual-mode operation
-    /// Returns (chat_client, reasoner_client) - chat for tool loop, reasoner for synthesis
-    /// Returns (same_client, None) for non-DeepSeek providers
+    /// Get chat and reasoner clients for expert consultation.
+    /// Currently returns (primary, None) — single client for everything.
+    /// The agentic tool loop strips reasoning_content from intermediate messages
+    /// (see execution.rs, debate.rs) to prevent unbounded memory growth,
+    /// so deepseek-reasoner is safe to use for the full loop.
     pub async fn client_for_role_dual_mode(
         &self,
         role: &str,
         pool: &Arc<DatabasePool>,
     ) -> Result<(Arc<dyn LlmClient>, Option<Arc<dyn LlmClient>>), String> {
-        // First get the primary client using existing logic
         let primary = self.client_for_role(role, pool).await?;
-
-        // Only DeepSeek supports dual-mode
-        if primary.provider_type() != Provider::DeepSeek {
-            return Ok((primary, None));
-        }
-
-        // Check if we have the DeepSeek API key
-        let Some(ref api_key) = self.deepseek_key else {
-            return Ok((primary, None));
-        };
-
-        // Create reasoner client for synthesis
-        let reasoner = Arc::new(DeepSeekClient::with_model(
-            api_key.clone(),
-            "deepseek-reasoner".into(),
-        )) as Arc<dyn LlmClient>;
-
-        // Create or reuse chat client for tool loop
-        let chat = Arc::new(DeepSeekClient::with_model(
-            api_key.clone(),
-            "deepseek-chat".into(),
-        )) as Arc<dyn LlmClient>;
-
-        tracing::debug!(
-            role = role,
-            chat_model = %chat.model_name(),
-            reasoner_model = %reasoner.model_name(),
-            "Dual-mode DeepSeek clients created"
-        );
-
-        Ok((chat, Some(reasoner)))
+        Ok((primary, None))
     }
 }
 

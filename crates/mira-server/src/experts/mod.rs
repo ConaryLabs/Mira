@@ -134,6 +134,8 @@ pub enum CollaborationMode {
     Hierarchical,
     /// Single expert handles the problem
     Single,
+    /// Multi-round moderated debate: independent analysis, then targeted follow-ups on disagreements
+    Debate,
 }
 
 impl CollaborationMode {
@@ -143,6 +145,7 @@ impl CollaborationMode {
             CollaborationMode::Sequential => "sequential",
             CollaborationMode::Hierarchical => "hierarchical",
             CollaborationMode::Single => "single",
+            CollaborationMode::Debate => "debate",
         }
     }
 }
@@ -314,6 +317,7 @@ mod tests {
         assert_eq!(CollaborationMode::Sequential.as_str(), "sequential");
         assert_eq!(CollaborationMode::Hierarchical.as_str(), "hierarchical");
         assert_eq!(CollaborationMode::Single.as_str(), "single");
+        assert_eq!(CollaborationMode::Debate.as_str(), "debate");
     }
 
     #[test]

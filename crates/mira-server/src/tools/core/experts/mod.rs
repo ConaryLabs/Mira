@@ -5,6 +5,7 @@ use std::time::Duration;
 
 mod config;
 mod context;
+pub(crate) mod debate;
 mod execution;
 mod findings;
 mod prompts;
@@ -29,6 +30,17 @@ pub(crate) const MAX_CONCURRENT_EXPERTS: usize = 3;
 
 /// Timeout for parallel expert consultation (longer than single expert to allow queuing)
 pub(crate) const PARALLEL_EXPERT_TIMEOUT: Duration = Duration::from_secs(900); // 15 minutes for reasoning models
+
+// Debate mode constants
+
+/// Timeout for the moderator phase (lightweight LLM call)
+pub(crate) const MODERATOR_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Timeout for each expert follow-up round
+pub(crate) const FOLLOWUP_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Maximum tool iterations per expert in follow-up round
+pub(crate) const FOLLOWUP_MAX_ITERATIONS: usize = 5;
 
 // Public API exports
 pub use config::configure_expert;

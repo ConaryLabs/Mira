@@ -152,10 +152,12 @@ pub async fn consult_expert<C: ToolContext>(
             // Check if the model wants to call tools
             if let Some(ref tool_calls) = result.tool_calls {
                 if !tool_calls.is_empty() {
-                    // Add assistant message with tool calls
+                    // Add assistant message with tool calls.
+                    // Drop reasoning_content — intermediate reasoning chains aren't
+                    // needed for tool-loop context and cause unbounded memory growth.
                     let mut assistant_msg = Message::assistant(
                         result.content.clone(),
-                        result.reasoning_content.clone(),
+                        None,
                     );
                     assistant_msg.tool_calls = Some(tool_calls.clone());
                     messages.push(assistant_msg);
@@ -267,19 +269,22 @@ pub async fn consult_expert<C: ToolContext>(
     ))
 }
 
-/// Consult multiple experts in parallel
+/// Consult multiple experts in parallel, with optional debate mode
 /// Takes a list of role names and runs all consultations concurrently
 pub async fn consult_experts<C: ToolContext + Clone + 'static>(
     ctx: &C,
     roles: Vec<String>,
     context: String,
     question: Option<String>,
+    mode: Option<String>,
 ) -> Result<String, String> {
     use futures::stream::{self, StreamExt};
 
     if roles.is_empty() {
         return Err("No expert roles specified".to_string());
     }
+
+    let is_debate = mode.as_deref() == Some("debate");
 
     // Parse and validate all roles first
     let parsed_roles: Result<Vec<ExpertRole>, String> = roles
@@ -296,7 +301,7 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
     let context: Arc<str> = Arc::from(context);
     let question: Option<Arc<str>> = question.map(Arc::from);
 
-    // Run consultations with bounded concurrency and overall timeout
+    // Phase 1: Run consultations with bounded concurrency and overall timeout
     let consultation_future = stream::iter(expert_roles)
         .map(|role| {
             let ctx = ctx.clone();
@@ -327,17 +332,41 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
         }
     };
 
-    // Format combined results
+    // Collect successful results
     let mut output = String::new();
     let mut successes = 0;
     let mut failures = 0;
+    let mut successful_results: Vec<(String, String)> = Vec::new();
 
+    for (role, result) in &results {
+        match result {
+            Ok(response) => {
+                successful_results.push((role.db_key(), response.clone()));
+                successes += 1;
+            }
+            Err(_) => {
+                failures += 1;
+            }
+        }
+    }
+
+    // Debate mode: run Phases 2-4 if we have 2+ successful expert results
+    if is_debate && successful_results.len() >= 2 {
+        match super::debate::run_debate(ctx, &successful_results).await {
+            Ok(debate_output) => return Ok(debate_output),
+            Err(e) => {
+                tracing::warn!("Debate pipeline failed, falling back to parallel output: {}", e);
+                // Fall through to standard parallel output
+            }
+        }
+    }
+
+    // Standard parallel output (also used as debate fallback)
     for (role, result) in results {
         match result {
             Ok(response) => {
                 output.push_str(&response);
                 output.push_str("\n\n---\n\n");
-                successes += 1;
             }
             Err(e) => {
                 output.push_str(&format!(
@@ -345,7 +374,6 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
                     role.name(),
                     e
                 ));
-                failures += 1;
             }
         }
     }

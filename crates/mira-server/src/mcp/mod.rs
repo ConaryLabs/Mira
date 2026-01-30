@@ -317,7 +317,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ConsultExpertsRequest>,
     ) -> Result<String, String> {
-        tools::consult_experts(self, req.roles, req.context, req.question).await
+        tools::consult_experts(self, req.roles, req.context, req.question, req.mode).await
     }
 
     #[tool(description = "Configure expert system prompts (set, get, delete, list, providers).")]

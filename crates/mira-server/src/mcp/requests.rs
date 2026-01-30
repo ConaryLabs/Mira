@@ -352,6 +352,8 @@ pub struct ConsultExpertsRequest {
     pub context: String,
     #[schemars(description = "Specific question for all experts (optional)")]
     pub question: Option<String>,
+    #[schemars(description = "Collaboration mode: parallel (default) or debate")]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

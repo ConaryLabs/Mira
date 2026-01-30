@@ -138,6 +138,7 @@ fn find_matching_collaboration_pattern(
             "parallel" => CollaborationMode::Parallel,
             "sequential" => CollaborationMode::Sequential,
             "hierarchical" => CollaborationMode::Hierarchical,
+            "debate" => CollaborationMode::Debate,
             _ => CollaborationMode::Single,
         };
 
@@ -323,6 +324,15 @@ pub fn synthesize_expert_results(
                 .first()
                 .map(|(_, result)| result.clone())
                 .unwrap_or_default()
+        }
+        CollaborationMode::Debate => {
+            // Debate mode synthesis is handled by the debate module;
+            // this fallback produces parallel-style output if called directly
+            let sections: Vec<String> = results
+                .iter()
+                .map(|(role, result)| format!("## {} Analysis\n\n{}", role.as_str(), result))
+                .collect();
+            sections.join("\n\n---\n\n")
         }
     }
 }

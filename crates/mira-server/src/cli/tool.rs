@@ -100,7 +100,8 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "consult_experts" => {
             let req: ConsultExpertsRequest = serde_json::from_str(&args)?;
-            mira::tools::consult_experts(&server, req.roles, req.context, req.question).await
+            mira::tools::consult_experts(&server, req.roles, req.context, req.question, req.mode)
+                .await
         }
         "configure_expert" => {
             let req: ConfigureExpertRequest = serde_json::from_str(&args)?;
