@@ -108,24 +108,20 @@ Where it all began - a personal AI assistant with memory.
 
 ## [0.3.4] - 2026-01-28
 
-### Changed
-- **Documentation workflow simplified** - Removed expert system for doc generation. Claude Code now writes docs directly using `documentation(action="get")` to get task details and `documentation(action="complete")` to mark done.
-- **Removed `DocumentationWriter` expert role** - No longer needed since Claude Code handles doc writing.
-
 ### Added
 - **Documentation interventions** - Stale and missing docs now surface as proactive insights in session start, using `[~]` for stale and `[+]` for missing.
 - **LLM-based change impact analysis** - Background worker analyzes stale docs to classify changes as "significant" (API changes, new functions) or "minor" (internal refactors). Only significant changes are surfaced as interventions.
+- **Auto-configure hooks in installer** - `install.sh` now sets up PostToolUse and UserPromptSubmit hooks automatically in `~/.claude/settings.json`.
 - **New database columns** - `documentation_inventory` gains `change_impact`, `change_summary`, and `impact_analyzed_at` for tracking analysis results.
 
+### Changed
+- **Documentation workflow simplified** - Removed expert system for doc generation. Claude Code now writes docs directly using `documentation(action="get")` to get task details and `documentation(action="complete")` to mark done.
+
 ### Removed
+- **`DocumentationWriter` expert role** - No longer needed since Claude Code handles doc writing.
 - `documentation(action="write")` - Replaced by `get` + `complete` workflow where Claude Code writes docs directly.
 
 ## [0.3.3] - 2026-01-28
-
-### Fixed
-- **Behavior tracking sequence_position bug** - Events were always logged with position 1, breaking pattern mining. `BehaviorTracker::for_session()` now loads current max position from DB.
-- **Proactive pattern type collision** - Pondering insights and mined patterns both used `tool_chain` type with incompatible data formats. Pondering now uses `insight_*` prefix (e.g., `insight_tool_chain`).
-- **Silent pattern deserialization failures** - Added logging when patterns fail to deserialize, making debugging easier.
 
 ### Added
 - **Background proactive suggestion system**
@@ -133,41 +129,58 @@ Where it all began - a personal AI assistant with memory.
   - Pattern mining runs every 3rd slow lane cycle (SQL only, fast)
   - LLM enhancement runs every 10th cycle (contextual suggestions)
   - Hybrid lookup in user_prompt hook: pre-generated first, fallback to templates
-- **Migration for existing pondering patterns** - Automatically prefixes old patterns with `insight_`
+- **One-liner install script** - `curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash` auto-detects OS/arch, downloads the binary, and installs the Claude Code plugin.
+- **CLAUDE.md template in installer** - Post-install now guides users to set up project instructions.
+- **Migration for existing pondering patterns** - Automatically prefixes old patterns with `insight_`.
+
+### Changed
+- **Removed legacy `Database` struct** - All code now uses `DatabasePool` with `pool.interact()` pattern. Removed 10 files of legacy implementation.
+- **Reduced code duplication** - Added `NodeExt` trait for tree-sitter, `SymbolBuilder` for fluent construction, `ResultExt::str_err()` helper. Applied across all 4 language parsers.
+- **Removed deprecated `BackgroundWorker`** - ~160 lines of dead code cleaned up.
+
+### Fixed
+- **Behavior tracking sequence_position bug** - Events were always logged with position 1, breaking pattern mining. `BehaviorTracker::for_session()` now loads current max position from DB.
+- **Proactive pattern type collision** - Pondering insights and mined patterns both used `tool_chain` type with incompatible data formats. Pondering now uses `insight_*` prefix (e.g., `insight_tool_chain`).
+- **Silent pattern deserialization failures** - Added logging when patterns fail to deserialize, making debugging easier.
+- **Installer API key setup** - Uses `PASTE_YOUR_*_KEY_HERE` placeholders with direct links to get keys.
 
 ## [0.3.2] - 2026-01-28
 
 ### Added
-- Session lifecycle management: sessions now properly close when Claude Code exits
-- LLM-powered session summaries generated automatically for sessions with 3+ tool calls
-- Background worker closes stale sessions (inactive 30+ min) with auto-generated summaries
-- New database functions: `close_session_sync`, `get_stale_sessions_sync`, `get_sessions_needing_summary_sync`
+- **Session lifecycle management** - Sessions now properly close when Claude Code exits. Stop hook marks them as "completed".
+- **LLM-powered session summaries** - Automatically generated for sessions with 3+ tool calls, focusing on actual user work (code written, bugs fixed) rather than internal housekeeping.
+- **Background stale session cleanup** - Sessions inactive for 30+ minutes auto-close with summaries.
+- **GitHub Releases with pre-built binaries** - Release workflow triggered by version tags, building for Linux x86_64, macOS Intel, macOS Apple Silicon, and Windows x86_64.
+- **Windows support** - Added `x86_64-pc-windows-msvc` target with `.zip` packaging.
 
 ### Fixed
-- Sessions no longer stay "active" forever - stop hook now marks them as "completed"
-- `session_history` now shows meaningful session data with summaries
+- Sessions no longer stay "active" forever.
+- `session_history` now shows meaningful session data with summaries.
+- macOS CI runner updated from retired `macos-13` to `macos-15-intel`.
 
 ## [0.3.1] - 2026-01-28
 
 ### Added
-- Plugin marketplace distribution (`claude plugin install ConaryLabs/Mira`)
-- Auto-initialize project from Claude Code's working directory
+- **Plugin marketplace distribution** - Install via `claude plugin install ConaryLabs/Mira`.
+- **Auto-initialize project** - Mira detects Claude Code's working directory and initializes project context automatically. No manual `project(action="start")` call needed.
+- **Demo recording** - Added `demo.gif` to README, `scripts/demo.sh` for recording, and `--quiet` flag for `index` command.
 
 ### Changed
-- Updated installation docs to recommend marketplace installation
+- Updated installation docs to recommend marketplace installation.
 
 ## [0.3.0] - 2026-01-28
 
 ### Added
-- GitHub Actions CI pipeline (test, clippy, format, build for Linux/macOS)
-- CHANGELOG.md for version tracking
-- CONTRIBUTING.md with development guidelines
-- Issue templates for bug reports and feature requests
-- CI status badge in README
+- **GitHub Actions CI pipeline** - Test, clippy, format check, and release builds for Linux and macOS on every push.
+- **CHANGELOG.md** - Version tracking with Keep a Changelog format.
+- **CONTRIBUTING.md** - Development guidelines for contributors.
+- **Issue templates** - Bug report and feature request templates.
+- **CI status badge** in README.
 
 ### Changed
-- Cleaned up .env.example (removed deprecated GLM references)
-- Code formatted with cargo fmt for consistency
+- Cleaned up `.env.example` (removed deprecated GLM references).
+- Comprehensive documentation overhaul - updated README, CONCEPTS, DATABASE, DESIGN, and CONFIGURATION docs with expert review feedback.
+- Code formatted with `cargo fmt` for consistency.
 
 ## [0.2.0] - 2026-01-27
 
