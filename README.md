@@ -12,11 +12,11 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.3.5
+## What's New in v0.3.6
 
-- **SQLite Concurrency Overhaul**: Code index sharded into separate `mira-code.db` - indexing no longer blocks tool calls
-- **Write Contention Fixes**: `busy_timeout`, retry logic, and fire-and-forget logging eliminate `SQLITE_BUSY` failures
-- **Dual Database Pools**: Background workers and tool handlers route to the correct database automatically
+- **Stale Suggestion Fixes**: Proactive suggestions, file predictions, and doc interventions now expire and verify files exist on disk
+- **Lighter Build**: 9 unused dependencies removed, dead code cleaned up
+- **Modular CLAUDE.md**: Instructions restructured into `.claude/rules/` and `.claude/skills/` — 59% less always-loaded context
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 

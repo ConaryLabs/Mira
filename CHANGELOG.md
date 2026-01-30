@@ -80,6 +80,21 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-01-30
+
+### Changed
+- **Dependency cleanup** - Removed 9 unused dependencies: glob, libc, md5, similar, pdf-extract, pulldown-cmark, zerocopy, tree-sitter-javascript, dotenv (dev). Reduces build time and binary size.
+- **Dead code removal** - Removed unused `EmbeddingModelCheck` enum and `CallInsert` struct.
+- **Legacy wording cleanup** - Replaced "legacy data" references with "pre-branch-tracking data" across codebase.
+- **CLAUDE.md restructured** - Split monolithic 547-line file into modular layout: `.claude/rules/` (always-loaded guidance) and `.claude/skills/` (on-demand reference). Reduces always-loaded context by 59%.
+- **Documentation overhaul** - Added docs for 16 MCP tools, 4 public API types, and 33 modules. Updated CONTRIBUTING.md project structure and documented dual-database architecture.
+
+### Fixed
+- **Stale proactive suggestions** - Pre-generated suggestions now expire after 4 hours instead of persisting indefinitely.
+- **Stale documentation interventions** - Impact analysis results older than 2 hours are no longer surfaced.
+- **Ghost file predictions** - File predictions (NextFile, RelatedFiles) for files that no longer exist on disk are now filtered out before surfacing.
+- **Ghost documentation interventions** - Stale-doc and missing-doc interventions now verify files exist on disk before surfacing.
+
 ## [0.3.5] - 2026-01-29
 
 ### Added
