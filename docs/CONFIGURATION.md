@@ -62,9 +62,13 @@ Mira loads environment files in this order (later overrides earlier):
 
 | File | Purpose |
 |------|---------|
-| `CLAUDE.md` | Project instructions (checked into git) - see [template](CLAUDE_TEMPLATE.md) |
+| `CLAUDE.md` | Core project instructions (always loaded) - see [template](CLAUDE_TEMPLATE.md) |
+| `.claude/rules/*.md` | Detailed guidance: tool selection, memory, tasks, experts (always loaded) |
+| `.claude/skills/*/SKILL.md` | Reference docs: Context7, tool APIs (loaded on-demand) |
 | `CLAUDE.local.md` | Local-only instructions (gitignored) |
 | `.miraignore` | Files to exclude from indexing |
+
+Run `mira init` in your project to create all instruction files automatically.
 
 ---
 

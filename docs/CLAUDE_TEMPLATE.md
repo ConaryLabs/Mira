@@ -1,34 +1,40 @@
 # CLAUDE.md Template for Mira
 
-Copy the sections below into your project's `CLAUDE.md` file to get the most out of Mira.
+Mira uses a modular structure to keep always-loaded context small:
+
+| Location | Purpose | When Loaded |
+|----------|---------|-------------|
+| `CLAUDE.md` | Core identity, anti-patterns, build commands | Always |
+| `.claude/rules/*.md` | Tool selection, memory, tasks, experts | Always |
+| `.claude/skills/*/SKILL.md` | Reference docs (Context7, tool APIs) | On-demand |
 
 ---
 
-## Minimal Setup
+## Quick Setup
 
-At minimum, add this to your `CLAUDE.md`:
+Run the install script — it creates all files automatically:
 
-```markdown
-# CLAUDE.md
-
-This project uses **Mira** for persistent memory and code intelligence.
-
-## Session Start
-
-Project context is **auto-initialized** from Claude Code's working directory.
-No manual `project(action="start")` call is needed.
-
-For full session context (preferences, insights, etc.), call:
-get_session_recap()
-
-Or use `recall("preferences")` before writing code.
+```bash
+curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
 ```
 
+Then from your project directory:
+
+```bash
+mira init
+```
+
+This creates `CLAUDE.md`, `.claude/rules/`, and `.claude/skills/` with all Mira guidance.
+
 ---
 
-## Recommended Setup
+## Manual Setup
 
-For best results, include the full tool selection guidance:
+If you prefer to set up manually, create these files:
+
+### 1. `CLAUDE.md` (root) — Always loaded
+
+At minimum, add this to your project's `CLAUDE.md`:
 
 ```markdown
 # CLAUDE.md
@@ -38,144 +44,18 @@ This project uses **Mira** for persistent memory and code intelligence.
 ## Session Start
 
 Project context is **auto-initialized** from Claude Code's working directory.
-No manual `project(action="start")` call is needed.
+For full session context, call `get_session_recap()`. Use `recall("preferences")` before writing code.
 
-For full session context (preferences, insights, etc.), call:
-get_session_recap()
+## Tool Selection
 
-Or use `recall("preferences")` before writing code.
+STOP before using Grep or Glob. Prefer Mira tools for semantic work:
+- **Code by intent** -> `search_code` (not Grep)
+- **File structure** -> `get_symbols` (not grepping for definitions)
+- **Call graph** -> `find_callers` / `find_callees` (not grepping function names)
+- **Past decisions** -> `recall` before architectural changes
+- **External libraries** -> Context7: `resolve-library-id` then `query-docs`
 
----
-
-## CRITICAL: Tool Selection
-
-STOP before using Grep or Glob. Use Mira tools instead.
-
-### When to Use Mira Tools
-
-Use Mira tools proactively in these scenarios:
-
-1. **Searching for code by intent** - Use `search_code` instead of Grep
-2. **Understanding file structure** - Use `get_symbols` instead of grepping for definitions
-3. **Tracing call relationships** - Use `find_callers` / `find_callees` instead of grepping function names
-4. **Recalling past decisions** - Use `recall` before making architectural changes
-5. **Storing decisions for future sessions** - Use `remember` after important choices
-
-### When NOT to Use Mira Tools
-
-Use Grep/Glob directly only when:
-
-1. Searching for **literal strings** (error messages, UUIDs, specific constants)
-2. Finding files by **exact filename pattern** when you know the name
-3. The search is a simple one-off that doesn't need semantic understanding
-
-### Wrong vs Right
-
-| Task | Wrong | Right |
-|------|-------|-------|
-| Find authentication code | `grep -r "auth"` | `search_code("authentication")` |
-| What calls this function? | `grep -r "function_name"` | `find_callers("function_name")` |
-| List functions in file | `grep "fn " file.rs` | `get_symbols(file_path="file.rs")` |
-| Use external library | Guess from training data | Context7: `resolve-library-id` -> `query-docs` |
-| Find config files | `find . -name "*.toml"` | `glob("**/*.toml")` - OK, exact pattern |
-| Find error message | `search_code("error 404")` | `grep "error 404"` - OK, literal string |
-
----
-
-## Task and Goal Management
-
-### Session Workflow: Use Claude's Built-in Tasks
-
-For current session work, use Claude Code's native task system:
-- `TaskCreate` - Create tasks for multi-step work
-- `TaskUpdate` - Mark in_progress/completed, set dependencies
-- `TaskList` - View current session tasks
-
-### Cross-Session Planning: Use Mira Goals
-
-For work spanning multiple sessions, use Mira's `goal` tool with milestones:
-
-goal(action="create", title="Implement feature X", priority="high")
-goal(action="add_milestone", goal_id="1", milestone_title="Design API", weight=2)
-goal(action="complete_milestone", milestone_id="1")  # Auto-updates progress
-goal(action="list")  # Shows goals with progress %
-
-**When to use goals:**
-- Multi-session objectives (features, refactors, migrations)
-- Tracking progress over time
-- Breaking large work into weighted milestones
-
-### Quick Reference
-
-| Need | Tool |
-|------|------|
-| Track work in THIS session | Claude's `TaskCreate` |
-| Track work across sessions | Mira's `goal` |
-| Add sub-items to goal | `goal(action="add_milestone")` |
-| Check long-term progress | `goal(action="list")` |
-
----
-
-## Memory System
-
-Use `remember` to store decisions and context. Use `recall` to retrieve them.
-
-### Evidence Threshold
-
-**Don't store one-off observations.** Only use `remember` for:
-- Patterns observed **multiple times** across sessions
-- Decisions **explicitly requested** by the user to remember
-- Mistakes that caused **real problems** (not hypothetical issues)
-
-When uncertain, don't store it. Memories accumulate and dilute recall quality.
-
-### When to Use Memory
-
-1. **After architectural decisions** - Store the decision and reasoning
-2. **User preferences discovered** - Store for future sessions
-3. **Mistakes made and corrected** - Remember to avoid repeating
-4. **Before making changes** - Recall past decisions in that area
-5. **Workflows that worked** - Store successful patterns
-
----
-
-## Sub-Agent Context Injection
-
-When spawning sub-agents (Task tool with Explore, Plan, etc.), they do NOT automatically have access to Mira memories. You must inject relevant context into the prompt.
-
-### Pattern: Recall Before Task
-
-Before launching a sub-agent for significant work:
-
-1. Use `recall()` to get relevant context
-2. Include key information in the Task prompt
-3. Be explicit about project conventions
-
----
-
-## Expert Consultation
-
-Use the unified `consult_experts` tool for second opinions before major decisions:
-
-consult_experts(roles=["architect"], context="...", question="...")
-consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple experts
-
-**Available expert roles:**
-- `architect` - system design, patterns, tradeoffs
-- `plan_reviewer` - validate plans before coding
-- `code_reviewer` - find bugs, quality issues
-- `security` - vulnerabilities, hardening
-- `scope_analyst` - missing requirements, edge cases
-
-### When to Consult Experts
-
-1. **Before major refactoring** - `consult_experts(roles=["architect"], ...)`
-2. **After writing implementation plan** - `consult_experts(roles=["plan_reviewer"], ...)`
-3. **Before merging significant changes** - `consult_experts(roles=["code_reviewer"], ...)`
-4. **When handling user input or auth** - `consult_experts(roles=["security"], ...)`
-5. **When requirements seem incomplete** - `consult_experts(roles=["scope_analyst"], ...)`
-
----
+Use Grep/Glob only for **literal strings**, **exact filename patterns**, or **simple one-off searches**.
 
 ## Code Navigation Quick Reference
 
@@ -186,53 +66,38 @@ consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple 
 | What calls X? | `find_callers` |
 | What does X call? | `find_callees` |
 | Past decisions | `recall` |
-| Codebase overview | `project(action="start")` output |
 | External library API | Context7: `resolve-library-id` -> `query-docs` |
-| Literal string search | `Grep` (OK for this) |
-| Exact filename pattern | `Glob` (OK for this) |
-
----
-
-## Consolidated Tools Reference
-
-Mira uses action-based tools. Here are the key ones:
-
-### `project` - Project/Session Management
-project(action="start", project_path="...", name="...")  # Initialize session
-project(action="set", project_path="...", name="...")    # Change active project
-project(action="get")                                     # Show current project
-
-### `goal` - Cross-Session Goals
-goal(action="create", title="...", priority="high")       # Create goal
-goal(action="list")                                       # List goals
-goal(action="add_milestone", goal_id="1", milestone_title="...", weight=2)
-goal(action="complete_milestone", milestone_id="1")       # Mark done
-
-### `finding` - Code Review Findings
-finding(action="list", status="pending")                  # List findings
-finding(action="review", finding_id=123, status="accepted", feedback="...")
-finding(action="stats")                                   # Get statistics
-
-### `documentation` - Documentation Tasks
-documentation(action="list", status="pending")            # List doc tasks
-documentation(action="skip", task_id=123, reason="...")   # Skip a task
-documentation(action="inventory")                         # Show doc inventory
-
-### `consult_experts` - Expert Consultation
-consult_experts(roles=["architect"], context="...", question="...")
-consult_experts(roles=["code_reviewer", "security"], context="...")
+| Literal string search | `Grep` (OK) |
+| Exact filename pattern | `Glob` (OK) |
 ```
 
+Then add your project-specific content: build commands, anti-patterns, architecture overview, etc.
+
+### 2. `.claude/rules/` — Always loaded
+
+Create these rule files for detailed guidance:
+
+- **`tool-selection.md`** — When to use Mira vs Grep/Glob, wrong vs right table
+- **`memory-system.md`** — Evidence threshold, when to remember/recall
+- **`sub-agents.md`** — Recall before launching Task agents
+- **`task-management.md`** — Session tasks vs cross-session goals
+- **`experts.md`** — Available expert roles, when to consult
+
+See Mira's own [.claude/rules/](../.claude/rules/) for examples of each.
+
+### 3. `.claude/skills/` — Loaded on-demand
+
+Create these skill files for reference content that only loads when relevant:
+
+- **`context7/SKILL.md`** — Context7 workflow for external library docs
+- **`tools-reference/SKILL.md`** — Mira consolidated tool API signatures
+
+See Mira's own [.claude/skills/](../.claude/skills/) for examples.
+
 ---
 
-## Adding Project-Specific Content
+## Structure Benefits
 
-After the Mira sections above, add your own project-specific content:
-
-- Build & Test commands
-- Architecture overview
-- Key modules and their purpose
-- Coding standards and conventions
-- Anti-patterns specific to your codebase
-
-See the Mira project's own [CLAUDE.md](../CLAUDE.md) for an example of a complete file.
+- **Before:** ~550 lines always loaded in a single CLAUDE.md
+- **After:** ~80 lines in CLAUDE.md + ~170 lines in rules (always loaded) + ~80 lines in skills (on-demand)
+- **Result:** ~59% reduction in always-loaded context vs monolithic approach

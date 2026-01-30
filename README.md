@@ -145,26 +145,22 @@ Get your keys from:
 - DeepSeek: https://platform.deepseek.com/api_keys
 - Gemini: https://aistudio.google.com/app/apikey
 
-### Add to CLAUDE.md
+### Add Mira Instructions to Your Project
 
-Add Mira instructions to your project's `CLAUDE.md` so Claude Code knows how to use the tools effectively.
+From your project directory, run:
 
-**Minimal setup** - Add this at minimum:
-
-```markdown
-## Session Start
-project(action="start", project_path="/path/to/your/project")
-Then recall("preferences") before writing code.
+```bash
+mira init
 ```
 
-**Recommended setup** - For best results, include guidance on:
-- When to use Mira tools vs Grep/Glob
-- Memory system usage (remember/recall)
-- Goal tracking for multi-session work
-- Expert consultation patterns
-- Sub-agent context injection
+This creates a modular instruction layout:
+- `CLAUDE.md` — Core identity, tool selection, build commands (always loaded)
+- `.claude/rules/` — Detailed guidance for tools, memory, tasks, experts (always loaded)
+- `.claude/skills/` — Reference docs like Context7 and tool APIs (loaded on-demand)
 
-See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a complete template you can copy into your project.
+This modular structure keeps always-loaded context small (~225 lines) while putting reference material in on-demand skills.
+
+See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for manual setup instructions and the full file layout.
 
 ### Enable Hooks (Required for Full Features)
 

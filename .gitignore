@@ -10,7 +10,9 @@
 .env.*.local
 .mcp.json
 plugin/hooks/hooks.json
-.claude/
+.claude/*
+!.claude/rules/
+!.claude/skills/
 CLAUDE.local.md
 
 # Database files
