@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "mira-types"
-version = "0.1.0"
+version = "0.3.5"
 dependencies = [
  "serde",
  "serde_json",
