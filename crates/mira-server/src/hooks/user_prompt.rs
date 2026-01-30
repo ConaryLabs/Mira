@@ -103,9 +103,7 @@ pub async fn run() -> Result<()> {
                 }
 
                 // Resolve project path for file existence checks
-                let project_path = crate::db::get_last_active_project_sync(conn)
-                    .ok()
-                    .flatten();
+                let project_path = crate::db::get_last_active_project_sync(conn).ok().flatten();
 
                 // Build current context from recent behavior
                 let recent_files =
@@ -160,21 +158,16 @@ pub async fn run() -> Result<()> {
 
                 // Filter out file predictions for files that no longer exist
                 if let Some(ref base) = project_path {
-                    predictions.retain(|p| {
-                        match p.prediction_type {
-                            predictor::PredictionType::NextFile
-                            | predictor::PredictionType::RelatedFiles => {
-                                let exists = Path::new(base).join(&p.content).exists();
-                                if !exists {
-                                    tracing::debug!(
-                                        "Dropping stale file prediction: {}",
-                                        p.content
-                                    );
-                                }
-                                exists
+                    predictions.retain(|p| match p.prediction_type {
+                        predictor::PredictionType::NextFile
+                        | predictor::PredictionType::RelatedFiles => {
+                            let exists = Path::new(base).join(&p.content).exists();
+                            if !exists {
+                                tracing::debug!("Dropping stale file prediction: {}", p.content);
                             }
-                            _ => true,
+                            exists
                         }
+                        _ => true,
                     });
                 }
 

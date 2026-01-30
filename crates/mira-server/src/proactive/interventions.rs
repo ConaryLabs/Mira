@@ -240,10 +240,7 @@ fn get_documentation_interventions_sync(
         if let Some(base) = project_path {
             if let Some(ref src) = source_path {
                 if !Path::new(base).join(src).exists() {
-                    tracing::debug!(
-                        "Skipping missing doc intervention: source gone: {}",
-                        src
-                    );
+                    tracing::debug!("Skipping missing doc intervention: source gone: {}", src);
                     continue;
                 }
             }
