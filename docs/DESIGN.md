@@ -2,8 +2,8 @@
 
 > **Mira is a local-first "second brain for Claude Code".**
 >
-> It runs as an **MCP server over stdio**, stores durable memory in a **single SQLite
-> database** (with **sqlite-vec** for embeddings), and provides code intelligence
+> It runs as an **MCP server over stdio**, stores durable memory in **SQLite
+> databases** (with **sqlite-vec** for embeddings), and provides code intelligence
 > plus background "ambient" analysis powered by **DeepSeek Reasoner**
 > (and other LLM providers via a factory).
 
@@ -48,7 +48,7 @@ Mira is built around a few durable goals:
      embeddings, summaries, briefings, documentation tasks, health scans.
 
 4. **Local-first defaults**
-   - One install, one binary, one database file.
+   - One install, one binary, two database files.
    - No required cloud service, no required daemon, no required accounts.
 
 5. **Honest, evidence-grounded memory**
@@ -93,7 +93,7 @@ Key components:
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
 | LLM Factory | `llm/factory.rs` | DeepSeek, Gemini providers |
-| Embeddings | `embeddings/mod.rs` | Google embedding client (gemini-embedding-001) |
+| Embeddings | `embeddings/mod.rs` | Embedding queue and Google client (gemini-embedding-001) |
 
 ---
 
@@ -143,12 +143,14 @@ the same tool router behind a local Unix socket, loopback HTTP, or secure tunnel
 ### What We Chose
 
 Mira stores everything in SQLite and embeds vector search using `sqlite-vec`
-(`vec0` virtual tables). Default path: `~/.mira/mira.db`
+(`vec0` virtual tables). The main database lives at `~/.mira/mira.db`, with a
+separate code index database at `~/.mira/mira-code.db` to avoid write contention
+during indexing.
 
 ### Why SQLite Is Strategic
 
-**1) Single-file persistence**
-- One database file is portable, inspectable, and easy to back up.
+**1) Minimal-file persistence**
+- Two database files are portable, inspectable, and easy to back up.
 - You can move your brain between machines.
 
 **2) Minimal dependencies**
@@ -177,7 +179,7 @@ Mira stores everything in SQLite and embeds vector search using `sqlite-vec`
 
 | Pro | Con |
 |-----|-----|
-| Single-file simplicity | Not "infinite scale" |
+| Local-file simplicity | Not "infinite scale" |
 | Zero infrastructure | Schema evolution requires discipline |
 | Unified querying | Write contention under heavy parallelism |
 
@@ -332,7 +334,7 @@ All Mira state lives locally unless you explicitly opt into external providers:
 - Core functionality works offline (keyword search, memories, history).
 
 **3) Portability**
-- Single DB file is easy to backup, sync, archive, or inspect.
+- Local DB files are easy to backup, sync, archive, or inspect.
 
 ### Tradeoffs
 
@@ -379,7 +381,7 @@ in two areas:
 ### Experts
 
 Experts are bounded tool-using loops with multiple roles:
-- Architect, Plan Reviewer, Scope Analyst, Code Reviewer, Security, Documentation Writer
+- Architect, Plan Reviewer, Scope Analyst, Code Reviewer, Security
 
 Key constraints:
 - Bounded iterations (`MAX_ITERATIONS`)
@@ -388,10 +390,10 @@ Key constraints:
 
 ### Documentation System
 
-Mira detects and writes missing documentation:
+Mira detects documentation gaps and tracks staleness:
 - Gap detection for undocumented tools, APIs, modules
 - Staleness tracking when source changes
-- Expert generation that analyzes actual code behavior
+- Claude Code writes docs directly based on task details and source analysis
 
 ### Session Hooks
 
@@ -468,7 +470,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 | Decision | We Chose | We Gave Up |
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
-| Storage | SQLite single-file | Horizontal scaling |
+| Storage | SQLite local files | Horizontal scaling |
 | Intelligence | DeepSeek + Gemini | Requires at least one API key |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |

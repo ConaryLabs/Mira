@@ -54,7 +54,8 @@ Mira loads environment files in this order (later overrides earlier):
 
 | Location | Purpose |
 |----------|---------|
-| `~/.mira/mira.db` | SQLite database (memories, indexes, history) |
+| `~/.mira/mira.db` | Main SQLite database (memories, sessions, experts, goals) |
+| `~/.mira/mira-code.db` | Code index database (symbols, call graph, embeddings, FTS) |
 | `~/.mira/claude-session-id` | Current Claude session ID |
 
 ### Project Files

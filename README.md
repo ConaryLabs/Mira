@@ -281,7 +281,7 @@ Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
                                   +--->  DeepSeek (intelligence)
 ```
 
-All data stored locally in `~/.mira/mira.db`. No cloud storage, no external databases.
+All data stored locally in `~/.mira/` (`mira.db` for memories/sessions, `mira-code.db` for code index). No cloud storage, no external databases.
 
 ## Troubleshooting
 
@@ -301,7 +301,7 @@ Ensure `GEMINI_API_KEY` is set. Gemini provides the embeddings for semantic sear
 
 ### Memory not persisting
 
-Run `project(action="start", project_path="...")` at the start of each session to associate memories with your project.
+Project context is auto-initialized from Claude Code's working directory. If memories still aren't persisting, verify that Mira is running (`project(action="get")`) and that the working directory matches your project root.
 
 ## Documentation
 

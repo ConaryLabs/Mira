@@ -33,16 +33,29 @@ Thanks for your interest in contributing to Mira!
 crates/
   mira-server/       # Main server crate
     src/
-      background/    # Background workers (embeddings, summaries, etc.)
-      cli/           # Command-line interface
-      db/            # Database operations and schema
-      embeddings/    # Google embedding integration
-      indexer/       # Code parsing and symbol extraction
-      llm/           # LLM provider clients (DeepSeek, Gemini)
-      mcp/           # MCP protocol handlers
-      search/        # Semantic and keyword search
+      background/    # Background workers (embeddings, summaries, health checks)
+      cartographer/  # Codebase mapping and module detection
+      cli/           # Command-line interface and subcommands
+      config/        # Configuration management (config.toml, env loading)
+      context/       # Proactive context injection for hooks
+      cross_project/ # Privacy-preserving cross-project pattern sharing
+      db/            # Database operations, schema, migrations (SQLite)
+      embeddings/    # Embedding queue and Google embedding client
+      experts/       # Evolutionary expert system (adaptation, collaboration)
+      hooks/         # Claude Code lifecycle hooks (session, prompt, tool)
+      indexer/       # Code parsing and symbol extraction (tree-sitter)
+      llm/           # LLM provider clients (DeepSeek, Gemini, OpenAI-compat)
+      mcp/           # MCP protocol server (rmcp-based)
+      proactive/     # Proactive intelligence (behavior mining, predictions)
+      project_files/ # File discovery and filtering (.miraignore, .gitignore)
+      search/        # Semantic, keyword, and cross-reference search
       tools/         # MCP tool implementations
-  mira-types/        # Shared types
+      error.rs       # MiraError types
+      git.rs         # Git operations with caching
+      http.rs        # Shared HTTP client factory
+      identity.rs    # User identity detection
+      utils.rs       # Shared utilities
+  mira-types/        # Shared WASM-compatible types
 docs/                # Documentation
 ```
 

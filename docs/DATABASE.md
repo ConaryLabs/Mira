@@ -1,10 +1,19 @@
 # Mira Database Schema
 
-SQLite database stored at `~/.mira/mira.db` with sqlite-vec extension for vector search.
+Mira uses two SQLite databases with the sqlite-vec extension for vector search.
+
+| Database | Path | Purpose |
+|----------|------|---------|
+| **Main** | `~/.mira/mira.db` | Memories, sessions, experts, goals, proactive intelligence |
+| **Code Index** | `~/.mira/mira-code.db` | Code symbols, call graph, embeddings, FTS |
+
+The code index was separated from the main database in v0.3.5 to eliminate write contention - indexing operations no longer block tool calls. Each database has its own `DatabasePool` and WAL mode configuration.
 
 ---
 
 ## Core Tables
+
+> Tables below are in the **main database** (`mira.db`) unless marked otherwise.
 
 ### projects
 
@@ -62,6 +71,8 @@ Pattern corrections learned from reviewed findings.
 ---
 
 ## Code Intelligence
+
+> These tables are in the **code index database** (`mira-code.db`).
 
 ### code_symbols
 
@@ -613,7 +624,7 @@ Team membership.
 
 ## Vector Tables (sqlite-vec)
 
-### vec_memory
+### vec_memory *(main database)*
 
 Vector embeddings for semantic memory search.
 
@@ -623,7 +634,7 @@ Vector embeddings for semantic memory search.
 | fact_id | INTEGER | Reference to memory_facts.id |
 | content | TEXT | Searchable content |
 
-### vec_code
+### vec_code *(code database)*
 
 Vector embeddings for semantic code search.
 
@@ -635,7 +646,7 @@ Vector embeddings for semantic code search.
 | project_id | INTEGER | Project reference |
 | start_line | INTEGER | Starting line number |
 
-### code_fts (FTS5)
+### code_fts (FTS5) *(code database)*
 
 Full-text search index for fast keyword search.
 
@@ -665,9 +676,9 @@ Uses Porter stemming with Unicode support. Rebuilt from vec_code after indexing.
 | briefing_text | TEXT | DeepSeek-generated summary of changes |
 | generated_at | TEXT | When briefing was created |
 
-### pending_embeddings
+### pending_embeddings *(code database)*
 
-Queue for async embedding generation.
+Queue for async embedding generation. Stored in `mira-code.db` alongside the vector tables it feeds.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -675,6 +686,7 @@ Queue for async embedding generation.
 | project_id | INTEGER | Project reference |
 | file_path | TEXT | Source file |
 | chunk_content | TEXT | Content to embed |
+| start_line | INTEGER | Starting line number in source file |
 | status | TEXT | `pending`, `processing`, `done` |
 | created_at | TEXT | Timestamp |
 

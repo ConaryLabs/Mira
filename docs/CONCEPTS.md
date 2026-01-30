@@ -159,7 +159,6 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 | **Scope Analyst** | Detects requirements gaps and edge cases |
 | **Code Reviewer** | Bugs, safety, code quality patterns |
 | **Security** | Vulnerabilities and hardening |
-| **Documentation Writer** | Generates comprehensive documentation |
 
 ### Provider Configuration
 
@@ -210,7 +209,7 @@ A **Session** represents a continuous period of work with Claude Code.
 
 ### Session Recap
 
-When you return to a project, `session_start` provides:
+When you return to a project, `get_session_recap` provides:
 
 - Recent context from past sessions
 - Pending tasks and active goals

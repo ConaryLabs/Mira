@@ -1,0 +1,20 @@
+# search
+
+Unified search functionality shared between MCP tools and chat. Provides semantic search, cross-reference queries, keyword search, and context expansion.
+
+## Sub-modules
+
+| Module | Purpose |
+|--------|---------|
+| `semantic` | Hybrid and pure semantic search using embeddings |
+| `crossref` | Cross-reference search (callers/callees) |
+| `keyword` | Keyword-based code search |
+| `context` | Context expansion around search results |
+| `utils` | Search formatting and utility functions |
+
+## Key Functions
+
+- `hybrid_search()` - Combined semantic + keyword search
+- `semantic_search()` - Pure embedding-based similarity search
+- `find_callers()` / `find_callees()` - Call graph traversal
+- `format_crossref_results()` - Format cross-reference results for display
