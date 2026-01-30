@@ -159,7 +159,15 @@ impl McpClientManager {
             .ok_or_else(|| format!("MCP server '{}' not configured", server_name))?
             .clone();
 
-        info!(server = %server_name, command = %config.command, "Connecting to MCP server");
+        // Security: log the full command being spawned so users can audit .mcp.json behavior
+        let env_keys: Vec<&str> = config.env.keys().map(|k| k.as_str()).collect();
+        warn!(
+            server = %server_name,
+            command = %config.command,
+            args = ?config.args,
+            env_vars = ?env_keys,
+            "Spawning MCP server child process from .mcp.json"
+        );
 
         // Build the command
         let mut cmd = Command::new(&config.command);

@@ -7,6 +7,33 @@ use crate::db::{
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+/// Patterns that look like secrets/credentials.
+/// Each tuple is (description, regex).
+static SECRET_PATTERNS: Lazy<Vec<(&str, Regex)>> = Lazy::new(|| {
+    vec![
+        ("API key", Regex::new(r"(?i)(sk-[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*\S{10,})").unwrap()),
+        ("AWS key", Regex::new(r"AKIA[0-9A-Z]{16}").unwrap()),
+        ("Private key", Regex::new(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----").unwrap()),
+        ("Bearer token", Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-.]{20,}").unwrap()),
+        ("Password assignment", Regex::new(r"(?i)(password|passwd|pwd)\s*[:=]\s*\S{6,}").unwrap()),
+        ("GitHub token", Regex::new(r"gh[pousr]_[A-Za-z0-9_]{36,}").unwrap()),
+        ("Generic secret", Regex::new(r#"(?i)(secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-/.]{20,}"#).unwrap()),
+    ]
+});
+
+/// Check if content looks like it contains secrets.
+/// Returns the name of the first matched pattern, or None.
+fn detect_secret(content: &str) -> Option<&'static str> {
+    for (name, pattern) in SECRET_PATTERNS.iter() {
+        if pattern.is_match(content) {
+            return Some(name);
+        }
+    }
+    None
+}
 
 /// Store a memory fact
 pub async fn remember<C: ToolContext>(
@@ -18,6 +45,15 @@ pub async fn remember<C: ToolContext>(
     confidence: Option<f64>,
     scope: Option<String>,
 ) -> Result<String, String> {
+    // Security: warn if content looks like it contains secrets
+    if let Some(pattern_name) = detect_secret(&content) {
+        return Err(format!(
+            "Content appears to contain a secret ({pattern_name}). \
+             Secrets should be stored in ~/.mira/.env, not in memories. \
+             If this is a false positive, rephrase the content to avoid secret-like patterns."
+        ));
+    }
+
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_session_id().await;
     let user_id = ctx.get_user_identity();
