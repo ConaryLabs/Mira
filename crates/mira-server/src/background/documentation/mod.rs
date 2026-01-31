@@ -9,6 +9,7 @@ use crate::db::{
     StoreMemoryParams, delete_memory_by_key_sync, get_scan_info_sync, is_time_older_than_sync,
     store_memory_sync,
 };
+use crate::utils::ResultExt;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -125,7 +126,7 @@ async fn analyze_stale_doc_impacts(
             rows.collect::<Result<Vec<_>, _>>()
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut total_analyzed = 0;
 
@@ -413,7 +414,7 @@ pub fn mark_documentation_scanned_sync(
             branch: None,
         },
     )
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
     Ok(())
 }
 
@@ -424,7 +425,7 @@ pub fn clear_documentation_scan_marker_sync(
 ) -> Result<(), String> {
     delete_memory_by_key_sync(conn, project_id, DOC_SCAN_MARKER_KEY)
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 #[cfg(test)]

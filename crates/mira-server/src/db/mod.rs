@@ -84,6 +84,7 @@ pub use index::{
     count_symbols_sync,
     insert_call_sync,
     insert_chunk_embedding_sync,
+    insert_code_chunk_sync,
     insert_import_sync,
     insert_symbol_sync,
     queue_pending_embedding_sync,

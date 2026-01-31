@@ -4,6 +4,7 @@
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::utils::ResultExt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -19,7 +20,7 @@ pub async fn process_briefings(
                 .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut processed = 0;
 
@@ -66,7 +67,7 @@ pub async fn process_briefings(
                     .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
             tracing::info!(
                 "Generated briefing for project {} ({})",
                 project_id,

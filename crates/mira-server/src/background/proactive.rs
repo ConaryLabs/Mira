@@ -10,6 +10,7 @@ use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::proactive::patterns::{
     BehaviorPattern, PatternData, get_high_confidence_patterns, run_pattern_mining,
 };
+use crate::utils::ResultExt;
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -61,7 +62,7 @@ async fn mine_patterns(pool: &Arc<DatabasePool>) -> Result<usize, String> {
                 .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut total_patterns = 0;
 
@@ -73,7 +74,7 @@ async fn mine_patterns(pool: &Arc<DatabasePool>) -> Result<usize, String> {
                     .map_err(|e| anyhow::anyhow!("Mining failed: {}", e))
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
         if patterns_stored > 0 {
             tracing::debug!(
@@ -127,7 +128,7 @@ async fn enhance_suggestions(
                 .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut total_suggestions = 0;
 
@@ -141,7 +142,7 @@ async fn enhance_suggestions(
                         .map_err(|e| anyhow::anyhow!("Failed to get patterns: {}", e))
                 })
                 .await
-                .map_err(|e| e.to_string())?
+                .str_err()?
         };
 
         if patterns.is_empty() {

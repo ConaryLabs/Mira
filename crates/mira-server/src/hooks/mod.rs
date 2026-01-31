@@ -20,5 +20,8 @@ pub fn read_hook_input() -> Result<serde_json::Value> {
 
 /// Write hook output to stdout
 pub fn write_hook_output(output: &serde_json::Value) {
-    println!("{}", serde_json::to_string(output).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string(output).expect("hook output must be serializable")
+    );
 }

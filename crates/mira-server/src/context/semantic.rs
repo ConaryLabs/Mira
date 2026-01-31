@@ -70,7 +70,7 @@ impl SemanticInjector {
                 context
             }
             Err(e) => {
-                eprintln!("SemanticInjector error: {}", e);
+                tracing::warn!("SemanticInjector error: {}", e);
                 String::new()
             }
         }

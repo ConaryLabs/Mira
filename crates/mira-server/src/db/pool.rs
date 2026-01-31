@@ -26,6 +26,7 @@
 //    so multiple pool connections share the same database state.
 
 use crate::utils::path_to_string;
+use crate::utils::ResultExt;
 use anyhow::{Context, Result};
 use deadpool_sqlite::{Config, Hook, Pool, Runtime};
 use rusqlite::Connection;
@@ -376,7 +377,7 @@ impl DatabasePool {
             .interact(move |conn| f(conn).map_err(|e| anyhow::anyhow!("{}", e)))
             .await
             .map_err(|e| format!("Database error: {}", e))?
-            .map_err(|e| e.to_string())
+            .str_err()
     }
 
     /// Run a closure with retry on SQLITE_BUSY errors.

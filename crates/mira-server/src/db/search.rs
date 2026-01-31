@@ -176,16 +176,16 @@ pub fn fts_search_sync(
         .join(" ");
 
     let sql = if project_id.is_some() {
-        "SELECT f.file_path, f.chunk_content, bm25(code_fts, 1.0, 2.0) as score, v.start_line
+        "SELECT c.file_path, c.chunk_content, bm25(code_fts, 1.0, 2.0) as score, c.start_line
          FROM code_fts f
-         JOIN vec_code v ON f.file_path = v.file_path AND f.chunk_content = v.chunk_content
-         WHERE code_fts MATCH ?1 AND v.project_id = ?2
+         JOIN code_chunks c ON c.rowid = f.rowid
+         WHERE code_fts MATCH ?1 AND c.project_id = ?2
          ORDER BY bm25(code_fts, 1.0, 2.0)
          LIMIT ?3"
     } else {
-        "SELECT f.file_path, f.chunk_content, bm25(code_fts, 1.0, 2.0) as score, v.start_line
+        "SELECT c.file_path, c.chunk_content, bm25(code_fts, 1.0, 2.0) as score, c.start_line
          FROM code_fts f
-         JOIN vec_code v ON f.file_path = v.file_path AND f.chunk_content = v.chunk_content
+         JOIN code_chunks c ON c.rowid = f.rowid
          WHERE code_fts MATCH ?1
          ORDER BY bm25(code_fts, 1.0, 2.0)
          LIMIT ?2"
@@ -238,7 +238,7 @@ pub fn chunk_like_search_sync(
     limit: usize,
 ) -> Vec<ChunkSearchResult> {
     let mut results = Vec::new();
-    let sql = "SELECT file_path, chunk_content, start_line FROM vec_code
+    let sql = "SELECT file_path, chunk_content, start_line FROM code_chunks
                WHERE project_id = ? AND LOWER(chunk_content) LIKE ?
                LIMIT ?";
 

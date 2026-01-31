@@ -52,13 +52,6 @@ pub enum MiraError {
 /// Convenience type alias for Result using MiraError
 pub type Result<T> = std::result::Result<T, MiraError>;
 
-impl MiraError {
-    /// Convert to user-facing string for MCP tool boundaries
-    pub fn to_user_string(&self) -> String {
-        self.to_string()
-    }
-}
-
 impl From<String> for MiraError {
     fn from(s: String) -> Self {
         MiraError::Other(s)
@@ -140,16 +133,6 @@ mod tests {
         let err = MiraError::Other("something unexpected".to_string());
         assert!(err.to_string().contains("unknown error"));
         assert!(err.to_string().contains("something unexpected"));
-    }
-
-    // ============================================================================
-    // to_user_string tests
-    // ============================================================================
-
-    #[test]
-    fn test_to_user_string() {
-        let err = MiraError::InvalidInput("test".to_string());
-        assert_eq!(err.to_user_string(), err.to_string());
     }
 
     // ============================================================================

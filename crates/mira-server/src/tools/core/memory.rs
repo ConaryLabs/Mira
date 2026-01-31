@@ -7,13 +7,13 @@ use crate::db::{
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Patterns that look like secrets/credentials.
 /// Each tuple is (description, regex).
 #[allow(clippy::expect_used)] // Static regex patterns are compile-time known; panic on invalid regex is correct
-static SECRET_PATTERNS: Lazy<Vec<(&str, Regex)>> = Lazy::new(|| {
+static SECRET_PATTERNS: LazyLock<Vec<(&str, Regex)>> = LazyLock::new(|| {
     vec![
         (
             "API key",

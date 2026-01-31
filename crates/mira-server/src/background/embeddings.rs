@@ -7,6 +7,7 @@ use crate::db::{
 };
 use crate::embeddings::EmbeddingClient;
 use crate::search::embedding_to_bytes;
+use crate::utils::ResultExt;
 use std::sync::Arc;
 
 /// Maximum embeddings to process per batch
@@ -29,7 +30,7 @@ pub async fn process_pending_embeddings(
                 .map_err(|e| anyhow::anyhow!("Failed to get pending embeddings: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if pending.is_empty() {
         return Ok(0);
@@ -78,7 +79,7 @@ pub async fn process_pending_embeddings(
             Ok(stored)
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     tracing::info!("Stored {} embeddings from pending queue", count);
     Ok(count)

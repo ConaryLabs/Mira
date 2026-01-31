@@ -6,10 +6,11 @@ use super::code_health;
 use crate::config::ignore;
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    ImportInsert, SymbolInsert, clear_file_index_sync, insert_import_sync, insert_symbol_sync,
-    queue_pending_embedding_sync,
+    ImportInsert, SymbolInsert, clear_file_index_sync, insert_code_chunk_sync,
+    insert_import_sync, insert_symbol_sync, queue_pending_embedding_sync,
 };
 use crate::indexer;
+use crate::utils::ResultExt;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -312,7 +313,7 @@ impl FileWatcher {
                 Ok(())
             })
             .await
-            .map_err(|e| e.to_string())
+            .str_err()
     }
 
     /// Update a file (re-parse and queue embeddings) - runs DB ops on pool connection
@@ -377,8 +378,15 @@ impl FileWatcher {
                     insert_import_sync(&tx, Some(project_id), &relative_path, &import_insert)?;
                 }
 
-                // Queue chunks for background embedding
+                // Store chunks to code_chunks and queue for background embedding
                 for chunk in &parse_result.chunks {
+                    insert_code_chunk_sync(
+                        &tx,
+                        Some(project_id),
+                        &relative_path,
+                        &chunk.content,
+                        chunk.start_line,
+                    )?;
                     queue_pending_embedding_sync(
                         &tx,
                         Some(project_id),
@@ -392,7 +400,7 @@ impl FileWatcher {
                 Ok(())
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
         // Wake fast lane worker to process new embeddings immediately
         if let Some(ref notify) = self.fast_lane_notify {

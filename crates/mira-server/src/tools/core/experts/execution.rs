@@ -10,6 +10,7 @@ use super::{
     PARALLEL_EXPERT_TIMEOUT, ToolContext,
 };
 use crate::llm::{Message, record_llm_usage};
+use crate::utils::ResultExt;
 use std::sync::Arc;
 use tokio::time::timeout;
 use tracing::debug;
@@ -28,7 +29,7 @@ pub async fn consult_expert<C: ToolContext>(
     let strategy = llm_factory
         .strategy_for_role(expert_key.as_str(), ctx.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let chat_client = strategy.actor().clone();
     let provider = chat_client.provider_type();
@@ -300,7 +301,7 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
     if expert_roles.len() == 1 {
         return consult_expert(
             ctx,
-            expert_roles.into_iter().next().unwrap(),
+            expert_roles.into_iter().next().expect("len == 1"),
             context,
             question,
         )

@@ -4,6 +4,7 @@
 use crate::cross_project::{self, CrossProjectConfig, SharingPreferences};
 use crate::mcp::requests::CrossProjectAction;
 use crate::tools::core::ToolContext;
+use crate::utils::ResultExt;
 
 /// Unified cross-project tool with actions: get_preferences, enable_sharing, disable_sharing,
 /// reset_budget, get_stats, extract_patterns, sync
@@ -124,14 +125,14 @@ pub async fn cross_project<C: ToolContext>(
                 .pool()
                 .run(move |conn| {
                     let prefs = cross_project::get_preferences(conn, project_id)
-                        .map_err(|e| e.to_string())?;
+                        .str_err()?;
                     if !prefs.sharing_enabled || !prefs.import_patterns {
                         return Ok::<_, String>(0);
                     }
 
                     let patterns =
                         cross_project::get_shareable_patterns(conn, None, None, min_conf, 50)
-                            .map_err(|e| e.to_string())?;
+                            .str_err()?;
                     let mut count = 0;
                     for pattern in &patterns {
                         if cross_project::import_pattern(conn, project_id, pattern).is_ok() {

@@ -25,6 +25,11 @@ pub fn clear_project_index_sync(conn: &Connection, project_id: i64) -> rusqlite:
     )?;
 
     conn.execute(
+        "DELETE FROM code_chunks WHERE project_id = ?",
+        params![project_id],
+    )?;
+
+    conn.execute(
         "DELETE FROM vec_code WHERE project_id = ?",
         params![project_id],
     )?;
@@ -53,6 +58,12 @@ pub fn clear_file_index_sync(
     // Delete symbols for this file
     conn.execute(
         "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
+        params![project_id, file_path],
+    )?;
+
+    // Delete code chunks for this file
+    conn.execute(
+        "DELETE FROM code_chunks WHERE project_id = ? AND file_path = ?",
         params![project_id, file_path],
     )?;
 
@@ -209,6 +220,23 @@ pub fn insert_chunk_embedding_sync(
         "INSERT INTO vec_code (embedding, file_path, chunk_content, project_id, start_line)
          VALUES (?, ?, ?, ?, ?)",
         params![embedding_bytes, file_path, content, project_id, start_line],
+    )?;
+    Ok(())
+}
+
+/// Insert a code chunk into the canonical code_chunks table
+/// Uses transaction for batch operations
+pub fn insert_code_chunk_sync(
+    tx: &rusqlite::Transaction,
+    project_id: Option<i64>,
+    file_path: &str,
+    chunk_content: &str,
+    start_line: u32,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO code_chunks (project_id, file_path, chunk_content, start_line)
+         VALUES (?, ?, ?, ?)",
+        params![project_id, file_path, chunk_content, start_line],
     )?;
     Ok(())
 }

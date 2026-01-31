@@ -9,6 +9,7 @@ use crate::db::{
     get_documented_by_category_sync, get_indexed_project_ids_sync, get_lib_symbols_sync,
     get_modules_for_doc_gaps_sync, get_project_paths_by_ids_sync, get_symbols_for_file_sync,
 };
+use crate::utils::ResultExt;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -31,7 +32,7 @@ pub async fn scan_documentation_gaps(
             get_indexed_project_ids_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if project_ids.is_empty() {
         return Ok(0);
@@ -44,7 +45,7 @@ pub async fn scan_documentation_gaps(
             get_project_paths_by_ids_sync(conn, &ids).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut total_created = 0;
 
@@ -57,7 +58,7 @@ pub async fn scan_documentation_gaps(
                     .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
         if !needs_scan {
             continue;
@@ -105,7 +106,7 @@ pub async fn scan_documentation_gaps(
                 .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         if reset_count > 0 {
             tracing::info!(
                 "Documentation: reset {} orphaned tasks for project {}",
@@ -139,7 +140,7 @@ pub async fn scan_documentation_gaps(
                     .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
     }
 
     Ok(total_created)
@@ -192,7 +193,7 @@ async fn detect_gaps_for_project(
             Ok::<usize, anyhow::Error>(count)
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if created > 0 {
         tracing::info!(
@@ -250,7 +251,7 @@ async fn detect_mcp_tool_gaps(
                 .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Create gaps for undocumented tools
     for tool_name in tool_names {
@@ -298,7 +299,7 @@ async fn detect_public_api_gaps(
             get_lib_symbols_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Get documented public APIs (main DB)
     let documented: HashSet<String> = main_pool
@@ -308,7 +309,7 @@ async fn detect_public_api_gaps(
                 .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for (name, _signature) in lib_symbols {
         let doc_path = format!("docs/api/{}.md", name);
@@ -344,7 +345,7 @@ async fn detect_module_doc_gaps(
             get_modules_for_doc_gaps_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Get documented modules (main DB)
     let documented: HashSet<String> = main_pool
@@ -354,7 +355,7 @@ async fn detect_module_doc_gaps(
                 .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for (module_id, path, purpose) in modules {
         let doc_path = format!("docs/modules/{}.md", module_id);
@@ -398,7 +399,7 @@ async fn detect_stale_docs_for_project(
             get_inventory_for_stale_check(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for item in inventory {
         let mut is_stale = false;
@@ -449,7 +450,7 @@ async fn detect_stale_docs_for_project(
                         .map_err(|e| anyhow::anyhow!("{}", e))
                 })
                 .await
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             stale_count += 1;
             tracing::debug!("Stale documentation: {} - {}", item.doc_path, reason);
         }
@@ -475,7 +476,7 @@ async fn check_source_signature_changed(
                 .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if symbols.is_empty() {
         return Ok(None);

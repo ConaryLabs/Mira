@@ -2,9 +2,8 @@
 // Git operations using git2 crate
 
 use git2::Repository;
-use once_cell::sync::Lazy;
 use std::path::Path;
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant};
 
 /// Cache for git branch to avoid repeated repository lookups
@@ -18,7 +17,7 @@ struct BranchCache {
 /// Default cache TTL in seconds
 const BRANCH_CACHE_TTL_SECS: u64 = 5;
 
-static BRANCH_CACHE: Lazy<RwLock<Option<BranchCache>>> = Lazy::new(|| RwLock::new(None));
+static BRANCH_CACHE: LazyLock<RwLock<Option<BranchCache>>> = LazyLock::new(|| RwLock::new(None));
 
 /// Get the current git branch for a project path.
 ///

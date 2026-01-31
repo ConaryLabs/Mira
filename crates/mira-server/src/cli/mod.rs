@@ -91,11 +91,6 @@ pub enum HookAction {
     PostTool,
     /// Handle Stop hooks - check goals, save session state
     Stop,
-    /// Legacy hooks (no-op for compatibility)
-    #[command(hide = true)]
-    Posttool,
-    #[command(hide = true)]
-    Pretool,
 }
 
 /// Get the default database path

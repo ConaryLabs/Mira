@@ -42,11 +42,6 @@ impl GoalAwareInjector {
         }
     }
 
-    // Legacy method name for compatibility with context injection manager
-    pub async fn get_active_task_ids(&self) -> Vec<i64> {
-        self.get_active_goal_ids().await
-    }
-
     /// Inject context about active goals and their milestones
     pub async fn inject_goal_context(&self, goal_ids: Vec<i64>) -> String {
         if goal_ids.is_empty() {
@@ -100,16 +95,7 @@ impl GoalAwareInjector {
         context.trim_end().to_string()
     }
 
-    // Legacy method name for compatibility with context injection manager
-    pub async fn inject_task_context(&self, _task_ids: Vec<i64>) -> String {
-        // Now injects goal context instead
-        let goal_ids = self.get_active_goal_ids().await;
-        self.inject_goal_context(goal_ids).await
-    }
 }
-
-// Export as TaskAwareInjector for backwards compatibility
-pub type TaskAwareInjector = GoalAwareInjector;
 
 #[cfg(test)]
 mod tests {

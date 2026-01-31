@@ -18,6 +18,7 @@ use crate::git::get_git_branch;
 use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
 use crate::tools::core::claude_local;
+use crate::utils::ResultExt;
 
 // Helper functions moved to db/project.rs:
 // - search_memories_text_sync
@@ -303,11 +304,11 @@ pub async fn session_start<C: ToolContext>(
                 Some(project_id),
                 branch_for_db.as_deref(),
             )
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
             // Persist active session ID for restart recovery
             set_server_state_sync(conn, "active_session_id", &sid_for_db)
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
 
             // Store system context as memory
             if let Some(ref content) = system_context {

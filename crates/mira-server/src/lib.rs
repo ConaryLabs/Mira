@@ -1,6 +1,5 @@
 // crates/mira-server/src/lib.rs
 // Mira - Memory and Intelligence Layer for AI Agents
-// Test edit for file watcher verification
 
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::type_complexity)]

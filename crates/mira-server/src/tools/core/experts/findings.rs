@@ -252,7 +252,7 @@ impl FindingsStore {
 
     /// Add a finding. Returns the result indicating success or which limit was hit.
     pub fn add(&self, finding: CouncilFinding) -> AddFindingResult {
-        let mut findings = self.findings.lock().unwrap();
+        let mut findings = self.findings.lock().expect("findings mutex not poisoned");
         if findings.len() >= MAX_COUNCIL_FINDINGS {
             return AddFindingResult::GlobalLimitReached {
                 total: findings.len(),
@@ -273,7 +273,7 @@ impl FindingsStore {
     /// Get all findings.
     #[allow(dead_code)]
     pub fn all(&self) -> Vec<CouncilFinding> {
-        self.findings.lock().unwrap().clone()
+        self.findings.lock().expect("findings mutex not poisoned").clone()
     }
 
     /// Get findings from a specific role.
@@ -289,12 +289,12 @@ impl FindingsStore {
 
     /// Number of findings stored.
     pub fn count(&self) -> usize {
-        self.findings.lock().unwrap().len()
+        self.findings.lock().expect("findings mutex not poisoned").len()
     }
 
     /// Format all findings for the synthesis prompt.
     pub fn format_for_synthesis(&self) -> String {
-        let findings = self.findings.lock().unwrap();
+        let findings = self.findings.lock().expect("findings mutex not poisoned");
         if findings.is_empty() {
             return "No structured findings were recorded.".to_string();
         }
@@ -334,7 +334,7 @@ impl FindingsStore {
     /// Rough token estimate for the findings (1 token ≈ 4 chars).
     #[allow(dead_code)]
     pub fn estimated_tokens(&self) -> usize {
-        let findings = self.findings.lock().unwrap();
+        let findings = self.findings.lock().expect("findings mutex not poisoned");
         let total_chars: usize = findings
             .iter()
             .map(|f| {

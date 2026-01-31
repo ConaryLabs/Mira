@@ -19,7 +19,7 @@ pub use budget::BudgetManager;
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;
 pub use file_aware::FileAwareInjector;
-pub use goal_aware::{GoalAwareInjector, TaskAwareInjector};
+pub use goal_aware::GoalAwareInjector;
 pub use semantic::SemanticInjector;
 
 /// Result of context injection with metadata for MCP notification
@@ -99,7 +99,7 @@ pub struct ContextInjectionManager {
     pool: Arc<DatabasePool>,
     semantic_injector: SemanticInjector,
     file_injector: FileAwareInjector,
-    task_injector: TaskAwareInjector,
+    goal_injector: GoalAwareInjector,
     budget_manager: BudgetManager,
     cache: InjectionCache,
     analytics: InjectionAnalytics,
@@ -115,7 +115,7 @@ impl ContextInjectionManager {
             pool: pool.clone(),
             semantic_injector: SemanticInjector::new(pool.clone(), embeddings),
             file_injector: FileAwareInjector::new(pool.clone()),
-            task_injector: TaskAwareInjector::new(pool.clone()),
+            goal_injector: GoalAwareInjector::new(pool.clone()),
             budget_manager: BudgetManager::with_limit(config.max_chars),
             cache: InjectionCache::new(),
             analytics: InjectionAnalytics::new(pool.clone()),
@@ -402,13 +402,13 @@ impl ContextInjectionManager {
             }
         }
 
-        // Task context
+        // Goal context
         if self.config.enable_task_aware {
-            let task_ids = self.task_injector.get_active_task_ids().await;
-            if !task_ids.is_empty() {
-                let task_context = self.task_injector.inject_task_context(task_ids).await;
-                if !task_context.is_empty() {
-                    contexts.push(task_context);
+            let goal_ids = self.goal_injector.get_active_goal_ids().await;
+            if !goal_ids.is_empty() {
+                let goal_context = self.goal_injector.inject_goal_context(goal_ids).await;
+                if !goal_context.is_empty() {
+                    contexts.push(goal_context);
                     sources.push(InjectionSource::TaskAware);
                 }
             }
@@ -439,13 +439,6 @@ impl ContextInjectionManager {
             skip_reason: None,
             from_cache: false,
         }
-    }
-
-    /// Legacy method for backwards compatibility - returns just the context string
-    pub async fn get_context_string(&self, user_message: &str, session_id: &str) -> String {
-        self.get_context_for_message(user_message, session_id)
-            .await
-            .context
     }
 
     /// Get injection analytics summary

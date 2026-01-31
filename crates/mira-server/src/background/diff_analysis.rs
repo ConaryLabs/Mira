@@ -8,6 +8,7 @@ use crate::db::{
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::find_callers;
+use crate::utils::ResultExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -429,7 +430,7 @@ pub async fn analyze_diff(
                 .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if let Some(cached) = cached {
         tracing::info!(
@@ -487,7 +488,7 @@ pub async fn analyze_diff(
                 }
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         Some(impact_result)
     } else {
         None

@@ -1,6 +1,7 @@
 // crates/mira-server/src/db/documentation.rs
 // Database layer for documentation tracking and generation
 
+use crate::utils::ResultExt;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -92,7 +93,7 @@ pub fn create_doc_task(
         ],
     )
     .map(|_| conn.last_insert_rowid())
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Get pending documentation tasks, ordered by priority
@@ -134,10 +135,10 @@ pub fn get_pending_doc_tasks(
     } else {
         stmt.query_map(params![limit as i64], parse_doc_task)
     }
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
 
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Get all tasks with optional filters
@@ -183,9 +184,9 @@ pub fn list_doc_tasks(
         params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
 
     stmt.query_map(params_refs.as_slice(), parse_doc_task)
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Get a single task by ID
@@ -196,7 +197,7 @@ pub fn get_doc_task(conn: &rusqlite::Connection, task_id: i64) -> Result<Option<
         parse_doc_task,
     )
     .optional()
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Mark a task as applied (documentation written)
@@ -208,7 +209,7 @@ pub fn mark_doc_task_applied(conn: &rusqlite::Connection, task_id: i64) -> Resul
         [task_id],
     )
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Mark a task as skipped
@@ -224,7 +225,7 @@ pub fn mark_doc_task_skipped(
         params![reason, task_id],
     )
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Reset orphaned tasks whose target files no longer exist
@@ -242,11 +243,11 @@ pub fn reset_orphaned_doc_tasks(
             "SELECT id, target_doc_path FROM documentation_tasks
              WHERE project_id = ? AND status = 'applied'",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let tasks: Vec<(i64, String)> = stmt
         .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -260,7 +261,7 @@ pub fn reset_orphaned_doc_tasks(
                  WHERE id = ?",
                 [task_id],
             )
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
             reset_count += 1;
             tracing::info!(
                 "Reset orphaned doc task {} (file missing: {})",
@@ -312,7 +313,7 @@ pub fn upsert_doc_inventory(
         ],
     )
     .map(|_| conn.last_insert_rowid())
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Mark documentation as stale
@@ -329,7 +330,7 @@ pub fn mark_doc_stale(
         params![reason, project_id, doc_path],
     )
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Get all documentation inventory for a project
@@ -343,12 +344,12 @@ pub fn get_doc_inventory(
              WHERE project_id = ?
              ORDER BY doc_type, doc_path",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     stmt.query_map(params![project_id], parse_doc_inventory)
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Get inventory items eligible for staleness check
@@ -363,12 +364,12 @@ pub fn get_inventory_for_stale_check(
              WHERE project_id = ? AND source_signature_hash IS NOT NULL
              AND is_stale = 0",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     stmt.query_map(params![project_id], parse_doc_inventory)
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Get stale documentation for a project
@@ -382,12 +383,12 @@ pub fn get_stale_docs(
              WHERE project_id = ? AND is_stale = 1
              ORDER BY doc_type, doc_path",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     stmt.query_map(params![project_id], parse_doc_inventory)
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Parse a DocTask row
@@ -450,13 +451,13 @@ pub fn count_doc_tasks_by_status(
                      WHERE project_id = ?
                      GROUP BY status",
                 )
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             stmt.query_map([pid], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })
-            .map_err(|e| e.to_string())?
+            .str_err()?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+            .str_err()
         }
         None => {
             let mut stmt = conn
@@ -464,13 +465,13 @@ pub fn count_doc_tasks_by_status(
                     "SELECT status, COUNT(*) as count FROM documentation_tasks
                      GROUP BY status",
                 )
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             stmt.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })
-            .map_err(|e| e.to_string())?
+            .str_err()?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+            .str_err()
         }
     }
 }
@@ -490,12 +491,12 @@ pub fn get_stale_docs_needing_analysis(
              ORDER BY verified_at DESC
              LIMIT ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     stmt.query_map(params![project_id, limit as i64], parse_doc_inventory)
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Update impact analysis results for a stale doc
@@ -514,7 +515,7 @@ pub fn update_doc_impact_analysis(
         params![change_impact, change_summary, doc_id],
     )
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Clear impact analysis when doc is no longer stale (e.g., after update)
@@ -534,5 +535,5 @@ pub fn clear_doc_impact_analysis(
         params![project_id, doc_path],
     )
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .str_err()
 }

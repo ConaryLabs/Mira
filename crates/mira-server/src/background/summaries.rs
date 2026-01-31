@@ -8,6 +8,7 @@ use crate::db::{
     get_project_paths_by_ids_sync, update_module_purposes_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::utils::ResultExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,7 +35,7 @@ pub async fn process_queue(
                 .map_err(|e| anyhow::anyhow!("Failed to get project IDs: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if project_ids.is_empty() {
         return Ok(0);
@@ -48,7 +49,7 @@ pub async fn process_queue(
                 .map_err(|e| anyhow::anyhow!("Failed to get project paths: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if projects.is_empty() {
         return Ok(0);
@@ -64,7 +65,7 @@ pub async fn process_queue(
                     .map_err(|e| anyhow::anyhow!("Failed to get modules: {}", e))
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
         if modules.is_empty() {
             continue;

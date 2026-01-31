@@ -76,9 +76,6 @@ async fn main() -> Result<()> {
             HookAction::Stop => {
                 mira::hooks::stop::run().await?;
             }
-            HookAction::Posttool | HookAction::Pretool => {
-                // Legacy no-op hooks for compatibility
-            }
         },
         Some(Commands::DebugCarto { path }) => {
             cli::run_debug_carto(path).await?;

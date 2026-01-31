@@ -7,8 +7,8 @@ pub mod rust;
 pub mod typescript;
 
 use anyhow::{Result, anyhow};
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::path::PathBuf;
 use tree_sitter::{Node, Parser};
 
@@ -63,7 +63,7 @@ static TYPESCRIPT_PARSER: TypeScriptParser = TypeScriptParser;
 static GO_PARSER: GoParser = GoParser;
 
 /// Global parser registry - use this for all parser lookups
-pub static PARSERS: Lazy<ParserRegistry> = Lazy::new(|| {
+pub static PARSERS: LazyLock<ParserRegistry> = LazyLock::new(|| {
     let parsers: &[&'static dyn LanguageParser] =
         &[&RUST_PARSER, &PYTHON_PARSER, &TYPESCRIPT_PARSER, &GO_PARSER];
 

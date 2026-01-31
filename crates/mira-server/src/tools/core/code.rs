@@ -13,6 +13,7 @@ use crate::search::{
     format_crossref_results, format_project_header, hybrid_search,
 };
 use crate::tools::core::ToolContext;
+use crate::utils::ResultExt;
 
 /// Search code using semantic similarity or keyword fallback
 pub async fn search_code<C: ToolContext>(
@@ -265,7 +266,7 @@ pub async fn index<C: ToolContext>(
             let stats =
                 indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .str_err()?;
 
             let mut response = format!(
                 "Indexed {} files, {} symbols, {} chunks",
@@ -451,7 +452,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         .code_pool()
         .run(move |conn| {
             let count = cartographer::update_module_purposes(conn, project_id, &summaries_clone)
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
 
             // Clear cached modules to force regeneration
             clear_modules_without_purpose_sync(conn, project_id).map_err(|e| e.to_string())?;

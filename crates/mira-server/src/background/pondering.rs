@@ -6,6 +6,7 @@
 
 use crate::db::pool::DatabasePool;
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::utils::ResultExt;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -77,7 +78,7 @@ pub async fn process_pondering(
                 .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut processed = 0;
 

@@ -4,7 +4,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-/// Rebuild the FTS5 index from vec_code
+/// Rebuild the FTS5 index from code_chunks
 /// Call this after indexing or when FTS index needs refreshing
 pub fn rebuild_code_fts(conn: &Connection) -> Result<()> {
     tracing::info!("Rebuilding FTS5 code search index");
@@ -12,10 +12,11 @@ pub fn rebuild_code_fts(conn: &Connection) -> Result<()> {
     // Clear existing FTS data
     conn.execute("DELETE FROM code_fts", [])?;
 
-    // Populate from vec_code
+    // Populate from code_chunks (canonical chunk store)
+    // Use code_chunks.id as rowid so FTS rowid matches code_chunks.id for joins
     let inserted = conn.execute(
         "INSERT INTO code_fts(rowid, file_path, chunk_content, project_id, start_line)
-         SELECT rowid, file_path, chunk_content, project_id, start_line FROM vec_code",
+         SELECT id, file_path, chunk_content, project_id, start_line FROM code_chunks",
         [],
     )?;
 
@@ -30,11 +31,12 @@ pub fn rebuild_code_fts_for_project(conn: &Connection, project_id: i64) -> Resul
     // Delete existing entries for this project
     conn.execute("DELETE FROM code_fts WHERE project_id = ?", [project_id])?;
 
-    // Re-insert from vec_code
+    // Re-insert from code_chunks (canonical chunk store)
+    // Use code_chunks.id as rowid so FTS rowid matches code_chunks.id for joins
     conn.execute(
         "INSERT INTO code_fts(rowid, file_path, chunk_content, project_id, start_line)
-         SELECT rowid, file_path, chunk_content, project_id, start_line
-         FROM vec_code WHERE project_id = ?",
+         SELECT id, file_path, chunk_content, project_id, start_line
+         FROM code_chunks WHERE project_id = ?",
         [project_id],
     )?;
 

@@ -6,6 +6,7 @@ use crate::db::{
     pool::DatabasePool, search_memories_sync,
 };
 use crate::tools::core::ToolContext;
+use crate::utils::ResultExt;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -165,7 +166,7 @@ fn import_claude_local_md_sync(
             category.as_deref(),
             0.9,
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
         imported += 1;
     }
@@ -180,7 +181,7 @@ fn export_to_claude_local_md_sync(
     project_id: i64,
 ) -> Result<String, String> {
     let memories = fetch_ranked_memories_for_export_sync(conn, project_id, RANKED_FETCH_LIMIT)
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if memories.is_empty() {
         return Ok(String::new());

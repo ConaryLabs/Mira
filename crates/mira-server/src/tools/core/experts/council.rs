@@ -14,6 +14,7 @@ use super::{
     EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS, ToolContext,
 };
 use crate::llm::{Message, Tool, record_llm_usage};
+use crate::utils::ResultExt;
 use mira_types::{CouncilEvent, WsEvent};
 use std::sync::Arc;
 use std::time::Duration;
@@ -307,7 +308,7 @@ async fn run_expert_task<C: ToolContext>(
     let strategy = llm_factory
         .strategy_for_role(role_key, ctx.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let chat_client = strategy.actor().clone();
 

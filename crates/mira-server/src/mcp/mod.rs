@@ -108,7 +108,7 @@ impl MiraServer {
                 return; // Already initialized to the correct project
             }
             // Path mismatch - we'll re-initialize below
-            eprintln!(
+            tracing::info!(
                 "[mira] Project path mismatch: {} vs {}, auto-switching",
                 proj.path, cwd
             );
@@ -116,7 +116,7 @@ impl MiraServer {
         drop(current_project); // Release the read lock
 
         // Auto-initialize the project
-        eprintln!("[mira] Auto-initializing project from cwd: {}", cwd);
+        tracing::info!("[mira] Auto-initializing project from cwd: {}", cwd);
 
         // Get session_id from hook (if available)
         let session_id = read_claude_session_id();
@@ -134,10 +134,10 @@ impl MiraServer {
         .await
         {
             Ok(_) => {
-                eprintln!("[mira] Auto-initialized project: {}", cwd);
+                tracing::info!("[mira] Auto-initialized project: {}", cwd);
             }
             Err(e) => {
-                eprintln!("[mira] Failed to auto-initialize project: {}", e);
+                tracing::warn!("[mira] Failed to auto-initialize project: {}", e);
             }
         }
     }
@@ -146,16 +146,16 @@ impl MiraServer {
     pub fn broadcast(&self, event: mira_types::WsEvent) {
         if let Some(tx) = &self.ws_tx {
             let receiver_count = tx.receiver_count();
-            eprintln!(
+            tracing::debug!(
                 "[BROADCAST] Sending {:?} to {} receivers",
                 event, receiver_count
             );
             match tx.send(event) {
-                Ok(n) => eprintln!("[BROADCAST] Sent to {} receivers", n),
-                Err(e) => eprintln!("[BROADCAST] Error: {:?}", e),
+                Ok(n) => tracing::debug!("[BROADCAST] Sent to {} receivers", n),
+                Err(e) => tracing::warn!("[BROADCAST] Error: {:?}", e),
             }
         } else {
-            eprintln!("[BROADCAST] No ws_tx configured!");
+            tracing::debug!("[BROADCAST] No ws_tx configured!");
         }
     }
 }
@@ -480,7 +480,7 @@ impl MiraServer {
             })
             .await
         {
-            eprintln!("[HISTORY] Failed to log tool call: {}", e);
+            tracing::warn!("[HISTORY] Failed to log tool call: {}", e);
         }
     }
 }

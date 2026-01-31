@@ -41,7 +41,7 @@ impl ReasoningStrategy {
         matches!(self, Self::Decoupled { .. })
     }
 
-    /// Construct from the legacy dual-mode tuple.
+    /// Construct from a chat client and an optional dedicated reasoning client.
     pub fn from_dual_mode(chat: Arc<dyn LlmClient>, reasoner: Option<Arc<dyn LlmClient>>) -> Self {
         match reasoner {
             Some(thinker) => Self::Decoupled {

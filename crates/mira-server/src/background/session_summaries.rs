@@ -7,6 +7,7 @@ use crate::db::{
     get_stale_sessions_sync, update_session_summary_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::utils::ResultExt;
 use std::sync::Arc;
 
 /// Minutes of inactivity before a session is considered stale
@@ -43,7 +44,7 @@ async fn close_stale_sessions(
                 .map_err(|e| anyhow::anyhow!("Failed to get stale sessions: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if stale.is_empty() {
         return Ok(0);
@@ -101,7 +102,7 @@ async fn generate_missing_summaries(
                 .map_err(|e| anyhow::anyhow!("Failed to get sessions needing summary: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if sessions.is_empty() {
         return Ok(0);
@@ -230,7 +231,7 @@ pub async fn close_session_now(
             .map_err(|e| anyhow::anyhow!("Failed to count tools: {}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     // Generate summary if we have a client and enough tool calls
     let summary = if let Some(client) = client {

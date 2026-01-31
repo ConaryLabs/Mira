@@ -2,13 +2,14 @@
 // Batch processing for symbols, imports, calls, and embeddings
 
 use crate::db::{
-    ImportInsert, SymbolInsert, insert_call_sync, insert_chunk_embedding_sync, insert_import_sync,
-    insert_symbol_sync, pool::DatabasePool,
+    ImportInsert, SymbolInsert, insert_call_sync, insert_chunk_embedding_sync,
+    insert_code_chunk_sync, insert_import_sync, insert_symbol_sync, pool::DatabasePool,
 };
 use crate::embeddings::EmbeddingClient;
 use crate::indexer::parsing::{FunctionCall, Import, Symbol};
 use crate::indexer::types::IndexStats;
 use crate::search::embedding_to_bytes;
+use crate::utils::ResultExt;
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -44,7 +45,7 @@ pub async fn embed_chunks(
     embeddings
         .embed_batch_for_storage(&texts)
         .await
-        .map_err(|e| e.to_string())
+        .str_err()
 }
 
 /// Helper to prepare chunk data for database storage
@@ -101,7 +102,37 @@ pub async fn store_chunk_embeddings(
     .await
 }
 
-/// Flush accumulated chunks to database and generate embeddings
+/// Store chunks into the canonical code_chunks table
+pub async fn store_chunks_to_db(
+    pool: Arc<DatabasePool>,
+    pending_chunks: &[PendingChunk],
+    project_id: Option<i64>,
+) -> Result<usize> {
+    let chunk_data: Vec<(String, String, u32)> = pending_chunks
+        .iter()
+        .map(|c| (c.file_path.clone(), c.content.clone(), c.start_line as u32))
+        .collect();
+
+    pool.interact(move |conn| {
+        let tx = conn.unchecked_transaction()?;
+        let mut errors = 0usize;
+
+        for (file_path, content, start_line) in &chunk_data {
+            if let Err(e) =
+                insert_code_chunk_sync(&tx, project_id, file_path, content, *start_line)
+            {
+                tracing::warn!("Failed to store chunk ({}:{}): {}", file_path, start_line, e);
+                errors += 1;
+            }
+        }
+
+        tx.commit()?;
+        Ok(errors)
+    })
+    .await
+}
+
+/// Flush accumulated chunks to database and optionally generate embeddings
 pub async fn flush_chunks(
     mut pending_chunks: Vec<PendingChunk>,
     pool: Arc<DatabasePool>,
@@ -113,30 +144,36 @@ pub async fn flush_chunks(
         return Ok(());
     }
 
-    if let Some(ref emb) = embeddings {
-        let chunk_count = pending_chunks.len();
-        tracing::info!("Flushing {} chunks...", chunk_count);
+    let chunk_count = pending_chunks.len();
+    tracing::info!("Flushing {} chunks...", chunk_count);
 
+    // Always store chunks to code_chunks table
+    match store_chunks_to_db(pool.clone(), &pending_chunks, project_id).await {
+        Ok(error_count) => {
+            stats.chunks += chunk_count - error_count;
+            stats.errors += error_count;
+        }
+        Err(e) => {
+            tracing::error!("Failed to store chunks to code_chunks: {}", e);
+            stats.errors += chunk_count;
+            // Still try embeddings even if code_chunks failed
+        }
+    }
+
+    // Optionally embed + store to vec_code when embeddings are available
+    if let Some(ref emb) = embeddings {
         match embed_chunks(emb, &pending_chunks).await {
             Ok(vectors) => {
                 tracing::info!("Embedded {} chunks", vectors.len());
 
                 let chunk_data = prepare_chunk_data(&pending_chunks, &vectors);
 
-                match store_chunk_embeddings(pool.clone(), chunk_data, project_id).await {
-                    Ok(error_count) => {
-                        stats.chunks += chunk_count - error_count;
-                        stats.errors += error_count;
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to store embeddings: {}", e);
-                        stats.errors += chunk_count;
-                    }
+                if let Err(e) = store_chunk_embeddings(pool.clone(), chunk_data, project_id).await {
+                    tracing::error!("Failed to store embeddings: {}", e);
                 }
             }
             Err(e) => {
                 tracing::error!("Batch embedding failed: {}", e);
-                stats.errors += pending_chunks.len();
             }
         }
     }

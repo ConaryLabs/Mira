@@ -2,6 +2,7 @@
 // Cargo check integration for detecting compiler warnings
 
 use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::utils::ResultExt;
 use rusqlite::Connection;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -94,7 +95,7 @@ pub fn scan_cargo_warnings(
                                 branch: None,
                             },
                         )
-                        .map_err(|e| e.to_string())?;
+                        .str_err()?;
 
                         stored += 1;
                     }

@@ -76,7 +76,7 @@ impl ToolContext for MiraServer {
         match ensure_session(self).await {
             Ok(id) => id,
             Err(e) => {
-                eprintln!("[SESSION] Failed to create session in database: {}", e);
+                tracing::warn!("[SESSION] Failed to create session in database: {}", e);
                 // Fallback to local session ID generation
                 let mut session_id = self.session_id.write().await;
                 match &*session_id {

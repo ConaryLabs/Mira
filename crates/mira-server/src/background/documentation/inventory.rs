@@ -4,6 +4,7 @@
 use crate::db::documentation::upsert_doc_inventory;
 use crate::db::get_symbols_for_file_sync;
 use crate::db::pool::DatabasePool;
+use crate::utils::ResultExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -143,7 +144,7 @@ async fn inventory_file(
         .map_err(|e| anyhow::anyhow!("{}", e))
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
 
     Ok(())
 }
@@ -240,7 +241,7 @@ async fn get_source_signature(
                 .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     if symbols.is_empty() {
         return Ok(None);

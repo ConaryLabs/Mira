@@ -178,31 +178,29 @@ async fn process_parsed_files(
             tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
         }
 
-        // Collect chunks for batch embedding (if embeddings enabled)
-        if embeddings.is_some() {
-            let chunks = create_semantic_chunks(&parsed.content, &parsed_symbols);
-            for chunk in chunks {
-                if !chunk.content.trim().is_empty() {
-                    pending_chunks.push(PendingChunk {
-                        file_path: parsed.relative_path.clone(),
-                        start_line: chunk.start_line as usize,
-                        content: chunk.content,
-                    });
-                }
+        // Always collect chunks (stored to code_chunks; optionally embedded to vec_code)
+        let chunks = create_semantic_chunks(&parsed.content, &parsed_symbols);
+        for chunk in chunks {
+            if !chunk.content.trim().is_empty() {
+                pending_chunks.push(PendingChunk {
+                    file_path: parsed.relative_path.clone(),
+                    start_line: chunk.start_line as usize,
+                    content: chunk.content,
+                });
             }
+        }
 
-            // Flush if we've accumulated enough chunks
-            if pending_chunks.len() >= CHUNK_FLUSH_THRESHOLD {
-                let chunks_to_flush = std::mem::take(pending_chunks);
-                flush_chunks(
-                    chunks_to_flush,
-                    pool.clone(),
-                    embeddings.clone(),
-                    project_id,
-                    stats,
-                )
-                .await?;
-            }
+        // Flush if we've accumulated enough chunks
+        if pending_chunks.len() >= CHUNK_FLUSH_THRESHOLD {
+            let chunks_to_flush = std::mem::take(pending_chunks);
+            flush_chunks(
+                chunks_to_flush,
+                pool.clone(),
+                embeddings.clone(),
+                project_id,
+                stats,
+            )
+            .await?;
         }
     }
     Ok(())

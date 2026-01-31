@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS pending_embeddings (
 CREATE INDEX IF NOT EXISTS idx_pending_embeddings_status ON pending_embeddings(status);
 
 -- =======================================
+-- CODE CHUNKS (canonical chunk store)
+-- =======================================
+CREATE TABLE IF NOT EXISTS code_chunks (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER,
+    file_path TEXT NOT NULL,
+    chunk_content TEXT NOT NULL,
+    start_line INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_code_chunks_project ON code_chunks(project_id);
+CREATE INDEX IF NOT EXISTS idx_code_chunks_file ON code_chunks(project_id, file_path);
+
+-- =======================================
 -- VECTOR TABLES (sqlite-vec)
 -- =======================================
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
@@ -116,6 +129,7 @@ pub fn run_code_migrations(conn: &Connection) -> Result<()> {
     migrate_pending_embeddings_line_numbers(conn)?;
     migrate_imports_unique(conn)?;
     migrate_fts_tokenizer(conn)?;
+    migrate_code_chunks(conn)?;
 
     Ok(())
 }
@@ -227,6 +241,58 @@ fn migrate_fts_tokenizer(conn: &Connection) -> Result<()> {
             [],
         )?;
         tracing::info!("FTS5 tokenizer migration: re-indexed {} chunks", inserted);
+    }
+
+    Ok(())
+}
+
+/// Migrate code_chunks table for existing users.
+///
+/// If code_chunks is empty but vec_code has data, populate code_chunks from
+/// vec_code so FTS and LIKE search work immediately without re-indexing.
+/// Then rebuild code_fts from code_chunks.
+fn migrate_code_chunks(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "code_chunks") {
+        return Ok(());
+    }
+
+    let chunks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_chunks", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    if chunks_count > 0 {
+        return Ok(());
+    }
+
+    // Check if vec_code has data to migrate from
+    let vec_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vec_code", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    if vec_count == 0 {
+        return Ok(());
+    }
+
+    tracing::info!(
+        "Migrating {} chunks from vec_code to code_chunks",
+        vec_count
+    );
+
+    conn.execute(
+        "INSERT INTO code_chunks (project_id, file_path, chunk_content, start_line)
+         SELECT project_id, file_path, chunk_content, start_line FROM vec_code",
+        [],
+    )?;
+
+    // Rebuild FTS from code_chunks
+    if table_exists(conn, "code_fts") {
+        conn.execute("DELETE FROM code_fts", [])?;
+        conn.execute(
+            "INSERT INTO code_fts(rowid, file_path, chunk_content, project_id, start_line)
+             SELECT id, file_path, chunk_content, project_id, start_line FROM code_chunks",
+            [],
+        )?;
+        tracing::info!("Rebuilt code_fts from code_chunks after migration");
     }
 
     Ok(())
