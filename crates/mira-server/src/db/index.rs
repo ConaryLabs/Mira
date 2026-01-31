@@ -30,6 +30,11 @@ pub fn clear_project_index_sync(conn: &Connection, project_id: i64) -> rusqlite:
     )?;
 
     conn.execute(
+        "DELETE FROM code_fts WHERE project_id = ?",
+        params![project_id],
+    )?;
+
+    conn.execute(
         "DELETE FROM vec_code WHERE project_id = ?",
         params![project_id],
     )?;
@@ -64,6 +69,11 @@ pub fn clear_file_index_sync(
     // Delete code chunks for this file
     conn.execute(
         "DELETE FROM code_chunks WHERE project_id = ? AND file_path = ?",
+        params![project_id, file_path],
+    )?;
+
+    conn.execute(
+        "DELETE FROM code_fts WHERE project_id = ? AND file_path = ?",
         params![project_id, file_path],
     )?;
 
@@ -232,11 +242,29 @@ pub fn insert_code_chunk_sync(
     file_path: &str,
     chunk_content: &str,
     start_line: u32,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<i64> {
     tx.execute(
         "INSERT INTO code_chunks (project_id, file_path, chunk_content, start_line)
          VALUES (?, ?, ?, ?)",
         params![project_id, file_path, chunk_content, start_line],
+    )?;
+    Ok(tx.last_insert_rowid())
+}
+
+/// Insert a code chunk into the FTS index using a specific rowid
+/// Uses transaction for batch operations
+pub fn insert_code_fts_entry_sync(
+    tx: &rusqlite::Transaction,
+    rowid: i64,
+    file_path: &str,
+    chunk_content: &str,
+    project_id: Option<i64>,
+    start_line: u32,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO code_fts (rowid, file_path, chunk_content, project_id, start_line)
+         VALUES (?, ?, ?, ?, ?)",
+        params![rowid, file_path, chunk_content, project_id, start_line],
     )?;
     Ok(())
 }

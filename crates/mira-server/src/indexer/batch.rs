@@ -3,7 +3,8 @@
 
 use crate::db::{
     ImportInsert, SymbolInsert, insert_call_sync, insert_chunk_embedding_sync,
-    insert_code_chunk_sync, insert_import_sync, insert_symbol_sync, pool::DatabasePool,
+    insert_code_chunk_sync, insert_code_fts_entry_sync, insert_import_sync, insert_symbol_sync,
+    pool::DatabasePool,
 };
 use crate::embeddings::EmbeddingClient;
 use crate::indexer::parsing::{FunctionCall, Import, Symbol};
@@ -118,11 +119,29 @@ pub async fn store_chunks_to_db(
         let mut errors = 0usize;
 
         for (file_path, content, start_line) in &chunk_data {
-            if let Err(e) =
-                insert_code_chunk_sync(&tx, project_id, file_path, content, *start_line)
-            {
-                tracing::warn!("Failed to store chunk ({}:{}): {}", file_path, start_line, e);
-                errors += 1;
+            match insert_code_chunk_sync(&tx, project_id, file_path, content, *start_line) {
+                Ok(rowid) => {
+                    if let Err(e) = insert_code_fts_entry_sync(
+                        &tx,
+                        rowid,
+                        file_path,
+                        content,
+                        project_id,
+                        *start_line,
+                    ) {
+                        tracing::warn!(
+                            "Failed to store chunk in FTS ({}:{}): {}",
+                            file_path,
+                            start_line,
+                            e
+                        );
+                        errors += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to store chunk ({}:{}): {}", file_path, start_line, e);
+                    errors += 1;
+                }
             }
         }
 

@@ -7,7 +7,8 @@ use crate::config::ignore;
 use crate::db::pool::DatabasePool;
 use crate::db::{
     ImportInsert, SymbolInsert, clear_file_index_sync, insert_code_chunk_sync,
-    insert_import_sync, insert_symbol_sync, queue_pending_embedding_sync,
+    insert_code_fts_entry_sync, insert_import_sync, insert_symbol_sync,
+    queue_pending_embedding_sync,
 };
 use crate::indexer;
 use crate::utils::ResultExt;
@@ -380,11 +381,19 @@ impl FileWatcher {
 
                 // Store chunks to code_chunks and queue for background embedding
                 for chunk in &parse_result.chunks {
-                    insert_code_chunk_sync(
+                    let rowid = insert_code_chunk_sync(
                         &tx,
                         Some(project_id),
                         &relative_path,
                         &chunk.content,
+                        chunk.start_line,
+                    )?;
+                    insert_code_fts_entry_sync(
+                        &tx,
+                        rowid,
+                        &relative_path,
+                        &chunk.content,
+                        Some(project_id),
                         chunk.start_line,
                     )?;
                     queue_pending_embedding_sync(
