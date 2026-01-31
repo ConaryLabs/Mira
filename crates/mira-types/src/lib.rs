@@ -82,7 +82,7 @@ pub struct MemoryFact {
     /// Session ID where this fact was most recently reinforced.
     #[serde(default)]
     pub last_session_id: Option<String>,
-    /// State of the fact: "candidate", "verified", or "rejected".
+    /// State of the fact: `"candidate"` or `"confirmed"`.
     #[serde(default = "default_status")]
     pub status: String,
 
@@ -204,20 +204,14 @@ pub enum CouncilEvent {
     /// An expert recorded a finding via store_finding.
     FindingAdded { role: String, topic: String },
     /// An expert completed their task.
-    ExpertComplete {
-        role: String,
-        finding_count: usize,
-    },
+    ExpertComplete { role: String, finding_count: usize },
     /// Coordinator completed review of all findings.
     ReviewComplete {
         consensus_count: usize,
         conflict_count: usize,
     },
     /// A delta round started to resolve conflicts.
-    DeltaRoundStarted {
-        round: usize,
-        question_count: usize,
-    },
+    DeltaRoundStarted { round: usize, question_count: usize },
     /// Final synthesis phase started.
     SynthesisStarted,
     /// Council consultation complete.

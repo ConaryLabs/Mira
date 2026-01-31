@@ -230,9 +230,10 @@ impl ProviderFactory {
         if primary.provider_type() == Provider::DeepSeek {
             let actor: Arc<dyn LlmClient> = if primary.model_name().contains("reasoner") {
                 match self.deepseek_key.as_ref() {
-                    Some(key) => {
-                        Arc::new(DeepSeekClient::with_model(key.clone(), "deepseek-chat".into()))
-                    }
+                    Some(key) => Arc::new(DeepSeekClient::with_model(
+                        key.clone(),
+                        "deepseek-chat".into(),
+                    )),
                     None => primary.clone(),
                 }
             } else {
@@ -352,12 +353,12 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let strategy = factory
-            .strategy_for_role("architect", &pool)
-            .await
-            .unwrap();
+        let strategy = factory.strategy_for_role("architect", &pool).await.unwrap();
         // DeepSeek should produce a Decoupled strategy
-        assert!(strategy.is_decoupled(), "DeepSeek should use Decoupled strategy");
+        assert!(
+            strategy.is_decoupled(),
+            "DeepSeek should use Decoupled strategy"
+        );
         // Actor should be deepseek-chat
         assert_eq!(strategy.actor().provider_type(), Provider::DeepSeek);
         assert!(
@@ -383,11 +384,11 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let strategy = factory
-            .strategy_for_role("architect", &pool)
-            .await
-            .unwrap();
-        assert!(strategy.is_decoupled(), "DeepSeek should use Decoupled strategy");
+        let strategy = factory.strategy_for_role("architect", &pool).await.unwrap();
+        assert!(
+            strategy.is_decoupled(),
+            "DeepSeek should use Decoupled strategy"
+        );
         // Actor should be swapped to deepseek-chat even when primary is reasoner
         assert!(
             strategy.actor().model_name().contains("chat"),
@@ -420,12 +421,12 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let strategy = factory
-            .strategy_for_role("architect", &pool)
-            .await
-            .unwrap();
+        let strategy = factory.strategy_for_role("architect", &pool).await.unwrap();
         // Without key, can't create thinker — from_dual_mode returns Single
-        assert!(!strategy.is_decoupled(), "no key should produce Single strategy");
+        assert!(
+            !strategy.is_decoupled(),
+            "no key should produce Single strategy"
+        );
         // Actor/thinker both point to the primary (reasoner) since that's all we have
         assert!(strategy.actor().model_name().contains("reasoner"));
     }

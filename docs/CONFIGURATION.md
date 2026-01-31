@@ -120,17 +120,17 @@ The installer adds all hooks to `~/.claude/settings.json` using `jq` for JSON ma
 
 | Hook | Command | Timeout | Purpose |
 |------|---------|---------|---------|
-| `SessionStart` | `mira hook session-start` | 3s | Captures session ID for tracking |
-| `UserPromptSubmit` | `mira hook user-prompt` | 3s | Injects proactive context into prompts |
-| `PostToolUse` | `mira hook post-tool` | 3s | Tracks behavior for pattern mining |
-| `PreCompact` | `mira hook pre-compact` | 5s | Preserves context before summarization |
+| `SessionStart` | `mira hook session-start` | 10s | Captures session ID for tracking |
+| `UserPromptSubmit` | `mira hook user-prompt` | 5s | Injects proactive context into prompts |
+| `PostToolUse` | `mira hook post-tool` | 5s | Tracks behavior for pattern mining (scoped to `Write\|Edit\|NotebookEdit`) |
+| `PreCompact` | `mira hook pre-compact` | 30s | Preserves context before summarization |
+| `Stop` | `mira hook stop` | 5s | Save session state, auto-export memories to CLAUDE.local.md, check goal progress |
 
 Additional hooks (not auto-configured):
 
 | Hook | Command | Purpose |
 |------|---------|---------|
 | `Permission` | `mira hook permission` | Auto-approve tools based on stored rules |
-| `Stop` | `mira hook stop` | Save session state when Claude finishes |
 
 ### Manual Configuration
 

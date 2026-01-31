@@ -159,9 +159,7 @@ pub async fn run() -> Result<()> {
         let pid = project_id;
         let _ = pool_clone
             .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn)
-                    .ok()
-                    .flatten();
+                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
                 if let Some(project_path) = path {
                     match crate::tools::core::claude_local::write_claude_local_md_sync(
                         conn,
@@ -169,10 +167,7 @@ pub async fn run() -> Result<()> {
                         &project_path,
                     ) {
                         Ok(count) if count > 0 => {
-                            eprintln!(
-                                "[mira] Auto-exported {} memories to CLAUDE.local.md",
-                                count
-                            );
+                            eprintln!("[mira] Auto-exported {} memories to CLAUDE.local.md", count);
                         }
                         Err(e) => {
                             eprintln!("[mira] CLAUDE.local.md export failed: {}", e);

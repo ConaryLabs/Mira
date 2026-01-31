@@ -75,6 +75,16 @@ Index status: 1200 symbols, 3500 embedded chunks
 - **"No project path specified"**: No path provided and no active project to default to.
 - **Database errors**: Failed to write index data.
 
+## FTS5 Tokenizer
+
+Indexing creates an FTS5 full-text search index (`code_fts`) with a code-aware tokenizer:
+
+- **Tokenizer**: `unicode61` with `remove_diacritics 1` and `tokenchars '_'`
+- **No stemming** — identifiers like `database_pool` are indexed as single tokens, preserving exact matches
+- **Migration**: If the tokenizer config changes between versions, `migrate_fts_tokenizer` automatically rebuilds the FTS index from `vec_code` chunks
+
+This affects how keyword search matches work — snake_case identifiers are searchable as whole tokens, and multi-term queries use AND-first logic with OR fallback.
+
 ## See Also
 
 - **search_code**: Semantic code search (uses the index)

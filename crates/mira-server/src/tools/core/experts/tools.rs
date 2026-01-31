@@ -220,8 +220,7 @@ pub async fn execute_tool_with_findings<C: ToolContext>(
     role_key: &str,
 ) -> String {
     if tool_call.function.name == "store_finding" {
-        let args: Value =
-            serde_json::from_str(&tool_call.function.arguments).unwrap_or(json!({}));
+        let args: Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or(json!({}));
         return execute_store_finding(&args, findings_store, role_key);
     }
     execute_tool(ctx, tool_call).await
@@ -830,6 +829,68 @@ async fn execute_mcp_tool<C: ToolContext>(ctx: &C, prefixed_name: &str, args: Va
     }
 }
 
+async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> String {
+    let project_id = ctx.project_id().await;
+
+    // Try semantic recall if embeddings available
+    if let Some(embeddings) = ctx.embeddings() {
+        if let Ok(query_embedding) = embeddings.embed(query).await {
+            let embedding_bytes = embedding_to_bytes(&query_embedding);
+
+            // Run vector search via connection pool
+            let results: Result<Vec<(i64, String, f32)>, String> = ctx
+                .pool()
+                .run(move |conn| {
+                    recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit)
+                })
+                .await;
+
+            if let Ok(results) = results {
+                if !results.is_empty() {
+                    let mut output = format!("Found {} relevant memories:\n\n", results.len());
+                    for (id, content, distance) in results {
+                        let score = 1.0 - distance;
+                        let preview = if content.len() > 150 {
+                            format!("{}...", &content[..150])
+                        } else {
+                            content
+                        };
+                        output.push_str(&format!("[{}] (score: {:.2}) {}\n", id, score, preview));
+                    }
+                    return output;
+                }
+            }
+        }
+    }
+
+    // Fallback to keyword search via connection pool
+    let query_owned = query.to_string();
+    let result = ctx
+        .pool()
+        .run(move |conn| search_memories_sync(conn, project_id, &query_owned, None, limit))
+        .await;
+
+    match result {
+        Ok(memories) => {
+            if memories.is_empty() {
+                "No relevant memories found.".to_string()
+            } else {
+                let mut output = format!("Found {} memories:\n\n", memories.len());
+                for mem in memories {
+                    let preview = if mem.content.len() > 150 {
+                        format!("{}...", &mem.content[..150])
+                    } else {
+                        mem.content
+                    };
+                    output.push_str(&format!("[{}] {}\n", mem.id, preview));
+                }
+                output
+            }
+        }
+        Err(e) => format!("Recall failed: {}", e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -946,67 +1007,5 @@ mod tests {
         }
         let result = execute_web_search("test query", 5).await;
         assert!(result.contains("BRAVE_API_KEY not configured"));
-    }
-}
-
-async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> String {
-    let project_id = ctx.project_id().await;
-
-    // Try semantic recall if embeddings available
-    if let Some(embeddings) = ctx.embeddings() {
-        if let Ok(query_embedding) = embeddings.embed(query).await {
-            let embedding_bytes = embedding_to_bytes(&query_embedding);
-
-            // Run vector search via connection pool
-            let results: Result<Vec<(i64, String, f32)>, String> = ctx
-                .pool()
-                .run(move |conn| {
-                    recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit)
-                })
-                .await;
-
-            if let Ok(results) = results {
-                if !results.is_empty() {
-                    let mut output = format!("Found {} relevant memories:\n\n", results.len());
-                    for (id, content, distance) in results {
-                        let score = 1.0 - distance;
-                        let preview = if content.len() > 150 {
-                            format!("{}...", &content[..150])
-                        } else {
-                            content
-                        };
-                        output.push_str(&format!("[{}] (score: {:.2}) {}\n", id, score, preview));
-                    }
-                    return output;
-                }
-            }
-        }
-    }
-
-    // Fallback to keyword search via connection pool
-    let query_owned = query.to_string();
-    let result = ctx
-        .pool()
-        .run(move |conn| search_memories_sync(conn, project_id, &query_owned, None, limit))
-        .await;
-
-    match result {
-        Ok(memories) => {
-            if memories.is_empty() {
-                "No relevant memories found.".to_string()
-            } else {
-                let mut output = format!("Found {} memories:\n\n", memories.len());
-                for mem in memories {
-                    let preview = if mem.content.len() > 150 {
-                        format!("{}...", &mem.content[..150])
-                    } else {
-                        mem.content
-                    };
-                    output.push_str(&format!("[{}] {}\n", mem.id, preview));
-                }
-                output
-            }
-        }
-        Err(e) => format!("Recall failed: {}", e),
     }
 }

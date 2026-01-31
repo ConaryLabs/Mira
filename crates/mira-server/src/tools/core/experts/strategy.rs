@@ -42,10 +42,7 @@ impl ReasoningStrategy {
     }
 
     /// Construct from the legacy dual-mode tuple.
-    pub fn from_dual_mode(
-        chat: Arc<dyn LlmClient>,
-        reasoner: Option<Arc<dyn LlmClient>>,
-    ) -> Self {
+    pub fn from_dual_mode(chat: Arc<dyn LlmClient>, reasoner: Option<Arc<dyn LlmClient>>) -> Self {
         match reasoner {
             Some(thinker) => Self::Decoupled {
                 actor: chat,
@@ -69,7 +66,7 @@ mod tests {
     }
 
     impl MockClient {
-        fn new(name: &str) -> Arc<dyn LlmClient> {
+        fn create(name: &str) -> Arc<dyn LlmClient> {
             Arc::new(Self {
                 name: name.to_string(),
             })
@@ -78,7 +75,11 @@ mod tests {
 
     #[async_trait]
     impl LlmClient for MockClient {
-        async fn chat(&self, _messages: Vec<Message>, _tools: Option<Vec<Tool>>) -> Result<ChatResult> {
+        async fn chat(
+            &self,
+            _messages: Vec<Message>,
+            _tools: Option<Vec<Tool>>,
+        ) -> Result<ChatResult> {
             Ok(ChatResult {
                 request_id: String::new(),
                 content: None,
@@ -98,16 +99,19 @@ mod tests {
 
     #[test]
     fn test_single_strategy() {
-        let client = MockClient::new("deepseek-chat");
+        let client = MockClient::create("deepseek-chat");
         let strategy = ReasoningStrategy::Single(client);
         assert!(!strategy.is_decoupled());
-        assert_eq!(strategy.actor().model_name(), strategy.thinker().model_name());
+        assert_eq!(
+            strategy.actor().model_name(),
+            strategy.thinker().model_name()
+        );
     }
 
     #[test]
     fn test_decoupled_strategy() {
-        let actor = MockClient::new("deepseek-chat");
-        let thinker = MockClient::new("deepseek-reasoner");
+        let actor = MockClient::create("deepseek-chat");
+        let thinker = MockClient::create("deepseek-reasoner");
         let strategy = ReasoningStrategy::Decoupled { actor, thinker };
         assert!(strategy.is_decoupled());
         assert!(strategy.actor().model_name().contains("chat"));
@@ -116,15 +120,15 @@ mod tests {
 
     #[test]
     fn test_from_dual_mode_with_reasoner() {
-        let chat = MockClient::new("deepseek-chat");
-        let reasoner = MockClient::new("deepseek-reasoner");
+        let chat = MockClient::create("deepseek-chat");
+        let reasoner = MockClient::create("deepseek-reasoner");
         let strategy = ReasoningStrategy::from_dual_mode(chat, Some(reasoner));
         assert!(strategy.is_decoupled());
     }
 
     #[test]
     fn test_from_dual_mode_without_reasoner() {
-        let chat = MockClient::new("deepseek-chat");
+        let chat = MockClient::create("deepseek-chat");
         let strategy = ReasoningStrategy::from_dual_mode(chat, None);
         assert!(!strategy.is_decoupled());
     }

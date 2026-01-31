@@ -24,11 +24,7 @@ pub const SCOPE_BOOST: f32 = 1.3;
 /// Returns `Some(paths)` with the top module directory prefixes if good
 /// matches are found, or `None` if the module tree is empty / no matches
 /// exceed the score threshold.
-pub fn narrow_by_modules(
-    conn: &Connection,
-    query: &str,
-    project_id: i64,
-) -> Option<Vec<String>> {
+pub fn narrow_by_modules(conn: &Connection, query: &str, project_id: i64) -> Option<Vec<String>> {
     let modules = get_cached_modules_sync(conn, project_id).ok()?;
     if modules.is_empty() {
         return None;
@@ -82,11 +78,7 @@ pub fn narrow_by_modules(
 fn score_module(module: &Module, query_terms: &[String]) -> f32 {
     let name_lower = module.name.to_lowercase();
     let path_lower = module.path.to_lowercase();
-    let purpose_lower = module
-        .purpose
-        .as_deref()
-        .unwrap_or("")
-        .to_lowercase();
+    let purpose_lower = module.purpose.as_deref().unwrap_or("").to_lowercase();
     let exports_lower: Vec<String> = module.exports.iter().map(|e| e.to_lowercase()).collect();
 
     let mut score: f32 = 0.0;
@@ -218,7 +210,12 @@ mod tests {
 
     #[test]
     fn test_score_module_case_insensitive() {
-        let module = make_module("Search", "src/Search", Some("CODE SEARCH"), &["HybridSearch"]);
+        let module = make_module(
+            "Search",
+            "src/Search",
+            Some("CODE SEARCH"),
+            &["HybridSearch"],
+        );
         let terms = vec!["search".to_string()];
         // name(3) + purpose(2) + exports(2) + path(1) = 8
         let score = score_module(&module, &terms);

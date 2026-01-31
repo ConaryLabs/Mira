@@ -53,9 +53,7 @@ pub fn keyword_search(
     }
 
     // Tree-guided scope: score modules to identify relevant subtrees
-    let scope_paths = project_id.and_then(|pid| {
-        super::tree::narrow_by_modules(conn, query, pid)
-    });
+    let scope_paths = project_id.and_then(|pid| super::tree::narrow_by_modules(conn, query, pid));
     let has_scope = scope_paths.is_some();
 
     // Over-fetch when scoping so we have enough results after boosting/sorting
@@ -100,16 +98,10 @@ pub fn keyword_search(
                     .map(|t| format!("%{}%", t.to_lowercase()))
                     .collect();
                 let remaining = fetch_limit - all_results.len();
-                let chunk_results =
-                    chunk_like_search_sync(conn, &like_patterns, pid, remaining);
+                let chunk_results = chunk_like_search_sync(conn, &like_patterns, pid, remaining);
                 for chunk in chunk_results {
                     let start_line = chunk.start_line.unwrap_or(0);
-                    all_results.push((
-                        chunk.file_path,
-                        chunk.chunk_content,
-                        0.4,
-                        start_line,
-                    ));
+                    all_results.push((chunk.file_path, chunk.chunk_content, 0.4, start_line));
                 }
             }
         }
@@ -129,10 +121,8 @@ pub fn keyword_search(
         let proximity_hits = fts5_search(conn, near_query, project_id, fetch_limit);
         if !proximity_hits.is_empty() {
             // Build a set of (file_path, start_line) that have proximity matches
-            let near_set: std::collections::HashSet<(String, i64)> = proximity_hits
-                .iter()
-                .map(|r| (r.0.clone(), r.3))
-                .collect();
+            let near_set: std::collections::HashSet<(String, i64)> =
+                proximity_hits.iter().map(|r| (r.0.clone(), r.3)).collect();
             for result in &mut all_results {
                 if near_set.contains(&(result.0.clone(), result.3)) {
                     result.2 *= PROXIMITY_BOOST;
@@ -413,10 +403,7 @@ mod tests {
         let plan = build_fts_query("find user data");
         assert_eq!(plan.strict, "find user data*");
         assert_eq!(plan.relaxed.as_deref(), Some("find OR user OR data*"));
-        assert_eq!(
-            plan.proximity.as_deref(),
-            Some("NEAR(find user data, 10)")
-        );
+        assert_eq!(plan.proximity.as_deref(), Some("NEAR(find user data, 10)"));
     }
 
     #[test]
@@ -467,8 +454,7 @@ mod tests {
         // Symbol contains the full query form
         assert!((score_symbol_match("get_database_pool", "database pool") - 0.85).abs() < 0.01);
         assert!(
-            (score_symbol_match("create_database_pool_sync", "database pool") - 0.85).abs()
-                < 0.01
+            (score_symbol_match("create_database_pool_sync", "database pool") - 0.85).abs() < 0.01
         );
     }
 

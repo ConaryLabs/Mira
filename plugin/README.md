@@ -101,7 +101,7 @@ The plugin uses Claude Code hooks for bidirectional communication:
 | `UserPromptSubmit` | Auto-recall relevant memories and code context |
 | `PostToolUse` | Track file changes, queue re-indexing |
 | `PreCompact` | Extract important context before summarization |
-| `Stop` | Save session state, check goal progress |
+| `Stop` | Save session state, auto-export CLAUDE.local.md, check goal progress |
 
 ## Configuration
 

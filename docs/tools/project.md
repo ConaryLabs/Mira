@@ -38,7 +38,7 @@ Manage project context. Initializes sessions with a codebase map, switches betwe
 A comprehensive project initialization report containing:
 
 - **Project header**: Name and detected type (rust, node, python, go, java)
-- **CLAUDE.local.md import**: Count of memory entries imported, if the file exists
+- **CLAUDE.local.md import**: Count of memory entries imported, if the file exists (bidirectional: imported on start, auto-exported on session close via Stop hook)
 - **What's new briefing**: Summary of changes since last session
 - **Recent sessions**: Last few sessions with timestamps and summaries
 - **Session insights**: User preferences, recent context, health alerts, proactive analysis results, and pending documentation count

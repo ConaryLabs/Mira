@@ -657,7 +657,7 @@ Full-text search index for fast keyword search.
 | project_id | INTEGER | Project reference (not searchable) |
 | start_line | INTEGER | Starting line (not searchable) |
 
-Uses Porter stemming with Unicode support. Rebuilt from vec_code after indexing.
+Uses `unicode61` tokenizer with `remove_diacritics 1` and `tokenchars '_'`. No stemming — identifiers like `database_pool` are indexed as single tokens, preserving exact matches for code search. Rebuilt from `vec_code` after indexing. A migration (`migrate_fts_tokenizer`) rewrites the FTS table if the tokenizer config has changed.
 
 ---
 

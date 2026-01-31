@@ -3,7 +3,7 @@
 
 use super::context::{build_user_prompt, get_patterns_context};
 use super::findings::{CouncilFinding, FindingsStore};
-use super::plan::{parse_json_with_retry, ResearchPlan, ResearchTask, ReviewResult};
+use super::plan::{ResearchPlan, ResearchTask, ReviewResult, parse_json_with_retry};
 use super::prompts::*;
 use super::role::ExpertRole;
 use super::tools::{
@@ -172,7 +172,12 @@ async fn plan_phase<C: ToolContext>(
 
     let result = timeout(COORDINATOR_TIMEOUT, client.chat(messages, None))
         .await
-        .map_err(|_| format!("Coordinator plan timed out after {}s", COORDINATOR_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "Coordinator plan timed out after {}s",
+                COORDINATOR_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Coordinator plan LLM call failed: {}", e))?;
 
     record_llm_usage(
@@ -191,7 +196,8 @@ async fn plan_phase<C: ToolContext>(
         .as_deref()
         .ok_or("Coordinator returned empty plan")?;
 
-    parse_json_with_retry::<ResearchPlan>(content, &client, "ResearchPlan with goal, tasks array").await
+    parse_json_with_retry::<ResearchPlan>(content, &client, "ResearchPlan with goal, tasks array")
+        .await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -207,29 +213,34 @@ async fn execute_phase<C: ToolContext + Clone + 'static>(
 ) -> Result<(), String> {
     use futures::stream::{self, StreamExt};
 
-    let tasks: Vec<_> = plan.tasks.iter().enumerate().map(|(i, task)| {
-        let ctx = ctx.clone();
-        let store = Arc::clone(findings_store);
-        let role_key = task.role.clone();
-        let task_desc = task.task.clone();
-        let focus_areas = task.focus_areas.clone();
-        let context = original_context.to_string();
-        let question = question.map(String::from);
+    let tasks: Vec<_> = plan
+        .tasks
+        .iter()
+        .enumerate()
+        .map(|(i, task)| {
+            let ctx = ctx.clone();
+            let store = Arc::clone(findings_store);
+            let role_key = task.role.clone();
+            let task_desc = task.task.clone();
+            let focus_areas = task.focus_areas.clone();
+            let context = original_context.to_string();
+            let question = question.map(String::from);
 
-        async move {
-            let result = run_expert_task(
-                &ctx,
-                &role_key,
-                &task_desc,
-                &focus_areas,
-                &store,
-                &context,
-                question.as_deref(),
-            )
-            .await;
-            (i, role_key, result)
-        }
-    }).collect();
+            async move {
+                let result = run_expert_task(
+                    &ctx,
+                    &role_key,
+                    &task_desc,
+                    &focus_areas,
+                    &store,
+                    &context,
+                    question.as_deref(),
+                )
+                .await;
+                (i, role_key, result)
+            }
+        })
+        .collect();
 
     let results = timeout(
         COUNCIL_EXECUTE_TIMEOUT,
@@ -238,10 +249,12 @@ async fn execute_phase<C: ToolContext + Clone + 'static>(
             .collect::<Vec<_>>(),
     )
     .await
-    .map_err(|_| format!(
-        "Council execution timed out after {}s",
-        COUNCIL_EXECUTE_TIMEOUT.as_secs()
-    ))?;
+    .map_err(|_| {
+        format!(
+            "Council execution timed out after {}s",
+            COUNCIL_EXECUTE_TIMEOUT.as_secs()
+        )
+    })?;
 
     // Log results — don't fail the council if some experts fail
     let mut successes = 0;
@@ -281,8 +294,8 @@ async fn run_expert_task<C: ToolContext>(
     original_context: &str,
     question: Option<&str>,
 ) -> Result<(), String> {
-    let expert = ExpertRole::from_db_key(role_key)
-        .ok_or_else(|| format!("Unknown role: {}", role_key))?;
+    let expert =
+        ExpertRole::from_db_key(role_key).ok_or_else(|| format!("Unknown role: {}", role_key))?;
 
     ctx.broadcast(WsEvent::Council(CouncilEvent::ExpertStarted {
         role: role_key.to_string(),
@@ -311,12 +324,11 @@ async fn run_expert_task<C: ToolContext>(
     let system_prompt = format!("{}\n\n{}", base_prompt, task_prompt);
 
     // Inject learned patterns for code reviewer and security experts
-    let patterns_context =
-        if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
-            get_patterns_context(ctx, role_key).await
-        } else {
-            String::new()
-        };
+    let patterns_context = if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
+        get_patterns_context(ctx, role_key).await
+    } else {
+        String::new()
+    };
 
     let enriched_context = if patterns_context.is_empty() {
         original_context.to_string()
@@ -349,14 +361,11 @@ async fn run_expert_task<C: ToolContext>(
     let mut previous_response_id: Option<String> = None;
 
     // Agentic loop
-    let _result = timeout(EXPERT_TIMEOUT, async {
+    timeout(EXPERT_TIMEOUT, async {
         loop {
             iterations += 1;
             if iterations > MAX_ITERATIONS {
-                return Err(format!(
-                    "Expert {} exceeded maximum iterations",
-                    role_key
-                ));
+                return Err(format!("Expert {} exceeded maximum iterations", role_key));
             }
 
             let messages_to_send =
@@ -403,8 +412,7 @@ async fn run_expert_task<C: ToolContext>(
 
             if let Some(ref tool_calls) = result.tool_calls {
                 if !tool_calls.is_empty() {
-                    let mut assistant_msg =
-                        Message::assistant(result.content.clone(), None);
+                    let mut assistant_msg = Message::assistant(result.content.clone(), None);
                     assistant_msg.tool_calls = Some(tool_calls.clone());
                     messages.push(assistant_msg);
 
@@ -413,8 +421,7 @@ async fn run_expert_task<C: ToolContext>(
 
                         // Use council-aware executor that handles store_finding
                         let tool_result =
-                            execute_tool_with_findings(ctx, tc, findings_store, role_key)
-                                .await;
+                            execute_tool_with_findings(ctx, tc, findings_store, role_key).await;
 
                         if tc.function.name == "store_finding" {
                             ctx.broadcast(WsEvent::Council(CouncilEvent::FindingAdded {
@@ -546,7 +553,12 @@ async fn review_phase<C: ToolContext>(
 
     let result = timeout(COORDINATOR_TIMEOUT, client.chat(messages, None))
         .await
-        .map_err(|_| format!("Coordinator review timed out after {}s", COORDINATOR_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "Coordinator review timed out after {}s",
+                COORDINATOR_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Coordinator review LLM call failed: {}", e))?;
 
     record_llm_usage(
@@ -565,7 +577,12 @@ async fn review_phase<C: ToolContext>(
         .as_deref()
         .ok_or("Coordinator returned empty review")?;
 
-    parse_json_with_retry::<ReviewResult>(content, &client, "ReviewResult with needs_followup, delta_questions, consensus, conflicts").await
+    parse_json_with_retry::<ReviewResult>(
+        content,
+        &client,
+        "ReviewResult with needs_followup, delta_questions, consensus, conflicts",
+    )
+    .await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -580,28 +597,32 @@ async fn delta_round<C: ToolContext + Clone + 'static>(
 ) -> Result<(), String> {
     use futures::stream::{self, StreamExt};
 
-    let tasks: Vec<_> = review.delta_questions.iter().map(|dq| {
-        let ctx = ctx.clone();
-        let store = Arc::clone(findings_store);
-        let role_key = dq.role.clone();
-        let question = dq.question.clone();
-        let dq_context = dq.context.clone();
-        let original_context = original_context.to_string();
+    let tasks: Vec<_> = review
+        .delta_questions
+        .iter()
+        .map(|dq| {
+            let ctx = ctx.clone();
+            let store = Arc::clone(findings_store);
+            let role_key = dq.role.clone();
+            let question = dq.question.clone();
+            let dq_context = dq.context.clone();
+            let original_context = original_context.to_string();
 
-        async move {
-            let result = run_expert_task(
-                &ctx,
-                &role_key,
-                &format!("Follow-up: {}", question),
-                &[dq_context],
-                &store,
-                &original_context,
-                Some(&question),
-            )
-            .await;
-            (role_key, result)
-        }
-    }).collect();
+            async move {
+                let result = run_expert_task(
+                    &ctx,
+                    &role_key,
+                    &format!("Follow-up: {}", question),
+                    &[dq_context],
+                    &store,
+                    &original_context,
+                    Some(&question),
+                )
+                .await;
+                (role_key, result)
+            }
+        })
+        .collect();
 
     let results = timeout(
         Duration::from_secs(300), // 5 min for delta rounds
@@ -654,7 +675,12 @@ async fn synthesize_phase<C: ToolContext>(
 
     let result = timeout(COORDINATOR_TIMEOUT, client.chat(messages, None))
         .await
-        .map_err(|_| format!("Synthesis timed out after {}s", COORDINATOR_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "Synthesis timed out after {}s",
+                COORDINATOR_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Synthesis LLM call failed: {}", e))?;
 
     record_llm_usage(

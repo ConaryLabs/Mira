@@ -1,12 +1,12 @@
 # experts
 
-Evolutionary expert system that learns and adapts over time. Provides higher-level orchestration for expert consultations including complexity assessment and collaboration mode selection.
+Legacy expert orchestration module. Contains complexity assessment and collaboration mode abstractions that were superseded by the council architecture in `tools/core/experts`.
 
 ## Key Types
 
-- `ExpertRole` - Role enum: Architect, CodeReviewer, Security, PlanReviewer, ScopeAnalyst
-- `ComplexityAssessment` - Analyzes problem complexity to determine approach
-- `CollaborationMode` - Parallel, Sequential, Hierarchical, or Single expert mode
+- `ExpertRole` — Role enum: Architect, CodeReviewer, Security, PlanReviewer, ScopeAnalyst
+- `ComplexityAssessment` — Analyzes problem complexity to determine approach
+- `CollaborationMode` — Parallel, Sequential, Hierarchical, or Single expert mode (not actively used by `consult_experts`)
 
 ## Sub-modules
 
@@ -19,4 +19,10 @@ Evolutionary expert system that learns and adapts over time. Provides higher-lev
 
 ## Relationship to tools/core/experts
 
-This module provides the evolutionary/adaptive layer, while `tools/core/experts` handles the direct tool implementation and agentic execution loop.
+The active expert implementation lives in `tools/core/experts/`, which provides:
+- **Council mode** — Coordinator-driven multi-expert consultation with planning, review, and delta rounds
+- **Single expert mode** — Agentic tool-using loop
+- **ReasoningStrategy** — Decoupled chat/reasoner client pairing
+- **FindingsStore** — Structured finding collection and review
+
+This module provides auxiliary evolutionary/adaptive abstractions.

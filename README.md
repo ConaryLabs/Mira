@@ -12,12 +12,12 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.3.7
+## What's New in v0.4.0
 
-- **Auto-Download**: Marketplace installs now auto-download the `mira` binary on first launch — no manual installation needed
-- **Plugin Fix**: Hooks and MCP config now ship with portable paths — marketplace installs work correctly
-- **Stop Hook**: Session cleanup hook added to all installation paths (was plugin-only)
-- **PostToolUse Scoped**: Hook now only fires on file mutations (`Write|Edit|NotebookEdit`), not every tool call
+- **Council Architecture**: Expert consultations now use an iterative council with coordinator synthesis, conflict detection, and delta rounds
+- **Search Overhaul**: Keyword search uses AND-first queries, tree-guided scoping, and a code-aware tokenizer for much better precision
+- **Smart Export**: CLAUDE.local.md export is hotness-ranked, budget-aware, and auto-runs on session close
+- **Expert Quality**: Stakes framing, accountability rules, and self-checks in expert prompts
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 

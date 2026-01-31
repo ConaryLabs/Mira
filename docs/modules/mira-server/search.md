@@ -8,7 +8,8 @@ Unified search functionality shared between MCP tools and chat. Provides semanti
 |--------|---------|
 | `semantic` | Hybrid and pure semantic search using embeddings |
 | `crossref` | Cross-reference search (callers/callees) |
-| `keyword` | Keyword-based code search |
+| `keyword` | FTS5-powered keyword search with AND-first queries, symbol matching, and LIKE fallback |
+| `tree` | Tree-guided scope narrowing — scores query terms against cartographer module tree and boosts results in relevant subtrees (1.3x) |
 | `context` | Context expansion around search results |
 | `utils` | Search formatting and utility functions |
 

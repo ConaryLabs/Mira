@@ -226,10 +226,7 @@ fn migrate_fts_tokenizer(conn: &Connection) -> Result<()> {
              SELECT rowid, file_path, chunk_content, project_id, start_line FROM vec_code",
             [],
         )?;
-        tracing::info!(
-            "FTS5 tokenizer migration: re-indexed {} chunks",
-            inserted
-        );
+        tracing::info!("FTS5 tokenizer migration: re-indexed {} chunks", inserted);
     }
 
     Ok(())

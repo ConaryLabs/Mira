@@ -57,10 +57,33 @@ If any experts fail, the summary indicates: `*Consulted 3 experts: 2 succeeded, 
 
 Expert responses may include findings that are automatically stored and can be managed with the `finding` tool.
 
+## Execution Modes
+
+### Council Mode (multi-expert default)
+
+When multiple experts are requested, the tool uses a **council architecture**:
+
+1. **Plan** — A coordinator creates a research plan assigning tasks to experts
+2. **Execute** — Experts run tasks in parallel (max concurrency: 3), recording structured findings
+3. **Review** — Coordinator identifies consensus, conflicts, and gaps
+4. **Delta** — Up to 2 targeted follow-up rounds to resolve conflicts
+5. **Synthesize** — Final output combining all findings
+
+If the council pipeline fails, it falls back to parallel independent consultations.
+
+### Single Expert Mode
+
+When one expert is requested, it runs a standard agentic loop (reason → tool call → observe → iterate, max 100 iterations).
+
+### Reasoning Strategy
+
+DeepSeek experts use a **Decoupled** strategy: `deepseek-chat` handles tool-calling loops, `deepseek-reasoner` handles final synthesis. This prevents OOM from reasoning content accumulation.
+
 ## Concurrency
 
-- Experts run in parallel with a maximum concurrency of 3
-- Overall timeout: 15 minutes
+- Max 3 concurrent experts
+- Per-expert timeout: 10 minutes
+- Council timeout: 15 minutes
 - Individual expert failures don't block other experts
 
 ## Examples

@@ -33,7 +33,6 @@ pub(crate) const MAX_CONCURRENT_EXPERTS: usize = 3;
 /// Timeout for parallel expert consultation (longer than single expert to allow queuing)
 pub(crate) const PARALLEL_EXPERT_TIMEOUT: Duration = Duration::from_secs(900); // 15 minutes for reasoning models
 
-
 // Public API exports
 pub use config::configure_expert;
 pub use execution::{consult_expert, consult_experts};

@@ -106,12 +106,27 @@ This allows tracing execution paths and understanding dependencies without readi
 
 ### Semantic Search
 
-Code chunks and memories are embedded into vector space using Google's gemini-embedding-001 model. This enables **semantic search** - finding code by meaning rather than exact keywords.
+Code chunks and memories are embedded into vector space using Google's gemini-embedding-001 model. This enables **semantic search** — finding code by meaning rather than exact keywords.
 
 ```
 "authentication middleware" → finds auth-related code
 "error handling"           → finds try/catch, Result types, etc.
 ```
+
+### Keyword Search
+
+The keyword search system uses FTS5 with a code-aware tokenizer (`unicode61` with underscore as a token character, no stemming). Multi-term queries use an **AND-first** strategy — all terms must match — with OR fallback if AND yields nothing.
+
+Three strategies run in parallel:
+1. **FTS5 full-text search** — AND-first with OR fallback, proximity boost for nearby terms
+2. **Symbol name matching** — Scored by match quality (exact, substring, partial)
+3. **LIKE chunk search** — Supplements sparse results
+
+**Tree-guided scope narrowing**: Query terms are scored against the cartographer module tree (names, purposes, exports). Results in the top 3 matching modules receive a 1.3x score boost.
+
+### Hybrid Search
+
+The `search_code` tool runs semantic and keyword searches in parallel, merges and deduplicates results, then applies intent-based reranking (documentation, implementation, example, or general queries get different boost profiles).
 
 ---
 
@@ -170,7 +185,9 @@ Each expert role can use a different provider based on the task requirements.
 
 ### How Experts Work
 
-Experts operate in a multi-turn **agentic loop**:
+#### Single Expert Mode
+
+A single expert runs in a multi-turn **agentic loop**:
 
 ```
 1. Reason  → Analyze the request, decide what info is needed
@@ -179,19 +196,51 @@ Experts operate in a multi-turn **agentic loop**:
 4. Iterate → Continue until task complete (max 100 iterations)
 ```
 
+#### Council Mode (Multi-Expert)
+
+When multiple experts are consulted, Mira uses a **council architecture** with a coordinator that orchestrates the consultation:
+
+```
+Plan     → Coordinator creates a research plan with tasks per expert
+Execute  → Experts run assigned tasks in parallel (agentic loops)
+Review   → Coordinator reviews all findings, identifies conflicts
+Delta    → If conflicts exist, targeted follow-up questions (up to 2 rounds)
+Synthesize → Final synthesis combining all findings
+```
+
+Each expert records structured **findings** (topic, content, evidence, severity, recommendation) via a `store_finding` tool. The coordinator reviews these findings to identify consensus, conflicts, and gaps.
+
+If the council pipeline fails, it falls back gracefully to parallel independent consultations.
+
+#### Reasoning Strategy
+
+Expert consultations use a `ReasoningStrategy` to manage LLM clients:
+
+- **Single**: One model handles both tool-calling and synthesis
+- **Decoupled**: A chat model (`deepseek-chat`) handles tool loops, and a reasoning model (`deepseek-reasoner`) handles final synthesis. This split prevents OOM from unbounded `reasoning_content` accumulation during long tool loops.
+
 ### Tool Access
 
 Experts can use these tools to explore the codebase:
 
-- `search_code` - Semantic code search
-- `read_file` - Read file contents
-- `get_symbols` - Get functions/classes in a file
-- `find_callers` / `find_callees` - Trace call relationships
-- `recall` - Search memories
+- `search_code` — Semantic code search
+- `read_file` — Read file contents
+- `get_symbols` — Get functions/classes in a file
+- `find_callers` / `find_callees` — Trace call relationships
+- `recall` — Search memories
+- `web_fetch` / `web_search` — Web access (if API keys configured)
+- **MCP tools** — Tools from external MCP servers in the host environment
 
 ### Learned Patterns
 
-For Code Reviewer and Security roles, Mira injects "Previously Identified Patterns" from memory. If you correct an issue (e.g., "Always validate inputs"), the expert remembers in future sessions.
+For Code Reviewer and Security roles, Mira injects "Previously Identified Patterns" from the `corrections` table. If you correct a finding (e.g., "Always validate inputs"), the expert applies that pattern in future sessions.
+
+### Expert Prompts
+
+Expert system prompts include:
+- **Stakes framing** — Context on why the review matters
+- **Accountability rules** — Experts must cite evidence and avoid speculation
+- **Self-checks** — Required verification steps before finalizing output
 
 ---
 
@@ -232,8 +281,9 @@ Mira integrates with Claude Code via **hooks** that trigger at key moments durin
 |------|--------------|---------|
 | **SessionStart** | When session begins | Captures session ID, initializes tracking |
 | **UserPromptSubmit** | When user submits a prompt | Injects proactive context automatically |
-| **PostToolUse** | After any tool call | Tracks behavior for pattern mining |
+| **PostToolUse** | After file mutations (`Write\|Edit\|NotebookEdit`) | Tracks behavior for pattern mining |
 | **PreCompact** | Before context compaction | Preserves important context before summarization |
+| **Stop** | When session ends | Saves session state, auto-exports memories to CLAUDE.local.md, checks goal progress |
 
 ### Auto-Configuration
 
@@ -377,8 +427,9 @@ Here's how the concepts connect:
 │         └────────────────┼────────────────────┘              │
 │                          ↓                                   │
 │  ┌─────────────────────────────────────────────────────────┐ │
-│  │                    Expert System                         │ │
-│  │  Architect | Code Reviewer | Security | Doc Writer | ... │ │
+│  │              Expert System (Council)                     │ │
+│  │  Coordinator → Architect | Code Reviewer | Security | …  │ │
+│  │  FindingsStore ← structured findings from all experts    │ │
 │  └─────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```

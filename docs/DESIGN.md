@@ -190,24 +190,31 @@ during indexing.
 ### What We Chose
 
 Mira's intelligence features use a **Provider Factory** that supports DeepSeek
-and Gemini. DeepSeek Reasoner is the default for its extended reasoning
-capabilities, while Gemini provides cost-effective alternatives.
+and Gemini, with a **Reasoning Strategy** layer that manages how models are
+paired for expert consultations.
 
 ### Why Multi-Provider
 
 **1) Different tasks benefit from different models**
-- Extended reasoning tasks (architects, security) → DeepSeek Reasoner
+- Extended reasoning tasks (architects, security) → DeepSeek Reasoner (synthesis)
+- Tool-calling loops (agentic exploration) → DeepSeek Chat
 - Cost-sensitive tasks → Gemini
 - Embeddings → Google gemini-embedding-001
 
-**2) Resilience and choice**
+**2) Decoupled Reasoning Strategy**
+- **Single mode**: One model handles both tool loops and synthesis
+- **Decoupled mode**: `deepseek-chat` handles tool-calling loops, `deepseek-reasoner` handles final synthesis
+- The split prevents OOM from unbounded `reasoning_content` accumulation during long agentic loops
+- Factory auto-detects when to use Decoupled mode (DeepSeek Reasoner as primary)
+
+**3) Resilience and choice**
 - No single-provider lock-in
 - If one provider is down, switch to another
 - Users can optimize for cost, speed, or quality
 
-**3) Tool access across providers**
+**4) Tool access across providers**
 - All providers support tool-calling for the agentic expert loop
-- Experts can search code, trace call graphs, read files, recall memories
+- Experts can search code, trace call graphs, read files, recall memories, and call MCP tools from the host environment
 
 ### Configuration
 
@@ -234,9 +241,9 @@ background_provider = "deepseek"  # For summaries, briefings, etc.
 
 ### Default Behavior
 
-DeepSeek Reasoner remains the default for its extended thinking capabilities,
-which excel at multi-step expert analysis. The prompt strategy is designed
-for cache efficiency with static prefixes.
+DeepSeek Reasoner remains the default for final synthesis, while DeepSeek Chat
+handles tool-calling loops in Decoupled mode. The prompt strategy includes
+stakes framing, accountability rules, and self-checks for higher quality output.
 
 ---
 
@@ -380,13 +387,24 @@ in two areas:
 
 ### Experts
 
-Experts are bounded tool-using loops with multiple roles:
-- Architect, Plan Reviewer, Scope Analyst, Code Reviewer, Security
+Experts use two execution modes:
+
+**Single expert**: A bounded tool-using loop with one role (agentic loop, max 100 iterations).
+
+**Council mode** (multi-expert): A coordinator-driven pipeline:
+- **Plan**: Coordinator creates a research plan assigning tasks to experts
+- **Execute**: Experts run tasks in parallel, recording structured findings via `FindingsStore`
+- **Review**: Coordinator identifies consensus, conflicts, and gaps
+- **Delta rounds**: Up to 2 targeted follow-up rounds to resolve conflicts
+- **Synthesize**: Final output combining all findings
+
+Available roles: Architect, Plan Reviewer, Scope Analyst, Code Reviewer, Security.
 
 Key constraints:
-- Bounded iterations (`MAX_ITERATIONS`)
-- Timeouts (up to 10 minutes for multi-step analysis)
-- Concurrency limits
+- Bounded iterations (`MAX_ITERATIONS = 100` per expert)
+- Per-expert timeout (10 minutes), council timeout (15 minutes)
+- Max 3 concurrent experts
+- Graceful fallback to parallel mode if council fails
 
 ### Documentation System
 

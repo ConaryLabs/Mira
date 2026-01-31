@@ -254,9 +254,7 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
         let section_name = classify_memory(mem);
 
         // Find the section bucket
-        let section = sections
-            .iter_mut()
-            .find(|(name, _)| *name == section_name);
+        let section = sections.iter_mut().find(|(name, _)| *name == section_name);
         let Some((_, entries)) = section else {
             continue;
         };
@@ -480,7 +478,12 @@ mod tests {
     // build_budgeted_export tests
     // ============================================================================
 
-    fn make_memory(content: &str, fact_type: &str, category: Option<&str>, hotness: f64) -> RankedMemory {
+    fn make_memory(
+        content: &str,
+        fact_type: &str,
+        category: Option<&str>,
+        hotness: f64,
+    ) -> RankedMemory {
         RankedMemory {
             content: content.to_string(),
             fact_type: fact_type.to_string(),
@@ -536,8 +539,7 @@ mod tests {
 
         // Each entry line is "- {content}\n", content should be truncated
         for line in result.lines() {
-            if line.starts_with("- ") {
-                let entry = &line[2..];
+            if let Some(entry) = line.strip_prefix("- ") {
                 assert!(entry.len() <= MAX_MEMORY_BYTES + 3); // +3 for "..."
                 assert!(entry.ends_with("..."));
             }
@@ -548,12 +550,17 @@ mod tests {
     fn test_budgeted_export_respects_budget() {
         // Create many memories that would exceed the budget
         let memories: Vec<RankedMemory> = (0..300)
-            .map(|i| make_memory(
-                &format!("Memory number {} with some padding text to take up space", i),
-                "general",
-                None,
-                300.0 - i as f64,
-            ))
+            .map(|i| {
+                make_memory(
+                    &format!(
+                        "Memory number {} with some padding text to take up space",
+                        i
+                    ),
+                    "general",
+                    None,
+                    300.0 - i as f64,
+                )
+            })
             .collect();
 
         let result = build_budgeted_export(&memories);
@@ -594,9 +601,12 @@ mod tests {
     #[test]
     fn test_budgeted_export_category_fallback_classification() {
         // fact_type is "general" but category is "decision" — should go to Decisions
-        let memories = vec![
-            make_memory("Chose REST over GraphQL", "general", Some("decision"), 8.0),
-        ];
+        let memories = vec![make_memory(
+            "Chose REST over GraphQL",
+            "general",
+            Some("decision"),
+            8.0,
+        )];
         let result = build_budgeted_export(&memories);
         assert!(result.contains("## Decisions"));
         assert!(result.contains("- Chose REST over GraphQL"));
@@ -604,9 +614,12 @@ mod tests {
 
     #[test]
     fn test_budgeted_export_convention_in_patterns() {
-        let memories = vec![
-            make_memory("Use snake_case", "convention", Some("convention"), 5.0),
-        ];
+        let memories = vec![make_memory(
+            "Use snake_case",
+            "convention",
+            Some("convention"),
+            5.0,
+        )];
         let result = build_budgeted_export(&memories);
         assert!(result.contains("## Patterns"));
     }

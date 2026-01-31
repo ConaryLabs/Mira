@@ -31,6 +31,7 @@ The crate follows a modular design with clear separation between protocol handli
 | `git` | Git repository analysis |
 | `http` | HTTP client utilities |
 | `project_files` | Project file discovery and filtering |
+| `mcp_client` | MCP client for accessing host environment tools from experts |
 | `proxy` | MCP proxy/routing |
 | `cli` | CLI subcommands |
 | `error` | Error types (`MiraError`) |

@@ -1,108 +1,96 @@
-# Expert Analysis: `search_code` Tool Implementation
+# `search_code` Tool
 
-Based on my comprehensive exploration of the codebase, here's my expert analysis of the `search_code` MCP tool:
+Search code by meaning using hybrid semantic + keyword search.
 
-## Key Findings
+## Parameters
 
-### 1. **Sophisticated Hybrid Architecture**
-The tool implements a well-designed hybrid search system that intelligently combines multiple search strategies:
-- **Semantic search** using vector embeddings for conceptual similarity
-- **Keyword search** as a reliable fallback mechanism  
-- **Intent detection** that analyzes query patterns to optimize results
-- **Smart reranking** with contextual boosts based on file type, documentation, and recency
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | Yes | — | Natural language query or identifier name |
+| `language` | string | No | — | Language filter (currently unused, reserved) |
+| `limit` | integer | No | 10 | Maximum number of results |
 
-### 2. **Graceful Degradation Pattern**
-The implementation shows excellent resilience engineering:
-- When embeddings are unavailable, it automatically falls back to keyword search
-- No error is thrown for missing embeddings - search continues with reduced capability
-- This ensures the tool always provides some value, even in suboptimal conditions
+## How It Works
 
-### 3. **Query Intent Intelligence**
-The system analyzes queries to detect user intent:
-- **Documentation queries** (25% extra boost to documented code)
-- **Example/usage queries** (25% boost to test/example files)
-- **Implementation queries** (15% boost to function definitions)
-- **General queries** (standard ranking)
+### Cross-Reference Detection
 
-This intent-aware ranking significantly improves result relevance compared to naive similarity search.
+Before searching, the tool checks if the query matches cross-reference patterns like "who calls X", "callers of X", or "callees of X". If detected, it routes directly to the call graph instead of running a general search.
 
-### 4. **Performance Optimizations**
-- Parallel execution of semantic and keyword searches
-- Database-level caching of embeddings and search results
-- Intelligent result deduplication by (file_path, start_line)
-- Configurable limits to prevent overwhelming responses
+### Hybrid Search Pipeline
 
-### 5. **Integration Points**
-The tool is deeply integrated with:
-- **Database layer** for persistent indexing and caching
-- **Embedding service** for semantic understanding
-- **File system** for recency-based boosting
-- **Project context system** for scope-aware searching
+For general queries, the tool runs a parallel hybrid search:
 
-## Critical Implementation Details
-
-### Search Process Flow:
 ```
-1. Query → Intent Detection → Boost Configuration
-2. Parallel: [Semantic Search] + [Keyword Search]
-3. Merge & Deduplicate → Keep Higher Scores
-4. Apply Intent-Specific Boosts
-5. Apply Recency/Documentation Boosts
-6. Sort by Final Score → Format Results
+Query
+  ├── Semantic Search (vector similarity via embeddings)
+  └── Keyword Search (FTS5 + symbol + LIKE)
+         ├── FTS5: AND-first query, OR fallback
+         ├── Symbol name matching (always runs)
+         ├── LIKE chunk search (supplements sparse results)
+         ├── Tree-guided scope boost (1.3x for relevant modules)
+         └── Proximity boost (1.2x for NEAR matches)
+  ↓
+Merge & Deduplicate (by file_path + start_line, keep higher score)
+  ↓
+Intent-Based Reranking
+  ↓
+Results (with context expansion)
 ```
 
-### Score Composition:
-- **Base Score**: 70-90% from semantic/keyword similarity
-- **Intent Boost**: 10-25% based on query type
-- **Quality Boost**: 10% for documented code
-- **Recency Boost**: Up to 20% for recently modified files
+### Keyword Search Details
 
-### Limitations & Constraints:
-1. **Indexing Dependency**: Must run `index` tool first
-2. **Chunk-Based Search**: Works on code chunks, not whole files
-3. **Embedding Service Required**: For full semantic capability
-4. **Line Number Approximation**: Start lines may be approximate for multi-chunk symbols
+The keyword search uses three parallel strategies:
 
-## Actionable Recommendations
+1. **FTS5 full-text search** — Builds an AND-first query (all terms must match). If AND yields no results, falls back to OR (any term matches). Uses a code-aware tokenizer (`unicode61` with `tokenchars '_'`) that preserves snake_case identifiers as single tokens. No stemming — exact identifiers are preserved.
 
-### For Tool Users:
-1. **Always index first**: Use `index` tool before expecting meaningful results
-2. **Be query-specific**: Use natural language descriptions rather than keywords
-3. **Start small**: Use limit=3-5 to evaluate result quality
-4. **Combine tools**: Use with `find_callers`/`find_callees` for comprehensive analysis
+2. **Symbol name matching** — Always runs alongside FTS5. Scores symbols by match quality: exact match (0.95), substring (0.85), all terms present (0.75), partial (0.55–0.70).
 
-### For Developers/Maintainers:
-1. **Monitor embedding service**: Critical dependency for semantic search
-2. **Optimize chunk size**: Current ~100-500 character chunks may miss context
-3. **Add search analytics**: Track query patterns to improve intent detection
-4. **Implement result caching**: Could cache frequent queries for performance
+3. **LIKE chunk search** — Supplements when FTS5 + symbol results are sparse.
 
-### For Documentation:
-1. **Emphasize indexing requirement**: Most common user issue
-2. **Show query examples**: Demonstrate effective vs ineffective queries
-3. **Explain score meaning**: Help users interpret 0.0-1.0 scores
-4. **Document fallback behavior**: Users should know when they're getting keyword-only results
+### Tree-Guided Scope Narrowing
 
-## Quality Assessment
+When the cartographer module tree is available, the query terms are scored against module names, purposes, exports, and paths. The top 3 matching modules become "scope paths", and results within those modules receive a 1.3x score boost.
 
-**Strengths:**
-- ✅ Robust fallback mechanisms
-- ✅ Intelligent query analysis
-- ✅ Performance-optimized design
-- ✅ Good user experience (graceful degradation)
-- ✅ Comprehensive result formatting
+### Proximity Boost
 
-**Areas for Improvement:**
-- ⚠️ No real-time search index updates
-- ⚠️ Dependency on external embedding service
-- ⚠️ Limited context expansion for large files
-- ⚠️ No search history or query suggestions
+For multi-term queries, an FTS5 `NEAR(term1 term2, 10)` query identifies results where terms appear within 10 tokens of each other. These results receive a 1.2x score boost.
 
-## Conclusion
+### Intent Detection & Reranking
 
-The `search_code` tool represents a sophisticated implementation of semantic code search that balances advanced AI capabilities with practical resilience. Its hybrid approach ensures reliable operation across varying conditions, while its intent-aware ranking provides significantly better results than naive similarity search.
+After merging, results are reranked based on detected query intent:
 
-The tool is production-ready but would benefit from additional features like real-time index updates, search analytics, and improved context handling for large codebases. For users, following the recommended practices (proper indexing, specific queries, combined tool usage) will yield excellent results for code discovery and exploration tasks.
+| Intent | Trigger phrases | Boost |
+|--------|----------------|-------|
+| Documentation | "docs for", "explain", "what is" | 1.2x for documented code |
+| Implementation | "how does", "definition of" | 1.15x for function definitions |
+| Examples | "example of", "how to use" | 1.25x for test/example files |
+| General | (default) | No extra boost |
 
----
-*Tokens: 29566 prompt, 1516 completion*
+Additional boosts: complete symbols (1.1x), documented code (1.1x), recently modified files (up to 1.2x).
+
+### Graceful Degradation
+
+If embeddings are unavailable, the tool falls back to keyword-only search without error. Semantic search failures are logged as warnings and do not prevent keyword results from returning.
+
+## Output Format
+
+Results include a project context header followed by numbered results with file path, line number, search type indicator, score, and a code snippet with surrounding context.
+
+## Dependencies
+
+- **Embeddings** (`GEMINI_API_KEY`) — Required for semantic search, optional for keyword-only
+- **Code index** — Must run `index` tool first for FTS5 and symbol data
+- **Cartographer** — Module tree required for scope narrowing (populated by background workers)
+
+## Examples
+
+```
+# Semantic query — finds code by meaning
+search_code(query="authentication middleware", limit=5)
+
+# Identifier search — keyword search excels here
+search_code(query="database_pool", limit=5)
+
+# Cross-reference detection — routes to call graph
+search_code(query="who calls hybrid_search", limit=5)
+```

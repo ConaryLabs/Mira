@@ -16,4 +16,4 @@ Claude Code hook handlers for lifecycle integration points. Hooks are invoked by
 | `user_prompt` | User prompt submission | Inject context into prompts |
 | `precompact` | Before context compaction | Preserve important context |
 | `permission` | Permission requests | Handle permission checks |
-| `stop` | Session stop | Cleanup and session summary |
+| `stop` | Session stop | Save state, auto-export CLAUDE.local.md, check goal progress |

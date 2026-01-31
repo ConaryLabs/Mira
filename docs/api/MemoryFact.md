@@ -50,7 +50,7 @@ pub struct MemoryFact {
 | `session_count` | `i32` | `1` | Number of sessions that have reinforced this memory |
 | `first_session_id` | `Option<String>` | `None` | Session where this memory was first created |
 | `last_session_id` | `Option<String>` | `None` | Most recent session that touched this memory |
-| `status` | `String` | `"candidate"` | Memory status: `candidate`, `confirmed`, `archived` |
+| `status` | `String` | `"candidate"` | Memory status: `candidate` or `confirmed` |
 
 ### Multi-User Sharing Fields
 

@@ -10,7 +10,7 @@ Database schema creation and migration system.
 
 | Module | Tables Managed |
 |--------|---------------|
-| `code` | Code database migrations (symbols, chunks, modules) |
+| `code` | Code database migrations (symbols, chunks, modules). Includes `migrate_fts_tokenizer` which rebuilds `code_fts` when the FTS5 tokenizer config changes (current: `unicode61` with `tokenchars '_'`, no stemming). |
 | `fts` | Full-text search indexes |
 | `intelligence` | Proactive/evolutionary/cross-project tables |
 | `memory` | Facts, corrections, docs, users, teams |

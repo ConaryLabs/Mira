@@ -80,6 +80,22 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-30
+
+### Added
+- **Iterative council architecture** - Expert consultations now use a multi-round council pipeline with a coordinator that synthesizes findings, identifies conflicts, and runs delta rounds for resolution. Replaces the previous parallel-only and debate pipelines.
+- **Expert stakes framing** - Expert prompts now include stakes context, accountability rules, and self-check requirements for higher quality output.
+- **Non-semantic search overhaul** - Keyword search now uses AND-first query logic, tree-guided scope filtering, and a code-aware tokenizer for significantly better precision on identifier and symbol searches.
+- **Smart CLAUDE.local.md export** - Memory export is now hotness-ranked and budget-aware (stays under 500 lines). Automatically exports on session close via the Stop hook.
+- **CI install tests** - New workflow and Podman-based multi-distro script for testing the install process.
+
+### Fixed
+- **Council reliability** - Fixed race condition in expert task completion, added per-expert timeouts, iteration limits, and graceful fallbacks to parallel mode on council failure.
+- **OOM in expert consultations** - Split DeepSeek chat/reasoner clients so reasoning models don't accumulate unbounded `reasoning_content`. Capped debate output and stripped `$schema` from tool definitions to reduce token usage.
+- **Plugin marketplace category** - Moved `category` field from plugin manifest to marketplace config where it belongs. Expanded keywords for better discoverability.
+- **Clippy warnings** - Fixed `let_unit_value`, `strip_prefix`, `new_ret_no_self`, and `items_after_test_module` warnings.
+- **Code formatting** - Applied `cargo fmt` across all crates.
+
 ## [0.3.7] - 2026-01-30
 
 ### Added

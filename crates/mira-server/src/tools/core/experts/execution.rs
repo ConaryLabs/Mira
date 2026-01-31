@@ -155,10 +155,7 @@ pub async fn consult_expert<C: ToolContext>(
                     // Add assistant message with tool calls.
                     // Drop reasoning_content — intermediate reasoning chains aren't
                     // needed for tool-loop context and cause unbounded memory growth.
-                    let mut assistant_msg = Message::assistant(
-                        result.content.clone(),
-                        None,
-                    );
+                    let mut assistant_msg = Message::assistant(result.content.clone(), None);
                     assistant_msg.tool_calls = Some(tool_calls.clone());
                     messages.push(assistant_msg);
 
@@ -208,11 +205,7 @@ pub async fn consult_expert<C: ToolContext>(
 
                 // Call thinker without tools for final synthesis (no timeout, it can be slow)
                 let final_result = thinker
-                    .chat_stateful(
-                        messages,
-                        None::<Vec<crate::llm::Tool>>,
-                        None::<&str>,
-                    )
+                    .chat_stateful(messages, None::<Vec<crate::llm::Tool>>, None::<&str>)
                     .await
                     .map_err(|e| format!("Thinker synthesis failed: {}", e))?;
 
@@ -316,7 +309,14 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
 
     // Council mode: coordinator-driven multi-expert consultation
     if is_council && expert_roles.len() >= 2 {
-        match super::council::run_council(ctx, expert_roles.clone(), context.clone(), question.clone()).await {
+        match super::council::run_council(
+            ctx,
+            expert_roles.clone(),
+            context.clone(),
+            question.clone(),
+        )
+        .await
+        {
             Ok(council_output) => return Ok(council_output),
             Err(e) => {
                 tracing::warn!("Council pipeline failed, falling back to parallel: {}", e);

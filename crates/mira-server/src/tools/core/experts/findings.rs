@@ -335,13 +335,16 @@ impl FindingsStore {
     #[allow(dead_code)]
     pub fn estimated_tokens(&self) -> usize {
         let findings = self.findings.lock().unwrap();
-        let total_chars: usize = findings.iter().map(|f| {
-            f.topic.len()
-                + f.content.len()
-                + f.evidence.iter().map(|e| e.len()).sum::<usize>()
-                + f.recommendation.as_ref().map(|r| r.len()).unwrap_or(0)
-                + 50 // overhead per finding
-        }).sum();
+        let total_chars: usize = findings
+            .iter()
+            .map(|f| {
+                f.topic.len()
+                    + f.content.len()
+                    + f.evidence.iter().map(|e| e.len()).sum::<usize>()
+                    + f.recommendation.as_ref().map(|r| r.len()).unwrap_or(0)
+                    + 50 // overhead per finding
+            })
+            .sum();
         total_chars / 4
     }
 }
