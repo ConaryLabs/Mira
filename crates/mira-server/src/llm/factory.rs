@@ -6,6 +6,7 @@ use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::gemini::GeminiClient;
 use crate::llm::provider::{LlmClient, Provider};
+use crate::tools::core::experts::strategy::ReasoningStrategy;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -212,20 +213,22 @@ impl ProviderFactory {
         !self.clients.is_empty()
     }
 
-    /// Get chat and reasoner clients for expert consultation.
-    /// For DeepSeek, use deepseek-chat for tool loops and deepseek-reasoner for synthesis.
-    pub async fn client_for_role_dual_mode(
+    /// Get a `ReasoningStrategy` for an expert role.
+    ///
+    /// For DeepSeek: returns `Decoupled` with deepseek-chat (actor) + deepseek-reasoner (thinker).
+    /// For other providers: returns `Single` with the primary client.
+    pub async fn strategy_for_role(
         &self,
         role: &str,
         pool: &Arc<DatabasePool>,
-    ) -> Result<(Arc<dyn LlmClient>, Option<Arc<dyn LlmClient>>), String> {
+    ) -> Result<ReasoningStrategy, String> {
         let primary = self.client_for_role(role, pool).await?;
 
         // If the primary provider is DeepSeek, enforce chat+reasoner split:
-        // - Tool use should run on deepseek-chat
-        // - Final synthesis should run on deepseek-reasoner
+        // - Tool use (actor) should run on deepseek-chat
+        // - Final synthesis (thinker) should run on deepseek-reasoner
         if primary.provider_type() == Provider::DeepSeek {
-            let chat_client: Arc<dyn LlmClient> = if primary.model_name().contains("reasoner") {
+            let actor: Arc<dyn LlmClient> = if primary.model_name().contains("reasoner") {
                 match self.deepseek_key.as_ref() {
                     Some(key) => {
                         Arc::new(DeepSeekClient::with_model(key.clone(), "deepseek-chat".into()))
@@ -236,17 +239,17 @@ impl ProviderFactory {
                 primary.clone()
             };
 
-            let reasoner_client = self.deepseek_key.as_ref().map(|key| {
+            let thinker = self.deepseek_key.as_ref().map(|key| {
                 Arc::new(DeepSeekClient::with_model(
                     key.clone(),
                     "deepseek-reasoner".into(),
                 )) as Arc<dyn LlmClient>
             });
 
-            return Ok((chat_client, reasoner_client));
+            return Ok(ReasoningStrategy::from_dual_mode(actor, thinker));
         }
 
-        Ok((primary, None))
+        Ok(ReasoningStrategy::Single(primary))
     }
 }
 
@@ -321,7 +324,7 @@ mod tests {
     }
 
     // ========================================================================
-    // client_for_role_dual_mode tests (DeepSeek chat/reasoner split)
+    // strategy_for_role tests (DeepSeek chat/reasoner split via ReasoningStrategy)
     // ========================================================================
 
     /// Create a factory with a DeepSeek client registered in the fallback chain
@@ -342,61 +345,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dual_mode_deepseek_chat_returns_chat_and_reasoner() {
+    async fn test_strategy_deepseek_chat_returns_decoupled() {
         let factory = factory_with_deepseek("deepseek-chat");
         let pool = Arc::new(
             crate::db::pool::DatabasePool::open_in_memory()
                 .await
                 .unwrap(),
         );
-        let (chat, reasoner) = factory
-            .client_for_role_dual_mode("architect", &pool)
+        let strategy = factory
+            .strategy_for_role("architect", &pool)
             .await
             .unwrap();
-        // Chat client should be deepseek-chat (same as primary)
-        assert_eq!(chat.provider_type(), Provider::DeepSeek);
+        // DeepSeek should produce a Decoupled strategy
+        assert!(strategy.is_decoupled(), "DeepSeek should use Decoupled strategy");
+        // Actor should be deepseek-chat
+        assert_eq!(strategy.actor().provider_type(), Provider::DeepSeek);
         assert!(
-            chat.model_name().contains("chat"),
-            "chat client model should be deepseek-chat, got: {}",
-            chat.model_name()
+            strategy.actor().model_name().contains("chat"),
+            "actor model should be deepseek-chat, got: {}",
+            strategy.actor().model_name()
         );
-        // Reasoner client should exist and be deepseek-reasoner
-        let reasoner = reasoner.expect("reasoner client should be Some for DeepSeek");
-        assert_eq!(reasoner.provider_type(), Provider::DeepSeek);
+        // Thinker should be deepseek-reasoner
+        assert_eq!(strategy.thinker().provider_type(), Provider::DeepSeek);
         assert!(
-            reasoner.model_name().contains("reasoner"),
-            "reasoner model should be deepseek-reasoner, got: {}",
-            reasoner.model_name()
+            strategy.thinker().model_name().contains("reasoner"),
+            "thinker model should be deepseek-reasoner, got: {}",
+            strategy.thinker().model_name()
         );
     }
 
     #[tokio::test]
-    async fn test_dual_mode_deepseek_reasoner_swaps_to_chat() {
-        // When primary is deepseek-reasoner, chat client should be swapped to deepseek-chat
+    async fn test_strategy_deepseek_reasoner_swaps_actor_to_chat() {
+        // When primary is deepseek-reasoner, actor should be swapped to deepseek-chat
         let factory = factory_with_deepseek("deepseek-reasoner");
         let pool = Arc::new(
             crate::db::pool::DatabasePool::open_in_memory()
                 .await
                 .unwrap(),
         );
-        let (chat, reasoner) = factory
-            .client_for_role_dual_mode("architect", &pool)
+        let strategy = factory
+            .strategy_for_role("architect", &pool)
             .await
             .unwrap();
-        // Chat client should NOT be reasoner — should be swapped to chat
+        assert!(strategy.is_decoupled(), "DeepSeek should use Decoupled strategy");
+        // Actor should be swapped to deepseek-chat even when primary is reasoner
         assert!(
-            chat.model_name().contains("chat"),
-            "chat client should be deepseek-chat even when primary is reasoner, got: {}",
-            chat.model_name()
+            strategy.actor().model_name().contains("chat"),
+            "actor should be deepseek-chat even when primary is reasoner, got: {}",
+            strategy.actor().model_name()
         );
-        // Reasoner should still exist
-        let reasoner = reasoner.expect("reasoner client should be Some");
-        assert!(reasoner.model_name().contains("reasoner"));
+        // Thinker should be deepseek-reasoner
+        assert!(strategy.thinker().model_name().contains("reasoner"));
     }
 
     #[tokio::test]
-    async fn test_dual_mode_deepseek_no_key_falls_back() {
-        // If deepseek_key is None, can't create new clients — should fall back gracefully
+    async fn test_strategy_deepseek_no_key_falls_back_to_single() {
+        // If deepseek_key is None, can't create new clients — should fall back to Single
         let client = Arc::new(DeepSeekClient::with_model(
             "test-key".into(),
             "deepseek-reasoner".into(),
@@ -416,29 +420,26 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let (chat, reasoner) = factory
-            .client_for_role_dual_mode("architect", &pool)
+        let strategy = factory
+            .strategy_for_role("architect", &pool)
             .await
             .unwrap();
-        // Without key, chat falls back to primary (reasoner) — can't create new client
-        assert!(chat.model_name().contains("reasoner"));
-        // Reasoner should be None — can't create it without key
-        assert!(reasoner.is_none());
+        // Without key, can't create thinker — from_dual_mode returns Single
+        assert!(!strategy.is_decoupled(), "no key should produce Single strategy");
+        // Actor/thinker both point to the primary (reasoner) since that's all we have
+        assert!(strategy.actor().model_name().contains("reasoner"));
     }
 
     #[tokio::test]
-    async fn test_dual_mode_non_deepseek_returns_none_reasoner() {
-        // Non-DeepSeek providers should return (primary, None)
+    async fn test_strategy_empty_factory_errors() {
+        // No providers available should return an error
         let factory = empty_factory();
-        // This will fail because no providers — but let's test with Gemini
-        // We can't easily construct a Gemini client without a real key hitting init,
-        // so just verify the empty factory path returns an error
         let pool = Arc::new(
             crate::db::pool::DatabasePool::open_in_memory()
                 .await
                 .unwrap(),
         );
-        let result = factory.client_for_role_dual_mode("architect", &pool).await;
+        let result = factory.strategy_for_role("architect", &pool).await;
         assert!(result.is_err(), "empty factory should error");
     }
 }

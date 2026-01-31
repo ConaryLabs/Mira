@@ -23,14 +23,14 @@ pub async fn consult_expert<C: ToolContext>(
 ) -> Result<String, String> {
     let expert_key = expert.db_key();
 
-    // Get dual-mode LLM clients for DeepSeek: chat for tools, reasoner for synthesis
-    // For non-DeepSeek providers, both are the same client
+    // Get reasoning strategy: Single (one model) or Decoupled (chat + reasoner)
     let llm_factory = ctx.llm_factory();
-    let (chat_client, reasoner_client) = llm_factory
-        .client_for_role_dual_mode(expert_key.as_str(), ctx.pool())
+    let strategy = llm_factory
+        .strategy_for_role(expert_key.as_str(), ctx.pool())
         .await
         .map_err(|e| e.to_string())?;
 
+    let chat_client = strategy.actor().clone();
     let provider = chat_client.provider_type();
     tracing::info!(expert = %expert_key, provider = %provider, "Expert consultation starting");
 
@@ -184,42 +184,44 @@ pub async fn consult_expert<C: ToolContext>(
             }
 
             // No tool calls - we have a preliminary response from chat client
-            // For DeepSeek dual-mode, now use reasoner for final synthesis
-            if let Some(ref reasoner) = reasoner_client {
+            // For decoupled strategy, now use thinker for final synthesis
+            if strategy.is_decoupled() {
+                let thinker = strategy.thinker();
                 tracing::debug!(
                     expert = %expert_key,
                     iterations,
                     tool_calls = total_tool_calls,
-                    "Tool gathering complete, switching to reasoner for synthesis"
+                    "Tool gathering complete, switching to thinker for synthesis"
                 );
 
-                // Add chat client's response as context for reasoner
+                // Add chat client's response as context for thinker
                 let assistant_msg =
                     Message::assistant(result.content.clone(), result.reasoning_content.clone());
                 messages.push(assistant_msg);
 
-                // Create synthesis prompt for reasoner
+                // Create synthesis prompt for thinker
                 let synthesis_prompt = Message::user(String::from(
                     "Based on the tool results above, provide your final expert analysis. \
                     Synthesize the findings into a clear, actionable response.",
                 ));
                 messages.push(synthesis_prompt);
 
-                // Call reasoner without tools for final synthesis (no timeout reasoner, it can be slow)
-                let final_result = reasoner
+                // Call thinker without tools for final synthesis (no timeout, it can be slow)
+                let final_result = thinker
                     .chat_stateful(
-                        messages, None, // No tools for synthesis
-                        None, // No previous_response_id across different clients
+                        messages,
+                        None::<Vec<crate::llm::Tool>>,
+                        None::<&str>,
                     )
                     .await
-                    .map_err(|e| format!("Reasoner synthesis failed: {}", e))?;
+                    .map_err(|e| format!("Thinker synthesis failed: {}", e))?;
 
-                // Record usage for reasoner synthesis call
+                // Record usage for thinker synthesis call
                 let role_for_usage = format!("expert:{}:reasoner", expert_key);
                 record_llm_usage(
                     ctx.pool(),
-                    reasoner.provider_type(),
-                    &reasoner.model_name(),
+                    thinker.provider_type(),
+                    &thinker.model_name(),
                     &role_for_usage,
                     &final_result,
                     ctx.project_id().await,
@@ -269,8 +271,11 @@ pub async fn consult_expert<C: ToolContext>(
     ))
 }
 
-/// Consult multiple experts in parallel, with optional debate mode
-/// Takes a list of role names and runs all consultations concurrently
+/// Consult multiple experts, with optional council/debate mode.
+///
+/// - Single expert: delegates directly to `consult_expert()` (no council overhead).
+/// - Multiple experts with mode "debate" or "council": runs the council pipeline.
+/// - Multiple experts without mode: runs in parallel and concatenates results.
 pub async fn consult_experts<C: ToolContext + Clone + 'static>(
     ctx: &C,
     roles: Vec<String>,
@@ -284,7 +289,8 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
         return Err("No expert roles specified".to_string());
     }
 
-    let is_debate = mode.as_deref() == Some("debate");
+    // "debate" is now an alias for "council"
+    let is_council = matches!(mode.as_deref(), Some("debate") | Some("council"));
 
     // Parse and validate all roles first
     let parsed_roles: Result<Vec<ExpertRole>, String> = roles
@@ -297,11 +303,33 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
 
     let expert_roles = parsed_roles?;
 
-    // Use Arc for efficient sharing across concurrent tasks (avoids cloning large context)
+    // Single expert bypass: skip council entirely
+    if expert_roles.len() == 1 {
+        return consult_expert(
+            ctx,
+            expert_roles.into_iter().next().unwrap(),
+            context,
+            question,
+        )
+        .await;
+    }
+
+    // Council mode: coordinator-driven multi-expert consultation
+    if is_council && expert_roles.len() >= 2 {
+        match super::council::run_council(ctx, expert_roles.clone(), context.clone(), question.clone()).await {
+            Ok(council_output) => return Ok(council_output),
+            Err(e) => {
+                tracing::warn!("Council pipeline failed, falling back to parallel: {}", e);
+                // Fall through to standard parallel output
+            }
+        }
+    }
+
+    // Standard parallel mode (also used as council fallback)
+    // Use Arc for efficient sharing across concurrent tasks
     let context: Arc<str> = Arc::from(context);
     let question: Option<Arc<str>> = question.map(Arc::from);
 
-    // Phase 1: Run consultations with bounded concurrency and overall timeout
     let consultation_future = stream::iter(expert_roles)
         .map(|role| {
             let ctx = ctx.clone();
@@ -332,43 +360,20 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
         }
     };
 
-    // Collect successful results
+    // Collect and format results
     let mut output = String::new();
     let mut successes = 0;
     let mut failures = 0;
-    let mut successful_results: Vec<(String, String)> = Vec::new();
 
-    for (role, result) in &results {
-        match result {
-            Ok(response) => {
-                successful_results.push((role.db_key(), response.clone()));
-                successes += 1;
-            }
-            Err(_) => {
-                failures += 1;
-            }
-        }
-    }
-
-    // Debate mode: run Phases 2-4 if we have 2+ successful expert results
-    if is_debate && successful_results.len() >= 2 {
-        match super::debate::run_debate(ctx, &successful_results).await {
-            Ok(debate_output) => return Ok(debate_output),
-            Err(e) => {
-                tracing::warn!("Debate pipeline failed, falling back to parallel output: {}", e);
-                // Fall through to standard parallel output
-            }
-        }
-    }
-
-    // Standard parallel output (also used as debate fallback)
     for (role, result) in results {
         match result {
             Ok(response) => {
+                successes += 1;
                 output.push_str(&response);
                 output.push_str("\n\n---\n\n");
             }
             Err(e) => {
+                failures += 1;
                 output.push_str(&format!(
                     "## {} (Failed)\n\nError: {}\n\n---\n\n",
                     role.name(),

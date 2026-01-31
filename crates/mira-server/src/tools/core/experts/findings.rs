@@ -1,7 +1,9 @@
 // crates/mira-server/src/tools/core/experts/findings.rs
-// ParsedFinding struct and parsing/storage logic
+// ParsedFinding struct, parsing/storage logic, and council findings store
 
 use super::ToolContext;
+use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 /// A parsed finding from expert response
 #[derive(Debug, Clone)]
@@ -194,4 +196,244 @@ pub async fn store_findings<C: ToolContext>(
     }
 
     stored
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Council Findings Store (per-consultation, in-memory only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Maximum findings per council consultation (prevents runaway experts).
+const MAX_COUNCIL_FINDINGS: usize = 50;
+
+/// A structured finding emitted by an expert during a council consultation
+/// via the `store_finding` tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CouncilFinding {
+    pub role: String,
+    pub topic: String,
+    pub content: String,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    #[serde(default = "default_severity")]
+    pub severity: String,
+    pub recommendation: Option<String>,
+}
+
+fn default_severity() -> String {
+    "info".to_string()
+}
+
+/// Thread-safe, per-consultation store for council findings.
+/// Created once per `run_council()` call and shared across expert tasks.
+pub struct FindingsStore {
+    findings: Mutex<Vec<CouncilFinding>>,
+}
+
+impl FindingsStore {
+    pub fn new() -> Self {
+        Self {
+            findings: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Add a finding. Returns false if the store is full.
+    pub fn add(&self, finding: CouncilFinding) -> bool {
+        let mut findings = self.findings.lock().unwrap();
+        if findings.len() >= MAX_COUNCIL_FINDINGS {
+            return false;
+        }
+        findings.push(finding);
+        true
+    }
+
+    /// Get all findings.
+    pub fn all(&self) -> Vec<CouncilFinding> {
+        self.findings.lock().unwrap().clone()
+    }
+
+    /// Get findings from a specific role.
+    pub fn by_role(&self, role: &str) -> Vec<CouncilFinding> {
+        self.findings
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|f| f.role == role)
+            .cloned()
+            .collect()
+    }
+
+    /// Number of findings stored.
+    pub fn count(&self) -> usize {
+        self.findings.lock().unwrap().len()
+    }
+
+    /// Format all findings for the synthesis prompt.
+    pub fn format_for_synthesis(&self) -> String {
+        let findings = self.findings.lock().unwrap();
+        if findings.is_empty() {
+            return "No structured findings were recorded.".to_string();
+        }
+
+        let mut output = String::new();
+        let mut current_role = "";
+
+        for finding in findings.iter() {
+            if finding.role != current_role {
+                current_role = &finding.role;
+                output.push_str(&format!("\n### {} Findings\n\n", current_role));
+            }
+
+            output.push_str(&format!(
+                "**[{}] {}**: {}\n",
+                finding.severity.to_uppercase(),
+                finding.topic,
+                finding.content
+            ));
+
+            if !finding.evidence.is_empty() {
+                for ev in &finding.evidence {
+                    output.push_str(&format!("  - Evidence: {}\n", ev));
+                }
+            }
+
+            if let Some(ref rec) = finding.recommendation {
+                output.push_str(&format!("  - Recommendation: {}\n", rec));
+            }
+
+            output.push('\n');
+        }
+
+        output
+    }
+
+    /// Patch the role of the last finding (used to tag findings from store_finding tool).
+    pub fn patch_last_role(&self, role: &str) {
+        let mut findings = self.findings.lock().unwrap();
+        if let Some(last) = findings.last_mut() {
+            if last.role.is_empty() {
+                last.role = role.to_string();
+            }
+        }
+    }
+
+    /// Rough token estimate for the findings (1 token ≈ 4 chars).
+    #[allow(dead_code)]
+    pub fn estimated_tokens(&self) -> usize {
+        let findings = self.findings.lock().unwrap();
+        let total_chars: usize = findings.iter().map(|f| {
+            f.topic.len()
+                + f.content.len()
+                + f.evidence.iter().map(|e| e.len()).sum::<usize>()
+                + f.recommendation.as_ref().map(|r| r.len()).unwrap_or(0)
+                + 50 // overhead per finding
+        }).sum();
+        total_chars / 4
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_finding(role: &str, topic: &str) -> CouncilFinding {
+        CouncilFinding {
+            role: role.to_string(),
+            topic: topic.to_string(),
+            content: "Test finding content".to_string(),
+            evidence: vec!["file.rs:42".to_string()],
+            severity: "medium".to_string(),
+            recommendation: Some("Fix this".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_findings_store_add_and_count() {
+        let store = FindingsStore::new();
+        assert_eq!(store.count(), 0);
+        assert!(store.add(sample_finding("architect", "design")));
+        assert_eq!(store.count(), 1);
+    }
+
+    #[test]
+    fn test_findings_store_all() {
+        let store = FindingsStore::new();
+        store.add(sample_finding("architect", "design"));
+        store.add(sample_finding("security", "auth"));
+        let all = store.all();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_findings_store_by_role() {
+        let store = FindingsStore::new();
+        store.add(sample_finding("architect", "design"));
+        store.add(sample_finding("security", "auth"));
+        store.add(sample_finding("architect", "patterns"));
+
+        assert_eq!(store.by_role("architect").len(), 2);
+        assert_eq!(store.by_role("security").len(), 1);
+        assert_eq!(store.by_role("code_reviewer").len(), 0);
+    }
+
+    #[test]
+    fn test_findings_store_max_cap() {
+        let store = FindingsStore::new();
+        for i in 0..MAX_COUNCIL_FINDINGS {
+            assert!(store.add(sample_finding("test", &format!("topic_{}", i))));
+        }
+        // 51st should fail
+        assert!(!store.add(sample_finding("test", "overflow")));
+        assert_eq!(store.count(), MAX_COUNCIL_FINDINGS);
+    }
+
+    #[test]
+    fn test_findings_store_format_for_synthesis() {
+        let store = FindingsStore::new();
+        store.add(sample_finding("architect", "design"));
+        store.add(sample_finding("security", "auth"));
+
+        let formatted = store.format_for_synthesis();
+        assert!(formatted.contains("architect Findings"));
+        assert!(formatted.contains("security Findings"));
+        assert!(formatted.contains("[MEDIUM]"));
+        assert!(formatted.contains("Evidence:"));
+        assert!(formatted.contains("Recommendation:"));
+    }
+
+    #[test]
+    fn test_findings_store_format_empty() {
+        let store = FindingsStore::new();
+        let formatted = store.format_for_synthesis();
+        assert!(formatted.contains("No structured findings"));
+    }
+
+    #[test]
+    fn test_findings_store_estimated_tokens() {
+        let store = FindingsStore::new();
+        assert_eq!(store.estimated_tokens(), 0);
+        store.add(sample_finding("architect", "design"));
+        assert!(store.estimated_tokens() > 0);
+    }
+
+    #[test]
+    fn test_findings_store_thread_safety() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let store = Arc::new(FindingsStore::new());
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let store = Arc::clone(&store);
+            handles.push(thread::spawn(move || {
+                store.add(sample_finding("test", &format!("topic_{}", i)));
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(store.count(), 10);
+    }
 }

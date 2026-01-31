@@ -8,6 +8,7 @@ use crate::llm::{Tool, ToolCall};
 use crate::search::{embedding_to_bytes, find_callees, find_callers, hybrid_search};
 use serde_json::{Value, json};
 use std::path::Path;
+use std::sync::Arc;
 use tracing::debug;
 
 /// Define the tools available to experts
@@ -128,6 +129,42 @@ pub fn get_expert_tools() -> Vec<Tool> {
     ]
 }
 
+/// Store finding tool definition (used during council mode)
+pub fn store_finding_tool() -> Tool {
+    Tool::function(
+        "store_finding",
+        "Record a key finding from your analysis. Use this whenever you discover something significant.",
+        json!({
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "Brief topic name (e.g., 'error handling', 'auth flow')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The finding itself — what you discovered"
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["info", "low", "medium", "high", "critical"],
+                    "description": "Severity level of this finding (default: info)"
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "File paths, code snippets, or references supporting this finding"
+                },
+                "recommendation": {
+                    "type": "string",
+                    "description": "What to do about it (optional)"
+                }
+            },
+            "required": ["topic", "content"]
+        }),
+    )
+}
+
 /// Web fetch tool definition
 pub fn web_fetch_tool() -> Tool {
     Tool::function(
@@ -172,6 +209,61 @@ pub fn web_search_tool() -> Tool {
             "required": ["query"]
         }),
     )
+}
+
+/// Execute a tool call during council mode, with access to the FindingsStore.
+/// Falls through to `execute_tool` for all tools except `store_finding`.
+pub async fn execute_tool_with_findings<C: ToolContext>(
+    ctx: &C,
+    tool_call: &ToolCall,
+    findings_store: &Arc<super::findings::FindingsStore>,
+) -> String {
+    if tool_call.function.name == "store_finding" {
+        let args: Value =
+            serde_json::from_str(&tool_call.function.arguments).unwrap_or(json!({}));
+        return execute_store_finding(&args, findings_store);
+    }
+    execute_tool(ctx, tool_call).await
+}
+
+/// Handle the store_finding tool call by writing to the FindingsStore.
+fn execute_store_finding(
+    args: &Value,
+    store: &Arc<super::findings::FindingsStore>,
+) -> String {
+    use super::findings::CouncilFinding;
+
+    let topic = args["topic"].as_str().unwrap_or("").to_string();
+    let content = args["content"].as_str().unwrap_or("").to_string();
+    let severity = args["severity"].as_str().unwrap_or("info").to_string();
+    let evidence: Vec<String> = args["evidence"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let recommendation = args["recommendation"].as_str().map(String::from);
+
+    if topic.is_empty() || content.is_empty() {
+        return "Error: 'topic' and 'content' are required".to_string();
+    }
+
+    let finding = CouncilFinding {
+        role: String::new(), // filled in by the caller (run_expert_task sets this)
+        topic,
+        content,
+        evidence,
+        severity,
+        recommendation,
+    };
+
+    if store.add(finding) {
+        format!("Finding recorded ({} total)", store.count())
+    } else {
+        "Finding limit reached — focus on your most important findings".to_string()
+    }
 }
 
 /// Execute a tool call and return the result

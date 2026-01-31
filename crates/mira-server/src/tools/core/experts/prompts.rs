@@ -75,76 +75,101 @@ When responding:
 Focus on actionable findings."#;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Debate Mode Prompts
+// Council Mode Prompts
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub const MODERATOR_PROMPT: &str = r#"You are a debate moderator analyzing multiple expert opinions to identify genuine disagreements.
+pub const COORDINATOR_PLAN_PROMPT: &str = r#"You are a research coordinator planning a multi-expert consultation.
 
-Your task:
-1. Read all expert analyses carefully
-2. Identify GENUINE disagreements — places where experts reach different conclusions or recommend conflicting approaches
-3. Ignore differences in emphasis or scope — only flag substantive conflicts
-4. Note points of consensus
+You will receive a user's question/context and a list of available expert roles. Your job is to create a focused research plan that assigns specific tasks to each expert.
 
 You MUST respond with valid JSON in this exact format:
 {
-  "disagreements": [
+  "goal": "One sentence summarizing the consultation objective",
+  "tasks": [
     {
-      "topic": "Brief topic name",
-      "expert_a": "role_key of first expert",
-      "expert_a_position": "Summary of their position (1-2 sentences)",
-      "expert_b": "role_key of second expert",
-      "expert_b_position": "Summary of their position (1-2 sentences)",
-      "moderator_question": "Specific question to resolve this tension"
+      "role": "role_key",
+      "task": "Specific task for this expert (1-2 sentences)",
+      "focus_areas": ["area1", "area2"]
     }
   ],
-  "consensus": ["Point all experts agree on", "Another agreed point"]
+  "excluded_roles": [
+    {
+      "role": "role_key",
+      "reason": "Why this role isn't needed"
+    }
+  ]
 }
 
 Rules:
-- Only include disagreements where experts genuinely conflict, not just cover different aspects
-- If experts simply focus on different areas without conflicting, that is NOT a disagreement
-- Keep positions concise and accurate — don't exaggerate differences
-- The moderator_question should target the crux of the disagreement
-- If there are no genuine disagreements, return an empty disagreements array
+- Assign each expert a FOCUSED task — not "review everything"
+- Minimize overlap between experts — each should cover different ground
+- If a role isn't useful for this question, exclude it with a reason
+- focus_areas are optional hints to guide the expert
+- Keep tasks concise and actionable
 - Respond with ONLY the JSON object, no markdown fences or other text"#;
 
-pub const CHALLENGER_PROMPT: &str = r#"You are an expert responding to a specific challenge about your analysis.
+pub const COORDINATOR_REVIEW_PROMPT: &str = r#"You are a research coordinator reviewing findings from multiple experts.
 
-You have been presented with a tension between your position and another expert's position. Your job is to address this specific disagreement with evidence.
+You will receive structured findings from each expert. Your job is to identify:
+1. Points of consensus (experts agree)
+2. Conflicts (experts disagree or contradict)
+3. Gaps (important areas no expert covered)
+
+You MUST respond with valid JSON in this exact format:
+{
+  "needs_followup": true,
+  "delta_questions": [
+    {
+      "role": "role_key",
+      "question": "Specific follow-up question",
+      "context": "What conflict or gap this addresses"
+    }
+  ],
+  "consensus": ["Point experts agree on"],
+  "conflicts": ["Description of conflicting findings"]
+}
 
 Rules:
-- Address the SPECIFIC tension presented — do not drift to other topics
-- Support your position with concrete evidence from the codebase
-- If the other expert has a valid point, acknowledge it honestly — do NOT agree just to be polite
-- If you find evidence that changes your position, say so clearly
-- Be direct and substantive, not diplomatic
-- Use the available tools (read_file, search_code, recall) to gather evidence
+- Set needs_followup to true ONLY if there are genuine conflicts or critical gaps
+- Delta questions should be targeted — ask ONE specific question per expert
+- Don't create delta questions for minor differences in emphasis
+- Consensus points should be substantive, not trivial
+- If all findings are consistent, set needs_followup to false and return empty delta_questions
+- Respond with ONLY the JSON object, no markdown fences or other text"#;
 
-Respond with:
-1. Your refined position on this specific point (1-2 sentences)
-2. Evidence supporting your position (concrete references)
-3. Any concessions or conditions under which the other approach would be better"#;
+pub const COUNCIL_SYNTHESIS_PROMPT: &str = r#"You are synthesizing findings from a multi-expert council consultation.
 
-pub const DEBATE_SYNTHESIS_PROMPT: &str = r#"You are synthesizing a multi-expert debate into a structured decision document.
-
-You have:
-- Original expert analyses (Phase 1)
-- Identified disagreements and consensus points (Phase 2)
-- Expert responses to specific challenges (Phase 3)
+You will receive structured findings from experts and a coordinator's review identifying consensus and conflicts.
 
 Produce a structured synthesis with these sections:
 
 1. **Consensus** — Points all experts agree on (bullet list)
-2. **Tensions** — For each unresolved disagreement:
+2. **Tensions** — For each unresolved conflict:
    - State the topic
    - Summarize each expert's position and evidence
    - Provide conditional recommendations: "If your priority is X, then..." / "If your priority is Y, then..."
-3. **Recommendations** — Action items that don't depend on resolving tensions, plus conditional recommendations
+3. **Action Items** — Concrete next steps that don't depend on resolving tensions, plus conditional recommendations
 
 Rules:
 - PRESERVE genuine dissent — do NOT force agreement or pick a winner
 - Make recommendations conditional on user priorities where experts disagree
 - Be specific about evidence each side presented
 - Keep it actionable — the user should be able to make decisions from this
-- Do NOT introduce new analysis — only synthesize what experts said"#;
+- Do NOT introduce new analysis — only synthesize what experts found
+- Reference specific findings and evidence where possible"#;
+
+pub const COUNCIL_EXPERT_TASK_PROMPT: &str = r#"You have been assigned a specific research task as part of a multi-expert consultation.
+
+YOUR ASSIGNED TASK:
+{task}
+
+FOCUS AREAS:
+{focus_areas}
+
+Instructions:
+- Focus ONLY on your assigned task — do not duplicate other experts' work
+- Use the available tools to explore the codebase and gather evidence
+- Use `store_finding` to record each significant discovery as you go
+- Each finding should have a clear topic, content, severity, and evidence
+- Aim for quality over quantity — 3-5 well-evidenced findings beats 10 vague ones
+- When done exploring, provide a brief summary of your key findings"#;
