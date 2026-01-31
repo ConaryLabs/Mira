@@ -3,7 +3,7 @@
 
 use super::context::{build_user_prompt, get_patterns_context};
 use super::findings::{CouncilFinding, FindingsStore};
-use super::plan::{parse_json_with_retry, ResearchPlan, ReviewResult};
+use super::plan::{parse_json_with_retry, ResearchPlan, ResearchTask, ReviewResult};
 use super::prompts::*;
 use super::role::ExpertRole;
 use super::tools::{
@@ -51,8 +51,14 @@ pub async fn run_council<C: ToolContext + Clone + 'static>(
 
     let findings_store = Arc::new(FindingsStore::new());
 
-    // Phase 1: Coordinator creates a research plan
-    let plan = plan_phase(ctx, &roles, &context, question.as_deref()).await?;
+    // Phase 1: Coordinator creates a research plan (with fallback)
+    let plan = match plan_phase(ctx, &roles, &context, question.as_deref()).await {
+        Ok(plan) => plan,
+        Err(e) => {
+            warn!(error = %e, "Coordinator planning failed, using default plan");
+            default_plan(&roles, question.as_deref())
+        }
+    };
 
     ctx.broadcast(WsEvent::Council(CouncilEvent::PlanCreated {
         task_count: plan.tasks.len(),
@@ -71,9 +77,15 @@ pub async fn run_council<C: ToolContext + Clone + 'static>(
 
     let mut rounds = 1;
 
-    // Phase 3: Review + optional delta rounds
+    // Phase 3: Review + optional delta rounds (with fallback)
     for round in 0..MAX_COUNCIL_ROUNDS - 1 {
-        let review = review_phase(ctx, &findings_store).await?;
+        let review = match review_phase(ctx, &findings_store).await {
+            Ok(review) => review,
+            Err(e) => {
+                warn!(error = %e, "Coordinator review failed, skipping to synthesis");
+                break;
+            }
+        };
 
         ctx.broadcast(WsEvent::Council(CouncilEvent::ReviewComplete {
             consensus_count: review.consensus.len(),
@@ -401,21 +413,10 @@ async fn run_expert_task<C: ToolContext>(
 
                         // Use council-aware executor that handles store_finding
                         let tool_result =
-                            execute_tool_with_findings(ctx, tc, findings_store).await;
+                            execute_tool_with_findings(ctx, tc, findings_store, role_key)
+                                .await;
 
-                        // If this was store_finding, tag the finding with the role
                         if tc.function.name == "store_finding" {
-                            // The finding was added without a role; patch it
-                            let findings = findings_store.all();
-                            if let Some(last) = findings.last() {
-                                if last.role.is_empty() {
-                                    // We need to fix the role — get mutable access
-                                    // Since FindingsStore uses Mutex, we re-add with correct role
-                                    // Actually, let's fix this differently: patch in-place
-                                    patch_last_finding_role(findings_store, role_key);
-                                }
-                            }
-
                             ctx.broadcast(WsEvent::Council(CouncilEvent::FindingAdded {
                                 role: role_key.to_string(),
                                 topic: serde_json::from_str::<serde_json::Value>(
@@ -490,18 +491,6 @@ async fn run_expert_task<C: ToolContext>(
     .map_err(|_| format!("{} task timed out", role_key))??;
 
     Ok(())
-}
-
-/// Patch the role field of the last finding in the store.
-fn patch_last_finding_role(store: &Arc<FindingsStore>, role: &str) {
-    let mut findings = store.all();
-    if let Some(last) = findings.last_mut() {
-        if last.role.is_empty() {
-            // We need to rebuild — FindingsStore uses interior mutability
-            // The simplest approach: the store exposes a method for this
-            store.patch_last_role(role);
-        }
-    }
 }
 
 /// Parse the expert's final response for any findings not captured via store_finding.
@@ -663,9 +652,9 @@ async fn synthesize_phase<C: ToolContext>(
         Message::user(user_prompt),
     ];
 
-    let result = client
-        .chat(messages, None)
+    let result = timeout(COORDINATOR_TIMEOUT, client.chat(messages, None))
         .await
+        .map_err(|_| format!("Synthesis timed out after {}s", COORDINATOR_TIMEOUT.as_secs()))?
         .map_err(|e| format!("Synthesis LLM call failed: {}", e))?;
 
     record_llm_usage(
@@ -682,6 +671,37 @@ async fn synthesize_phase<C: ToolContext>(
     result
         .content
         .ok_or_else(|| "Synthesis returned empty response".to_string())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Fallback Plan
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Create a default plan when the coordinator LLM fails.
+/// Assigns each expert a generic task based on their role.
+fn default_plan(roles: &[ExpertRole], question: Option<&str>) -> ResearchPlan {
+    let goal = question
+        .map(|q| q.to_string())
+        .unwrap_or_else(|| "Analyze the provided context".to_string());
+
+    let tasks = roles
+        .iter()
+        .map(|role| ResearchTask {
+            role: role.db_key(),
+            task: format!(
+                "Analyze from the perspective of a {}: {}",
+                role.name(),
+                goal
+            ),
+            focus_areas: vec![],
+        })
+        .collect();
+
+    ResearchPlan {
+        goal,
+        tasks,
+        excluded_roles: vec![],
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -735,5 +755,26 @@ mod tests {
     #[test]
     fn test_max_council_rounds() {
         assert_eq!(MAX_COUNCIL_ROUNDS, 3);
+    }
+
+    #[test]
+    fn test_default_plan_with_question() {
+        let roles = vec![ExpertRole::Architect, ExpertRole::Security];
+        let plan = default_plan(&roles, Some("Is the auth secure?"));
+        assert_eq!(plan.goal, "Is the auth secure?");
+        assert_eq!(plan.tasks.len(), 2);
+        assert_eq!(plan.tasks[0].role, "architect");
+        assert_eq!(plan.tasks[1].role, "security");
+        assert!(plan.tasks[0].task.contains("Is the auth secure?"));
+        assert!(plan.excluded_roles.is_empty());
+    }
+
+    #[test]
+    fn test_default_plan_without_question() {
+        let roles = vec![ExpertRole::CodeReviewer];
+        let plan = default_plan(&roles, None);
+        assert_eq!(plan.goal, "Analyze the provided context");
+        assert_eq!(plan.tasks.len(), 1);
+        assert_eq!(plan.tasks[0].role, "code_reviewer");
     }
 }

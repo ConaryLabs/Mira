@@ -217,11 +217,12 @@ pub async fn execute_tool_with_findings<C: ToolContext>(
     ctx: &C,
     tool_call: &ToolCall,
     findings_store: &Arc<super::findings::FindingsStore>,
+    role_key: &str,
 ) -> String {
     if tool_call.function.name == "store_finding" {
         let args: Value =
             serde_json::from_str(&tool_call.function.arguments).unwrap_or(json!({}));
-        return execute_store_finding(&args, findings_store);
+        return execute_store_finding(&args, findings_store, role_key);
     }
     execute_tool(ctx, tool_call).await
 }
@@ -230,8 +231,9 @@ pub async fn execute_tool_with_findings<C: ToolContext>(
 fn execute_store_finding(
     args: &Value,
     store: &Arc<super::findings::FindingsStore>,
+    role: &str,
 ) -> String {
-    use super::findings::CouncilFinding;
+    use super::findings::{AddFindingResult, CouncilFinding};
 
     let topic = args["topic"].as_str().unwrap_or("").to_string();
     let content = args["content"].as_str().unwrap_or("").to_string();
@@ -251,7 +253,7 @@ fn execute_store_finding(
     }
 
     let finding = CouncilFinding {
-        role: String::new(), // filled in by the caller (run_expert_task sets this)
+        role: role.to_string(),
         topic,
         content,
         evidence,
@@ -259,10 +261,16 @@ fn execute_store_finding(
         recommendation,
     };
 
-    if store.add(finding) {
-        format!("Finding recorded ({} total)", store.count())
-    } else {
-        "Finding limit reached — focus on your most important findings".to_string()
+    match store.add(finding) {
+        AddFindingResult::Added { total } => format!("Finding recorded ({} total)", total),
+        AddFindingResult::RoleLimitReached { role_count } => format!(
+            "Your findings limit reached ({} stored). Focus on your most critical findings only.",
+            role_count
+        ),
+        AddFindingResult::GlobalLimitReached { total } => format!(
+            "Council findings limit reached ({} total). No more findings can be recorded.",
+            total
+        ),
     }
 }
 

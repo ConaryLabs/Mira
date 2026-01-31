@@ -205,6 +205,20 @@ pub async fn store_findings<C: ToolContext>(
 /// Maximum findings per council consultation (prevents runaway experts).
 const MAX_COUNCIL_FINDINGS: usize = 50;
 
+/// Maximum findings per expert role (prevents one expert from monopolizing the store).
+const MAX_FINDINGS_PER_ROLE: usize = 20;
+
+/// Result of attempting to add a finding to the store.
+#[derive(Debug)]
+pub enum AddFindingResult {
+    /// Finding was added successfully.
+    Added { total: usize },
+    /// This expert has hit their per-role limit.
+    RoleLimitReached { role_count: usize },
+    /// The global findings limit has been reached.
+    GlobalLimitReached { total: usize },
+}
+
 /// A structured finding emitted by an expert during a council consultation
 /// via the `store_finding` tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,17 +250,28 @@ impl FindingsStore {
         }
     }
 
-    /// Add a finding. Returns false if the store is full.
-    pub fn add(&self, finding: CouncilFinding) -> bool {
+    /// Add a finding. Returns the result indicating success or which limit was hit.
+    pub fn add(&self, finding: CouncilFinding) -> AddFindingResult {
         let mut findings = self.findings.lock().unwrap();
         if findings.len() >= MAX_COUNCIL_FINDINGS {
-            return false;
+            return AddFindingResult::GlobalLimitReached {
+                total: findings.len(),
+            };
+        }
+        if !finding.role.is_empty() {
+            let role_count = findings.iter().filter(|f| f.role == finding.role).count();
+            if role_count >= MAX_FINDINGS_PER_ROLE {
+                return AddFindingResult::RoleLimitReached { role_count };
+            }
         }
         findings.push(finding);
-        true
+        AddFindingResult::Added {
+            total: findings.len(),
+        }
     }
 
     /// Get all findings.
+    #[allow(dead_code)]
     pub fn all(&self) -> Vec<CouncilFinding> {
         self.findings.lock().unwrap().clone()
     }
@@ -306,16 +331,6 @@ impl FindingsStore {
         output
     }
 
-    /// Patch the role of the last finding (used to tag findings from store_finding tool).
-    pub fn patch_last_role(&self, role: &str) {
-        let mut findings = self.findings.lock().unwrap();
-        if let Some(last) = findings.last_mut() {
-            if last.role.is_empty() {
-                last.role = role.to_string();
-            }
-        }
-    }
-
     /// Rough token estimate for the findings (1 token ≈ 4 chars).
     #[allow(dead_code)]
     pub fn estimated_tokens(&self) -> usize {
@@ -350,7 +365,10 @@ mod tests {
     fn test_findings_store_add_and_count() {
         let store = FindingsStore::new();
         assert_eq!(store.count(), 0);
-        assert!(store.add(sample_finding("architect", "design")));
+        assert!(matches!(
+            store.add(sample_finding("architect", "design")),
+            AddFindingResult::Added { total: 1 }
+        ));
         assert_eq!(store.count(), 1);
     }
 
@@ -378,12 +396,41 @@ mod tests {
     #[test]
     fn test_findings_store_max_cap() {
         let store = FindingsStore::new();
+        // Use different roles to avoid per-role limit
         for i in 0..MAX_COUNCIL_FINDINGS {
-            assert!(store.add(sample_finding("test", &format!("topic_{}", i))));
+            let role = format!("role_{}", i % 10);
+            assert!(matches!(
+                store.add(sample_finding(&role, &format!("topic_{}", i))),
+                AddFindingResult::Added { .. }
+            ));
         }
-        // 51st should fail
-        assert!(!store.add(sample_finding("test", "overflow")));
+        // 51st should fail with global limit
+        assert!(matches!(
+            store.add(sample_finding("role_0", "overflow")),
+            AddFindingResult::GlobalLimitReached { .. }
+        ));
         assert_eq!(store.count(), MAX_COUNCIL_FINDINGS);
+    }
+
+    #[test]
+    fn test_findings_store_per_role_limit() {
+        let store = FindingsStore::new();
+        for i in 0..MAX_FINDINGS_PER_ROLE {
+            assert!(matches!(
+                store.add(sample_finding("architect", &format!("topic_{}", i))),
+                AddFindingResult::Added { .. }
+            ));
+        }
+        // Next finding from same role should be rejected
+        assert!(matches!(
+            store.add(sample_finding("architect", "one_too_many")),
+            AddFindingResult::RoleLimitReached { .. }
+        ));
+        // But a different role can still add
+        assert!(matches!(
+            store.add(sample_finding("security", "still_ok")),
+            AddFindingResult::Added { .. }
+        ));
     }
 
     #[test]
@@ -423,10 +470,12 @@ mod tests {
         let store = Arc::new(FindingsStore::new());
         let mut handles = vec![];
 
+        // Use different roles to avoid per-role limit
         for i in 0..10 {
             let store = Arc::clone(&store);
             handles.push(thread::spawn(move || {
-                store.add(sample_finding("test", &format!("topic_{}", i)));
+                let role = format!("role_{}", i % 5);
+                store.add(sample_finding(&role, &format!("topic_{}", i)));
             }));
         }
 
