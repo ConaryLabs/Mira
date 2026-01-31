@@ -47,6 +47,7 @@ pub async fn search_code<C: ToolContext>(
     let result = hybrid_search(
         ctx.code_pool(),
         ctx.embeddings(),
+        ctx.fuzzy_cache(),
         &query,
         project_id,
         project_path.as_deref(),
@@ -267,6 +268,9 @@ pub async fn index<C: ToolContext>(
                 indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
                     .await
                     .str_err()?;
+            if let Some(cache) = ctx.fuzzy_cache() {
+                cache.invalidate_code(project_id).await;
+            }
 
             let mut response = format!(
                 "Indexed {} files, {} symbols, {} chunks",

@@ -3,17 +3,27 @@
 
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
+use crate::fuzzy::FuzzyCache;
 use crate::search::hybrid_search;
 use std::sync::Arc;
 
 pub struct SemanticInjector {
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
+    fuzzy: Option<Arc<FuzzyCache>>,
 }
 
 impl SemanticInjector {
-    pub fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
-        Self { pool, embeddings }
+    pub fn new(
+        pool: Arc<DatabasePool>,
+        embeddings: Option<Arc<EmbeddingClient>>,
+        fuzzy: Option<Arc<FuzzyCache>>,
+    ) -> Self {
+        Self {
+            pool,
+            embeddings,
+            fuzzy,
+        }
     }
 
     /// Inject relevant context based on semantic similarity to user message
@@ -31,6 +41,7 @@ impl SemanticInjector {
         let result = hybrid_search(
             &self.pool,
             self.embeddings.as_ref(),
+            self.fuzzy.as_ref(),
             user_message,
             project_id,
             project_path,

@@ -153,6 +153,10 @@ pub async fn remember<C: ToolContext>(
         }
     }
 
+    if let Some(cache) = ctx.fuzzy_cache() {
+        cache.invalidate_memory(project_id).await;
+    }
+
     Ok(format!(
         "Stored memory (id: {}){}",
         id,
@@ -247,6 +251,54 @@ pub async fn recall<C: ToolContext>(
         }
     }
 
+    // Fall back to fuzzy search if enabled
+    if let Some(cache) = ctx.fuzzy_cache() {
+        if let Ok(results) = cache
+            .search_memories(ctx.pool(), project_id, user_id.as_deref(), &query, limit)
+            .await
+        {
+            if !results.is_empty() {
+                // Record memory access for evidence-based tracking
+                if let Some(ref sid) = session_id {
+                    let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
+                    let pool_clone = ctx.pool().clone();
+                    let sid_clone = sid.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = pool_clone
+                            .interact(move |conn| {
+                                for id in ids {
+                                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone)
+                                    {
+                                        tracing::debug!("Failed to record memory access: {}", e);
+                                    }
+                                }
+                                Ok::<_, anyhow::Error>(())
+                            })
+                            .await
+                        {
+                            tracing::debug!("Failed to record memory access (pool error): {}", e);
+                        }
+                    });
+                }
+
+                let mut response =
+                    format!("{}Found {} memories (fuzzy):\n", context_header, results.len());
+                for mem in results {
+                    let preview = if mem.content.len() > 100 {
+                        format!("{}...", &mem.content[..100])
+                    } else {
+                        mem.content.clone()
+                    };
+                    response.push_str(&format!(
+                        "  [{}] ({}) {}\n",
+                        mem.id, mem.fact_type, preview
+                    ));
+                }
+                return Ok(response);
+            }
+        }
+    }
+
     // Fall back to SQL search via connection pool
     let query_clone = query.clone();
     let user_id_clone = user_id.clone();
@@ -319,6 +371,10 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, Strin
         .await?;
 
     if deleted {
+        if let Some(cache) = ctx.fuzzy_cache() {
+            let project_id = ctx.project_id().await;
+            cache.invalidate_memory(project_id).await;
+        }
         Ok(format!("Memory {} deleted.", id))
     } else {
         Ok(format!("Memory {} not found.", id))

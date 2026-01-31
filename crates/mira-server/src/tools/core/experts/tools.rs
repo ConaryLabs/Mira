@@ -329,8 +329,9 @@ async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize)
     let project_path = project.as_ref().map(|p| p.path.clone());
 
     match hybrid_search(
-        ctx.pool(),
+        ctx.code_pool(),
         ctx.embeddings(),
+        ctx.fuzzy_cache(),
         query,
         project_id,
         project_path.as_deref(),

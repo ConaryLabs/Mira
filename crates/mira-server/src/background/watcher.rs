@@ -10,6 +10,7 @@ use crate::db::{
     insert_code_fts_entry_sync, insert_import_sync, insert_symbol_sync,
     queue_pending_embedding_sync,
 };
+use crate::fuzzy::FuzzyCache;
 use crate::indexer;
 use crate::utils::ResultExt;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -28,6 +29,7 @@ const DEBOUNCE_MS: u64 = 500;
 /// File watcher manages watching multiple project directories
 pub struct FileWatcher {
     pool: Arc<DatabasePool>,
+    fuzzy_cache: Option<Arc<FuzzyCache>>,
     /// Map of project_id -> project_path for active watches
     watched_projects: Arc<RwLock<HashMap<i64, PathBuf>>>,
     /// Pending file changes (debounced)
@@ -47,11 +49,13 @@ pub enum ChangeType {
 impl FileWatcher {
     pub fn new(
         pool: Arc<DatabasePool>,
+        fuzzy_cache: Option<Arc<FuzzyCache>>,
         shutdown: watch::Receiver<bool>,
         fast_lane_notify: Option<FastLaneNotify>,
     ) -> Self {
         Self {
             pool,
+            fuzzy_cache,
             watched_projects: Arc::new(RwLock::new(HashMap::new())),
             pending_changes: Arc::new(RwLock::new(HashMap::new())),
             shutdown,
@@ -303,7 +307,7 @@ impl FileWatcher {
     /// Delete all data associated with a file (runs on pool connection)
     async fn delete_file_data(&self, project_id: i64, file_path: &str) -> Result<(), String> {
         let file_path = file_path.to_string();
-        self.pool
+        let result = self.pool
             .interact(move |conn| -> Result<(), anyhow::Error> {
                 clear_file_index_sync(conn, project_id, &file_path)?;
                 tracing::debug!(
@@ -314,7 +318,13 @@ impl FileWatcher {
                 Ok(())
             })
             .await
-            .str_err()
+            .str_err();
+        if result.is_ok() {
+            if let Some(cache) = self.fuzzy_cache.as_ref() {
+                cache.invalidate_code(Some(project_id)).await;
+            }
+        }
+        result
     }
 
     /// Update a file (re-parse and queue embeddings) - runs DB ops on pool connection
@@ -411,6 +421,10 @@ impl FileWatcher {
             .await
             .str_err()?;
 
+        if let Some(cache) = self.fuzzy_cache.as_ref() {
+            cache.invalidate_code(Some(project_id)).await;
+        }
+
         // Wake fast lane worker to process new embeddings immediately
         if let Some(ref notify) = self.fast_lane_notify {
             notify.wake();
@@ -458,6 +472,7 @@ impl WatcherHandle {
 /// Spawn the file watcher and return a handle for registering projects
 pub fn spawn(
     pool: Arc<DatabasePool>,
+    fuzzy_cache: Option<Arc<FuzzyCache>>,
     shutdown: watch::Receiver<bool>,
     fast_lane_notify: Option<FastLaneNotify>,
 ) -> WatcherHandle {
@@ -468,6 +483,7 @@ pub fn spawn(
 
     let watcher = FileWatcher {
         pool,
+        fuzzy_cache,
         watched_projects,
         pending_changes: Arc::new(RwLock::new(HashMap::new())),
         shutdown,

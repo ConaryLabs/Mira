@@ -15,6 +15,7 @@ Mira uses environment variables for API keys and configuration. These can be set
 | `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, capabilities, documentation (default provider) |
 | `GEMINI_API_KEY` | Recommended | For embeddings (semantic search) and as alternative expert provider |
 | `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `gemini` |
+| `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
 | `MIRA_USER_ID` | Optional | User identity override (defaults to git config user.email) |
 
 *At least one provider key (DeepSeek or Gemini) is required for intelligence features. DeepSeek is the default. Mira runs without any keys but with reduced functionality (no experts, no summaries, no semantic search).

@@ -15,6 +15,7 @@ use crate::background::watcher::WatcherHandle;
 use crate::config::ApiKeys;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
+use crate::fuzzy::FuzzyCache;
 use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
 use crate::llm::ProviderFactory;
 use mira_types::ProjectContext;
@@ -55,6 +56,10 @@ pub struct MiraServer {
     pub pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>,
     /// MCP client manager for connecting to external MCP servers (expert tool access)
     pub mcp_client_manager: Option<Arc<McpClientManager>>,
+    /// Fuzzy fallback cache for non-embedding searches
+    pub fuzzy_cache: Arc<FuzzyCache>,
+    /// Whether fuzzy fallback is enabled
+    pub fuzzy_enabled: bool,
     tool_router: ToolRouter<Self>,
 }
 
@@ -65,6 +70,7 @@ impl MiraServer {
         code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
         api_keys: &ApiKeys,
+        fuzzy_enabled: bool,
     ) -> Self {
         // Create provider factory from pre-loaded keys
         let llm_factory = Arc::new(ProviderFactory::from_api_keys(api_keys.clone()));
@@ -81,6 +87,8 @@ impl MiraServer {
             watcher: None,
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
             mcp_client_manager: None,
+            fuzzy_cache: Arc::new(FuzzyCache::new()),
+            fuzzy_enabled,
             tool_router: Self::tool_router(),
         }
     }
@@ -90,7 +98,7 @@ impl MiraServer {
         code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
     ) -> Self {
-        Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env())
+        Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env(), true)
     }
 
     /// Auto-initialize project from Claude's cwd if not already set or mismatched

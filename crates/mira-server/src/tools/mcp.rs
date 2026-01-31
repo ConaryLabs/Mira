@@ -25,6 +25,14 @@ impl ToolContext for MiraServer {
         self.embeddings.as_ref()
     }
 
+    fn fuzzy_cache(&self) -> Option<&Arc<crate::fuzzy::FuzzyCache>> {
+        if self.fuzzy_enabled {
+            Some(&self.fuzzy_cache)
+        } else {
+            None
+        }
+    }
+
     fn llm_factory(&self) -> &crate::llm::ProviderFactory {
         &self.llm_factory
     }

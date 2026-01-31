@@ -8,6 +8,7 @@ use crate::Result;
 use crate::db::pool::DatabasePool;
 use crate::db::semantic_code_search_sync;
 use crate::embeddings::EmbeddingClient;
+use crate::fuzzy::FuzzyCache;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub struct SearchResult {
 pub enum SearchType {
     Semantic,
     Keyword,
+    Fuzzy,
 }
 
 impl std::fmt::Display for SearchType {
@@ -33,6 +35,7 @@ impl std::fmt::Display for SearchType {
         match self {
             SearchType::Semantic => write!(f, "semantic"),
             SearchType::Keyword => write!(f, "keyword"),
+            SearchType::Fuzzy => write!(f, "fuzzy"),
         }
     }
 }
@@ -236,6 +239,7 @@ fn rerank_results_with_intent(
 fn merge_results(
     semantic_results: Vec<SearchResult>,
     keyword_results: Vec<SearchResult>,
+    fuzzy_results: Vec<SearchResult>,
 ) -> (Vec<SearchResult>, SearchType) {
     // Use HashMap for deduplication by (file_path, start_line)
     let mut merged: HashMap<(String, u32), SearchResult> = HashMap::new();
@@ -243,6 +247,7 @@ fn merge_results(
     // Track which search type contributed more
     let semantic_count = semantic_results.len();
     let keyword_count = keyword_results.len();
+    let fuzzy_count = fuzzy_results.len();
 
     // Add semantic results first
     for result in semantic_results {
@@ -263,6 +268,18 @@ fn merge_results(
             .or_insert(result);
     }
 
+    for result in fuzzy_results {
+        let key = (result.file_path.clone(), result.start_line);
+        merged
+            .entry(key)
+            .and_modify(|existing| {
+                if result.score > existing.score {
+                    *existing = result.clone();
+                }
+            })
+            .or_insert(result);
+    }
+
     // Convert to vec and sort by score descending
     let mut results: Vec<SearchResult> = merged.into_values().collect();
     results.sort_by(|a, b| {
@@ -272,8 +289,12 @@ fn merge_results(
     });
 
     // Determine primary search type based on contribution
-    let search_type = if semantic_count >= keyword_count && semantic_count > 0 {
+    let search_type = if semantic_count >= keyword_count && semantic_count >= fuzzy_count
+        && semantic_count > 0
+    {
         SearchType::Semantic
+    } else if fuzzy_count > keyword_count && fuzzy_count > 0 {
+        SearchType::Fuzzy
     } else {
         SearchType::Keyword
     };
@@ -286,6 +307,7 @@ fn merge_results(
 pub async fn hybrid_search(
     pool: &Arc<DatabasePool>,
     embeddings: Option<&Arc<EmbeddingClient>>,
+    fuzzy: Option<&Arc<FuzzyCache>>,
     query: &str,
     project_id: Option<i64>,
     project_path: Option<&str>,
@@ -317,7 +339,7 @@ pub async fn hybrid_search(
     };
 
     // Run searches in parallel
-    let (semantic_results, keyword_results) = if let Some(emb) = embeddings {
+    let (semantic_results, keyword_results, fuzzy_results) = if let Some(emb) = embeddings {
         let emb = emb.clone();
         let pool_for_semantic = pool.clone();
         let query_for_semantic = query.to_string();
@@ -341,11 +363,22 @@ pub async fn hybrid_search(
             Vec::new()
         });
 
-        (semantic, keyword_res)
+        (semantic, keyword_res, Vec::new())
     } else {
-        // No embeddings available, keyword only
+        // No embeddings available, keyword + fuzzy fallback if enabled
         let keyword_res = keyword_future.await;
-        (Vec::new(), keyword_res)
+        let fuzzy_res = if let Some(cache) = fuzzy {
+            cache
+                .search_code(pool, project_id, query, fetch_limit)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Fuzzy search failed, using keyword only: {}", e);
+                    Vec::new()
+                })
+        } else {
+            Vec::new()
+        };
+        (Vec::new(), keyword_res, fuzzy_res)
     };
 
     // Convert keyword results to SearchResult
@@ -359,14 +392,26 @@ pub async fn hybrid_search(
         })
         .collect();
 
+    let fuzzy_results: Vec<SearchResult> = fuzzy_results
+        .into_iter()
+        .map(|r| SearchResult {
+            file_path: r.file_path,
+            content: r.content,
+            score: r.score,
+            start_line: r.start_line,
+        })
+        .collect();
+
     tracing::debug!(
-        "Hybrid search: {} semantic, {} keyword results before merge",
+        "Hybrid search: {} semantic, {} keyword, {} fuzzy results before merge",
         semantic_results.len(),
-        keyword_results.len()
+        keyword_results.len(),
+        fuzzy_results.len()
     );
 
     // Merge and deduplicate results
-    let (mut results, search_type) = merge_results(semantic_results, keyword_results);
+    let (mut results, search_type) =
+        merge_results(semantic_results, keyword_results, fuzzy_results);
 
     // Apply intent-based reranking
     let intent = detect_query_intent(query);
@@ -451,13 +496,17 @@ mod tests {
     fn test_search_type_display() {
         assert_eq!(format!("{}", SearchType::Semantic), "semantic");
         assert_eq!(format!("{}", SearchType::Keyword), "keyword");
+        assert_eq!(format!("{}", SearchType::Fuzzy), "fuzzy");
     }
 
     #[test]
     fn test_search_type_equality() {
         assert_eq!(SearchType::Semantic, SearchType::Semantic);
         assert_eq!(SearchType::Keyword, SearchType::Keyword);
+        assert_eq!(SearchType::Fuzzy, SearchType::Fuzzy);
         assert_ne!(SearchType::Semantic, SearchType::Keyword);
+        assert_ne!(SearchType::Semantic, SearchType::Fuzzy);
+        assert_ne!(SearchType::Keyword, SearchType::Fuzzy);
     }
 
     // ============================================================================
@@ -549,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_merge_results_empty() {
-        let (results, search_type) = merge_results(vec![], vec![]);
+        let (results, search_type) = merge_results(vec![], vec![], vec![]);
         assert!(results.is_empty());
         assert_eq!(search_type, SearchType::Keyword);
     }
@@ -562,7 +611,7 @@ mod tests {
             score: 0.9,
             start_line: 1,
         }];
-        let (results, search_type) = merge_results(semantic, vec![]);
+        let (results, search_type) = merge_results(semantic, vec![], vec![]);
         assert_eq!(results.len(), 1);
         assert_eq!(search_type, SearchType::Semantic);
     }
@@ -575,7 +624,7 @@ mod tests {
             score: 0.8,
             start_line: 10,
         }];
-        let (results, search_type) = merge_results(vec![], keyword);
+        let (results, search_type) = merge_results(vec![], keyword, vec![]);
         assert_eq!(results.len(), 1);
         assert_eq!(search_type, SearchType::Keyword);
     }
@@ -594,7 +643,7 @@ mod tests {
             score: 0.7,
             start_line: 1,
         }];
-        let (results, _) = merge_results(semantic, keyword);
+        let (results, _) = merge_results(semantic, keyword, vec![]);
         assert_eq!(results.len(), 1);
         // Should keep higher score
         assert_eq!(results[0].score, 0.9);
@@ -614,7 +663,7 @@ mod tests {
             score: 0.95,
             start_line: 1,
         }];
-        let (results, _) = merge_results(semantic, keyword);
+        let (results, _) = merge_results(semantic, keyword, vec![]);
         assert_eq!(results.len(), 2);
         assert!(results[0].score > results[1].score);
         assert_eq!(results[0].file_path, "src/high.rs");

@@ -211,6 +211,8 @@ pub struct EnvConfig {
     pub default_provider: Option<String>,
     /// User identity override (MIRA_USER_ID)
     pub user_id: Option<String>,
+    /// Enable fuzzy fallback search when embeddings are unavailable (MIRA_FUZZY_FALLBACK)
+    pub fuzzy_fallback: bool,
 }
 
 impl EnvConfig {
@@ -225,6 +227,7 @@ impl EnvConfig {
                 .ok()
                 .filter(|s| !s.is_empty()),
             user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
+            fuzzy_fallback: parse_bool_env("MIRA_FUZZY_FALLBACK").unwrap_or(true),
         }
     }
 
@@ -257,6 +260,15 @@ impl EnvConfig {
         }
 
         validation
+    }
+}
+
+fn parse_bool_env(name: &str) -> Option<bool> {
+    let value = std::env::var(name).ok()?.to_lowercase();
+    match value.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 
@@ -298,6 +310,7 @@ mod tests {
             embeddings: EmbeddingsConfig::default(),
             default_provider: None,
             user_id: None,
+            fuzzy_fallback: true,
         };
 
         let validation = config.validate();

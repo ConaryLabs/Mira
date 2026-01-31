@@ -13,6 +13,7 @@ use tokio::sync::{RwLock, oneshot};
 use crate::background::watcher::WatcherHandle;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
+use crate::fuzzy::FuzzyCache;
 use crate::llm::ProviderFactory;
 
 /// Information about an MCP tool
@@ -37,6 +38,11 @@ pub trait ToolContext: Send + Sync {
 
     /// Embeddings client for semantic search (optional)
     fn embeddings(&self) -> Option<&Arc<EmbeddingClient>>;
+
+    /// Fuzzy fallback cache for non-embedding searches (optional)
+    fn fuzzy_cache(&self) -> Option<&Arc<FuzzyCache>> {
+        None
+    }
 
     /// LLM provider factory for multi-provider support
     fn llm_factory(&self) -> &ProviderFactory;

@@ -4,6 +4,7 @@
 use crate::db::pool::DatabasePool;
 use crate::db::{get_or_create_project_sync, get_server_state_sync};
 use crate::embeddings::EmbeddingClient;
+use crate::fuzzy::FuzzyCache;
 use std::sync::Arc;
 
 mod analytics;
@@ -107,13 +108,17 @@ pub struct ContextInjectionManager {
 }
 
 impl ContextInjectionManager {
-    pub async fn new(pool: Arc<DatabasePool>, embeddings: Option<Arc<EmbeddingClient>>) -> Self {
+    pub async fn new(
+        pool: Arc<DatabasePool>,
+        embeddings: Option<Arc<EmbeddingClient>>,
+        fuzzy: Option<Arc<FuzzyCache>>,
+    ) -> Self {
         // Load config from database
         let config = InjectionConfig::load(&pool).await.unwrap_or_default();
 
         Self {
             pool: pool.clone(),
-            semantic_injector: SemanticInjector::new(pool.clone(), embeddings),
+            semantic_injector: SemanticInjector::new(pool.clone(), embeddings, fuzzy),
             file_injector: FileAwareInjector::new(pool.clone()),
             goal_injector: GoalAwareInjector::new(pool.clone()),
             budget_manager: BudgetManager::with_limit(config.max_chars),

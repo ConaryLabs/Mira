@@ -110,8 +110,13 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     );
 
     // Create server context from centralized config
-    let mut server =
-        MiraServer::from_api_keys(pool.clone(), code_pool, embeddings, &env_config.api_keys);
+    let mut server = MiraServer::from_api_keys(
+        pool.clone(),
+        code_pool,
+        embeddings,
+        &env_config.api_keys,
+        env_config.fuzzy_fallback,
+    );
 
     // Initialize MCP client manager for external MCP server access (expert tools)
     let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
@@ -226,18 +231,24 @@ pub async fn run_mcp_server() -> Result<()> {
     );
     info!("Background worker started");
 
+    // Create MCP server with watcher from centralized config
+    let mut server = MiraServer::from_api_keys(
+        pool.clone(),
+        code_pool,
+        embeddings,
+        &env_config.api_keys,
+        env_config.fuzzy_fallback,
+    );
+
     // Spawn file watcher for incremental indexing (uses code_pool)
     let (_watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
     let watcher_handle = background::watcher::spawn(
-        code_pool.clone(),
+        server.code_pool.clone(),
+        Some(server.fuzzy_cache.clone()),
         watcher_shutdown_rx,
         Some(fast_lane_notify),
     );
     info!("File watcher started");
-
-    // Create MCP server with watcher from centralized config
-    let mut server =
-        MiraServer::from_api_keys(pool.clone(), code_pool, embeddings, &env_config.api_keys);
     server.watcher = Some(watcher_handle);
 
     // Initialize MCP client manager for external MCP server access (expert tools)

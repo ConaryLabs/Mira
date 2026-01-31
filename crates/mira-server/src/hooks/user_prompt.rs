@@ -2,8 +2,10 @@
 // UserPromptSubmit hook handler for proactive context injection
 
 use crate::background::proactive::get_pre_generated_suggestions;
+use crate::config::EnvConfig;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
+use crate::fuzzy::FuzzyCache;
 use crate::hooks::{read_hook_input, write_hook_output};
 use crate::proactive::{behavior::BehaviorTracker, predictor};
 use anyhow::Result;
@@ -49,8 +51,15 @@ pub async fn run() -> Result<()> {
     // Open database and create context injection manager
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(std::path::Path::new(&db_path)).await?);
+    let env_config = EnvConfig::load();
     let embeddings = get_embeddings(Some(pool.clone()));
-    let manager = crate::context::ContextInjectionManager::new(pool.clone(), embeddings).await;
+    let fuzzy = if env_config.fuzzy_fallback {
+        Some(Arc::new(FuzzyCache::new()))
+    } else {
+        None
+    };
+    let manager =
+        crate::context::ContextInjectionManager::new(pool.clone(), embeddings, fuzzy).await;
 
     // Get project ID for proactive features
     let project_id: Option<i64> = {
