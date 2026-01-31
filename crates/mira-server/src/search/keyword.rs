@@ -1,15 +1,45 @@
 // crates/mira-server/src/search/keyword.rs
 // FTS5-powered keyword search for code
 
-use crate::db::{chunk_like_search_sync, fts_search_sync, symbol_like_search_sync};
+use crate::db::{
+    SymbolSearchResult, chunk_like_search_sync, fts_search_sync, symbol_like_search_sync,
+};
 use rusqlite::Connection;
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Result from keyword search: (file_path, content, score, start_line)
 pub type KeywordResult = (String, String, f32, i64);
 
-/// FTS5-powered keyword search
-/// Uses SQLite full-text search for fast, accurate keyword matching
+/// Score boost for results with proximity matches (20%)
+const PROXIMITY_BOOST: f32 = 1.2;
+
+/// FTS5 query plan with strict (AND), relaxed (OR), and proximity (NEAR) variants
+#[derive(Debug)]
+struct FtsQueryPlan {
+    /// AND query — all terms must match (tried first)
+    strict: String,
+    /// OR query — any term can match (fallback if AND yields nothing)
+    relaxed: Option<String>,
+    /// NEAR query — terms within 10 tokens of each other (for boosting)
+    proximity: Option<String>,
+}
+
+impl FtsQueryPlan {
+    fn is_empty(&self) -> bool {
+        self.strict.is_empty()
+    }
+}
+
+/// FTS5-powered keyword search with unified scoring and tree-guided scoping
+///
+/// Runs three search strategies and merges results:
+/// 1. FTS5 full-text search (AND-first, OR fallback)
+/// 2. Symbol name matching (always runs alongside FTS5)
+/// 3. LIKE chunk search (supplements if results are sparse)
+///
+/// When the cartographer module tree is available, results in relevant
+/// module subtrees receive a score boost, pushing them above unrelated matches.
 pub fn keyword_search(
     conn: &Connection,
     query: &str,
@@ -17,60 +47,175 @@ pub fn keyword_search(
     project_path: Option<&str>,
     limit: usize,
 ) -> Vec<KeywordResult> {
-    // Clean query for FTS5 - escape special characters and build search terms
-    let fts_query = build_fts_query(query);
-    if fts_query.is_empty() {
+    let plan = build_fts_query(query);
+    if plan.is_empty() {
         return Vec::new();
     }
 
-    // Try FTS5 search first
-    let fts_results = fts5_search(conn, &fts_query, project_id, limit);
-    if !fts_results.is_empty() {
-        return fts_results;
+    // Tree-guided scope: score modules to identify relevant subtrees
+    let scope_paths = project_id.and_then(|pid| {
+        super::tree::narrow_by_modules(conn, query, pid)
+    });
+    let has_scope = scope_paths.is_some();
+
+    // Over-fetch when scoping so we have enough results after boosting/sorting
+    let fetch_limit = if has_scope { limit * 3 } else { limit };
+
+    let mut all_results: Vec<KeywordResult> = Vec::new();
+
+    // Strategy 1: FTS5 search — try AND (strict) first, fall back to OR (relaxed)
+    let fts_results = fts5_search(conn, &plan.strict, project_id, fetch_limit);
+    if fts_results.is_empty() {
+        if let Some(ref relaxed) = plan.relaxed {
+            all_results.extend(fts5_search(conn, relaxed, project_id, fetch_limit));
+        }
+    } else {
+        all_results.extend(fts_results);
     }
 
-    // Fallback to LIKE search if FTS5 fails or returns no results
-    // This handles edge cases and ensures we always return something if possible
-    like_search(conn, query, project_id, project_path, limit)
+    // Strategy 2: Symbol name search (always runs, not just as fallback)
+    if let Some(pid) = project_id {
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        if !terms.is_empty() {
+            let like_patterns: Vec<String> = terms
+                .iter()
+                .map(|t| format!("%{}%", t.to_lowercase()))
+                .collect();
+            let symbol_results = symbol_like_search_sync(conn, &like_patterns, pid, fetch_limit);
+            for sym in symbol_results {
+                let content = read_symbol_content(&sym, project_path);
+                let score = score_symbol_match(&sym.name, query);
+                all_results.push((sym.file_path, content, score, sym.start_line));
+            }
+        }
+    }
+
+    // Strategy 3: LIKE chunk search (supplement when results are sparse)
+    if all_results.len() < fetch_limit {
+        if let Some(pid) = project_id {
+            let terms: Vec<&str> = query.split_whitespace().collect();
+            if !terms.is_empty() {
+                let like_patterns: Vec<String> = terms
+                    .iter()
+                    .map(|t| format!("%{}%", t.to_lowercase()))
+                    .collect();
+                let remaining = fetch_limit - all_results.len();
+                let chunk_results =
+                    chunk_like_search_sync(conn, &like_patterns, pid, remaining);
+                for chunk in chunk_results {
+                    let start_line = chunk.start_line.unwrap_or(0);
+                    all_results.push((
+                        chunk.file_path,
+                        chunk.chunk_content,
+                        0.4,
+                        start_line,
+                    ));
+                }
+            }
+        }
+    }
+
+    // Apply tree scope boost: results in relevant module subtrees get higher scores
+    if let Some(ref paths) = scope_paths {
+        for result in &mut all_results {
+            if super::tree::path_in_scope(&result.0, paths) {
+                result.2 *= super::tree::SCOPE_BOOST;
+            }
+        }
+    }
+
+    // Apply proximity boost: results where terms appear near each other score higher
+    if let Some(ref near_query) = plan.proximity {
+        let proximity_hits = fts5_search(conn, near_query, project_id, fetch_limit);
+        if !proximity_hits.is_empty() {
+            // Build a set of (file_path, start_line) that have proximity matches
+            let near_set: std::collections::HashSet<(String, i64)> = proximity_hits
+                .iter()
+                .map(|r| (r.0.clone(), r.3))
+                .collect();
+            for result in &mut all_results {
+                if near_set.contains(&(result.0.clone(), result.3)) {
+                    result.2 *= PROXIMITY_BOOST;
+                }
+            }
+        }
+    }
+
+    // Deduplicate by (file_path, start_line), keep highest score, sort, truncate
+    dedup_and_sort(all_results, limit)
 }
 
-/// Build FTS5 query from user input
-/// Handles special characters and builds proper FTS5 syntax
-fn build_fts_query(query: &str) -> String {
-    // Split into terms
+/// Build FTS5 query plan from user input
+///
+/// For single terms: prefix match (no AND/OR distinction).
+/// For multiple terms: AND query (strict) with OR fallback (relaxed).
+/// FTS5 implicit AND = space-separated terms. Explicit OR = "term1 OR term2".
+fn build_fts_query(query: &str) -> FtsQueryPlan {
     let terms: Vec<&str> = query.split_whitespace().filter(|t| !t.is_empty()).collect();
 
     if terms.is_empty() {
-        return String::new();
+        return FtsQueryPlan {
+            strict: String::new(),
+            relaxed: None,
+            proximity: None,
+        };
     }
 
-    // For single terms, use prefix matching
-    if terms.len() == 1 {
-        let term = terms[0];
-        // Escape special FTS5 characters and add prefix match
-        let cleaned = escape_fts_term(term);
-        if cleaned.is_empty() {
-            return String::new();
-        }
-        return format!("{}*", cleaned);
+    // Clean all terms, adding prefix match on the last one
+    let cleaned: Vec<String> = terms
+        .iter()
+        .enumerate()
+        .filter_map(|(i, term)| {
+            let c = escape_fts_term(term);
+            if c.is_empty() {
+                return None;
+            }
+            if i == terms.len() - 1 {
+                Some(format!("{}*", c))
+            } else {
+                Some(c)
+            }
+        })
+        .collect();
+
+    if cleaned.is_empty() {
+        return FtsQueryPlan {
+            strict: String::new(),
+            relaxed: None,
+            proximity: None,
+        };
     }
 
-    // For multiple terms, use OR matching with prefix on last term
-    let mut query_parts: Vec<String> = Vec::new();
-    for (i, term) in terms.iter().enumerate() {
-        let cleaned = escape_fts_term(term);
-        if cleaned.is_empty() {
-            continue;
-        }
-        if i == terms.len() - 1 {
-            // Prefix match on last term for partial matching
-            query_parts.push(format!("{}*", cleaned));
-        } else {
-            query_parts.push(cleaned);
-        }
+    // Single term — no AND vs OR distinction, no proximity
+    if cleaned.len() == 1 {
+        return FtsQueryPlan {
+            strict: cleaned[0].clone(),
+            relaxed: None,
+            proximity: None,
+        };
     }
 
-    query_parts.join(" OR ")
+    // Build NEAR query for proximity boosting (terms without prefix *)
+    // FTS5 NEAR syntax: NEAR(term1 term2, distance)
+    let near_terms: Vec<String> = terms
+        .iter()
+        .filter_map(|term| {
+            let c = escape_fts_term(term);
+            if c.is_empty() { None } else { Some(c) }
+        })
+        .collect();
+    let proximity = if near_terms.len() >= 2 {
+        Some(format!("NEAR({}, 10)", near_terms.join(" ")))
+    } else {
+        None
+    };
+
+    // Multiple terms: space-separated = implicit AND in FTS5
+    FtsQueryPlan {
+        strict: cleaned.join(" "),
+        relaxed: Some(cleaned.join(" OR ")),
+        proximity,
+    }
 }
 
 /// Escape special FTS5 characters
@@ -105,84 +250,83 @@ fn fts5_search(
         .collect()
 }
 
-/// Fallback LIKE-based search (when FTS5 fails or for edge cases)
-fn like_search(
-    conn: &Connection,
-    query: &str,
-    project_id: Option<i64>,
-    project_path: Option<&str>,
-    limit: usize,
-) -> Vec<KeywordResult> {
-    let mut results = Vec::new();
+/// Read a symbol's source code from the filesystem, falling back to signature/name
+fn read_symbol_content(sym: &SymbolSearchResult, project_path: Option<&str>) -> String {
+    if let Some(proj_path) = project_path {
+        let full_path = Path::new(proj_path).join(&sym.file_path);
+        if let Ok(file_content) = std::fs::read_to_string(&full_path) {
+            let lines: Vec<&str> = file_content.lines().collect();
+            let start_idx = (sym.start_line as usize).saturating_sub(1).min(lines.len());
+            let end_idx = (sym.end_line as usize).min(lines.len());
+            if start_idx < end_idx {
+                return lines[start_idx..end_idx].join("\n");
+            }
+        }
+    }
+    sym.signature.clone().unwrap_or_else(|| sym.name.clone())
+}
 
-    // Split query into terms for flexible matching
-    let terms: Vec<&str> = query.split_whitespace().collect();
-    if terms.is_empty() {
-        return results;
+/// Score a symbol name match against the query
+///
+/// Returns 0.0–1.0 based on match quality:
+/// - 0.95: exact match (query maps directly to symbol name)
+/// - 0.85: symbol name contains the full query as substring
+/// - 0.75: all query terms appear in the symbol name
+/// - 0.55–0.70: partial term matches (scaled by fraction matched)
+fn score_symbol_match(symbol_name: &str, query: &str) -> f32 {
+    let name_lower = symbol_name.to_lowercase();
+    let query_lower = query.to_lowercase();
+    let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+
+    // Exact match: query with spaces replaced by _ or concatenated matches name
+    let query_snake = query_lower.replace(' ', "_");
+    let query_concat = query_lower.replace(' ', "");
+    if name_lower == query_snake || name_lower == query_concat {
+        return 0.95;
     }
 
-    // Build LIKE patterns
-    let like_patterns: Vec<String> = terms
+    // Substring: symbol name contains the full query form
+    if name_lower.contains(&query_snake) || name_lower.contains(&query_concat) {
+        return 0.85;
+    }
+
+    // Count how many query terms appear in the symbol name
+    let matches = query_terms
         .iter()
-        .map(|t| format!("%{}%", t.to_lowercase()))
-        .collect();
-
-    // Search vec_code chunk_content
-    if let Some(pid) = project_id {
-        let chunk_results = chunk_like_search_sync(conn, &like_patterns, pid, limit);
-        for chunk in chunk_results {
-            let start_line = chunk.start_line.unwrap_or(0);
-            // Avoid duplicates
-            if !results
-                .iter()
-                .any(|(f, c, _, _)| f == &chunk.file_path && c == &chunk.chunk_content)
-            {
-                results.push((chunk.file_path, chunk.chunk_content, 0.5, start_line));
-            }
-            if results.len() >= limit {
-                break;
-            }
-        }
+        .filter(|t| name_lower.contains(**t))
+        .count();
+    if matches == query_terms.len() && !query_terms.is_empty() {
+        return 0.75;
     }
 
-    // Also search symbol names for direct matches
-    if let Some(pid) = project_id {
-        let symbol_results = symbol_like_search_sync(conn, &like_patterns, pid, limit);
-        for sym in symbol_results {
-            // Try to read the actual code from file
-            let content = if let Some(proj_path) = project_path {
-                let full_path = Path::new(proj_path).join(&sym.file_path);
-                if let Ok(file_content) = std::fs::read_to_string(&full_path) {
-                    let lines: Vec<&str> = file_content.lines().collect();
-                    let start_idx = (sym.start_line as usize).saturating_sub(1).min(lines.len());
-                    let end_idx = (sym.end_line as usize).min(lines.len());
-                    if start_idx < end_idx {
-                        lines[start_idx..end_idx].join("\n")
-                    } else {
-                        sym.signature.clone().unwrap_or_else(|| sym.name.clone())
-                    }
-                } else {
-                    sym.signature.clone().unwrap_or_else(|| sym.name.clone())
+    // Partial: scale by fraction of terms matched
+    if matches > 0 {
+        return 0.55 + (0.15 * matches as f32 / query_terms.len().max(1) as f32);
+    }
+
+    // Matched by LIKE but no direct term overlap (e.g. substring of a term)
+    0.50
+}
+
+/// Deduplicate results by (file_path, start_line), keep highest score, sort descending
+fn dedup_and_sort(results: Vec<KeywordResult>, limit: usize) -> Vec<KeywordResult> {
+    let mut best: HashMap<(String, i64), KeywordResult> = HashMap::new();
+
+    for result in results {
+        let key = (result.0.clone(), result.3);
+        best.entry(key)
+            .and_modify(|existing| {
+                if result.2 > existing.2 {
+                    *existing = result.clone();
                 }
-            } else {
-                sym.signature.clone().unwrap_or_else(|| sym.name.clone())
-            };
-
-            // Avoid duplicates
-            if !results
-                .iter()
-                .any(|(f, _, _, _)| f == &sym.file_path && content.contains(&sym.name))
-            {
-                results.push((sym.file_path, content, 0.6, sym.start_line));
-            }
-            if results.len() >= limit {
-                break;
-            }
-        }
+            })
+            .or_insert(result);
     }
 
-    results.truncate(limit);
-    results
+    let mut deduped: Vec<KeywordResult> = best.into_values().collect();
+    deduped.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    deduped.truncate(limit);
+    deduped
 }
 
 #[cfg(test)]
@@ -221,52 +365,188 @@ mod tests {
     }
 
     // ============================================================================
-    // build_fts_query tests
+    // build_fts_query tests (now returns FtsQueryPlan)
     // ============================================================================
 
     #[test]
     fn test_build_fts_query_empty() {
-        assert_eq!(build_fts_query(""), "");
-        assert_eq!(build_fts_query("   "), "");
+        let plan = build_fts_query("");
+        assert!(plan.is_empty());
+        let plan = build_fts_query("   ");
+        assert!(plan.is_empty());
     }
 
     #[test]
     fn test_build_fts_query_single_term() {
-        assert_eq!(build_fts_query("search"), "search*");
-        assert_eq!(build_fts_query("Database"), "Database*");
+        let plan = build_fts_query("search");
+        assert_eq!(plan.strict, "search*");
+        assert!(plan.relaxed.is_none());
+        assert!(plan.proximity.is_none()); // single term has no proximity
+
+        let plan = build_fts_query("Database");
+        assert_eq!(plan.strict, "Database*");
+        assert!(plan.relaxed.is_none());
+        assert!(plan.proximity.is_none());
     }
 
     #[test]
     fn test_build_fts_query_single_term_with_special() {
-        assert_eq!(build_fts_query("fn()"), "fn*");
-        assert_eq!(build_fts_query("*test*"), "test*");
+        let plan = build_fts_query("fn()");
+        assert_eq!(plan.strict, "fn*");
+        assert!(plan.relaxed.is_none());
+        assert!(plan.proximity.is_none());
+
+        let plan = build_fts_query("*test*");
+        assert_eq!(plan.strict, "test*");
+        assert!(plan.relaxed.is_none());
+        assert!(plan.proximity.is_none());
     }
 
     #[test]
-    fn test_build_fts_query_multiple_terms() {
-        assert_eq!(build_fts_query("search code"), "search OR code*");
-        assert_eq!(build_fts_query("find user data"), "find OR user OR data*");
+    fn test_build_fts_query_multiple_terms_and_first() {
+        // Multiple terms: strict = AND (space-separated), relaxed = OR
+        let plan = build_fts_query("search code");
+        assert_eq!(plan.strict, "search code*");
+        assert_eq!(plan.relaxed.as_deref(), Some("search OR code*"));
+        assert_eq!(plan.proximity.as_deref(), Some("NEAR(search code, 10)"));
+
+        let plan = build_fts_query("find user data");
+        assert_eq!(plan.strict, "find user data*");
+        assert_eq!(plan.relaxed.as_deref(), Some("find OR user OR data*"));
+        assert_eq!(
+            plan.proximity.as_deref(),
+            Some("NEAR(find user data, 10)")
+        );
     }
 
     #[test]
     fn test_build_fts_query_multiple_terms_with_special() {
-        // Special chars are stripped, but terms remain
-        assert_eq!(build_fts_query("fn() main()"), "fn OR main*");
+        let plan = build_fts_query("fn() main()");
+        assert_eq!(plan.strict, "fn main*");
+        assert_eq!(plan.relaxed.as_deref(), Some("fn OR main*"));
+        assert_eq!(plan.proximity.as_deref(), Some("NEAR(fn main, 10)"));
     }
 
     #[test]
     fn test_build_fts_query_all_special_terms() {
-        // If all terms become empty after escaping, return empty
-        assert_eq!(build_fts_query("() * -"), "");
+        let plan = build_fts_query("() * -");
+        assert!(plan.is_empty());
     }
 
     #[test]
     fn test_build_fts_query_partial_special_terms() {
-        // Mixed: some valid, some empty after escape
-        // "hello" stays, "()" becomes empty, "world" stays
-        let result = build_fts_query("hello () world");
-        assert!(result.contains("hello"));
-        assert!(result.contains("world*"));
+        let plan = build_fts_query("hello () world");
+        assert!(plan.strict.contains("hello"));
+        assert!(plan.strict.contains("world*"));
+        // strict should be AND (space-separated)
+        assert!(!plan.strict.contains("OR"));
+        // relaxed should be OR
+        let relaxed = plan.relaxed.unwrap();
+        assert!(relaxed.contains("hello"));
+        assert!(relaxed.contains("OR"));
+        assert!(relaxed.contains("world*"));
+        // proximity should use clean terms without prefix *
+        let proximity = plan.proximity.unwrap();
+        assert_eq!(proximity, "NEAR(hello world, 10)");
+    }
+
+    // ============================================================================
+    // score_symbol_match tests
+    // ============================================================================
+
+    #[test]
+    fn test_score_symbol_exact_match() {
+        // "database pool" -> "database_pool" (snake_case exact)
+        assert!((score_symbol_match("database_pool", "database pool") - 0.95).abs() < 0.01);
+        // "databasepool" (concatenated exact)
+        assert!((score_symbol_match("databasepool", "database pool") - 0.95).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_score_symbol_substring_match() {
+        // Symbol contains the full query form
+        assert!((score_symbol_match("get_database_pool", "database pool") - 0.85).abs() < 0.01);
+        assert!(
+            (score_symbol_match("create_database_pool_sync", "database pool") - 0.85).abs()
+                < 0.01
+        );
+    }
+
+    #[test]
+    fn test_score_symbol_all_terms_match() {
+        // All terms present but not as a contiguous substring
+        assert!((score_symbol_match("pool_for_database", "database pool") - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_score_symbol_partial_match() {
+        // Only some terms match
+        let score = score_symbol_match("database_connection", "database pool");
+        assert!(score > 0.55 && score < 0.75);
+    }
+
+    #[test]
+    fn test_score_symbol_no_term_overlap() {
+        assert!((score_symbol_match("xyz_handler", "abc") - 0.50).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_score_symbol_single_term() {
+        // Single-word query, exact match
+        assert!((score_symbol_match("search", "search") - 0.95).abs() < 0.01);
+        // Single-word query, substring
+        assert!((score_symbol_match("keyword_search", "search") - 0.85).abs() < 0.01);
+    }
+
+    // ============================================================================
+    // dedup_and_sort tests
+    // ============================================================================
+
+    #[test]
+    fn test_dedup_keeps_highest_score() {
+        let results = vec![
+            ("src/a.rs".into(), "fn a()".into(), 0.5, 10),
+            ("src/a.rs".into(), "fn a() { body }".into(), 0.9, 10), // same file+line, higher score
+        ];
+        let deduped = dedup_and_sort(results, 10);
+        assert_eq!(deduped.len(), 1);
+        assert!((deduped[0].2 - 0.9).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_dedup_different_lines_kept() {
+        let results = vec![
+            ("src/a.rs".into(), "fn a()".into(), 0.9, 10),
+            ("src/a.rs".into(), "fn b()".into(), 0.8, 50), // same file, different line
+        ];
+        let deduped = dedup_and_sort(results, 10);
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn test_dedup_sorted_by_score_desc() {
+        let results = vec![
+            ("src/low.rs".into(), "low".into(), 0.3, 1),
+            ("src/high.rs".into(), "high".into(), 0.95, 1),
+            ("src/mid.rs".into(), "mid".into(), 0.6, 1),
+        ];
+        let deduped = dedup_and_sort(results, 10);
+        assert_eq!(deduped.len(), 3);
+        assert!(deduped[0].2 >= deduped[1].2);
+        assert!(deduped[1].2 >= deduped[2].2);
+    }
+
+    #[test]
+    fn test_dedup_respects_limit() {
+        let results = vec![
+            ("src/a.rs".into(), "a".into(), 0.9, 1),
+            ("src/b.rs".into(), "b".into(), 0.8, 1),
+            ("src/c.rs".into(), "c".into(), 0.7, 1),
+        ];
+        let deduped = dedup_and_sort(results, 2);
+        assert_eq!(deduped.len(), 2);
+        assert!((deduped[0].2 - 0.9).abs() < 0.01);
+        assert!((deduped[1].2 - 0.8).abs() < 0.01);
     }
 
     // ============================================================================

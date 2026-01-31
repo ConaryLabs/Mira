@@ -93,13 +93,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
 -- =======================================
 -- FULL-TEXT SEARCH (FTS5)
 -- =======================================
+-- tokenize: unicode61 without porter stemmer, keeping '_' as a token character
+-- so snake_case identifiers like database_pool are indexed as single tokens.
 CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
     file_path,
     chunk_content,
     project_id UNINDEXED,
     start_line UNINDEXED,
     content='',
-    tokenize='porter unicode61 remove_diacritics 1'
+    tokenize="unicode61 remove_diacritics 1 tokenchars '_'"
 );
 "#;
 
@@ -113,6 +115,7 @@ pub fn run_code_migrations(conn: &Connection) -> Result<()> {
     migrate_vec_code_line_numbers(conn)?;
     migrate_pending_embeddings_line_numbers(conn)?;
     migrate_imports_unique(conn)?;
+    migrate_fts_tokenizer(conn)?;
 
     Ok(())
 }
@@ -171,6 +174,65 @@ fn migrate_pending_embeddings_line_numbers(conn: &Connection) -> Result<()> {
         "start_line",
         "INTEGER NOT NULL DEFAULT 1",
     )
+}
+
+/// Migrate FTS5 tokenizer from porter-stemmed to code-aware.
+///
+/// Detects if code_fts uses the old `porter unicode61` tokenizer and rebuilds
+/// with `unicode61 tokenchars '_'` which preserves snake_case as single tokens
+/// and avoids incorrect stemming of code identifiers.
+fn migrate_fts_tokenizer(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "code_fts") {
+        return Ok(());
+    }
+
+    let uses_old_tokenizer: bool = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='code_fts'",
+            [],
+            |row| {
+                let sql: String = row.get(0)?;
+                Ok(sql.contains("porter"))
+            },
+        )
+        .unwrap_or(false);
+
+    if !uses_old_tokenizer {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating code_fts: replacing porter tokenizer with code-aware tokenizer");
+
+    conn.execute("DROP TABLE IF EXISTS code_fts", [])?;
+    conn.execute_batch(
+        r#"CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
+            file_path,
+            chunk_content,
+            project_id UNINDEXED,
+            start_line UNINDEXED,
+            content='',
+            tokenize="unicode61 remove_diacritics 1 tokenchars '_'"
+        );"#,
+    )?;
+
+    // Re-populate from vec_code if it has data
+    let vec_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vec_code", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    if vec_count > 0 {
+        let inserted = conn.execute(
+            "INSERT INTO code_fts(rowid, file_path, chunk_content, project_id, start_line)
+             SELECT rowid, file_path, chunk_content, project_id, start_line FROM vec_code",
+            [],
+        )?;
+        tracing::info!(
+            "FTS5 tokenizer migration: re-indexed {} chunks",
+            inserted
+        );
+    }
+
+    Ok(())
 }
 
 /// Deduplicate imports and add unique constraint

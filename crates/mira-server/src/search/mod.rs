@@ -5,6 +5,7 @@ mod context;
 mod crossref;
 mod keyword;
 mod semantic;
+mod tree;
 mod utils;
 
 pub use context::{expand_context, expand_context_with_conn};
