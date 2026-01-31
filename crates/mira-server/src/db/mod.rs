@@ -89,10 +89,12 @@ pub use index::{
     queue_pending_embedding_sync,
 };
 pub use memory::{
+    RankedMemory,
     StoreMemoryParams,
     clear_project_persona_sync,
     count_facts_without_embeddings_sync,
     delete_memory_sync,
+    fetch_ranked_memories_for_export_sync,
     find_facts_without_embeddings_sync,
     get_base_persona_sync,
     get_global_memories_sync,

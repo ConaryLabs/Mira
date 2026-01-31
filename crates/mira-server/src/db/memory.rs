@@ -4,6 +4,15 @@
 use mira_types::MemoryFact;
 use rusqlite::OptionalExtension;
 
+/// Lightweight memory struct for ranked export to CLAUDE.local.md
+#[derive(Debug, Clone)]
+pub struct RankedMemory {
+    pub content: String,
+    pub fact_type: String,
+    pub category: Option<String>,
+    pub hotness: f64,
+}
+
 // Branch-aware boosting constants (tunable)
 // Lower multiplier = better score (distances are minimized)
 
@@ -598,6 +607,58 @@ pub fn clear_project_persona_sync(
         [project_id],
     )? > 0;
     Ok(deleted)
+}
+
+/// Fetch memories ranked by hotness for CLAUDE.local.md export
+///
+/// Hotness formula (computed in SQL):
+///   hotness = session_count * confidence * status_mult * category_mult / recency_penalty
+///
+/// - status_mult: confirmed = 1.5, candidate = 1.0
+/// - category_mult: preference = 1.4, decision = 1.3, pattern/convention = 1.1, context = 1.0, general = 0.9
+/// - recency_penalty: 1.0 + (days_since_update / 90.0) — gentle linear decay
+/// - Confidence floor: 0.5
+/// - Scope: project-only
+pub fn fetch_ranked_memories_for_export_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<RankedMemory>> {
+    let sql = r#"
+        SELECT content, fact_type, category,
+            (
+                session_count
+                * MAX(confidence, 0.5)
+                * CASE status WHEN 'confirmed' THEN 1.5 ELSE 1.0 END
+                * CASE
+                    WHEN category = 'preference' THEN 1.4
+                    WHEN category = 'decision' THEN 1.3
+                    WHEN category IN ('pattern', 'convention') THEN 1.1
+                    WHEN category = 'context' THEN 1.0
+                    ELSE 0.9
+                  END
+                / (1.0 + (CAST(julianday('now') - julianday(COALESCE(updated_at, created_at)) AS REAL) / 90.0))
+            ) AS hotness
+        FROM memory_facts
+        WHERE project_id = ?1
+          AND scope = 'project'
+          AND confidence >= 0.5
+          AND fact_type NOT IN ('health', 'persona')
+        ORDER BY hotness DESC
+        LIMIT ?2
+    "#;
+
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(rusqlite::params![project_id, limit as i64], |row| {
+        Ok(RankedMemory {
+            content: row.get(0)?,
+            fact_type: row.get(1)?,
+            category: row.get(2)?,
+            hotness: row.get(3)?,
+        })
+    })?;
+
+    rows.collect()
 }
 
 #[cfg(test)]
