@@ -283,9 +283,13 @@ impl McpClientManager {
                         .unwrap_or("No description")
                         .to_string();
 
-                    // Convert MCP tool input_schema (Arc<JsonObject>) to our Tool format
-                    let parameters = serde_json::to_value(mcp_tool.input_schema.as_ref())
+                    // Convert MCP tool input_schema (Arc<JsonObject>) to our Tool format.
+                    // Strip $schema — Gemini's function calling API rejects unknown fields.
+                    let mut parameters = serde_json::to_value(mcp_tool.input_schema.as_ref())
                         .unwrap_or(json!({"type": "object", "properties": {}}));
+                    if let Some(obj) = parameters.as_object_mut() {
+                        obj.remove("$schema");
+                    }
 
                     tools.push(Tool::function(prefixed_name, description, parameters));
                 }
@@ -440,6 +444,48 @@ mod tests {
         // Only server with command should be included
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].name, "has_cmd");
+    }
+
+    // ========================================================================
+    // $schema stripping (Gemini compatibility)
+    // ========================================================================
+
+    /// Helper that mirrors the inline $schema stripping logic from get_all_tools
+    fn strip_schema_field(mut value: Value) -> Value {
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("$schema");
+        }
+        value
+    }
+
+    #[test]
+    fn test_strip_schema_removes_schema_field() {
+        let input = json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {"name": {"type": "string"}}
+        });
+        let result = strip_schema_field(input);
+        assert!(result.get("$schema").is_none());
+        assert_eq!(result.get("type").unwrap(), "object");
+        assert!(result.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_strip_schema_no_schema_field_unchanged() {
+        let input = json!({
+            "type": "object",
+            "properties": {"id": {"type": "integer"}}
+        });
+        let result = strip_schema_field(input.clone());
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_strip_schema_non_object_unchanged() {
+        let input = json!("just a string");
+        let result = strip_schema_field(input.clone());
+        assert_eq!(result, input);
     }
 
     #[test]

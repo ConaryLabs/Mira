@@ -515,6 +515,7 @@ fn format_no_disagreements(
     timings: &PhaseTimings,
 ) -> String {
     let mut output = String::from("## Expert Panel Discussion\n\n");
+    const SUMMARY_CHARS: usize = 10_000;
 
     // Show consensus points if the moderator identified any
     if !consensus.is_empty() {
@@ -525,9 +526,14 @@ fn format_no_disagreements(
         output.push('\n');
     }
 
-    // Include the individual analyses
+    // Include short summaries instead of full analyses to avoid huge payloads
     for (role, analysis) in expert_results {
-        output.push_str(&format!("### {} Analysis\n\n{}\n\n", role, analysis));
+        let (summary, truncated) = summarize_text(analysis, SUMMARY_CHARS);
+        output.push_str(&format!("### {} Summary\n\n{}\n", role, summary));
+        if truncated {
+            output.push_str("*Summary truncated. Full analysis omitted in no-disagreement mode.*\n");
+        }
+        output.push('\n');
     }
 
     output.push_str(&format!(
@@ -536,6 +542,16 @@ fn format_no_disagreements(
         timings.moderation_ms as f64 / 1000.0,
     ));
     output
+}
+
+/// Return a prefix-limited summary with a truncated flag.
+fn summarize_text(text: &str, max_chars: usize) -> (String, bool) {
+    if text.len() <= max_chars {
+        return (text.to_string(), false);
+    }
+    let mut out = text[..max_chars].to_string();
+    out.push_str("...");
+    (out, true)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -656,7 +672,90 @@ mod tests {
         assert!(output.contains("Expert Panel Discussion"));
         assert!(output.contains("Code is clean"));
         assert!(output.contains("All experts converged"));
-        assert!(output.contains("architect Analysis"));
-        assert!(output.contains("security Analysis"));
+        assert!(output.contains("architect Summary"));
+        assert!(output.contains("security Summary"));
+    }
+
+    // ========================================================================
+    // summarize_text tests
+    // ========================================================================
+
+    #[test]
+    fn test_summarize_text_short_unchanged() {
+        let (text, truncated) = summarize_text("hello world", 100);
+        assert_eq!(text, "hello world");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_summarize_text_exact_limit_unchanged() {
+        let input = "a".repeat(50);
+        let (text, truncated) = summarize_text(&input, 50);
+        assert_eq!(text, input);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_summarize_text_over_limit_truncated() {
+        let input = "a".repeat(100);
+        let (text, truncated) = summarize_text(&input, 50);
+        assert_eq!(text.len(), 53); // 50 + "..."
+        assert!(text.ends_with("..."));
+        assert!(truncated);
+    }
+
+    #[test]
+    fn test_summarize_text_empty_input() {
+        let (text, truncated) = summarize_text("", 10);
+        assert_eq!(text, "");
+        assert!(!truncated);
+    }
+
+    // ========================================================================
+    // format_no_disagreements truncation behavior
+    // ========================================================================
+
+    #[test]
+    fn test_format_no_disagreements_truncates_large_analysis() {
+        let large_analysis = "x".repeat(20_000);
+        let results = vec![("architect".to_string(), large_analysis)];
+        let consensus = vec![];
+        let timings = PhaseTimings::default();
+        let output = format_no_disagreements(&results, &consensus, &timings);
+        // Full 20k analysis must NOT appear — should be truncated to 10k + "..."
+        assert!(output.len() < 15_000);
+        assert!(output.contains("Summary truncated"));
+        assert!(output.contains("..."));
+    }
+
+    #[test]
+    fn test_format_no_disagreements_small_analysis_not_truncated() {
+        let small_analysis = "Everything looks good.".to_string();
+        let results = vec![("security".to_string(), small_analysis.clone())];
+        let consensus = vec![];
+        let timings = PhaseTimings::default();
+        let output = format_no_disagreements(&results, &consensus, &timings);
+        assert!(output.contains(&small_analysis));
+        assert!(!output.contains("Summary truncated"));
+    }
+
+    #[test]
+    fn test_format_no_disagreements_multiple_experts_bounded() {
+        // 5 experts each with 20k chars — output must stay bounded
+        let large = "y".repeat(20_000);
+        let results: Vec<_> = (0..5)
+            .map(|i| (format!("expert_{i}"), large.clone()))
+            .collect();
+        let consensus = vec![];
+        let timings = PhaseTimings::default();
+        let output = format_no_disagreements(&results, &consensus, &timings);
+        // 5 × 10k cap + overhead, must be well under 5 × 20k = 100k
+        assert!(output.len() < 60_000, "output was {} chars", output.len());
+        // Each expert should be truncated
+        assert_eq!(
+            output.matches("Summary truncated").count(),
+            5,
+            "all 5 experts should be truncated"
+        );
     }
 }
