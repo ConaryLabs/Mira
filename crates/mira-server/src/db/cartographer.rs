@@ -158,7 +158,7 @@ pub fn get_modules_needing_summaries_sync(
     let mut stmt = conn.prepare(
         "SELECT module_id, name, path, exports, line_count
          FROM codebase_modules
-         WHERE project_id = ? AND (purpose IS NULL OR purpose = '')",
+         WHERE project_id = ? AND (purpose IS NULL OR purpose = '' OR purpose LIKE '[heuristic] %')",
     )?;
 
     let modules = stmt

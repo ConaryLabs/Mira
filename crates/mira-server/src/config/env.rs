@@ -17,7 +17,18 @@ pub struct ApiKeys {
 
 impl ApiKeys {
     /// Load API keys from environment variables (single source of truth)
+    ///
+    /// Set `MIRA_DISABLE_LLM=1` to suppress all LLM keys (forces heuristic fallbacks)
     pub fn from_env() -> Self {
+        if parse_bool_env("MIRA_DISABLE_LLM").unwrap_or(false) {
+            info!("MIRA_DISABLE_LLM is set — LLM providers disabled, using fallbacks");
+            return Self {
+                deepseek: None,
+                gemini: None,
+                brave: Self::read_key("BRAVE_API_KEY"),
+            };
+        }
+
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
         let gemini = Self::read_key("GEMINI_API_KEY").or_else(|| Self::read_key("GOOGLE_API_KEY"));
         let brave = Self::read_key("BRAVE_API_KEY");

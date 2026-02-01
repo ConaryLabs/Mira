@@ -93,34 +93,33 @@ impl SlowLaneWorker {
         }
     }
 
-    /// Process a batch of LLM-dependent tasks
+    /// Process a batch of background tasks
+    /// LLM client is optional — tasks produce heuristic/template fallbacks when absent
     async fn process_batch(&mut self) -> Result<usize, String> {
         let mut processed = 0;
 
         // Increment cycle counter
         self.cycle_count += 1;
 
-        // Get LLM client for background tasks
-        let client = match self
+        // Get LLM client for background tasks (optional — fallbacks used when absent)
+        let client: Option<Arc<dyn LlmClient>> = self
             .llm_factory
             .client_for_role("background", &self.pool)
             .await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::debug!("Slow lane: no LLM provider available: {}", e);
-                return Ok(0);
-            }
-        };
+            .ok();
+
+        if client.is_none() {
+            tracing::debug!("Slow lane: no LLM provider available, using fallbacks");
+        }
 
         // Process stale sessions (close and summarize)
-        processed += self.process_stale_sessions(&client).await?;
+        processed += self.process_stale_sessions(client.as_ref()).await?;
 
         // Process summaries (rate limited) - uses code DB for module data
-        processed += self.process_summaries(&client).await?;
+        processed += self.process_summaries(client.as_ref()).await?;
 
         // Process project briefings
-        processed += self.process_briefings(&client).await?;
+        processed += self.process_briefings(client.as_ref()).await?;
 
         // Process documentation tasks (every Nth cycle)
         if self
@@ -130,29 +129,38 @@ impl SlowLaneWorker {
             processed += self.process_documentation().await?;
         }
 
-        // Process code health
-        processed += self.process_code_health(&client).await?;
+        // Process code health (LLM analysis portions require client)
+        processed += self.process_code_health(client.as_ref()).await?;
 
-        // Process pondering (every Nth cycle)
+        // Process pondering (every Nth cycle) — requires LLM, no fallback
         if self.cycle_count.is_multiple_of(PONDERING_CYCLE_INTERVAL) {
-            processed += self.process_pondering(&client).await?;
+            if let Some(ref c) = client {
+                processed += self.process_pondering(c).await?;
+            }
         }
 
         // Process proactive suggestions (pattern mining every 3rd, LLM enhancement every 10th)
-        processed += self.process_proactive(&client).await?;
+        processed += self.process_proactive(client.as_ref()).await?;
 
         Ok(processed)
     }
 
-    async fn process_proactive(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
-        let count = proactive::process_proactive(&self.pool, client, self.cycle_count).await?;
+    async fn process_proactive(
+        &self,
+        client: Option<&Arc<dyn LlmClient>>,
+    ) -> Result<usize, String> {
+        let count =
+            proactive::process_proactive(&self.pool, client, self.cycle_count).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} proactive items", count);
         }
         Ok(count)
     }
 
-    async fn process_summaries(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+    async fn process_summaries(
+        &self,
+        client: Option<&Arc<dyn LlmClient>>,
+    ) -> Result<usize, String> {
         let count = summaries::process_queue(&self.code_pool, &self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} summaries", count);
@@ -160,7 +168,10 @@ impl SlowLaneWorker {
         Ok(count)
     }
 
-    async fn process_briefings(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+    async fn process_briefings(
+        &self,
+        client: Option<&Arc<dyn LlmClient>>,
+    ) -> Result<usize, String> {
         let count = briefings::process_briefings(&self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} briefings", count);
@@ -178,9 +189,12 @@ impl SlowLaneWorker {
         Ok(count)
     }
 
-    async fn process_code_health(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+    async fn process_code_health(
+        &self,
+        client: Option<&Arc<dyn LlmClient>>,
+    ) -> Result<usize, String> {
         let count =
-            code_health::process_code_health(&self.pool, &self.code_pool, Some(client)).await?;
+            code_health::process_code_health(&self.pool, &self.code_pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} health issues", count);
         }
@@ -195,7 +209,10 @@ impl SlowLaneWorker {
         Ok(count)
     }
 
-    async fn process_stale_sessions(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+    async fn process_stale_sessions(
+        &self,
+        client: Option<&Arc<dyn LlmClient>>,
+    ) -> Result<usize, String> {
         let count = session_summaries::process_stale_sessions(&self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: closed {} stale sessions", count);

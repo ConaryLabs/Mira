@@ -5,6 +5,7 @@
 // - Pattern mining: Every 3rd cycle (~15 minutes) - SQL only, no LLM
 // - LLM enhancement: Every 10th cycle (~50 minutes) - generates contextual suggestions
 
+use super::{TEMPLATE_PREFIX, is_fallback_content};
 use crate::db::pool::DatabasePool;
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::proactive::patterns::{
@@ -14,25 +15,39 @@ use crate::utils::ResultExt;
 use rusqlite::params;
 use std::sync::Arc;
 
+/// Confidence multiplier for template suggestions vs LLM quality
+const TEMPLATE_CONFIDENCE_MULTIPLIER: f64 = 0.85;
+
+/// Minimum pattern confidence to generate a template suggestion
+/// pattern.confidence * TEMPLATE_CONFIDENCE_MULTIPLIER must be >= 0.7
+const MIN_PATTERN_CONFIDENCE: f64 = 0.7;
+
 /// Process proactive suggestions in background
 ///
 /// - Every 3rd cycle: Mine patterns from behavior logs (SQL only, fast)
 /// - Every 10th cycle: Enhance high-confidence patterns with LLM-generated suggestions
 pub async fn process_proactive(
     pool: &Arc<DatabasePool>,
-    client: &Arc<dyn LlmClient>,
+    client: Option<&Arc<dyn LlmClient>>,
     cycle_count: u64,
 ) -> Result<usize, String> {
     let mut processed = 0;
 
-    // Pattern mining every 3rd cycle (fast, SQL only)
+    // Pattern mining every 3rd cycle (fast, SQL only — always runs)
     if cycle_count.is_multiple_of(3) {
         processed += mine_patterns(pool).await?;
     }
 
-    // LLM enhancement every 10th cycle (expensive)
+    // LLM enhancement every 10th cycle (or template fallback when no LLM)
     if cycle_count.is_multiple_of(10) {
-        processed += enhance_suggestions(pool, client).await?;
+        match client {
+            Some(client) => {
+                processed += enhance_suggestions(pool, client).await?;
+            }
+            None => {
+                processed += generate_template_suggestions(pool).await?;
+            }
+        }
     }
 
     Ok(processed)
@@ -160,6 +175,117 @@ async fn enhance_suggestions(
 
     if total_suggestions > 0 {
         tracing::info!("Proactive: generated {} LLM suggestions", total_suggestions);
+    }
+
+    Ok(total_suggestions)
+}
+
+/// Generate template-based suggestions from high-confidence patterns (no LLM)
+async fn generate_template_suggestions(pool: &Arc<DatabasePool>) -> Result<usize, String> {
+    // Get projects with high-confidence patterns (same query as LLM path)
+    let projects_with_patterns = pool
+        .interact(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    r#"
+                    SELECT DISTINCT bp.project_id
+                    FROM behavior_patterns bp
+                    WHERE bp.confidence >= 0.7
+                      AND bp.pattern_type IN ('file_sequence', 'tool_chain')
+                      AND bp.occurrence_count >= 3
+                      AND NOT EXISTS (
+                          SELECT 1 FROM proactive_suggestions ps
+                          WHERE ps.project_id = bp.project_id
+                            AND ps.created_at > datetime('now', '-1 day')
+                      )
+                    LIMIT 5
+                "#,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to prepare: {}", e))?;
+
+            let rows = stmt
+                .query_map([], |row| row.get::<_, i64>(0))
+                .map_err(|e| anyhow::anyhow!("Failed to query: {}", e))?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
+        })
+        .await
+        .str_err()?;
+
+    let mut total_suggestions = 0;
+
+    for project_id in projects_with_patterns {
+        let patterns: Vec<BehaviorPattern> = {
+            let pool_clone = pool.clone();
+            pool_clone
+                .interact(move |conn| {
+                    get_high_confidence_patterns(conn, project_id, MIN_PATTERN_CONFIDENCE)
+                        .map_err(|e| anyhow::anyhow!("Failed to get patterns: {}", e))
+                })
+                .await
+                .str_err()?
+        };
+
+        if patterns.is_empty() {
+            continue;
+        }
+
+        let suggestions: Vec<PreGeneratedSuggestion> = patterns
+            .iter()
+            .take(10)
+            .filter_map(|p| {
+                let adjusted_confidence = p.confidence * TEMPLATE_CONFIDENCE_MULTIPLIER;
+                if adjusted_confidence < MIN_PATTERN_CONFIDENCE {
+                    return None;
+                }
+
+                match &p.pattern_data {
+                    PatternData::FileSequence { transitions, .. } => {
+                        if transitions.is_empty() {
+                            return None;
+                        }
+                        let (from, to) = &transitions[0];
+                        Some(PreGeneratedSuggestion {
+                            pattern_id: p.id,
+                            trigger_key: from.clone(),
+                            suggestion_text: format!(
+                                "{}Often edited with {}",
+                                TEMPLATE_PREFIX, to
+                            ),
+                            confidence: adjusted_confidence,
+                        })
+                    }
+                    PatternData::ToolChain { tools, .. } => {
+                        if tools.len() < 2 {
+                            return None;
+                        }
+                        Some(PreGeneratedSuggestion {
+                            pattern_id: p.id,
+                            trigger_key: tools[0].clone(),
+                            suggestion_text: format!(
+                                "{}Usually followed by {}",
+                                TEMPLATE_PREFIX, tools[1]
+                            ),
+                            confidence: adjusted_confidence,
+                        })
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+
+        if !suggestions.is_empty() {
+            let stored = store_suggestions(pool, project_id, &suggestions).await?;
+            total_suggestions += stored;
+        }
+    }
+
+    if total_suggestions > 0 {
+        tracing::info!(
+            "Proactive: generated {} template suggestions",
+            total_suggestions
+        );
     }
 
     Ok(total_suggestions)
@@ -333,6 +459,7 @@ fn parse_suggestions(
 }
 
 /// Store suggestions in the database
+/// Upgrade guard: won't overwrite non-fallback (LLM) suggestions with template suggestions
 async fn store_suggestions(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -356,7 +483,26 @@ async fn store_suggestions(
         let mut stored = 0;
 
         for suggestion in &suggestions_clone {
-            // Upsert suggestion - replace if trigger_key exists
+            let is_template = is_fallback_content(&suggestion.suggestion_text);
+
+            // Upgrade guard: if this is a template suggestion, don't overwrite LLM output
+            if is_template {
+                let existing: Option<String> = conn
+                    .query_row(
+                        "SELECT suggestion_text FROM proactive_suggestions WHERE project_id = ? AND trigger_key = ?",
+                        params![project_id, suggestion.trigger_key],
+                        |row| row.get(0),
+                    )
+                    .ok();
+
+                if let Some(ref text) = existing {
+                    if !text.is_empty() && !is_fallback_content(text) {
+                        // Existing is LLM-generated — don't overwrite
+                        continue;
+                    }
+                }
+            }
+
             let result = conn.execute(
                 r#"
                 INSERT INTO proactive_suggestions
