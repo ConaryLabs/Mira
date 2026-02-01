@@ -80,6 +80,22 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-01-31
+
+### Added
+- **Heuristic fallbacks for LLM-disabled mode** - `analyze_diff`, `summarize_codebase`, and pondering/insights all work without LLM providers. Diff analysis uses regex-based function detection and security keyword scanning. Module summaries use file count, language distribution, and symbol metadata. Pondering generates insights from tool usage stats, friction detection, and focus area analysis. All results tagged with `[heuristic]` and upgradeable when an LLM becomes available.
+- **Nucleo fuzzy search** - New fuzzy search engine (via `nucleo-matcher`) for memory and code recall when embeddings are unavailable. Provides fast, typo-tolerant matching as a fallback for semantic search.
+- **`MIRA_DISABLE_LLM` environment variable** - Explicitly disable all LLM calls to force heuristic fallbacks across the board.
+
+### Changed
+- **Code chunks decoupled from embeddings** - Code search indexing no longer requires embeddings. Chunks are stored and searchable via keyword/fuzzy search even without `GEMINI_API_KEY`.
+- **Keyword search stays fresh without embeddings** - FTS results no longer go stale when the embedding pipeline is unavailable.
+- **Expert consultation error improved** - Clear error message with setup instructions when no LLM provider is configured, instead of a generic failure.
+- **Documentation updated** - All tool docs, CONFIGURATION, DESIGN, README, and background module docs updated to reflect graceful degradation behavior.
+
+### Fixed
+- **Fuzzy search hardening** - Fixed TOCTOU race condition in cache invalidation, memory bloat from unbounded caches, and score normalization producing out-of-range values.
+
 ## [0.4.0] - 2026-01-30
 
 ### Added

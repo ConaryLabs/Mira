@@ -12,12 +12,11 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.4.0
+## What's New in v0.4.1
 
-- **Council Architecture**: Expert consultations now use an iterative council with coordinator synthesis, conflict detection, and delta rounds
-- **Search Overhaul**: Keyword search uses AND-first queries, tree-guided scoping, and a code-aware tokenizer for much better precision
-- **Smart Export**: CLAUDE.local.md export is hotness-ranked, budget-aware, and auto-runs on session close
-- **Expert Quality**: Stakes framing, accountability rules, and self-checks in expert prompts
+- **Graceful Degradation**: All major tools now work without LLM API keys via heuristic fallbacks — diff analysis, module summaries, and background insights all produce useful output without any provider configured
+- **Nucleo Fuzzy Search**: New fuzzy search engine for memory and code recall when embeddings are unavailable, with typo-tolerant matching
+- **Embedding-Free Code Search**: Code indexing and keyword/fuzzy search work independently of the embedding pipeline
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
