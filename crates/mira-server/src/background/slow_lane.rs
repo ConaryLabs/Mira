@@ -132,11 +132,9 @@ impl SlowLaneWorker {
         // Process code health (LLM analysis portions require client)
         processed += self.process_code_health(client.as_ref()).await?;
 
-        // Process pondering (every Nth cycle) — requires LLM, no fallback
+        // Process pondering (every Nth cycle) — heuristic fallback when no LLM
         if self.cycle_count.is_multiple_of(PONDERING_CYCLE_INTERVAL) {
-            if let Some(ref c) = client {
-                processed += self.process_pondering(c).await?;
-            }
+            processed += self.process_pondering(client.as_ref()).await?;
         }
 
         // Process proactive suggestions (pattern mining every 3rd, LLM enhancement every 10th)
@@ -149,8 +147,7 @@ impl SlowLaneWorker {
         &self,
         client: Option<&Arc<dyn LlmClient>>,
     ) -> Result<usize, String> {
-        let count =
-            proactive::process_proactive(&self.pool, client, self.cycle_count).await?;
+        let count = proactive::process_proactive(&self.pool, client, self.cycle_count).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} proactive items", count);
         }
@@ -193,15 +190,17 @@ impl SlowLaneWorker {
         &self,
         client: Option<&Arc<dyn LlmClient>>,
     ) -> Result<usize, String> {
-        let count =
-            code_health::process_code_health(&self.pool, &self.code_pool, client).await?;
+        let count = code_health::process_code_health(&self.pool, &self.code_pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} health issues", count);
         }
         Ok(count)
     }
 
-    async fn process_pondering(&self, client: &Arc<dyn LlmClient>) -> Result<usize, String> {
+    async fn process_pondering(
+        &self,
+        client: Option<&Arc<dyn LlmClient>>,
+    ) -> Result<usize, String> {
         let count = pondering::process_pondering(&self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: generated {} pondering insights", count);

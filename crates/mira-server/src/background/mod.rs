@@ -16,7 +16,7 @@ mod pondering;
 pub mod proactive;
 pub mod session_summaries;
 mod slow_lane;
-mod summaries;
+pub(crate) mod summaries;
 pub mod watcher;
 
 use crate::db::pool::DatabasePool;

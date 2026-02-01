@@ -114,12 +114,8 @@ pub async fn process_queue(
                             if !summaries.is_empty() {
                                 match code_pool
                                     .interact(move |conn| {
-                                        update_module_purposes_sync(
-                                            conn,
-                                            project_id,
-                                            &summaries,
-                                        )
-                                        .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
+                                        update_module_purposes_sync(conn, project_id, &summaries)
+                                            .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
                                     })
                                     .await
                                 {
@@ -178,7 +174,7 @@ pub async fn process_queue(
 }
 
 /// Generate heuristic summaries from module metadata (no LLM required)
-fn generate_heuristic_summaries(
+pub(crate) fn generate_heuristic_summaries(
     modules: &[cartographer::ModuleSummaryContext],
 ) -> HashMap<String, String> {
     let mut summaries = HashMap::new();
@@ -199,7 +195,10 @@ fn generate_heuristic_summaries(
         if !exports_display.is_empty() {
             summary.push_str(&format!(". Exports: {}", exports_display.join(", ")));
             if module.exports.len() > FALLBACK_MAX_EXPORTS {
-                summary.push_str(&format!(" (+{} more)", module.exports.len() - FALLBACK_MAX_EXPORTS));
+                summary.push_str(&format!(
+                    " (+{} more)",
+                    module.exports.len() - FALLBACK_MAX_EXPORTS
+                ));
             }
         }
 

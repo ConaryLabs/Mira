@@ -233,6 +233,193 @@ pub fn build_impact_graph(
     }
 }
 
+/// Security-relevant keywords for heuristic scanning
+const SECURITY_KEYWORDS: &[&str] = &[
+    "password",
+    "token",
+    "secret",
+    "auth",
+    "sql",
+    "unsafe",
+    "exec",
+    "eval",
+    "credential",
+    "private_key",
+    "api_key",
+    "encrypt",
+    "decrypt",
+    "hash",
+    "permission",
+    "privilege",
+    "sanitize",
+    "injection",
+];
+
+/// Function definition patterns for heuristic detection
+const FUNCTION_PATTERNS: &[&str] = &["fn ", "def ", "function ", "class ", "impl "];
+
+/// Analyze diff heuristically without LLM
+pub fn analyze_diff_heuristic(
+    diff_content: &str,
+    stats: &DiffStats,
+) -> (Vec<SemanticChange>, String, Vec<String>) {
+    if diff_content.is_empty() {
+        return (Vec::new(), "[heuristic] No changes".to_string(), Vec::new());
+    }
+
+    let mut changes = Vec::new();
+    let mut risk_flags = Vec::new();
+    let mut current_file: Option<String> = None;
+    let mut security_hits: Vec<String> = Vec::new();
+
+    for line in diff_content.lines() {
+        // Parse file headers: "diff --git a/path b/path"
+        if line.starts_with("diff --git ") {
+            // Extract file path from "diff --git a/foo b/foo"
+            if let Some(b_part) = line.split(" b/").last() {
+                current_file = Some(b_part.to_string());
+            }
+            continue;
+        }
+
+        // Handle rename lines: "rename from ..." / "rename to ..."
+        if line.starts_with("rename to ") {
+            if let Some(path) = line.strip_prefix("rename to ") {
+                current_file = Some(path.to_string());
+            }
+            continue;
+        }
+
+        // Skip binary diffs
+        if line.starts_with("Binary files") {
+            continue;
+        }
+
+        // Only scan added/removed lines within hunks
+        let is_added = line.starts_with('+') && !line.starts_with("+++");
+        let is_removed = line.starts_with('-') && !line.starts_with("---");
+
+        if !is_added && !is_removed {
+            continue;
+        }
+
+        let content = if is_added { &line[1..] } else { &line[1..] };
+        let file_path = current_file.clone().unwrap_or_default();
+
+        // Detect function definitions in changed lines
+        for pattern in FUNCTION_PATTERNS {
+            if content.contains(pattern) {
+                let symbol_name = extract_symbol_name(content, pattern);
+                let change_type = if is_added {
+                    "NewFunction"
+                } else {
+                    "DeletedFunction"
+                };
+                // Avoid duplicates for the same symbol in the same file
+                let already_exists = changes.iter().any(|c: &SemanticChange| {
+                    c.file_path == file_path
+                        && c.symbol_name.as_deref() == Some(symbol_name.as_str())
+                        && c.change_type == change_type
+                });
+                if !already_exists {
+                    changes.push(SemanticChange {
+                        change_type: change_type.to_string(),
+                        file_path: file_path.clone(),
+                        symbol_name: Some(symbol_name),
+                        description: format!(
+                            "{} {}",
+                            if is_added { "Added" } else { "Removed" },
+                            pattern.trim()
+                        ),
+                        breaking: is_removed,
+                        security_relevant: false,
+                    });
+                }
+                break;
+            }
+        }
+
+        // Scan for security-relevant keywords
+        let lower = content.to_lowercase();
+        for keyword in SECURITY_KEYWORDS {
+            if lower.contains(keyword) {
+                security_hits.push(format!("{}:{}", file_path, keyword));
+                break;
+            }
+        }
+    }
+
+    // Mark security-relevant changes
+    if !security_hits.is_empty() {
+        risk_flags.push("security_relevant_change".to_string());
+        // Mark changes in files with security hits as security_relevant
+        let security_files: std::collections::HashSet<String> = security_hits
+            .iter()
+            .filter_map(|h| h.split(':').next().map(|s| s.to_string()))
+            .collect();
+        for change in &mut changes {
+            if security_files.contains(&change.file_path) {
+                change.security_relevant = true;
+            }
+        }
+    }
+
+    // Risk flag: large change (>500 total lines)
+    if stats.lines_added + stats.lines_removed > 500 {
+        risk_flags.push("large_change".to_string());
+    }
+
+    // Risk flag: wide change (>10 files)
+    if stats.files_changed > 10 {
+        risk_flags.push("wide_change".to_string());
+    }
+
+    // Risk flag: breaking API change (removed functions)
+    let removed_count = changes
+        .iter()
+        .filter(|c| c.change_type == "DeletedFunction")
+        .count();
+    if removed_count > 0 {
+        risk_flags.push("breaking_api_change".to_string());
+    }
+
+    // Build summary
+    let added_fns = changes
+        .iter()
+        .filter(|c| c.change_type == "NewFunction")
+        .count();
+    let summary = format!(
+        "[heuristic] {} files changed (+{} -{}), {} functions added, {} removed{}",
+        stats.files_changed,
+        stats.lines_added,
+        stats.lines_removed,
+        added_fns,
+        removed_count,
+        if !security_hits.is_empty() {
+            format!("; {} security-relevant change(s)", security_hits.len())
+        } else {
+            String::new()
+        }
+    );
+
+    (changes, summary, risk_flags)
+}
+
+/// Extract a symbol name from a line containing a function/class pattern
+fn extract_symbol_name(line: &str, pattern: &str) -> String {
+    if let Some(after) = line.split(pattern).nth(1) {
+        // Take everything up to first ( or { or : or < or whitespace
+        let name: String = after
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    "unknown".to_string()
+}
+
 /// LLM response structure for diff analysis
 #[derive(Debug, Deserialize)]
 struct LlmDiffResponse {
@@ -369,6 +556,7 @@ async fn cache_result(
     pool: &Arc<DatabasePool>,
     project_id: Option<i64>,
     result: &DiffAnalysisResult,
+    analysis_type: &str,
 ) {
     let changes_json = serde_json::to_string(&result.changes).ok();
     let impact_json = result
@@ -382,6 +570,7 @@ async fn cache_result(
     let files_changed = result.files_changed;
     let lines_added = result.lines_added;
     let lines_removed = result.lines_removed;
+    let analysis_type = analysis_type.to_string();
 
     if let Err(e) = pool
         .interact(move |conn| {
@@ -390,7 +579,7 @@ async fn cache_result(
                 project_id,
                 &from,
                 &to,
-                "commit",
+                &analysis_type,
                 changes_json.as_deref(),
                 impact_json.as_deref(),
                 risk_json.as_deref(),
@@ -407,10 +596,10 @@ async fn cache_result(
     }
 }
 
-/// Perform complete diff analysis
+/// Perform complete diff analysis (LLM optional — falls back to heuristic)
 pub async fn analyze_diff(
     pool: &Arc<DatabasePool>,
-    llm_client: &Arc<dyn LlmClient>,
+    llm_client: Option<&Arc<dyn LlmClient>>,
     project_path: &Path,
     project_id: Option<i64>,
     from_ref: &str,
@@ -421,7 +610,7 @@ pub async fn analyze_diff(
     let from_commit = resolve_ref(project_path, from_ref)?;
     let to_commit = resolve_ref(project_path, to_ref)?;
 
-    // Check cache first
+    // Check cache first (skip heuristic-cached results so LLM can re-analyze when available)
     let from_for_cache = from_commit.clone();
     let to_for_cache = to_commit.clone();
     let cached = pool
@@ -433,12 +622,16 @@ pub async fn analyze_diff(
         .str_err()?;
 
     if let Some(cached) = cached {
-        tracing::info!(
-            "Using cached diff analysis for {}..{}",
-            from_commit,
-            to_commit
-        );
-        return Ok(result_from_cache(cached, from_commit, to_commit));
+        // If LLM is available and cached result is heuristic, skip cache to re-analyze
+        let is_heuristic_cache = cached.analysis_type == "heuristic";
+        if !is_heuristic_cache || llm_client.is_none() {
+            tracing::info!(
+                "Using cached diff analysis for {}..{}",
+                from_commit,
+                to_commit
+            );
+            return Ok(result_from_cache(cached, from_commit, to_commit));
+        }
     }
 
     // Get diff content and stats
@@ -462,11 +655,16 @@ pub async fn analyze_diff(
         });
     }
 
-    // Semantic analysis via LLM
-    let (changes, summary, risk_flags) =
-        analyze_diff_semantic(&diff_content, llm_client, pool, project_id).await?;
+    // Semantic analysis via LLM or heuristic fallback
+    let (changes, summary, risk_flags, analysis_type) = if let Some(client) = llm_client {
+        let (c, s, f) = analyze_diff_semantic(&diff_content, client, pool, project_id).await?;
+        (c, s, f, "commit")
+    } else {
+        let (c, s, f) = analyze_diff_heuristic(&diff_content, &stats);
+        (c, s, f, "heuristic")
+    };
 
-    // Build impact analysis if requested
+    // Build impact analysis if requested (DB-based, works without LLM)
     let impact = if include_impact && !changes.is_empty() {
         let files = stats.files.clone();
         let changes_clone = changes.clone();
@@ -511,7 +709,7 @@ pub async fn analyze_diff(
         lines_removed: stats.lines_removed,
     };
 
-    cache_result(pool, project_id, &result).await;
+    cache_result(pool, project_id, &result, analysis_type).await;
 
     Ok(result)
 }

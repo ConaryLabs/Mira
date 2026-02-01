@@ -431,16 +431,17 @@ async fn test_summarize_codebase_no_deepseek() {
     .expect("session_start failed");
 
     let result = summarize_codebase(&ctx).await;
-    // Should error because no LLM provider is configured
+    // Without LLM, either succeeds with heuristic fallback or returns "All modules already have summaries"
     assert!(
-        result.is_err(),
-        "summarize_codebase should fail without LLM provider"
+        result.is_ok(),
+        "summarize_codebase should succeed with heuristic fallback: {:?}",
+        result.err()
     );
-    let error = result.unwrap_err();
+    let output = result.unwrap();
     assert!(
-        error.contains("No LLM provider configured") || error.contains("No active project"),
-        "Error: {}",
-        error
+        output.contains("Summarized") || output.contains("All modules already have summaries"),
+        "Output: {}",
+        output
     );
 }
 

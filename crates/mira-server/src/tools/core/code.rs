@@ -383,8 +383,10 @@ async fn auto_summarize_modules(
     Ok(updated)
 }
 
-/// Summarize codebase modules using LLM
+/// Summarize codebase modules using LLM (or heuristic fallback)
 pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, String> {
+    use crate::background::summaries::generate_heuristic_summaries;
+
     // Get project context
     let project = ctx.get_project().await;
     let (project_id, project_path) = match project.as_ref() {
@@ -392,11 +394,8 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         None => return Err("No active project. Call session_start first.".to_string()),
     };
 
-    // Get LLM client
-    let llm_client = ctx
-        .llm_factory()
-        .client_for_background()
-        .ok_or("No LLM provider configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.")?;
+    // Get LLM client (optional — falls back to heuristic)
+    let llm_client = ctx.llm_factory().client_for_background();
 
     // Get modules needing summaries (from code DB)
     let mut modules = ctx
@@ -414,43 +413,47 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         module.code_preview = cartographer::get_module_code_preview(project_path_ref, &module.path);
     }
 
-    // Build prompt
-    let prompt = cartographer::build_summary_prompt(&modules);
+    let summaries = if let Some(llm_client) = llm_client {
+        // LLM path
+        let prompt = cartographer::build_summary_prompt(&modules);
+        let messages = vec![Message::user(prompt)];
+        let result = llm_client
+            .chat(messages, None)
+            .await
+            .map_err(|e| format!("LLM request failed: {}", e))?;
 
-    // Call LLM (no tools needed for summarization)
-    let messages = vec![Message::user(prompt)];
-    let result = llm_client
-        .chat(messages, None)
-        .await
-        .map_err(|e| format!("LLM request failed: {}", e))?;
+        record_llm_usage(
+            ctx.pool(),
+            llm_client.provider_type(),
+            &llm_client.model_name(),
+            "tool:summarize_codebase",
+            &result,
+            Some(project_id),
+            None,
+        )
+        .await;
 
-    // Record usage
-    record_llm_usage(
-        ctx.pool(),
-        llm_client.provider_type(),
-        &llm_client.model_name(),
-        "tool:summarize_codebase",
-        &result,
-        Some(project_id),
-        None,
-    )
-    .await;
+        let content = result.content.ok_or("No content in LLM response")?;
+        let parsed = cartographer::parse_summary_response(&content);
+        if parsed.is_empty() {
+            return Err(format!(
+                "Failed to parse summaries from LLM response:\n{}",
+                content
+            ));
+        }
+        parsed
+    } else {
+        // Heuristic fallback — no LLM available
+        let heuristic = generate_heuristic_summaries(&modules);
+        if heuristic.is_empty() {
+            return Err("No modules could be summarized heuristically.".to_string());
+        }
+        heuristic.into_iter().collect()
+    };
 
-    let content = result.content.ok_or("No content in LLM response")?;
-
-    // Parse summaries from response
-    let summaries = cartographer::parse_summary_response(&content);
-
-    if summaries.is_empty() {
-        return Err(format!(
-            "Failed to parse summaries from LLM response:\n{}",
-            content
-        ));
-    }
-
-    // Update database and clear cached modules (code DB)
-    use crate::db::clear_modules_without_purpose_sync;
-
+    // Update database (code DB)
+    // Only clear cached modules when using LLM summaries (heuristic ones are upgradeable)
+    let has_llm = ctx.llm_factory().has_providers();
     let summaries_clone = summaries.clone();
     let updated: usize = ctx
         .code_pool()
@@ -458,8 +461,10 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
             let count = cartographer::update_module_purposes(conn, project_id, &summaries_clone)
                 .str_err()?;
 
-            // Clear cached modules to force regeneration
-            clear_modules_without_purpose_sync(conn, project_id).map_err(|e| e.to_string())?;
+            if has_llm {
+                use crate::db::clear_modules_without_purpose_sync;
+                clear_modules_without_purpose_sync(conn, project_id).map_err(|e| e.to_string())?;
+            }
 
             Ok::<_, String>(count)
         })

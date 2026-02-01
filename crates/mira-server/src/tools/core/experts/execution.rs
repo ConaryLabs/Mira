@@ -24,8 +24,18 @@ pub async fn consult_expert<C: ToolContext>(
 ) -> Result<String, String> {
     let expert_key = expert.db_key();
 
-    // Get reasoning strategy: Single (one model) or Decoupled (chat + reasoner)
+    // Expert consultation fundamentally requires LLM reasoning — no heuristic fallback
     let llm_factory = ctx.llm_factory();
+    if !llm_factory.has_providers() {
+        return Err(format!(
+            "Expert consultation ({}) requires an LLM provider. This tool uses AI models \
+             to reason about code. Set DEEPSEEK_API_KEY or GEMINI_API_KEY in ~/.mira/.env, \
+             or unset MIRA_DISABLE_LLM to enable expert consultation.",
+            expert.name()
+        ));
+    }
+
+    // Get reasoning strategy: Single (one model) or Decoupled (chat + reasoner)
     let strategy = llm_factory
         .strategy_for_role(expert_key.as_str(), ctx.pool())
         .await
