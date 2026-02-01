@@ -25,8 +25,8 @@
 // 4. **In-memory testing**: Use shared cache URI (`file:memdb_xxx?mode=memory&cache=shared`)
 //    so multiple pool connections share the same database state.
 
-use crate::utils::path_to_string;
 use crate::utils::ResultExt;
+use crate::utils::path_to_string;
 use anyhow::{Context, Result};
 use deadpool_sqlite::{Config, Hook, Pool, Runtime};
 use rusqlite::Connection;

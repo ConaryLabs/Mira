@@ -307,7 +307,8 @@ impl FileWatcher {
     /// Delete all data associated with a file (runs on pool connection)
     async fn delete_file_data(&self, project_id: i64, file_path: &str) -> Result<(), String> {
         let file_path = file_path.to_string();
-        let result = self.pool
+        let result = self
+            .pool
             .interact(move |conn| -> Result<(), anyhow::Error> {
                 clear_file_index_sync(conn, project_id, &file_path)?;
                 tracing::debug!(

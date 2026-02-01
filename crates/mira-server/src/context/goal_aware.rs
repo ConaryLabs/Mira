@@ -94,7 +94,6 @@ impl GoalAwareInjector {
 
         context.trim_end().to_string()
     }
-
 }
 
 #[cfg(test)]

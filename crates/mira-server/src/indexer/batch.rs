@@ -43,10 +43,7 @@ pub async fn embed_chunks(
     pending_chunks: &[PendingChunk],
 ) -> Result<Vec<Vec<f32>>, String> {
     let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
-    embeddings
-        .embed_batch_for_storage(&texts)
-        .await
-        .str_err()
+    embeddings.embed_batch_for_storage(&texts).await.str_err()
 }
 
 /// Helper to prepare chunk data for database storage
@@ -139,7 +136,12 @@ pub async fn store_chunks_to_db(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to store chunk ({}:{}): {}", file_path, start_line, e);
+                    tracing::warn!(
+                        "Failed to store chunk ({}:{}): {}",
+                        file_path,
+                        start_line,
+                        e
+                    );
                     errors += 1;
                 }
             }

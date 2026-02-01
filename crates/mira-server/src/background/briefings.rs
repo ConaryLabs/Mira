@@ -359,7 +359,10 @@ fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -
     );
 
     if total_commits > FALLBACK_MAX_COMMITS {
-        result.push_str(&format!(" (+{} more)", total_commits - FALLBACK_MAX_COMMITS));
+        result.push_str(&format!(
+            " (+{} more)",
+            total_commits - FALLBACK_MAX_COMMITS
+        ));
     }
 
     if let Some(stats) = stat_summary {

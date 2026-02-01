@@ -124,8 +124,7 @@ pub async fn cross_project<C: ToolContext>(
             let imported: usize = ctx
                 .pool()
                 .run(move |conn| {
-                    let prefs = cross_project::get_preferences(conn, project_id)
-                        .str_err()?;
+                    let prefs = cross_project::get_preferences(conn, project_id).str_err()?;
                     if !prefs.sharing_enabled || !prefs.import_patterns {
                         return Ok::<_, String>(0);
                     }

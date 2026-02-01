@@ -434,7 +434,10 @@ mod tests {
 
     #[test]
     fn test_shorten_path() {
-        assert_eq!(shorten_path("src/background/slow_lane.rs"), "background/slow_lane.rs");
+        assert_eq!(
+            shorten_path("src/background/slow_lane.rs"),
+            "background/slow_lane.rs"
+        );
         assert_eq!(shorten_path("main.rs"), "main.rs");
         assert_eq!(shorten_path("src/lib.rs"), "src/lib.rs");
     }

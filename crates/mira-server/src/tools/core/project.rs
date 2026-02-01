@@ -307,8 +307,7 @@ pub async fn session_start<C: ToolContext>(
             .str_err()?;
 
             // Persist active session ID for restart recovery
-            set_server_state_sync(conn, "active_session_id", &sid_for_db)
-                .str_err()?;
+            set_server_state_sync(conn, "active_session_id", &sid_for_db).str_err()?;
 
             // Store system context as memory
             if let Some(ref content) = system_context {

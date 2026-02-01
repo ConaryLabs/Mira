@@ -118,7 +118,8 @@ impl MiraServer {
             // Path mismatch - we'll re-initialize below
             tracing::info!(
                 "[mira] Project path mismatch: {} vs {}, auto-switching",
-                proj.path, cwd
+                proj.path,
+                cwd
             );
         }
         drop(current_project); // Release the read lock
@@ -156,7 +157,8 @@ impl MiraServer {
             let receiver_count = tx.receiver_count();
             tracing::debug!(
                 "[BROADCAST] Sending {:?} to {} receivers",
-                event, receiver_count
+                event,
+                receiver_count
             );
             match tx.send(event) {
                 Ok(n) => tracing::debug!("[BROADCAST] Sent to {} receivers", n),

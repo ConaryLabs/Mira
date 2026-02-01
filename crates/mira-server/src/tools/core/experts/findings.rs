@@ -273,7 +273,10 @@ impl FindingsStore {
     /// Get all findings.
     #[allow(dead_code)]
     pub fn all(&self) -> Vec<CouncilFinding> {
-        self.findings.lock().expect("findings mutex not poisoned").clone()
+        self.findings
+            .lock()
+            .expect("findings mutex not poisoned")
+            .clone()
     }
 
     /// Get findings from a specific role.
@@ -289,7 +292,10 @@ impl FindingsStore {
 
     /// Number of findings stored.
     pub fn count(&self) -> usize {
-        self.findings.lock().expect("findings mutex not poisoned").len()
+        self.findings
+            .lock()
+            .expect("findings mutex not poisoned")
+            .len()
     }
 
     /// Format all findings for the synthesis prompt.

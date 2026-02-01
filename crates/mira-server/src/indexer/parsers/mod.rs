@@ -8,8 +8,8 @@ pub mod typescript;
 
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use tree_sitter::{Node, Parser};
 
 // Re-export parser implementations

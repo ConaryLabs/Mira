@@ -249,10 +249,7 @@ async fn generate_template_suggestions(pool: &Arc<DatabasePool>) -> Result<usize
                         Some(PreGeneratedSuggestion {
                             pattern_id: p.id,
                             trigger_key: from.clone(),
-                            suggestion_text: format!(
-                                "{}Often edited with {}",
-                                TEMPLATE_PREFIX, to
-                            ),
+                            suggestion_text: format!("{}Often edited with {}", TEMPLATE_PREFIX, to),
                             confidence: adjusted_confidence,
                         })
                     }

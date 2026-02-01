@@ -137,8 +137,7 @@ pub fn get_pending_doc_tasks(
     }
     .str_err()?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .str_err()
+    rows.collect::<Result<Vec<_>, _>>().str_err()
 }
 
 /// Get all tasks with optional filters

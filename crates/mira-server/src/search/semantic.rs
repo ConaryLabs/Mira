@@ -289,15 +289,14 @@ fn merge_results(
     });
 
     // Determine primary search type based on contribution
-    let search_type = if semantic_count >= keyword_count && semantic_count >= fuzzy_count
-        && semantic_count > 0
-    {
-        SearchType::Semantic
-    } else if fuzzy_count > keyword_count && fuzzy_count > 0 {
-        SearchType::Fuzzy
-    } else {
-        SearchType::Keyword
-    };
+    let search_type =
+        if semantic_count >= keyword_count && semantic_count >= fuzzy_count && semantic_count > 0 {
+            SearchType::Semantic
+        } else if fuzzy_count > keyword_count && fuzzy_count > 0 {
+            SearchType::Fuzzy
+        } else {
+            SearchType::Keyword
+        };
 
     (results, search_type)
 }

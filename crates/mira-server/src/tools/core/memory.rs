@@ -281,18 +281,18 @@ pub async fn recall<C: ToolContext>(
                     });
                 }
 
-                let mut response =
-                    format!("{}Found {} memories (fuzzy):\n", context_header, results.len());
+                let mut response = format!(
+                    "{}Found {} memories (fuzzy):\n",
+                    context_header,
+                    results.len()
+                );
                 for mem in results {
                     let preview = if mem.content.len() > 100 {
                         format!("{}...", &mem.content[..100])
                     } else {
                         mem.content.clone()
                     };
-                    response.push_str(&format!(
-                        "  [{}] ({}) {}\n",
-                        mem.id, mem.fact_type, preview
-                    ));
+                    response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
                 }
                 return Ok(response);
             }
