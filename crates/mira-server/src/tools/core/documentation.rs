@@ -383,5 +383,8 @@ pub async fn documentation<C: ToolContext>(
         }
         DocumentationAction::Inventory => show_doc_inventory(ctx).await,
         DocumentationAction::Scan => scan_documentation(ctx).await,
+        DocumentationAction::ExportClaudeLocal => {
+            crate::tools::core::claude_local::export_claude_local(ctx).await
+        }
     }
 }

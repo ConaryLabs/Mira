@@ -7,6 +7,29 @@ use crate::tools::core::ToolContext;
 use mira_types::{AgentRole, WsEvent};
 use uuid::Uuid;
 
+/// Unified session tool dispatcher
+pub async fn handle_session<C: ToolContext>(
+    ctx: &C,
+    req: crate::mcp::requests::SessionRequest,
+) -> Result<String, String> {
+    use crate::mcp::requests::SessionAction;
+    match req.action {
+        SessionAction::History => {
+            let history_action = req
+                .history_action
+                .ok_or("history_action is required for action 'history'")?;
+            session_history(ctx, history_action, req.session_id, req.limit).await
+        }
+        SessionAction::Recap => super::get_session_recap(ctx).await,
+        SessionAction::Usage => {
+            let usage_action = req
+                .usage_action
+                .ok_or("usage_action is required for action 'usage'")?;
+            super::usage(ctx, usage_action, req.group_by, req.since_days, req.limit).await
+        }
+    }
+}
+
 /// Query session history
 pub async fn session_history<C: ToolContext>(
     ctx: &C,

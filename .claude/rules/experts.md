@@ -1,10 +1,16 @@
 # Expert Consultation
 
-Use the unified `consult_experts` tool for second opinions before major decisions:
+Use the unified `expert` tool for second opinions before major decisions:
 
 ```
-consult_experts(roles=["architect"], context="...", question="...")
-consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple experts in parallel
+expert(action="consult", roles=["architect"], context="...", question="...")
+expert(action="consult", roles=["code_reviewer", "security"], context="...")  # Multiple experts in parallel
+```
+
+Configure experts with:
+```
+expert(action="configure", config_action="list")
+expert(action="configure", config_action="set", role="architect", provider="gemini", model="gemini-3-pro")
 ```
 
 ## Available Roles

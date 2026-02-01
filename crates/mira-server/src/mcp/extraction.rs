@@ -12,11 +12,9 @@ use crate::search::embedding_to_bytes;
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
-    "task",                 // Task completions and updates
-    "goal",                 // Goal progress and milestones
-    "semantic_code_search", // Code discoveries
-    "find_callers",         // Call graph insights
-    "find_callees",         // Call graph insights
+    "task",  // Task completions and updates
+    "goal",  // Goal progress and milestones
+    "code",  // Code discoveries and call graph insights
 ];
 
 /// Spawn background extraction for a tool call
@@ -229,23 +227,16 @@ mod tests {
     }
 
     #[test]
-    fn test_extractable_tools_contains_search() {
-        assert!(EXTRACTABLE_TOOLS.contains(&"semantic_code_search"));
-    }
-
-    #[test]
-    fn test_extractable_tools_contains_call_graph() {
-        assert!(EXTRACTABLE_TOOLS.contains(&"find_callers"));
-        assert!(EXTRACTABLE_TOOLS.contains(&"find_callees"));
+    fn test_extractable_tools_contains_code() {
+        assert!(EXTRACTABLE_TOOLS.contains(&"code"));
     }
 
     #[test]
     fn test_extractable_tools_excludes_common() {
         // These tools should NOT be extractable
-        assert!(!EXTRACTABLE_TOOLS.contains(&"remember"));
-        assert!(!EXTRACTABLE_TOOLS.contains(&"recall"));
+        assert!(!EXTRACTABLE_TOOLS.contains(&"memory"));
         assert!(!EXTRACTABLE_TOOLS.contains(&"index"));
-        assert!(!EXTRACTABLE_TOOLS.contains(&"session_start"));
+        assert!(!EXTRACTABLE_TOOLS.contains(&"session"));
     }
 
     // ============================================================================

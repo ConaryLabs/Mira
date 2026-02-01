@@ -66,6 +66,8 @@ pub enum IndexAction {
     Status,
     /// Compact vec_code storage and VACUUM
     Compact,
+    /// Generate LLM-powered summaries for codebase modules
+    Summarize,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -136,6 +138,8 @@ pub enum DocumentationAction {
     Inventory,
     /// Trigger documentation scan
     Scan,
+    /// Export Mira memories to CLAUDE.local.md
+    ExportClaudeLocal,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -184,10 +188,27 @@ pub struct ProjectRequest {
     pub session_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryAction {
+    /// Store a fact for future recall
+    Remember,
+    /// Search memories using semantic similarity
+    Recall,
+    /// Delete a memory by ID
+    Forget,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct RememberRequest {
-    #[schemars(description = "Content to remember")]
-    pub content: String,
+pub struct MemoryRequest {
+    #[schemars(description = "Action: remember, recall, forget")]
+    pub action: MemoryAction,
+    #[schemars(description = "Content to remember (required for remember)")]
+    pub content: Option<String>,
+    #[schemars(description = "Search query (required for recall)")]
+    pub query: Option<String>,
+    #[schemars(description = "Memory ID to delete (required for forget)")]
+    pub id: Option<String>,
     #[schemars(description = "Key for upsert")]
     pub key: Option<String>,
     #[schemars(description = "Type: preference/decision/context/general")]
@@ -200,56 +221,45 @@ pub struct RememberRequest {
         description = "Visibility scope: personal (only creator), project (default, anyone with project access), team (team members only)"
     )]
     pub scope: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct RecallRequest {
-    #[schemars(description = "Search query")]
-    pub query: String,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
-    #[schemars(description = "Filter by category")]
-    pub category: Option<String>,
-    #[schemars(description = "Filter by type")]
-    pub fact_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeAction {
+    /// Search code by meaning
+    Search,
+    /// Get symbols from a file
+    Symbols,
+    /// Find all functions that call a given function
+    Callers,
+    /// Find all functions called by a given function
+    Callees,
+    /// Analyze module dependencies and detect circular dependencies
+    Dependencies,
+    /// Detect architectural patterns (repository, builder, factory, etc.)
+    Patterns,
+    /// Compute per-module tech debt scores
+    TechDebt,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ForgetRequest {
-    #[schemars(description = "Memory ID to delete")]
-    pub id: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetSymbolsRequest {
-    #[schemars(description = "File path")]
-    pub file_path: String,
-    #[schemars(description = "Symbol type")]
-    pub symbol_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SemanticCodeSearchRequest {
-    #[schemars(description = "Query")]
-    pub query: String,
-    #[schemars(description = "Language")]
+pub struct CodeRequest {
+    #[schemars(
+        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt"
+    )]
+    pub action: CodeAction,
+    #[schemars(description = "Search query (required for search)")]
+    pub query: Option<String>,
+    #[schemars(description = "File path (required for symbols)")]
+    pub file_path: Option<String>,
+    #[schemars(description = "Function name (required for callers/callees)")]
+    pub function_name: Option<String>,
+    #[schemars(description = "Language filter")]
     pub language: Option<String>,
-    #[schemars(description = "Max results")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct FindCallersRequest {
-    #[schemars(description = "Function name to find callers for")]
-    pub function_name: String,
-    #[schemars(description = "Max results")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct FindCalleesRequest {
-    #[schemars(description = "Function name to find callees for")]
-    pub function_name: String,
+    #[schemars(description = "Symbol type filter")]
+    pub symbol_type: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
 }
@@ -308,7 +318,7 @@ pub struct CrossProjectRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
-    #[schemars(description = "Action: project/file/status/compact")]
+    #[schemars(description = "Action: project/file/status/compact/summarize")]
     pub action: IndexAction,
     #[schemars(description = "Path")]
     pub path: Option<String>,
@@ -322,14 +332,35 @@ pub struct IndexRequest {
     pub skip_embed: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionAction {
+    /// Query session history (list_sessions, get_history, current via history_action)
+    History,
+    /// Get session recap (preferences, recent context, goals)
+    Recap,
+    /// Query LLM usage analytics (summary, stats, list via usage_action)
+    Usage,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SessionHistoryRequest {
-    #[schemars(description = "Action: list_sessions/get_history/current")]
-    pub action: SessionHistoryAction,
+pub struct SessionRequest {
+    #[schemars(description = "Action: history, recap, usage")]
+    pub action: SessionAction,
+    #[schemars(description = "History sub-action: list_sessions/get_history/current")]
+    pub history_action: Option<SessionHistoryAction>,
+    #[schemars(description = "Usage sub-action: summary/stats/list")]
+    pub usage_action: Option<UsageAction>,
     #[schemars(description = "Session ID (for get_history)")]
     pub session_id: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+    #[schemars(
+        description = "Group by: role, provider, model, or provider_model (for usage stats)"
+    )]
+    pub group_by: Option<String>,
+    #[schemars(description = "Filter to last N days (default: 30)")]
+    pub since_days: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -344,33 +375,40 @@ pub struct ReplyToMiraRequest {
     pub complete: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConsultExpertsRequest {
-    #[schemars(
-        description = "List of expert roles to consult in parallel: architect, plan_reviewer, scope_analyst, code_reviewer, security"
-    )]
-    pub roles: Vec<String>,
-    #[schemars(description = "Code, design, or situation to analyze")]
-    pub context: String,
-    #[schemars(description = "Specific question for all experts (optional)")]
-    pub question: Option<String>,
-    #[schemars(description = "Collaboration mode: parallel (default) or debate")]
-    pub mode: Option<String>,
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpertAction {
+    /// Consult one or more experts in parallel
+    Consult,
+    /// Configure expert system prompts
+    Configure,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ConfigureExpertRequest {
-    #[schemars(description = "Action: set/get/delete/list/providers")]
-    pub action: ExpertConfigAction,
+pub struct ExpertRequest {
+    #[schemars(description = "Action: consult, configure")]
+    pub action: ExpertAction,
     #[schemars(
-        description = "Expert role: architect/plan_reviewer/scope_analyst/code_reviewer/security"
+        description = "Expert roles to consult: architect, plan_reviewer, scope_analyst, code_reviewer, security (required for consult)"
     )]
+    pub roles: Option<Vec<String>>,
+    #[schemars(description = "Code, design, or situation to analyze (required for consult)")]
+    pub context: Option<String>,
+    #[schemars(description = "Specific question for all experts")]
+    pub question: Option<String>,
+    #[schemars(description = "Collaboration mode: parallel (default) or debate")]
+    pub mode: Option<String>,
+    #[schemars(
+        description = "Configure sub-action: set/get/delete/list/providers (required for configure)"
+    )]
+    pub config_action: Option<ExpertConfigAction>,
+    #[schemars(description = "Expert role for configuration")]
     pub role: Option<String>,
-    #[schemars(description = "Custom system prompt (for 'set' action)")]
+    #[schemars(description = "Custom system prompt (for configure set)")]
     pub prompt: Option<String>,
-    #[schemars(description = "LLM provider: deepseek/gemini (for 'set' action)")]
+    #[schemars(description = "LLM provider: deepseek/gemini (for configure set)")]
     pub provider: Option<String>,
-    #[schemars(description = "Custom model name, e.g. gemini-3-pro (for 'set' action)")]
+    #[schemars(description = "Custom model name, e.g. gemini-3-pro (for configure set)")]
     pub model: Option<String>,
 }
 
@@ -378,7 +416,9 @@ pub struct ConfigureExpertRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DocumentationRequest {
-    #[schemars(description = "Action: list, get, complete, skip, inventory, scan")]
+    #[schemars(
+        description = "Action: list, get, complete, skip, inventory, scan, export_claude_local"
+    )]
     pub action: DocumentationAction,
     #[schemars(description = "Task ID (for get/complete/skip actions)")]
     pub task_id: Option<i64>,
@@ -448,18 +488,3 @@ pub struct AnalyzeDiffRequest {
     pub include_impact: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct UsageRequest {
-    #[schemars(
-        description = "Action: summary (totals), stats (grouped by dimension), list (recent records)"
-    )]
-    pub action: UsageAction,
-    #[schemars(
-        description = "Group by: role, provider, model, or provider_model (for stats action)"
-    )]
-    pub group_by: Option<String>,
-    #[schemars(description = "Filter to last N days (default: 30)")]
-    pub since_days: Option<u32>,
-    #[schemars(description = "Max results for list action (default: 50)")]
-    pub limit: Option<i64>,
-}

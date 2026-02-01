@@ -1,6 +1,6 @@
 # Memory System: Remember & Recall
 
-Use `remember` to store decisions and context. Use `recall` to retrieve them.
+Use `memory(action="remember", ...)` to store decisions and context. Use `memory(action="recall", ...)` to retrieve them.
 
 ## Evidence Threshold
 
@@ -19,6 +19,6 @@ When uncertain, don't store it. Memories accumulate and dilute recall quality.
 4. **Before making changes** - Recall past decisions in that area
 5. **Workflows that worked** - Store successful patterns
 
-Example: User chooses builder pattern for Config -> `remember(content="Config struct uses builder pattern. Chosen for clarity and optional field handling.", category="decision")`.
+Example: User chooses builder pattern for Config -> `memory(action="remember", content="Config struct uses builder pattern. Chosen for clarity and optional field handling.", category="decision")`.
 
-Example: Adding an API endpoint -> first `recall("API design patterns endpoints conventions")` to follow established patterns.
+Example: Adding an API endpoint -> first `memory(action="recall", query="API design patterns endpoints conventions")` to follow established patterns.

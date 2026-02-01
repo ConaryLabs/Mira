@@ -5,7 +5,7 @@ Mira is a Rust MCP server providing persistent memory and code intelligence for 
 ## Session Start
 
 Project context is **auto-initialized** from Claude Code's working directory.
-For full session context, call `get_session_recap()`. Use `recall("preferences")` before writing code.
+For full session context, call `session(action="recap")`. Use `memory(action="recall", query="preferences")` before writing code.
 
 ## Anti-Patterns
 
@@ -16,16 +16,16 @@ For full session context, call `get_session_recap()`. Use `recall("preferences")
 | Use `Database` directly | Use `DatabasePool` for all database access |
 | Store secrets in memories | Keep secrets in `.env` only |
 | Guess at MCP tool parameters | Check tool schema or existing usage first |
-| Add dependencies without checking | Run `recall("dependencies")` first |
+| Add dependencies without checking | Run `memory(action="recall", query="dependencies")` first |
 | Modify `proxy.rs` handler signatures | Coordinate changes across all tool handlers |
 
 ## Tool Selection
 
 STOP before using Grep or Glob. Prefer Mira tools for semantic work:
-- **Code by intent** -> `search_code` (not Grep)
-- **File structure** -> `get_symbols` (not grepping for definitions)
-- **Call graph** -> `find_callers` / `find_callees` (not grepping function names)
-- **Past decisions** -> `recall` before architectural changes
+- **Code by intent** -> `code(action="search", query="...")` (not Grep)
+- **File structure** -> `code(action="symbols", file_path="...")` (not grepping for definitions)
+- **Call graph** -> `code(action="callers", ...)` / `code(action="callees", ...)` (not grepping function names)
+- **Past decisions** -> `memory(action="recall", query="...")` before architectural changes
 - **External libraries** -> Context7: `resolve-library-id` then `query-docs`
 
 Use Grep/Glob only for **literal strings**, **exact filename patterns**, or **simple one-off searches**.
@@ -36,11 +36,11 @@ See `.claude/rules/tool-selection.md` for the full decision guide.
 
 | Need | Tool |
 |------|------|
-| Search by meaning | `search_code` |
-| File structure | `get_symbols` |
-| What calls X? | `find_callers` |
-| What does X call? | `find_callees` |
-| Past decisions | `recall` |
+| Search by meaning | `code(action="search", query="...")` |
+| File structure | `code(action="symbols", file_path="...")` |
+| What calls X? | `code(action="callers", function_name="...")` |
+| What does X call? | `code(action="callees", function_name="...")` |
+| Past decisions | `memory(action="recall", query="...")` |
 | Codebase overview | `project(action="start")` output |
 | External library API | Context7: `resolve-library-id` -> `query-docs` |
 | Literal string search | `Grep` (OK) |

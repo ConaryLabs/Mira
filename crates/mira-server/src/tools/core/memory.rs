@@ -59,6 +59,28 @@ fn detect_secret(content: &str) -> Option<&'static str> {
     None
 }
 
+/// Unified memory tool dispatcher
+pub async fn handle_memory<C: ToolContext>(
+    ctx: &C,
+    req: crate::mcp::requests::MemoryRequest,
+) -> Result<String, String> {
+    use crate::mcp::requests::MemoryAction;
+    match req.action {
+        MemoryAction::Remember => {
+            let content = req.content.ok_or("content is required for action 'remember'")?;
+            remember(ctx, content, req.key, req.fact_type, req.category, req.confidence, req.scope).await
+        }
+        MemoryAction::Recall => {
+            let query = req.query.ok_or("query is required for action 'recall'")?;
+            recall(ctx, query, req.limit, req.category, req.fact_type).await
+        }
+        MemoryAction::Forget => {
+            let id = req.id.ok_or("id is required for action 'forget'")?;
+            forget(ctx, id).await
+        }
+    }
+}
+
 /// Store a memory fact
 pub async fn remember<C: ToolContext>(
     ctx: &C,

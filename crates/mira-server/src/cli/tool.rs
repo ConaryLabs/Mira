@@ -5,11 +5,8 @@ use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    AnalyzeDiffRequest, ConfigureExpertRequest, ConsultExpertsRequest, CrossProjectRequest,
-    DocumentationRequest, FindCalleesRequest, FindCallersRequest, FindingRequest, ForgetRequest,
-    GetSymbolsRequest, GoalRequest, IndexRequest, ProjectRequest, RecallRequest, RememberRequest,
-    ReplyToMiraRequest, SemanticCodeSearchRequest, SessionHistoryRequest, TeamRequest,
-    UsageRequest,
+    AnalyzeDiffRequest, CodeRequest, DocumentationRequest, ExpertRequest, FindingRequest,
+    GoalRequest, IndexRequest, MemoryRequest, ProjectRequest, ReplyToMiraRequest, SessionRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -25,42 +22,13 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             let session_id = req.session_id.or_else(read_claude_session_id);
             mira::tools::project(&server, req.action, req.project_path, req.name, session_id).await
         }
-        "remember" => {
-            let req: RememberRequest = serde_json::from_str(&args)?;
-            mira::tools::remember(
-                &server,
-                req.content,
-                req.key,
-                req.fact_type,
-                req.category,
-                req.confidence,
-                req.scope,
-            )
-            .await
+        "memory" => {
+            let req: MemoryRequest = serde_json::from_str(&args)?;
+            mira::tools::handle_memory(&server, req).await
         }
-        "recall" => {
-            let req: RecallRequest = serde_json::from_str(&args)?;
-            mira::tools::recall(&server, req.query, req.limit, req.category, req.fact_type).await
-        }
-        "forget" => {
-            let req: ForgetRequest = serde_json::from_str(&args)?;
-            mira::tools::forget(&server, req.id).await
-        }
-        "get_symbols" => {
-            let req: GetSymbolsRequest = serde_json::from_str(&args)?;
-            mira::tools::get_symbols(req.file_path, req.symbol_type)
-        }
-        "search_code" => {
-            let req: SemanticCodeSearchRequest = serde_json::from_str(&args)?;
-            mira::tools::search_code(&server, req.query, req.language, req.limit).await
-        }
-        "find_callers" => {
-            let req: FindCallersRequest = serde_json::from_str(&args)?;
-            mira::tools::find_function_callers(&server, req.function_name, req.limit).await
-        }
-        "find_callees" => {
-            let req: FindCalleesRequest = serde_json::from_str(&args)?;
-            mira::tools::find_function_callees(&server, req.function_name, req.limit).await
+        "code" => {
+            let req: CodeRequest = serde_json::from_str(&args)?;
+            mira::tools::handle_code(&server, req).await
         }
         "goal" => {
             let req: GoalRequest = serde_json::from_str(&args)?;
@@ -92,28 +60,13 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             )
             .await
         }
-        "summarize_codebase" => mira::tools::summarize_codebase(&server).await,
-        "get_session_recap" => mira::tools::get_session_recap(&server).await,
-        "session_history" => {
-            let req: SessionHistoryRequest = serde_json::from_str(&args)?;
-            mira::tools::session_history(&server, req.action, req.session_id, req.limit).await
+        "session" => {
+            let req: SessionRequest = serde_json::from_str(&args)?;
+            mira::tools::handle_session(&server, req).await
         }
-        "consult_experts" => {
-            let req: ConsultExpertsRequest = serde_json::from_str(&args)?;
-            mira::tools::consult_experts(&server, req.roles, req.context, req.question, req.mode)
-                .await
-        }
-        "configure_expert" => {
-            let req: ConfigureExpertRequest = serde_json::from_str(&args)?;
-            mira::tools::configure_expert(
-                &server,
-                req.action,
-                req.role,
-                req.prompt,
-                req.provider,
-                req.model,
-            )
-            .await
+        "expert" => {
+            let req: ExpertRequest = serde_json::from_str(&args)?;
+            mira::tools::handle_expert(&server, req).await
         }
         "reply_to_mira" => {
             let req: ReplyToMiraRequest = serde_json::from_str(&args)?;
@@ -125,19 +78,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             )
             .await
         }
-        "cross_project" => {
-            let req: CrossProjectRequest = serde_json::from_str(&args)?;
-            mira::tools::cross_project(
-                &server,
-                req.action,
-                req.export,
-                req.import,
-                req.min_confidence,
-                req.epsilon,
-            )
-            .await
-        }
-        "export_claude_local" => mira::tools::export_claude_local(&server).await,
         "documentation" => {
             let req: DocumentationRequest = serde_json::from_str(&args)?;
             mira::tools::documentation(
@@ -148,19 +88,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 req.doc_type,
                 req.priority,
                 req.status,
-            )
-            .await
-        }
-        "team" => {
-            let req: TeamRequest = serde_json::from_str(&args)?;
-            mira::tools::team(
-                &server,
-                req.action,
-                req.team_id,
-                req.name,
-                req.description,
-                req.user_identity,
-                req.role,
             )
             .await
         }
@@ -185,10 +112,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             mira::tools::analyze_diff_tool(&server, req.from_ref, req.to_ref, req.include_impact)
                 .await
         }
-        "usage" => {
-            let req: UsageRequest = serde_json::from_str(&args)?;
-            mira::tools::usage(&server, req.action, req.group_by, req.since_days, req.limit).await
-        }
         _ => Err(format!("Unknown tool: {}", name)),
     };
 
@@ -205,28 +128,16 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
 fn list_cli_tool_names() -> Vec<&'static str> {
     vec![
         "project",
-        "remember",
-        "recall",
-        "forget",
-        "get_symbols",
-        "search_code",
-        "find_callers",
-        "find_callees",
+        "memory",
+        "code",
         "goal",
         "index",
-        "summarize_codebase",
-        "get_session_recap",
-        "session_history",
-        "consult_experts",
-        "configure_expert",
+        "session",
+        "expert",
         "reply_to_mira",
-        "cross_project",
-        "export_claude_local",
         "documentation",
-        "team",
         "finding",
         "analyze_diff",
-        "usage",
     ]
 }
 

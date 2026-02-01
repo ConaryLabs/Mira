@@ -38,3 +38,27 @@ pub use config::configure_expert;
 pub use execution::{consult_expert, consult_experts};
 pub use findings::ParsedFinding;
 pub use role::ExpertRole;
+
+/// Unified expert tool dispatcher
+pub async fn handle_expert<C: ToolContext + Clone + 'static>(
+    ctx: &C,
+    req: crate::mcp::requests::ExpertRequest,
+) -> Result<String, String> {
+    use crate::mcp::requests::ExpertAction;
+    match req.action {
+        ExpertAction::Consult => {
+            let roles = req.roles.ok_or("roles is required for action 'consult'")?;
+            let context = req
+                .context
+                .ok_or("context is required for action 'consult'")?;
+            consult_experts(ctx, roles, context, req.question, req.mode).await
+        }
+        ExpertAction::Configure => {
+            let config_action = req
+                .config_action
+                .ok_or("config_action is required for action 'configure'")?;
+            configure_expert(ctx, config_action, req.role, req.prompt, req.provider, req.model)
+                .await
+        }
+    }
+}

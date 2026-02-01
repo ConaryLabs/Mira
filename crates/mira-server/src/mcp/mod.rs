@@ -182,64 +182,17 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Store a fact for future recall. Scope controls visibility: personal (only you), project (default), team."
+        description = "Manage memories. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Scope controls visibility: personal, project (default), team."
     )]
-    async fn remember(
-        &self,
-        Parameters(req): Parameters<RememberRequest>,
-    ) -> Result<String, String> {
-        tools::remember(
-            self,
-            req.content,
-            req.key,
-            req.fact_type,
-            req.category,
-            req.confidence,
-            req.scope,
-        )
-        .await
+    async fn memory(&self, Parameters(req): Parameters<MemoryRequest>) -> Result<String, String> {
+        tools::handle_memory(self, req).await
     }
 
-    #[tool(description = "Search memories using semantic similarity.")]
-    async fn recall(&self, Parameters(req): Parameters<RecallRequest>) -> Result<String, String> {
-        tools::recall(self, req.query, req.limit, req.category, req.fact_type).await
-    }
-
-    #[tool(description = "Delete a memory by ID.")]
-    async fn forget(&self, Parameters(req): Parameters<ForgetRequest>) -> Result<String, String> {
-        tools::forget(self, req.id).await
-    }
-
-    #[tool(description = "Get symbols from a file.")]
-    async fn get_symbols(
-        &self,
-        Parameters(req): Parameters<GetSymbolsRequest>,
-    ) -> Result<String, String> {
-        tools::get_symbols(req.file_path, req.symbol_type)
-    }
-
-    #[tool(description = "Search code by meaning.")]
-    async fn search_code(
-        &self,
-        Parameters(req): Parameters<SemanticCodeSearchRequest>,
-    ) -> Result<String, String> {
-        tools::search_code(self, req.query, req.language, req.limit).await
-    }
-
-    #[tool(description = "Find all functions that call a given function.")]
-    async fn find_callers(
-        &self,
-        Parameters(req): Parameters<FindCallersRequest>,
-    ) -> Result<String, String> {
-        tools::find_function_callers(self, req.function_name, req.limit).await
-    }
-
-    #[tool(description = "Find all functions called by a given function.")]
-    async fn find_callees(
-        &self,
-        Parameters(req): Parameters<FindCalleesRequest>,
-    ) -> Result<String, String> {
-        tools::find_function_callees(self, req.function_name, req.limit).await
+    #[tool(
+        description = "Code intelligence. Actions: search (by meaning), symbols (from file), callers (of function), callees (by function), dependencies (module graph + circular deps), patterns (architectural pattern detection), tech_debt (per-module debt scores)."
+    )]
+    async fn code(&self, Parameters(req): Parameters<CodeRequest>) -> Result<String, String> {
+        tools::handle_code(self, req).await
     }
 
     #[tool(
@@ -266,44 +219,20 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Manage cross-project intelligence sharing (enable/disable sharing, view stats, sync patterns)."
+        description = "Index code and git history. Actions: project/file/status/compact/summarize"
     )]
-    async fn cross_project(
-        &self,
-        Parameters(req): Parameters<CrossProjectRequest>,
-    ) -> Result<String, String> {
-        tools::cross_project(
-            self,
-            req.action,
-            req.export,
-            req.import,
-            req.min_confidence,
-            req.epsilon,
-        )
-        .await
-    }
-
-    #[tool(description = "Index code and git history. Actions: project/file/status/compact")]
     async fn index(&self, Parameters(req): Parameters<IndexRequest>) -> Result<String, String> {
         tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
     }
 
-    #[tool(description = "Generate LLM-powered summaries for codebase modules.")]
-    async fn summarize_codebase(&self) -> Result<String, String> {
-        tools::summarize_codebase(self).await
-    }
-
-    #[tool(description = "Get session recap (preferences, recent context, goals).")]
-    async fn get_session_recap(&self) -> Result<String, String> {
-        tools::get_session_recap(self).await
-    }
-
-    #[tool(description = "Query session history (list_sessions, get_history, current).")]
-    async fn session_history(
+    #[tool(
+        description = "Session management. Actions: history (list_sessions/get_history/current via history_action), recap (preferences + context + goals), usage (summary/stats/list via usage_action)."
+    )]
+    async fn session(
         &self,
-        Parameters(req): Parameters<SessionHistoryRequest>,
+        Parameters(req): Parameters<SessionRequest>,
     ) -> Result<String, String> {
-        tools::session_history(self, req.action, req.session_id, req.limit).await
+        tools::handle_session(self, req).await
     }
 
     #[tool(description = "Send a response back to Mira during collaboration.")]
@@ -321,40 +250,14 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Consult one or more experts in parallel. Roles: architect, plan_reviewer, scope_analyst, code_reviewer, security."
+        description = "Consult experts or configure them. Actions: consult (get expert opinions), configure (set/get/delete/list/providers for expert prompts)."
     )]
-    async fn consult_experts(
-        &self,
-        Parameters(req): Parameters<ConsultExpertsRequest>,
-    ) -> Result<String, String> {
-        tools::consult_experts(self, req.roles, req.context, req.question, req.mode).await
-    }
-
-    #[tool(description = "Configure expert system prompts (set, get, delete, list, providers).")]
-    async fn configure_expert(
-        &self,
-        Parameters(req): Parameters<ConfigureExpertRequest>,
-    ) -> Result<String, String> {
-        tools::configure_expert(
-            self,
-            req.action,
-            req.role,
-            req.prompt,
-            req.provider,
-            req.model,
-        )
-        .await
+    async fn expert(&self, Parameters(req): Parameters<ExpertRequest>) -> Result<String, String> {
+        tools::handle_expert(self, req).await
     }
 
     #[tool(
-        description = "Export Mira memories to CLAUDE.local.md for persistence across Claude Code sessions."
-    )]
-    async fn export_claude_local(&self) -> Result<String, String> {
-        tools::export_claude_local(self).await
-    }
-
-    #[tool(
-        description = "Manage documentation tasks. Actions: list (show needed docs), get (full task details for Claude to write), complete (mark done after writing), skip (mark not needed), inventory (show all docs), scan (trigger scan)."
+        description = "Manage documentation tasks. Actions: list (show needed docs), get (full task details for Claude to write), complete (mark done after writing), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md)."
     )]
     async fn documentation(
         &self,
@@ -368,20 +271,6 @@ impl MiraServer {
             req.doc_type,
             req.priority,
             req.status,
-        )
-        .await
-    }
-
-    #[tool(description = "Manage teams for shared memory (create, invite, remove, list, members).")]
-    async fn team(&self, Parameters(req): Parameters<TeamRequest>) -> Result<String, String> {
-        tools::team(
-            self,
-            req.action,
-            req.team_id,
-            req.name,
-            req.description,
-            req.user_identity,
-            req.role,
         )
         .await
     }
@@ -417,12 +306,6 @@ impl MiraServer {
         tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await
     }
 
-    #[tool(
-        description = "Query LLM usage and cost analytics. Actions: summary (totals), stats (grouped by role/provider/model), list (recent)."
-    )]
-    async fn usage(&self, Parameters(req): Parameters<UsageRequest>) -> Result<String, String> {
-        tools::usage(self, req.action, req.group_by, req.since_days, req.limit).await
-    }
 }
 
 impl MiraServer {
