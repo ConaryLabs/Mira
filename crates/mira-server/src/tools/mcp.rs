@@ -147,4 +147,19 @@ impl ToolContext for MiraServer {
             Vec::new()
         }
     }
+
+    fn has_sampling(&self) -> bool {
+        // Check if peer is set and client advertised sampling capability.
+        // We can't do async here, so use try_read for a non-blocking check.
+        self.peer
+            .try_read()
+            .ok()
+            .and_then(|guard| {
+                guard.as_ref().and_then(|p| {
+                    p.peer_info()
+                        .map(|info| info.capabilities.sampling.is_some())
+                })
+            })
+            .unwrap_or(false)
+    }
 }

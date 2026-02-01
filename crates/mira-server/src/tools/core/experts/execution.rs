@@ -9,7 +9,7 @@ use super::{
     EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
     PARALLEL_EXPERT_TIMEOUT, ToolContext,
 };
-use crate::llm::{Message, record_llm_usage};
+use crate::llm::{Message, Provider, record_llm_usage};
 use crate::utils::ResultExt;
 use std::sync::Arc;
 use tokio::time::timeout;
@@ -63,6 +63,11 @@ pub async fn consult_expert<C: ToolContext>(
     };
 
     let user_prompt = build_user_prompt(&enriched_context, question.as_deref());
+
+    // Sampling fallback: single-shot via MCP host (no tools, no agentic loop)
+    if provider == Provider::Sampling {
+        return consult_expert_via_sampling(ctx, expert, &expert_key, system_prompt, user_prompt, &chat_client).await;
+    }
 
     // Build dynamic tool list: built-in + web + MCP tools
     let mut tools = get_expert_tools();
@@ -273,6 +278,63 @@ pub async fn consult_expert<C: ToolContext>(
         tool_calls,
         iters,
     ))
+}
+
+/// Single-shot expert consultation via MCP sampling (no tools, no agentic loop).
+///
+/// Used as a zero-key fallback when no DeepSeek/Gemini API keys are configured.
+/// The MCP host (Claude Code) handles the actual LLM call.
+async fn consult_expert_via_sampling<C: ToolContext>(
+    ctx: &C,
+    expert: ExpertRole,
+    expert_key: &str,
+    system_prompt: String,
+    user_prompt: String,
+    chat_client: &Arc<dyn crate::llm::LlmClient>,
+) -> Result<String, String> {
+    tracing::info!(expert = %expert_key, "Using MCP sampling for expert consultation (single-shot)");
+
+    let messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
+
+    // Single LLM call — no tools, no iteration
+    let result = timeout(
+        LLM_CALL_TIMEOUT,
+        chat_client.chat(messages, None),
+    )
+    .await
+    .map_err(|_| format!("MCP sampling timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
+    .map_err(|e| format!("MCP sampling failed: {}", e))?;
+
+    // Record usage
+    let role_for_usage = format!("expert:{}", expert_key);
+    record_llm_usage(
+        ctx.pool(),
+        chat_client.provider_type(),
+        &chat_client.model_name(),
+        &role_for_usage,
+        &result,
+        ctx.project_id().await,
+        ctx.get_session_id().await,
+    )
+    .await;
+
+    // Parse and store findings for code reviewer and security experts
+    if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
+        if let Some(ref content) = result.content {
+            let findings = parse_expert_findings(content, expert_key);
+            if !findings.is_empty() {
+                let stored = store_findings(ctx, &findings, expert_key).await;
+                tracing::debug!(
+                    expert = %expert_key,
+                    parsed = findings.len(),
+                    stored,
+                    "Parsed and stored review findings (sampling)"
+                );
+            }
+        }
+    }
+
+    Ok(format_expert_response(expert, result, 0, 1))
 }
 
 /// Consult multiple experts, with optional council/debate mode.

@@ -6,9 +6,12 @@ use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::gemini::GeminiClient;
 use crate::llm::provider::{LlmClient, Provider};
+use crate::llm::sampling::SamplingClient;
 use crate::tools::core::experts::strategy::ReasoningStrategy;
+use rmcp::service::{Peer, RoleServer};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 /// Factory for creating and managing LLM provider clients
@@ -20,6 +23,8 @@ pub struct ProviderFactory {
     // Store API keys to create custom clients on demand
     deepseek_key: Option<String>,
     gemini_key: Option<String>,
+    // MCP sampling peer — last-resort fallback when no API keys are configured
+    sampling_peer: Option<Arc<RwLock<Option<Peer<RoleServer>>>>>,
 }
 
 impl ProviderFactory {
@@ -81,7 +86,14 @@ impl ProviderFactory {
             fallback_order,
             deepseek_key: api_keys.deepseek,
             gemini_key: api_keys.gemini,
+            sampling_peer: None,
         }
+    }
+
+    /// Set the MCP sampling peer for zero-key expert fallback.
+    /// Called once the peer is captured from the first tool call.
+    pub fn set_sampling_peer(&mut self, peer: Arc<RwLock<Option<Peer<RoleServer>>>>) {
+        self.sampling_peer = Some(peer);
     }
 
     /// Get a client for background tasks (summaries, briefings, capabilities, etc.)
@@ -185,6 +197,12 @@ impl ProviderFactory {
             }
         }
 
+        // 4. Last resort: MCP sampling (zero-key fallback via host client)
+        if let Some(ref peer) = self.sampling_peer {
+            info!(role = role, "Using MCP sampling fallback (no API keys)");
+            return Ok(Arc::new(SamplingClient::new(peer.clone())));
+        }
+
         Err("No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.".into())
     }
 
@@ -208,9 +226,9 @@ impl ProviderFactory {
         self.default_provider
     }
 
-    /// Check if any providers are available
+    /// Check if any providers are available (including sampling fallback)
     pub fn has_providers(&self) -> bool {
-        !self.clients.is_empty()
+        !self.clients.is_empty() || self.sampling_peer.is_some()
     }
 
     /// Get a `ReasoningStrategy` for an expert role.
@@ -273,6 +291,7 @@ mod tests {
             fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
             deepseek_key: None,
             gemini_key: None,
+            sampling_peer: None,
         }
     }
 
@@ -312,6 +331,7 @@ mod tests {
             fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
             deepseek_key: None,
             gemini_key: None,
+            sampling_peer: None,
         };
         assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
     }
@@ -342,6 +362,7 @@ mod tests {
             fallback_order: vec![Provider::DeepSeek],
             deepseek_key: Some(key),
             gemini_key: None,
+            sampling_peer: None,
         }
     }
 
@@ -415,6 +436,7 @@ mod tests {
             fallback_order: vec![Provider::DeepSeek],
             deepseek_key: None, // No key available
             gemini_key: None,
+            sampling_peer: None,
         };
         let pool = Arc::new(
             crate::db::pool::DatabasePool::open_in_memory()

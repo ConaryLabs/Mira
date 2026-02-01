@@ -60,6 +60,8 @@ pub struct MiraServer {
     pub fuzzy_cache: Arc<FuzzyCache>,
     /// Whether fuzzy fallback is enabled
     pub fuzzy_enabled: bool,
+    /// MCP peer for sampling/createMessage fallback (captured on first tool call)
+    pub peer: Arc<RwLock<Option<rmcp::service::Peer<RoleServer>>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -73,7 +75,13 @@ impl MiraServer {
         fuzzy_enabled: bool,
     ) -> Self {
         // Create provider factory from pre-loaded keys
-        let llm_factory = Arc::new(ProviderFactory::from_api_keys(api_keys.clone()));
+        let mut factory = ProviderFactory::from_api_keys(api_keys.clone());
+
+        // Shared peer slot — populated on first call_tool, used by SamplingClient
+        let peer = Arc::new(RwLock::new(None));
+        factory.set_sampling_peer(peer.clone());
+
+        let llm_factory = Arc::new(factory);
 
         Self {
             pool,
@@ -89,6 +97,7 @@ impl MiraServer {
             mcp_client_manager: None,
             fuzzy_cache: Arc::new(FuzzyCache::new()),
             fuzzy_enabled,
+            peer,
             tool_router: Self::tool_router(),
         }
     }
@@ -418,6 +427,17 @@ impl ServerHandler for MiraServer {
             let tool_name = request.name.to_string();
             let call_id = uuid::Uuid::new_v4().to_string();
             let start = std::time::Instant::now();
+
+            // Capture peer on first tool call (for MCP sampling fallback)
+            if self.peer.read().await.is_none() {
+                let peer_clone = context.peer.clone();
+                if let Some(info) = peer_clone.peer_info() {
+                    if info.capabilities.sampling.is_some() {
+                        tracing::info!("[mira] Client supports MCP sampling");
+                    }
+                }
+                *self.peer.write().await = Some(peer_clone);
+            }
 
             // Get or create session for persistence
             let session_id = self.get_or_create_session().await;

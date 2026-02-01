@@ -70,7 +70,8 @@ pub fn get_pricing(provider: Provider, model: &str) -> Option<ModelPricing> {
     match provider {
         Provider::DeepSeek => get_deepseek_pricing(model),
         Provider::Gemini => get_gemini_pricing(model),
-        Provider::Ollama => Some(ModelPricing::new(0.0, 0.0)), // Local, no cost
+        Provider::Ollama => Some(ModelPricing::new(0.0, 0.0)),   // Local, no cost
+        Provider::Sampling => Some(ModelPricing::new(0.0, 0.0)), // Host-provided, no direct cost
     }
 }
 

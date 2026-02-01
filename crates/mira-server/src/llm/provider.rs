@@ -14,7 +14,8 @@ use super::{ChatResult, Message, Tool};
 pub enum Provider {
     DeepSeek,
     Gemini,
-    Ollama, // Reserved for local sovereignty - not implemented yet
+    Ollama,   // Reserved for local sovereignty - not implemented yet
+    Sampling, // MCP sampling — forwards to host client (Claude Code)
 }
 
 impl Provider {
@@ -25,6 +26,7 @@ impl Provider {
             "deepseek" => Some(Self::DeepSeek),
             "gemini" => Some(Self::Gemini),
             "ollama" => Some(Self::Ollama),
+            "sampling" => Some(Self::Sampling),
             _ => None,
         }
     }
@@ -35,6 +37,7 @@ impl Provider {
             Self::DeepSeek => "DEEPSEEK_API_KEY",
             Self::Gemini => "GEMINI_API_KEY",
             Self::Ollama => "OLLAMA_HOST", // Ollama uses host, not API key
+            Self::Sampling => "N/A",        // No API key — uses MCP sampling
         }
     }
 
@@ -44,6 +47,7 @@ impl Provider {
             Self::DeepSeek => "deepseek-reasoner",
             Self::Gemini => "gemini-3-pro-preview",
             Self::Ollama => "llama3.3",
+            Self::Sampling => "mcp-sampling",
         }
     }
 }
@@ -54,6 +58,7 @@ impl fmt::Display for Provider {
             Self::DeepSeek => write!(f, "deepseek"),
             Self::Gemini => write!(f, "gemini"),
             Self::Ollama => write!(f, "ollama"),
+            Self::Sampling => write!(f, "sampling"),
         }
     }
 }

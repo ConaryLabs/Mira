@@ -128,7 +128,7 @@ pub struct Usage {
 }
 
 /// Result of a chat completion
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChatResult {
     pub request_id: String,
     pub content: Option<String>,

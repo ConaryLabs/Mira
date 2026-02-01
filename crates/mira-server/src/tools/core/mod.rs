@@ -129,6 +129,11 @@ pub trait ToolContext: Send + Sync {
     async fn mcp_expert_tools(&self) -> Vec<crate::llm::Tool> {
         Vec::new()
     }
+
+    /// Whether the MCP client supports sampling/createMessage
+    fn has_sampling(&self) -> bool {
+        false
+    }
 }
 
 // Sub-modules with tool implementations

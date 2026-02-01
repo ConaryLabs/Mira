@@ -10,6 +10,7 @@ pub mod openai_compat;
 pub mod pricing;
 mod prompt;
 mod provider;
+pub mod sampling;
 mod types;
 
 pub use context_budget::{
