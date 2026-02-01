@@ -302,6 +302,19 @@ pub async fn index<C: ToolContext>(
 
             Ok(response)
         }
+        IndexAction::Compact => {
+            let stats = ctx
+                .code_pool()
+                .compact_code_db()
+                .await
+                .str_err()?;
+
+            Ok(format!(
+                "Compacted vec_code: {} rows preserved, ~{:.1} MB estimated savings.\n\
+                 VACUUM complete — database file should now reflect reduced size.",
+                stats.rows_preserved, stats.estimated_savings_mb
+            ))
+        }
         IndexAction::Status => {
             use crate::db::{count_embedded_chunks_sync, count_symbols_sync};
 

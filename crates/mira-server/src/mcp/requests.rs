@@ -64,6 +64,8 @@ pub enum IndexAction {
     File,
     /// Show index status
     Status,
+    /// Compact vec_code storage and VACUUM
+    Compact,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -306,7 +308,7 @@ pub struct CrossProjectRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
-    #[schemars(description = "Action: project/file/status")]
+    #[schemars(description = "Action: project/file/status/compact")]
     pub action: IndexAction,
     #[schemars(description = "Path")]
     pub path: Option<String>,

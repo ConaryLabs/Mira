@@ -74,12 +74,14 @@ pub use diff_analysis::{
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
 pub use index::{
+    CompactStats,
     ImportInsert,
     // Batch insert operations
     SymbolInsert,
     clear_file_index_sync,
     clear_modules_without_purpose_sync,
     clear_project_index_sync,
+    compact_vec_code_sync,
     count_embedded_chunks_sync,
     count_symbols_sync,
     insert_call_sync,

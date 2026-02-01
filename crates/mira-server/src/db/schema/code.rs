@@ -8,6 +8,21 @@ use crate::db::migration_helpers::{add_column_if_missing, table_exists};
 use anyhow::Result;
 use rusqlite::Connection;
 
+/// SQL to create the vec_code virtual table with optimized chunk_size.
+///
+/// chunk_size=256 reduces per-chunk waste from 6 MB (default 1024) to 1.5 MB.
+/// sqlite-vec uses brute-force scan for KNN, so chunk_size doesn't meaningfully
+/// affect query performance at our scale (~5K vectors).
+/// TODO: Benchmark if vector count grows significantly past 50K.
+pub const VEC_CODE_CREATE_SQL: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
+    embedding float[1536],
+    +file_path TEXT,
+    +chunk_content TEXT,
+    +project_id INTEGER,
+    +start_line INTEGER,
+    chunk_size=256
+)";
+
 /// Code index database schema SQL
 ///
 /// These tables were originally in the main database but are now isolated
@@ -100,7 +115,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
     +file_path TEXT,
     +chunk_content TEXT,
     +project_id INTEGER,
-    +start_line INTEGER
+    +start_line INTEGER,
+    chunk_size=256
 );
 
 -- =======================================
@@ -126,6 +142,7 @@ pub fn run_code_migrations(conn: &Connection) -> Result<()> {
 
     // Run code-specific migrations
     migrate_vec_code_line_numbers(conn)?;
+    migrate_vec_code_chunk_size(conn)?;
     migrate_pending_embeddings_line_numbers(conn)?;
     migrate_imports_unique(conn)?;
     migrate_fts_tokenizer(conn)?;
@@ -162,16 +179,71 @@ fn migrate_vec_code_line_numbers(conn: &Connection) -> Result<()> {
     if !has_start_line {
         tracing::info!("Migrating vec_code to add start_line column");
         conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
-                embedding float[1536],
-                +file_path TEXT,
-                +chunk_content TEXT,
-                +project_id INTEGER,
-                +start_line INTEGER
-            )",
+        conn.execute(VEC_CODE_CREATE_SQL, [])?;
+    }
+
+    Ok(())
+}
+
+/// Migrate vec_code to use chunk_size=256 for reduced storage bloat.
+///
+/// sqlite-vec's default chunk_size=1024 pre-allocates 6 MB per chunk. With
+/// deletions (re-indexing, file watcher updates), empty chunks accumulate
+/// and are never freed. This migration compacts vec_code by extracting all
+/// rows, dropping the table, and recreating with chunk_size=256.
+///
+/// Idempotent: after compact, the recreated table SQL contains "chunk_size"
+/// so subsequent runs are no-ops.
+fn migrate_vec_code_chunk_size(conn: &Connection) -> Result<()> {
+    let vec_code_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_code'",
             [],
-        )?;
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if !vec_code_exists {
+        return Ok(());
+    }
+
+    // Check if vec_code already has chunk_size in its schema
+    let has_chunk_size: bool = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_code'",
+            [],
+            |row| {
+                let sql: String = row.get(0)?;
+                Ok(sql.contains("chunk_size"))
+            },
+        )
+        .unwrap_or(false);
+
+    if has_chunk_size {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating vec_code to chunk_size=256 (compacting storage bloat)");
+
+    // Use compact_vec_code_sync from db::index for the heavy lifting
+    match crate::db::index::compact_vec_code_sync(conn) {
+        Ok(stats) => {
+            tracing::info!(
+                "vec_code compacted: {} rows preserved, ~{:.1} MB estimated savings",
+                stats.rows_preserved,
+                stats.estimated_savings_mb
+            );
+        }
+        Err(e) => {
+            // Fallback: DROP and recreate empty — embeddings regenerate on next index
+            tracing::warn!(
+                "vec_code compact failed ({}), dropping and recreating empty — \
+                 embeddings will regenerate on next index operation",
+                e
+            );
+            conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
+            conn.execute(VEC_CODE_CREATE_SQL, [])?;
+        }
     }
 
     Ok(())

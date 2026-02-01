@@ -283,7 +283,7 @@ impl MiraServer {
         .await
     }
 
-    #[tool(description = "Index code and git history. Actions: project/file/status")]
+    #[tool(description = "Index code and git history. Actions: project/file/status/compact")]
     async fn index(&self, Parameters(req): Parameters<IndexRequest>) -> Result<String, String> {
         tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
     }

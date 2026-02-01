@@ -467,6 +467,40 @@ impl DatabasePool {
         .await
     }
 
+    /// Compact vec_code storage and VACUUM the database file.
+    ///
+    /// This reclaims wasted space from sqlite-vec's pre-allocated chunks.
+    /// VACUUM runs in a separate `interact()` call to ensure no open
+    /// statements or transactions interfere (VACUUM cannot run inside a tx).
+    ///
+    /// Note: VACUUM temporarily requires ~2x the current db file size in
+    /// free disk space.
+    pub async fn compact_code_db(&self) -> Result<super::index::CompactStats> {
+        // Step 1: Compact vec_code (extract, drop, recreate, reinsert)
+        let stats = self
+            .interact(|conn| {
+                super::index::compact_vec_code_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await?;
+
+        // Step 2: VACUUM in a separate interact() to reclaim file space.
+        // Non-fatal — the compact already succeeded, VACUUM is best-effort.
+        if let Err(e) = self
+            .interact(|conn| {
+                conn.execute_batch("VACUUM")
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            tracing::warn!(
+                "VACUUM after compact failed (non-fatal, space will be reused): {}",
+                e
+            );
+        }
+
+        Ok(stats)
+    }
+
     /// Get pool status for monitoring.
     pub fn status(&self) -> PoolStatus {
         let status = self.pool.status();
