@@ -3,13 +3,12 @@
 
 use super::context::expand_context;
 use super::keyword::keyword_search;
-use super::utils::{distance_to_score, embedding_to_bytes};
+use super::utils::{Locatable, deduplicate_by_location, distance_to_score, embedding_to_bytes};
 use crate::Result;
 use crate::db::pool::DatabasePool;
 use crate::db::semantic_code_search_sync;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -20,6 +19,18 @@ pub struct SearchResult {
     pub content: String,
     pub score: f32,
     pub start_line: u32,
+}
+
+impl Locatable for SearchResult {
+    fn file_path(&self) -> &str {
+        &self.file_path
+    }
+    fn start_line(&self) -> i64 {
+        self.start_line as i64
+    }
+    fn score(&self) -> f32 {
+        self.score
+    }
 }
 
 /// Search type indicator
@@ -241,52 +252,16 @@ fn merge_results(
     keyword_results: Vec<SearchResult>,
     fuzzy_results: Vec<SearchResult>,
 ) -> (Vec<SearchResult>, SearchType) {
-    // Use HashMap for deduplication by (file_path, start_line)
-    let mut merged: HashMap<(String, u32), SearchResult> = HashMap::new();
-
     // Track which search type contributed more
     let semantic_count = semantic_results.len();
     let keyword_count = keyword_results.len();
     let fuzzy_count = fuzzy_results.len();
 
-    // Add semantic results first
-    for result in semantic_results {
-        let key = (result.file_path.clone(), result.start_line);
-        merged.insert(key, result);
-    }
-
-    // Add keyword results, keeping higher score on collision
-    for result in keyword_results {
-        let key = (result.file_path.clone(), result.start_line);
-        merged
-            .entry(key)
-            .and_modify(|existing| {
-                if result.score > existing.score {
-                    *existing = result.clone();
-                }
-            })
-            .or_insert(result);
-    }
-
-    for result in fuzzy_results {
-        let key = (result.file_path.clone(), result.start_line);
-        merged
-            .entry(key)
-            .and_modify(|existing| {
-                if result.score > existing.score {
-                    *existing = result.clone();
-                }
-            })
-            .or_insert(result);
-    }
-
-    // Convert to vec and sort by score descending
-    let mut results: Vec<SearchResult> = merged.into_values().collect();
-    results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // Combine all results and deduplicate
+    let mut all_results = semantic_results;
+    all_results.extend(keyword_results);
+    all_results.extend(fuzzy_results);
+    let results = deduplicate_by_location(all_results);
 
     // Determine primary search type based on contribution
     let search_type =

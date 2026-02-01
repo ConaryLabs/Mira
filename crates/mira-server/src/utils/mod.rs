@@ -1,5 +1,7 @@
-//! crates/mira-server/src/utils.rs
+//! crates/mira-server/src/utils/mod.rs
 //! Shared utility functions used across the codebase
+
+pub mod json;
 
 use std::fmt::Display;
 use std::path::Path;

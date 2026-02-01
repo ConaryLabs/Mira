@@ -7,6 +7,7 @@
 use crate::db::pool::DatabasePool;
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::utils::ResultExt;
+use crate::utils::json::parse_json_hardened;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -394,27 +395,9 @@ Only include high-value insights. If nothing notable, return an empty array []."
 
 /// Parse LLM response into insights
 fn parse_insights(content: &str) -> Result<Vec<PonderingInsight>, String> {
-    // Extract JSON from markdown code block if present
-    let json_str = if let Some(start) = content.find("```json") {
-        let start = start + 7;
-        if let Some(end) = content[start..].find("```") {
-            &content[start..start + end]
-        } else {
-            content
-        }
-    } else if let Some(start) = content.find('[') {
-        if let Some(end) = content.rfind(']') {
-            &content[start..=end]
-        } else {
-            content
-        }
-    } else {
-        content
-    };
-
-    serde_json::from_str(json_str.trim()).map_err(|e| {
-        tracing::debug!("Failed to parse insights JSON: {} from: {}", e, json_str);
-        format!("JSON parse error: {}", e)
+    parse_json_hardened(content).map_err(|e| {
+        tracing::debug!("Failed to parse insights JSON: {}", e);
+        e
     })
 }
 

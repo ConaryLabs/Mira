@@ -162,9 +162,6 @@ async fn detect_gaps_for_project(
     // Detect MCP tool documentation gaps (main DB only)
     gaps.extend(detect_mcp_tool_gaps(main_pool, project_id, project_path).await?);
 
-    // Detect CLI command documentation gaps
-    gaps.extend(detect_cli_gaps(main_pool, project_id, project_path).await?);
-
     // Detect public API documentation gaps (code_pool for symbols, main_pool for docs)
     gaps.extend(detect_public_api_gaps(main_pool, code_pool, project_id, project_path).await?);
 
@@ -271,17 +268,6 @@ async fn detect_mcp_tool_gaps(
     }
 
     Ok(gaps)
-}
-
-/// Detect undocumented CLI commands
-async fn detect_cli_gaps(
-    _pool: &Arc<DatabasePool>,
-    _project_id: i64,
-    _project_path: &Path,
-) -> Result<Vec<DocGap>, String> {
-    // For now, return empty - CLI commands are documented in README
-    // This could be extended to parse main.rs clap Command definitions
-    Ok(Vec::new())
 }
 
 /// Detect undocumented public APIs

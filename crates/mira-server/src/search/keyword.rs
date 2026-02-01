@@ -1,15 +1,27 @@
 // crates/mira-server/src/search/keyword.rs
 // FTS5-powered keyword search for code
 
+use super::utils::{Locatable, deduplicate_by_location};
 use crate::db::{
     SymbolSearchResult, chunk_like_search_sync, fts_search_sync, symbol_like_search_sync,
 };
 use rusqlite::Connection;
-use std::collections::HashMap;
 use std::path::Path;
 
 /// Result from keyword search: (file_path, content, score, start_line)
 pub type KeywordResult = (String, String, f32, i64);
+
+impl Locatable for KeywordResult {
+    fn file_path(&self) -> &str {
+        &self.0
+    }
+    fn start_line(&self) -> i64 {
+        self.3
+    }
+    fn score(&self) -> f32 {
+        self.2
+    }
+}
 
 /// Score boost for results with proximity matches (20%)
 const PROXIMITY_BOOST: f32 = 1.2;
@@ -300,21 +312,7 @@ fn score_symbol_match(symbol_name: &str, query: &str) -> f32 {
 
 /// Deduplicate results by (file_path, start_line), keep highest score, sort descending
 fn dedup_and_sort(results: Vec<KeywordResult>, limit: usize) -> Vec<KeywordResult> {
-    let mut best: HashMap<(String, i64), KeywordResult> = HashMap::new();
-
-    for result in results {
-        let key = (result.0.clone(), result.3);
-        best.entry(key)
-            .and_modify(|existing| {
-                if result.2 > existing.2 {
-                    *existing = result.clone();
-                }
-            })
-            .or_insert(result);
-    }
-
-    let mut deduped: Vec<KeywordResult> = best.into_values().collect();
-    deduped.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    let mut deduped = deduplicate_by_location(results);
     deduped.truncate(limit);
     deduped
 }

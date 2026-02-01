@@ -2,6 +2,7 @@
 // Shared utilities for search operations
 
 use mira_types::ProjectContext;
+use std::collections::HashMap;
 
 /// Convert embedding vector to bytes for sqlite-vec queries
 pub fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
@@ -23,6 +24,39 @@ pub fn format_project_header(project: Option<&ProjectContext>) -> String {
 /// Convert distance to similarity score (0.0 to 1.0)
 pub fn distance_to_score(distance: f32) -> f32 {
     1.0 - distance.clamp(0.0, 1.0)
+}
+
+/// Trait for search results that can be deduplicated by file location.
+pub trait Locatable: Clone {
+    fn file_path(&self) -> &str;
+    /// Return start line normalized to i64
+    fn start_line(&self) -> i64;
+    fn score(&self) -> f32;
+}
+
+/// Deduplicate search results by (file_path, start_line), keeping the highest-scoring
+/// entry for each location. Returns results sorted by score descending.
+pub fn deduplicate_by_location<T: Locatable>(items: Vec<T>) -> Vec<T> {
+    let mut best: HashMap<(String, i64), T> = HashMap::new();
+
+    for item in items {
+        let key = (item.file_path().to_string(), item.start_line());
+        best.entry(key)
+            .and_modify(|existing| {
+                if item.score() > existing.score() {
+                    *existing = item.clone();
+                }
+            })
+            .or_insert(item);
+    }
+
+    let mut deduped: Vec<T> = best.into_values().collect();
+    deduped.sort_by(|a, b| {
+        b.score()
+            .partial_cmp(&a.score())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    deduped
 }
 
 #[cfg(test)]
@@ -160,5 +194,63 @@ mod tests {
         assert!((distance_to_score(0.25) - 0.75).abs() < f32::EPSILON);
         assert!((distance_to_score(0.75) - 0.25).abs() < f32::EPSILON);
         assert!((distance_to_score(0.1) - 0.9).abs() < f32::EPSILON);
+    }
+
+    // ============================================================================
+    // deduplicate_by_location tests
+    // ============================================================================
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct TestResult {
+        path: String,
+        line: i64,
+        s: f32,
+    }
+
+    impl Locatable for TestResult {
+        fn file_path(&self) -> &str { &self.path }
+        fn start_line(&self) -> i64 { self.line }
+        fn score(&self) -> f32 { self.s }
+    }
+
+    #[test]
+    fn test_dedup_empty() {
+        let results: Vec<TestResult> = vec![];
+        assert!(deduplicate_by_location(results).is_empty());
+    }
+
+    #[test]
+    fn test_dedup_no_duplicates() {
+        let results = vec![
+            TestResult { path: "a.rs".into(), line: 1, s: 0.9 },
+            TestResult { path: "b.rs".into(), line: 2, s: 0.8 },
+        ];
+        let deduped = deduplicate_by_location(results);
+        assert_eq!(deduped.len(), 2);
+        assert!((deduped[0].s - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_dedup_keeps_higher_score() {
+        let results = vec![
+            TestResult { path: "a.rs".into(), line: 1, s: 0.5 },
+            TestResult { path: "a.rs".into(), line: 1, s: 0.9 },
+        ];
+        let deduped = deduplicate_by_location(results);
+        assert_eq!(deduped.len(), 1);
+        assert!((deduped[0].s - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_dedup_sorted_by_score_desc() {
+        let results = vec![
+            TestResult { path: "a.rs".into(), line: 1, s: 0.3 },
+            TestResult { path: "b.rs".into(), line: 1, s: 0.9 },
+            TestResult { path: "c.rs".into(), line: 1, s: 0.6 },
+        ];
+        let deduped = deduplicate_by_location(results);
+        assert_eq!(deduped.len(), 3);
+        assert!(deduped[0].s >= deduped[1].s);
+        assert!(deduped[1].s >= deduped[2].s);
     }
 }

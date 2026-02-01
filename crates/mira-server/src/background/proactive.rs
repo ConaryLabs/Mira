@@ -12,6 +12,7 @@ use crate::proactive::patterns::{
     BehaviorPattern, PatternData, get_high_confidence_patterns, run_pattern_mining,
 };
 use crate::utils::ResultExt;
+use crate::utils::json::parse_json_hardened;
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -395,33 +396,15 @@ fn parse_suggestions(
     content: &str,
     patterns: &[BehaviorPattern],
 ) -> Result<Vec<PreGeneratedSuggestion>, String> {
-    // Extract JSON from markdown code block if present
-    let json_str = if let Some(start) = content.find("```json") {
-        let start = start + 7;
-        if let Some(end) = content[start..].find("```") {
-            &content[start..start + end]
-        } else {
-            content
-        }
-    } else if let Some(start) = content.find('[') {
-        if let Some(end) = content.rfind(']') {
-            &content[start..=end]
-        } else {
-            content
-        }
-    } else {
-        content
-    };
-
     #[derive(serde::Deserialize)]
     struct LlmSuggestion {
         trigger: String,
         hint: String,
     }
 
-    let parsed: Vec<LlmSuggestion> = serde_json::from_str(json_str.trim()).map_err(|e| {
-        tracing::debug!("Failed to parse suggestions JSON: {} from: {}", e, json_str);
-        format!("JSON parse error: {}", e)
+    let parsed: Vec<LlmSuggestion> = parse_json_hardened(content).map_err(|e| {
+        tracing::debug!("Failed to parse suggestions JSON: {}", e);
+        e
     })?;
 
     // Match suggestions back to patterns for confidence scoring

@@ -15,7 +15,6 @@ pub mod cross_project;
 pub mod db;
 pub mod embeddings;
 pub mod error;
-pub mod experts;
 pub mod fuzzy;
 pub mod git;
 pub mod hooks;

@@ -9,6 +9,7 @@ use crate::db::{
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::find_callers;
 use crate::utils::ResultExt;
+use crate::utils::json::parse_json_hardened;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -482,15 +483,9 @@ pub async fn analyze_diff_semantic(
 
 /// Parse the LLM response to extract structured data
 fn parse_llm_response(content: &str) -> Result<(Vec<SemanticChange>, String, Vec<String>), String> {
-    // Try to find JSON in the response
-    let json_start = content.find('{');
-    let json_end = content.rfind('}');
-
-    if let (Some(start), Some(end)) = (json_start, json_end) {
-        let json_str = &content[start..=end];
-        if let Ok(response) = serde_json::from_str::<LlmDiffResponse>(json_str) {
-            return Ok((response.changes, response.summary, response.risk_flags));
-        }
+    // Try hardened JSON parsing first
+    if let Ok(response) = parse_json_hardened::<LlmDiffResponse>(content) {
+        return Ok((response.changes, response.summary, response.risk_flags));
     }
 
     // Fallback: extract what we can from plain text
