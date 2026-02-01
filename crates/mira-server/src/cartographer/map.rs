@@ -395,6 +395,7 @@ mod tests {
             depends_on: vec![],
             symbol_count: 0,
             line_count: 0,
+            detected_patterns: None,
         };
         assert!(module.purpose.is_none());
         assert!(module.exports.is_empty());
@@ -412,6 +413,7 @@ mod tests {
             depends_on: vec!["mira/config".to_string()],
             symbol_count: 50,
             line_count: 1000,
+            detected_patterns: None,
         };
         assert_eq!(module.id, "mira/db");
         assert_eq!(module.exports.len(), 2);

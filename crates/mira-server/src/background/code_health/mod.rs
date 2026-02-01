@@ -3,7 +3,10 @@
 
 mod analysis;
 mod cargo;
+pub mod dependencies;
 mod detection;
+pub mod patterns;
+pub mod scoring;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
@@ -272,7 +275,308 @@ async fn scan_project_health(
         total += error_quality;
     }
 
+    // 9. Module dependency analysis + circular dependency detection
+    let dep_count =
+        scan_dependencies_sharded(main_pool, code_pool, project_id).await?;
+    if dep_count > 0 {
+        tracing::info!("Code health: computed {} module dependency edges", dep_count);
+    }
+    total += dep_count;
+
+    // 10. Architectural pattern detection
+    let pattern_count =
+        scan_patterns_sharded(main_pool, code_pool, project_id).await?;
+    if pattern_count > 0 {
+        tracing::info!("Code health: detected {} architectural patterns", pattern_count);
+    }
+    total += pattern_count;
+
+    // 11. Tech debt scoring (runs last, aggregates all findings)
+    match scoring::compute_tech_debt_scores(main_pool, code_pool, project_id).await {
+        Ok(scored) => {
+            if scored > 0 {
+                tracing::info!("Code health: computed tech debt scores for {} modules", scored);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Code health: tech debt scoring failed: {}", e);
+        }
+    }
+
     Ok(total)
+}
+
+/// Scan module dependencies using sharded pools.
+async fn scan_dependencies_sharded(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<usize, String> {
+    // Need both connections simultaneously — get code conn first, then main conn
+    let code_conn_result = code_pool
+        .run(move |code_conn| {
+            // We need main_conn too, but we can't nest pool calls.
+            // Collect the data we need from code DB first.
+            // Actually, dependencies::analyze_module_dependencies needs both conns.
+            // Let's collect module info from code DB, then do the analysis.
+            Ok::<_, String>(collect_dependency_data(code_conn, project_id))
+        })
+        .await?;
+
+    let dep_data = code_conn_result?;
+
+    if dep_data.is_empty() {
+        return Ok(0);
+    }
+
+    // Store dependency edges in code DB
+    let edges = dep_data.len();
+    let dep_data_for_code = dep_data.clone();
+    code_pool
+        .run(move |conn| {
+            use crate::db::dependencies::{clear_module_dependencies_sync, upsert_module_dependency_sync, ModuleDependency};
+            clear_module_dependencies_sync(conn, project_id).map_err(|e| e.to_string())?;
+            for d in &dep_data_for_code {
+                let dep = ModuleDependency {
+                    source_module_id: d.source.clone(),
+                    target_module_id: d.target.clone(),
+                    dependency_type: d.dep_type.clone(),
+                    call_count: d.call_count,
+                    import_count: d.import_count,
+                    is_circular: d.is_circular,
+                };
+                upsert_module_dependency_sync(conn, project_id, &dep).map_err(|e| e.to_string())?;
+            }
+            Ok::<_, String>(())
+        })
+        .await?;
+
+    // Store circular dependency findings in main DB
+    let circular_findings: Vec<_> = dep_data.iter().filter(|d| d.is_circular).collect();
+    if !circular_findings.is_empty() {
+        let findings = circular_findings
+            .iter()
+            .map(|d| (d.source.clone(), d.target.clone()))
+            .collect::<Vec<_>>();
+        main_pool
+            .run(move |conn| {
+                for (src, tgt) in &findings {
+                    let key = format!("health:circular:{}:{}", src, tgt);
+                    let content = format!(
+                        "[circular-dependency] Circular dependency: {} <-> {}",
+                        src, tgt
+                    );
+                    store_memory_sync(
+                        conn,
+                        StoreMemoryParams {
+                            project_id: Some(project_id),
+                            key: Some(&key),
+                            content: &content,
+                            fact_type: "health",
+                            category: Some("circular_dependency"),
+                            confidence: 0.9,
+                            session_id: None,
+                            user_id: None,
+                            scope: "project",
+                            branch: None,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                Ok::<_, String>(())
+            })
+            .await?;
+    }
+
+    Ok(edges)
+}
+
+/// Intermediate dependency data that can be sent between pool closures
+#[derive(Clone)]
+struct DepEdge {
+    source: String,
+    target: String,
+    dep_type: String,
+    call_count: i64,
+    import_count: i64,
+    is_circular: bool,
+}
+
+/// Collect dependency data from code DB (runs inside pool.run)
+fn collect_dependency_data(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+) -> Result<Vec<DepEdge>, String> {
+    use dependencies::tarjan_scc;
+    use std::collections::HashMap;
+
+    // Get modules
+    let mut stmt = conn
+        .prepare("SELECT module_id, path FROM codebase_modules WHERE project_id = ?")
+        .map_err(|e| e.to_string())?;
+    let modules: Vec<(String, String)> = stmt
+        .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if modules.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Map file paths to modules
+    let file_to_mod = |file_path: &str| -> Option<String> {
+        modules
+            .iter()
+            .filter(|(_, path)| file_path.starts_with(path.as_str()) || file_path.contains(path.as_str()))
+            .max_by_key(|(_, path)| path.len())
+            .map(|(id, _)| id.clone())
+    };
+
+    // Count import deps
+    let mut import_deps: HashMap<(String, String), i64> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT file_path, import_path FROM imports WHERE project_id = ? AND is_external = 0")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([project_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (fp, ip) = row.map_err(|e| e.to_string())?;
+            if let (Some(src), Some(tgt)) = (file_to_mod(&fp), file_to_mod(&ip)) {
+                if src != tgt {
+                    *import_deps.entry((src, tgt)).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    // Count call deps
+    let mut call_deps: HashMap<(String, String), i64> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT cs1.file_path, cs2.file_path, cg.call_count
+                 FROM call_graph cg
+                 JOIN code_symbols cs1 ON cg.caller_id = cs1.id
+                 JOIN code_symbols cs2 ON cg.callee_id = cs2.id
+                 WHERE cs1.project_id = ? AND cs2.project_id = ?",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([project_id, project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (f1, f2, cnt) = row.map_err(|e| e.to_string())?;
+            if let (Some(src), Some(tgt)) = (file_to_mod(&f1), file_to_mod(&f2)) {
+                if src != tgt {
+                    *call_deps.entry((src, tgt)).or_default() += cnt;
+                }
+            }
+        }
+    }
+
+    // Merge
+    let mut merged: HashMap<(String, String), (i64, i64)> = HashMap::new();
+    for ((src, tgt), count) in &import_deps {
+        merged.entry((src.clone(), tgt.clone())).or_default().1 = *count;
+    }
+    for ((src, tgt), count) in &call_deps {
+        merged.entry((src.clone(), tgt.clone())).or_default().0 = *count;
+    }
+
+    if merged.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Tarjan's SCC for circular detection
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for (src, tgt) in merged.keys() {
+        adj.entry(src.clone()).or_default().push(tgt.clone());
+        adj.entry(tgt.clone()).or_default();
+    }
+    let sccs = tarjan_scc(&adj);
+    let mut circular_edges: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    for scc in &sccs {
+        for a in scc {
+            for b in scc {
+                if a != b && merged.contains_key(&(a.clone(), b.clone())) {
+                    circular_edges.insert((a.clone(), b.clone()));
+                }
+            }
+        }
+    }
+
+    // Build result
+    let result: Vec<DepEdge> = merged
+        .iter()
+        .map(|((src, tgt), (calls, imports))| {
+            let dep_type = match (calls > &0, imports > &0) {
+                (true, true) => "both",
+                (true, false) => "call",
+                (false, true) => "import",
+                (false, false) => "import",
+            };
+            DepEdge {
+                source: src.clone(),
+                target: tgt.clone(),
+                dep_type: dep_type.to_string(),
+                call_count: *calls,
+                import_count: *imports,
+                is_circular: circular_edges.contains(&(src.clone(), tgt.clone())),
+            }
+        })
+        .collect();
+
+    Ok(result)
+}
+
+/// Scan architectural patterns using sharded pools.
+async fn scan_patterns_sharded(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<usize, String> {
+    // Run pattern detection on code DB
+    let pattern_findings = code_pool
+        .run(move |conn| patterns::collect_pattern_data(conn, project_id))
+        .await?;
+
+    if pattern_findings.is_empty() {
+        return Ok(0);
+    }
+
+    let count = pattern_findings.len();
+
+    // Store pattern findings in main DB (memory_facts)
+    main_pool
+        .run(move |conn| {
+            for finding in &pattern_findings {
+                store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: Some(&finding.key),
+                        content: &finding.content,
+                        fact_type: "health",
+                        category: Some("architecture"),
+                        confidence: finding.confidence,
+                        session_id: None,
+                        user_id: None,
+                        scope: "project",
+                        branch: None,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok::<_, String>(())
+        })
+        .await?;
+
+    Ok(count)
 }
 
 /// Scan for unused functions using sharded pools.

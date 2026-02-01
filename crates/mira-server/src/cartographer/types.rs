@@ -20,6 +20,8 @@ pub struct Module {
     pub symbol_count: u32,
     /// Line count
     pub line_count: u32,
+    /// Detected architectural patterns (JSON, from code health scan)
+    pub detected_patterns: Option<String>,
 }
 
 /// Complete codebase map

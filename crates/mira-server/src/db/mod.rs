@@ -5,6 +5,7 @@ mod background;
 mod cartographer;
 mod chat;
 mod config;
+pub mod dependencies;
 mod diff_analysis;
 pub mod documentation;
 mod embeddings;
@@ -27,6 +28,7 @@ mod session_tests;
 mod tasks;
 #[cfg(test)]
 mod tasks_tests;
+pub mod tech_debt;
 mod teams;
 mod types;
 mod usage;

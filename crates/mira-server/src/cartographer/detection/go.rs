@@ -76,6 +76,7 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
             depends_on: vec![],
             symbol_count: 0,
             line_count: 0,
+            detected_patterns: None,
         });
     }
 

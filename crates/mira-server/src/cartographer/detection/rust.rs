@@ -121,6 +121,7 @@ fn detect_modules_in_src(
                     depends_on: vec![],
                     symbol_count: 0,
                     line_count: 0,
+                    detected_patterns: None,
                 });
             }
         }
@@ -152,6 +153,7 @@ fn detect_modules_in_src(
                         depends_on: vec![],
                         symbol_count: 0,
                         line_count: 0,
+                        detected_patterns: None,
                     });
                 }
             }
@@ -174,6 +176,7 @@ fn detect_modules_in_src(
                     depends_on: vec![],
                     symbol_count: 0,
                     line_count: 0,
+                    detected_patterns: None,
                 });
             }
         }

@@ -92,6 +92,7 @@ fn detect_in_package(
                         depends_on: vec![],
                         symbol_count: 0,
                         line_count: 0,
+                        detected_patterns: None,
                     });
                 }
             }
@@ -140,6 +141,7 @@ fn detect_in_package(
                         depends_on: vec![],
                         symbol_count: 0,
                         line_count: 0,
+                        detected_patterns: None,
                     });
                 }
             }
@@ -163,6 +165,7 @@ fn detect_in_package(
             depends_on: vec![],
             symbol_count: 0,
             line_count: 0,
+            detected_patterns: None,
         });
     }
 }

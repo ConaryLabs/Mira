@@ -24,7 +24,7 @@ pub fn get_cached_modules_sync(
     project_id: i64,
 ) -> rusqlite::Result<Vec<Module>> {
     let mut stmt = conn.prepare(
-        "SELECT module_id, name, path, purpose, exports, depends_on, symbol_count, line_count
+        "SELECT module_id, name, path, purpose, exports, depends_on, symbol_count, line_count, detected_patterns
          FROM codebase_modules WHERE project_id = ? ORDER BY module_id",
     )?;
 
@@ -41,6 +41,7 @@ pub fn get_cached_modules_sync(
                 depends_on: serde_json::from_str(&depends_json).unwrap_or_default(),
                 symbol_count: row.get(6)?,
                 line_count: row.get(7)?,
+                detected_patterns: row.get(8)?,
             })
         })?
         .filter_map(|r| r.ok())

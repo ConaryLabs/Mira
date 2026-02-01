@@ -147,8 +147,41 @@ pub fn run_code_migrations(conn: &Connection) -> Result<()> {
     migrate_imports_unique(conn)?;
     migrate_fts_tokenizer(conn)?;
     migrate_code_chunks(conn)?;
+    migrate_module_dependencies(conn)?;
+    migrate_detected_patterns(conn)?;
 
     Ok(())
+}
+
+/// Add module_dependencies table for cross-module dependency analysis
+fn migrate_module_dependencies(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::create_table_if_missing;
+    create_table_if_missing(
+        conn,
+        "module_dependencies",
+        r#"
+        CREATE TABLE IF NOT EXISTS module_dependencies (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            source_module_id TEXT NOT NULL,
+            target_module_id TEXT NOT NULL,
+            dependency_type TEXT NOT NULL,
+            call_count INTEGER DEFAULT 0,
+            import_count INTEGER DEFAULT 0,
+            is_circular INTEGER DEFAULT 0,
+            computed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, source_module_id, target_module_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_module_deps_project ON module_dependencies(project_id);
+        CREATE INDEX IF NOT EXISTS idx_module_deps_circular ON module_dependencies(project_id, is_circular) WHERE is_circular = 1;
+    "#,
+    )
+}
+
+/// Add detected_patterns column to codebase_modules for architectural pattern detection
+fn migrate_detected_patterns(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::add_column_if_missing;
+    add_column_if_missing(conn, "codebase_modules", "detected_patterns", "TEXT")
 }
 
 /// Migrate vec_code to add start_line column (v2.1 schema)

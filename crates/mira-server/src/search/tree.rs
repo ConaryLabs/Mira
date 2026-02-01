@@ -122,6 +122,7 @@ mod tests {
             depends_on: vec![],
             symbol_count: 10,
             line_count: 200,
+            detected_patterns: None,
         }
     }
 

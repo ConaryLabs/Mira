@@ -53,7 +53,25 @@ pub fn format_compact(map: &CodebaseMap) -> String {
                 format!(" -> {}", dep_names.join(", "))
             };
 
-            output.push_str(&format!("  {} - {}{}\n", module.name, purpose, deps));
+            // Show detected pattern tags if available
+            let pattern_tags = module
+                .detected_patterns
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
+                .map(|patterns| {
+                    let names: Vec<_> = patterns
+                        .iter()
+                        .filter_map(|p| p.get("pattern").and_then(|v| v.as_str()))
+                        .collect();
+                    if names.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", names.join(", "))
+                    }
+                })
+                .unwrap_or_default();
+
+            output.push_str(&format!("  {} - {}{}{}\n", module.name, purpose, pattern_tags, deps));
         }
     }
 

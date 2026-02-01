@@ -74,7 +74,36 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Remove orphaned capability data (check_capability tool removed)
     memory::migrate_remove_capability_data(conn)?;
 
+    // Add tech debt scores table for per-module debt tracking
+    migrate_tech_debt_scores(conn)?;
+
     Ok(())
+}
+
+/// Add tech_debt_scores table for per-module composite debt scoring
+fn migrate_tech_debt_scores(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::create_table_if_missing;
+    create_table_if_missing(
+        conn,
+        "tech_debt_scores",
+        r#"
+        CREATE TABLE IF NOT EXISTS tech_debt_scores (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            module_id TEXT NOT NULL,
+            module_path TEXT NOT NULL,
+            overall_score REAL NOT NULL,
+            tier TEXT NOT NULL,
+            factor_scores TEXT NOT NULL,
+            line_count INTEGER,
+            finding_count INTEGER,
+            computed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, module_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tech_debt_project ON tech_debt_scores(project_id);
+        CREATE INDEX IF NOT EXISTS idx_tech_debt_tier ON tech_debt_scores(project_id, tier);
+    "#,
+    )
 }
 
 /// Database schema SQL

@@ -15,6 +15,41 @@ use crate::search::{
 use crate::tools::core::ToolContext;
 use crate::utils::ResultExt;
 
+/// Unified code tool dispatcher
+pub async fn handle_code<C: ToolContext>(
+    ctx: &C,
+    req: crate::mcp::requests::CodeRequest,
+) -> Result<String, String> {
+    use crate::mcp::requests::CodeAction;
+    match req.action {
+        CodeAction::Search => {
+            let query = req.query.ok_or("query is required for action 'search'")?;
+            search_code(ctx, query, req.language, req.limit).await
+        }
+        CodeAction::Symbols => {
+            let file_path = req
+                .file_path
+                .ok_or("file_path is required for action 'symbols'")?;
+            get_symbols(file_path, req.symbol_type)
+        }
+        CodeAction::Callers => {
+            let function_name = req
+                .function_name
+                .ok_or("function_name is required for action 'callers'")?;
+            find_function_callers(ctx, function_name, req.limit).await
+        }
+        CodeAction::Callees => {
+            let function_name = req
+                .function_name
+                .ok_or("function_name is required for action 'callees'")?;
+            find_function_callees(ctx, function_name, req.limit).await
+        }
+        CodeAction::Dependencies => get_dependencies(ctx).await,
+        CodeAction::Patterns => get_patterns(ctx).await,
+        CodeAction::TechDebt => get_tech_debt(ctx).await,
+    }
+}
+
 /// Search code using semantic similarity or keyword fallback
 pub async fn search_code<C: ToolContext>(
     ctx: &C,
@@ -315,6 +350,9 @@ pub async fn index<C: ToolContext>(
                 stats.rows_preserved, stats.estimated_savings_mb
             ))
         }
+        IndexAction::Summarize => {
+            return summarize_codebase(ctx).await;
+        }
         IndexAction::Status => {
             use crate::db::{count_embedded_chunks_sync, count_symbols_sync};
 
@@ -492,4 +530,198 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
             .collect::<Vec<_>>()
             .join("\n")
     ))
+}
+
+/// Get module dependencies and circular dependency warnings
+async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<String, String> {
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Call project(action='start') first.")?;
+
+    let deps = ctx
+        .code_pool()
+        .run(move |conn| {
+            crate::db::dependencies::get_module_deps_sync(conn, project_id)
+                .map_err(|e| e.to_string())
+        })
+        .await?;
+
+    if deps.is_empty() {
+        return Ok("No module dependencies found. Run a health scan or index the project first.".to_string());
+    }
+
+    let circular: Vec<_> = deps.iter().filter(|d| d.is_circular).collect();
+
+    let mut response = format!("Module dependencies ({} edges):\n\n", deps.len());
+
+    // Show circular warnings first
+    if !circular.is_empty() {
+        response.push_str(&format!("⚠ {} circular dependencies detected:\n", circular.len()));
+        for dep in &circular {
+            response.push_str(&format!(
+                "  {} <-> {} ({} calls, {} imports)\n",
+                dep.source_module_id, dep.target_module_id, dep.call_count, dep.import_count
+            ));
+        }
+        response.push('\n');
+    }
+
+    // Show top dependencies by weight
+    response.push_str("Top dependencies (by call+import count):\n");
+    for dep in deps.iter().take(30) {
+        let circular_marker = if dep.is_circular { " ⚠" } else { "" };
+        response.push_str(&format!(
+            "  {} -> {} [{}] calls:{} imports:{}{}\n",
+            dep.source_module_id,
+            dep.target_module_id,
+            dep.dependency_type,
+            dep.call_count,
+            dep.import_count,
+            circular_marker,
+        ));
+    }
+
+    if deps.len() > 30 {
+        response.push_str(&format!("  ... and {} more\n", deps.len() - 30));
+    }
+
+    Ok(response)
+}
+
+/// Get detected architectural patterns
+async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<String, String> {
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Call project(action='start') first.")?;
+
+    let patterns = ctx
+        .code_pool()
+        .run(move |conn| {
+            crate::background::code_health::patterns::get_all_module_patterns(conn, project_id)
+        })
+        .await?;
+
+    if patterns.is_empty() {
+        return Ok("No architectural patterns detected yet. Run a health scan first.".to_string());
+    }
+
+    let mut response = format!("Architectural patterns ({} modules):\n\n", patterns.len());
+
+    for (module_id, name, patterns_json) in &patterns {
+        response.push_str(&format!("━━━ {} ({}) ━━━\n", module_id, name));
+
+        if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(patterns_json) {
+            for p in &parsed {
+                let pattern = p.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
+                let confidence = p.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let evidence = p
+                    .get("evidence")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+
+                response.push_str(&format!(
+                    "  [{}] {:.0}% — {}\n",
+                    pattern,
+                    confidence * 100.0,
+                    evidence
+                ));
+            }
+        }
+        response.push('\n');
+    }
+
+    Ok(response)
+}
+
+/// Get tech debt scores for all modules
+async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<String, String> {
+    use crate::background::code_health::scoring::tier_label;
+
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Call project(action='start') first.")?;
+
+    let scores = ctx
+        .pool()
+        .run(move |conn| {
+            crate::db::tech_debt::get_debt_scores_sync(conn, project_id)
+                .map_err(|e| e.to_string())
+        })
+        .await?;
+
+    if scores.is_empty() {
+        return Ok("No tech debt scores computed yet. Run a health scan first.".to_string());
+    }
+
+    // Summary
+    let summary = ctx
+        .pool()
+        .run(move |conn| {
+            crate::db::tech_debt::get_debt_summary_sync(conn, project_id)
+                .map_err(|e| e.to_string())
+        })
+        .await?;
+
+    let mut response = format!("Tech Debt Report ({} modules):\n\n", scores.len());
+
+    // Tier summary
+    response.push_str("Summary by tier:\n");
+    for (tier, count) in &summary {
+        response.push_str(&format!("  {} ({}): {} modules\n", tier, tier_label(tier), count));
+    }
+    response.push('\n');
+
+    // Per-module scores (worst first)
+    response.push_str("Modules (worst first):\n\n");
+    for score in &scores {
+        let line_info = score
+            .line_count
+            .map(|l| format!(" {}L", l))
+            .unwrap_or_default();
+        let finding_info = score
+            .finding_count
+            .map(|f| format!(" {}findings", f))
+            .unwrap_or_default();
+
+        response.push_str(&format!(
+            "  {} [{} {}] score:{:.0}{}{}\n",
+            score.module_path,
+            score.tier,
+            tier_label(&score.tier),
+            score.overall_score,
+            line_info,
+            finding_info,
+        ));
+
+        // Show top factors for D/F tier
+        if score.tier == "D" || score.tier == "F" {
+            if let Ok(factors) = serde_json::from_str::<serde_json::Value>(&score.factor_scores) {
+                let mut factor_list: Vec<(String, f64)> = Vec::new();
+                if let Some(obj) = factors.as_object() {
+                    for (name, val) in obj {
+                        if let Some(s) = val.get("score").and_then(|v| v.as_f64()) {
+                            if s > 20.0 {
+                                factor_list.push((name.clone(), s));
+                            }
+                        }
+                    }
+                }
+                factor_list.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                for (name, s) in factor_list.iter().take(3) {
+                    response.push_str(&format!("    ↳ {}: {:.0}\n", name, s));
+                }
+            }
+        }
+    }
+
+    Ok(response)
 }
