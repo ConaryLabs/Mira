@@ -40,12 +40,25 @@ The tool fits naturally into existing workflows and complements other Mira tools
 ## **Critical Implementation Insights**
 
 ### **Dependencies & Requirements**
-- **Must-have**: `DEEPSEEK_API_KEY` environment variable
 - **Must-have**: Active project session via `session_start`
+- **Recommended**: `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` for LLM-powered semantic analysis
 - **Recommended**: Codebase indexed for accurate symbol resolution
 
+### **Heuristic Fallback (No LLM)**
+
+When no LLM provider is configured (or `MIRA_DISABLE_LLM=1`), `analyze_diff` uses a **heuristic parser** instead of LLM-powered semantic analysis:
+
+- Parses unified diffs to extract file paths and changed lines
+- Detects added/removed/modified functions via regex (`fn`, `def`, `function`, `class`, `impl`)
+- Flags security-relevant changes by keyword matching (password, token, secret, auth, sql, unsafe, exec, eval)
+- Risk flags: breaking API changes, security-relevant changes, large changes (>500 lines), wide changes (>10 files)
+- Summaries are prefixed with `[heuristic]` to indicate non-LLM analysis
+- Impact analysis (call graph) still works — it's database-based, not LLM-dependent
+- Heuristic results are cached separately and won't prevent LLM re-analysis when a provider becomes available
+
 ### **Performance Characteristics**
-- **LLM-bound**: Analysis speed depends on DeepSeek API response times
+- **LLM-bound** (with provider): Analysis speed depends on LLM API response times
+- **Fast** (heuristic mode): No external API calls, instant analysis
 - **Cache-sensitive**: Repeated analyses of same ranges are fast
 - **Memory-safe**: 50KB diff truncation prevents LLM token overflow
 

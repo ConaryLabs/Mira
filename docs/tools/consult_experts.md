@@ -124,7 +124,7 @@ DeepSeek experts use a **Decoupled** strategy: `deepseek-chat` handles tool-call
 
 ## Errors
 
-- **No LLM provider available**: Requires `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` configured.
+- **No LLM provider**: Expert consultation requires an LLM provider. Set `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` in `~/.mira/.env`, or unset `MIRA_DISABLE_LLM` to enable expert consultation. Unlike other tools, expert reasoning fundamentally requires an LLM and has no heuristic fallback.
 - **Invalid role**: The role must be one of the valid role keys.
 - **Timeout**: Consultations exceeding 15 minutes are cancelled.
 

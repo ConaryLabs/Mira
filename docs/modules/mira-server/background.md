@@ -26,6 +26,20 @@ Handles LLM-powered tasks: session summaries, pondering/insights, code health an
 | `briefings` | slow | What's-new briefing generation |
 | `watcher` | fast | Filesystem watching for incremental updates |
 
+## Graceful Degradation
+
+All background tasks degrade gracefully when no LLM provider is configured (or `MIRA_DISABLE_LLM=1`):
+
+| Task | With LLM | Without LLM |
+|------|----------|-------------|
+| Module summaries | LLM-generated descriptions | Heuristic: file count, languages, top symbols |
+| Diff analysis | Semantic change classification | Heuristic: regex-based function/security detection |
+| Pondering/insights | LLM-powered pattern extraction | Heuristic: tool usage stats, friction detection, focus areas |
+| Session summaries | LLM summarization | Skipped |
+| Code health | LLM analysis | Skipped |
+
+Heuristic results are tagged with `[heuristic]` prefix and remain upgradeable when an LLM becomes available.
+
 ## Entry Points
 
 - `spawn()` - Spawn both workers with a single pool

@@ -231,13 +231,27 @@ expert_provider = "deepseek"      # Default for all experts
 background_provider = "deepseek"  # For summaries, briefings, etc.
 ```
 
+### Graceful Degradation
+
+When no LLM provider is configured (or `MIRA_DISABLE_LLM=1`), Mira degrades gracefully
+rather than failing:
+
+- **Diff analysis** falls back to heuristic parsing (regex-based function detection, security keyword scanning)
+- **Module summaries** fall back to metadata extraction (file counts, language distribution, symbol names)
+- **Pondering/insights** fall back to tool history analysis (usage distribution, friction detection)
+- **Expert consultation** is the only feature that hard-requires an LLM — it returns a clear error message with setup instructions
+
+Heuristic results are prefixed with `[heuristic]` and cached separately, so LLM re-analysis
+can upgrade them when a provider becomes available.
+
 ### Tradeoffs
 
 | Pro | Con |
 |-----|-----|
-| Provider choice | Requires at least one API key |
+| Provider choice | Full features need at least one API key |
 | Cost optimization | Configuration complexity |
 | No vendor lock-in | Different providers have different strengths |
+| Works without any keys | Heuristic results are less detailed than LLM |
 
 ### Default Behavior
 
@@ -312,6 +326,11 @@ Work includes:
 **3) Enables incremental updates**
 - File watcher queues changes, background pipeline processes them.
 
+**4) Heuristic fallbacks keep the brain running**
+- Background tasks use heuristic analysis when no LLM is available.
+- Module summaries, diff analysis, and pondering all produce useful output without API keys.
+- Results are tagged and upgradeable when an LLM becomes available.
+
 ### Tradeoffs
 
 | Pro | Con |
@@ -319,6 +338,7 @@ Work includes:
 | Fast interactive queries | CPU/network usage when "idle" |
 | Continuously fresh data | Failure handling complexity |
 | Incremental updates | Must not surprise users |
+| Works without LLM keys | Heuristic results less detailed |
 
 ---
 

@@ -135,16 +135,18 @@ The binary will be at `target/release/mira`. Add to `.mcp.json`:
 Create `~/.mira/.env`:
 
 ```bash
-# Required for intelligence features
+# Recommended for intelligence features (experts, LLM-powered summaries/analysis)
 DEEPSEEK_API_KEY=sk-your-key-here
 
-# Required for semantic search
+# Recommended for semantic search (embeddings)
 GEMINI_API_KEY=your-key-here
 ```
 
 Get your keys from:
 - DeepSeek: https://platform.deepseek.com/api_keys
 - Gemini: https://aistudio.google.com/app/apikey
+
+> **No API keys?** Mira works without them using heuristic fallbacks — diff analysis uses pattern-based parsing, module summaries use metadata extraction, and code search falls back to fuzzy/keyword matching. Expert consultation is the only feature that requires an LLM provider.
 
 ### Add Mira Instructions to Your Project
 
@@ -285,7 +287,7 @@ All data stored locally in `~/.mira/` (`mira.db` for memories/sessions, `mira-co
 
 ### "No LLM API keys configured"
 
-Set at least one API key in `~/.mira/.env`. DeepSeek is recommended for intelligence features.
+Most features work without API keys via heuristic fallbacks. Set at least one API key in `~/.mira/.env` for full LLM-powered intelligence. DeepSeek is recommended for expert consultation and semantic analysis.
 
 ### Semantic search not working
 
