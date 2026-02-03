@@ -3,6 +3,7 @@
 
 mod extraction;
 pub mod requests;
+pub mod responses;
 
 use crate::mcp_client::McpClientManager;
 use crate::tools::core as tools;
@@ -21,7 +22,11 @@ use crate::llm::ProviderFactory;
 use mira_types::ProjectContext;
 use rmcp::{
     ErrorData, ServerHandler,
-    handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
+    handler::server::{
+        router::tool::ToolRouter,
+        tool::ToolCallContext,
+        wrapper::{Json, Parameters},
+    },
     model::{
         CallToolRequestParam, CallToolResult, ListToolsResult, PaginatedRequestParam,
         ServerCapabilities, ServerInfo,
@@ -184,7 +189,10 @@ impl MiraServer {
     #[tool(
         description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current)."
     )]
-    async fn project(&self, Parameters(req): Parameters<ProjectRequest>) -> Result<String, String> {
+    async fn project(
+        &self,
+        Parameters(req): Parameters<ProjectRequest>,
+    ) -> Result<Json<responses::ProjectOutput>, String> {
         // For start action, use provided session ID or fall back to Claude's hook-generated ID
         let session_id = req.session_id.or_else(read_claude_session_id);
         tools::project(self, req.action, req.project_path, req.name, session_id).await
@@ -193,21 +201,30 @@ impl MiraServer {
     #[tool(
         description = "Manage memories. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Scope controls visibility: personal, project (default), team."
     )]
-    async fn memory(&self, Parameters(req): Parameters<MemoryRequest>) -> Result<String, String> {
+    async fn memory(
+        &self,
+        Parameters(req): Parameters<MemoryRequest>,
+    ) -> Result<Json<responses::MemoryOutput>, String> {
         tools::handle_memory(self, req).await
     }
 
     #[tool(
         description = "Code intelligence. Actions: search (by meaning), symbols (from file), callers (of function), callees (by function), dependencies (module graph + circular deps), patterns (architectural pattern detection), tech_debt (per-module debt scores)."
     )]
-    async fn code(&self, Parameters(req): Parameters<CodeRequest>) -> Result<String, String> {
+    async fn code(
+        &self,
+        Parameters(req): Parameters<CodeRequest>,
+    ) -> Result<Json<responses::CodeOutput>, String> {
         tools::handle_code(self, req).await
     }
 
     #[tool(
         description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations."
     )]
-    async fn goal(&self, Parameters(req): Parameters<GoalRequest>) -> Result<String, String> {
+    async fn goal(
+        &self,
+        Parameters(req): Parameters<GoalRequest>,
+    ) -> Result<Json<responses::GoalOutput>, String> {
         tools::goal(
             self,
             req.action,
@@ -230,7 +247,10 @@ impl MiraServer {
     #[tool(
         description = "Index code and git history. Actions: project/file/status/compact/summarize"
     )]
-    async fn index(&self, Parameters(req): Parameters<IndexRequest>) -> Result<String, String> {
+    async fn index(
+        &self,
+        Parameters(req): Parameters<IndexRequest>,
+    ) -> Result<Json<responses::IndexOutput>, String> {
         tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
     }
 
@@ -240,7 +260,7 @@ impl MiraServer {
     async fn session(
         &self,
         Parameters(req): Parameters<SessionRequest>,
-    ) -> Result<String, String> {
+    ) -> Result<Json<responses::SessionOutput>, String> {
         tools::handle_session(self, req).await
     }
 
@@ -248,7 +268,7 @@ impl MiraServer {
     async fn reply_to_mira(
         &self,
         Parameters(req): Parameters<ReplyToMiraRequest>,
-    ) -> Result<String, String> {
+    ) -> Result<Json<responses::ReplyOutput>, String> {
         tools::reply_to_mira(
             self,
             req.in_reply_to,
@@ -261,7 +281,10 @@ impl MiraServer {
     #[tool(
         description = "Consult experts or configure them. Actions: consult (get expert opinions), configure (set/get/delete/list/providers for expert prompts)."
     )]
-    async fn expert(&self, Parameters(req): Parameters<ExpertRequest>) -> Result<String, String> {
+    async fn expert(
+        &self,
+        Parameters(req): Parameters<ExpertRequest>,
+    ) -> Result<Json<responses::ExpertOutput>, String> {
         tools::handle_expert(self, req).await
     }
 
@@ -271,7 +294,7 @@ impl MiraServer {
     async fn documentation(
         &self,
         Parameters(req): Parameters<DocumentationRequest>,
-    ) -> Result<String, String> {
+    ) -> Result<Json<responses::DocOutput>, String> {
         tools::documentation(
             self,
             req.action,
@@ -287,7 +310,10 @@ impl MiraServer {
     #[tool(
         description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract."
     )]
-    async fn finding(&self, Parameters(req): Parameters<FindingRequest>) -> Result<String, String> {
+    async fn finding(
+        &self,
+        Parameters(req): Parameters<FindingRequest>,
+    ) -> Result<Json<responses::FindingOutput>, String> {
         tools::finding(
             self,
             req.action,
@@ -311,7 +337,7 @@ impl MiraServer {
     async fn analyze_diff(
         &self,
         Parameters(req): Parameters<AnalyzeDiffRequest>,
-    ) -> Result<String, String> {
+    ) -> Result<Json<responses::DiffOutput>, String> {
         tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await
     }
 
@@ -332,6 +358,11 @@ impl MiraServer {
     fn extract_result_text(result: &Result<CallToolResult, ErrorData>) -> (bool, String) {
         match result {
             Ok(r) => {
+                if let Some(structured) = r.structured_content.as_ref() {
+                    if let Some(message) = structured.get("message").and_then(|v| v.as_str()) {
+                        return (true, message.to_string());
+                    }
+                }
                 let text = r
                     .content
                     .first()

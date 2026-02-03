@@ -15,10 +15,12 @@ use crate::db::{
     upsert_session_with_branch_sync,
 };
 use crate::git::get_git_branch;
+use crate::mcp::responses::{ProjectData, ProjectGetData, ProjectOutput, ProjectSetData, ProjectStartData};
 use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
 use crate::tools::core::claude_local;
 use crate::utils::ResultExt;
+use rmcp::handler::server::wrapper::Json;
 
 // Helper functions moved to db/project.rs:
 // - search_memories_text_sync
@@ -148,28 +150,44 @@ pub async fn set_project<C: ToolContext>(
     ctx: &C,
     project_path: String,
     name: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<ProjectOutput>, String> {
     let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
 
     let display_name = project_name.as_deref().unwrap_or(&project_path);
-    Ok(format!(
-        "Project set: {} (id: {})",
-        display_name, project_id
-    ))
+    Ok(Json(ProjectOutput {
+        action: "set".into(),
+        message: format!("Project set: {} (id: {})", display_name, project_id),
+        data: Some(ProjectData::Set(ProjectSetData {
+            project_id,
+            project_name,
+        })),
+    }))
 }
 
 /// Get current project info
-pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<String, String> {
+pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>, String> {
     let project = ctx.get_project().await;
 
     match project {
-        Some(ctx) => Ok(format!(
-            "Current project:\n  Path: {}\n  Name: {}\n  ID: {}",
-            ctx.path,
-            ctx.name.as_deref().unwrap_or("(unnamed)"),
-            ctx.id
-        )),
-        None => Ok("No active project. Call set_project first.".to_string()),
+        Some(p) => Ok(Json(ProjectOutput {
+            action: "get".into(),
+            message: format!(
+                "Current project:\n  Path: {}\n  Name: {}\n  ID: {}",
+                p.path,
+                p.name.as_deref().unwrap_or("(unnamed)"),
+                p.id
+            ),
+            data: Some(ProjectData::Get(ProjectGetData {
+                project_id: p.id,
+                project_name: p.name,
+                project_path: p.path,
+            })),
+        })),
+        None => Ok(Json(ProjectOutput {
+            action: "get".into(),
+            message: "No active project. Call set_project first.".into(),
+            data: None,
+        })),
     }
 }
 
@@ -278,7 +296,7 @@ pub async fn session_start<C: ToolContext>(
     project_path: String,
     name: Option<String>,
     session_id: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<ProjectOutput>, String> {
     // Initialize project (shared with set_project)
     let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
 
@@ -495,7 +513,16 @@ pub async fn session_start<C: ToolContext>(
     }
 
     response.push_str("\nReady.");
-    Ok(response)
+    Ok(Json(ProjectOutput {
+        action: "start".into(),
+        message: response,
+        data: Some(ProjectData::Start(ProjectStartData {
+            project_id,
+            project_name,
+            project_path: project_path.clone(),
+            project_type: project_type.to_string(),
+        })),
+    }))
 }
 
 /// Gather system context content for bash tool usage (returns content string, does not store)
@@ -593,7 +620,7 @@ pub async fn project<C: ToolContext>(
     project_path: Option<String>,
     name: Option<String>,
     session_id: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<ProjectOutput>, String> {
     match action {
         ProjectAction::Start => {
             let path = project_path.ok_or("project_path is required for action 'start'")?;

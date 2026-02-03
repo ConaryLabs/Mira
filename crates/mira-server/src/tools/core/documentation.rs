@@ -7,7 +7,11 @@ use crate::db::documentation::{
     mark_doc_task_skipped,
 };
 use crate::mcp::requests::DocumentationAction;
+use crate::mcp::responses::{
+    DocOutput, DocData, DocListData, DocTaskItem, DocGetData, DocInventoryData, DocInventoryItem,
+};
 use crate::tools::core::ToolContext;
+use rmcp::handler::server::wrapper::Json;
 
 /// List documentation that needs to be written or updated
 pub async fn list_doc_tasks(
@@ -15,7 +19,7 @@ pub async fn list_doc_tasks(
     status: Option<String>,
     doc_type: Option<String>,
     priority: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<DocOutput>, String> {
     let project_id = ctx
         .project_id()
         .await
@@ -35,17 +39,21 @@ pub async fn list_doc_tasks(
         .await?;
 
     if tasks.is_empty() {
-        return Ok("No documentation tasks found for this project.".to_string());
+        return Ok(Json(DocOutput {
+            action: "list".into(),
+            message: "No documentation tasks found for this project.".into(),
+            data: Some(DocData::List(DocListData { tasks: vec![], total: 0 })),
+        }));
     }
 
     let mut output = String::from("## Documentation Tasks\n\n");
 
-    for task in tasks {
+    for task in &tasks {
         let status_indicator = match task.status.as_str() {
-            "pending" => "📝",
-            "applied" => "✅",
-            "skipped" => "⏭️",
-            _ => "❓",
+            "pending" => "[P]",
+            "applied" => "[A]",
+            "skipped" => "[S]",
+            _ => "[?]",
         };
 
         output.push_str(&format!(
@@ -75,7 +83,22 @@ pub async fn list_doc_tasks(
         output.push('\n');
     }
 
-    Ok(output)
+    let items: Vec<DocTaskItem> = tasks.iter().map(|task| DocTaskItem {
+        id: task.id,
+        doc_category: task.doc_category.clone(),
+        target_doc_path: task.target_doc_path.clone(),
+        priority: task.priority.clone(),
+        status: task.status.clone(),
+        source_file_path: task.source_file_path.clone(),
+        reason: task.reason.clone(),
+    }).collect();
+    let total = items.len();
+
+    Ok(Json(DocOutput {
+        action: "list".into(),
+        message: output,
+        data: Some(DocData::List(DocListData { tasks: items, total })),
+    }))
 }
 
 /// Wrapper to avoid name collision with db module function
@@ -93,7 +116,7 @@ fn list_db_doc_tasks(
 pub async fn get_doc_task_details(
     ctx: &(impl ToolContext + ?Sized),
     task_id: i64,
-) -> Result<String, String> {
+) -> Result<Json<DocOutput>, String> {
     // Require active project
     let current_project_id = ctx
         .project_id()
@@ -166,7 +189,7 @@ pub async fn get_doc_task_details(
     // Add category-specific guidelines
     output.push_str("## Writing Guidelines\n\n");
 
-    match task.doc_category.as_str() {
+    let guidelines = match task.doc_category.as_str() {
         "mcp_tool" => {
             output.push_str("For MCP tool documentation, include:\n\n");
             output.push_str("1. **Title** - Tool name as heading\n");
@@ -178,6 +201,7 @@ pub async fn get_doc_task_details(
             output.push_str("5. **Examples** - 2-3 realistic usage examples\n");
             output.push_str("6. **Errors** - Common failure modes\n");
             output.push_str("7. **See Also** - Related tools (if any)\n");
+            "For MCP tool documentation, include: Title, Description, Parameters table, Returns, Examples, Errors, See Also"
         }
         "module" => {
             output.push_str("For module documentation, include:\n\n");
@@ -185,6 +209,7 @@ pub async fn get_doc_task_details(
             output.push_str("2. **Key Components** - Main structs, functions, traits\n");
             output.push_str("3. **Usage Patterns** - How to use this module\n");
             output.push_str("4. **Architecture Notes** - Design decisions, dependencies\n");
+            "For module documentation, include: Overview, Key Components, Usage Patterns, Architecture Notes"
         }
         "public_api" => {
             output.push_str("For public API documentation, include:\n\n");
@@ -192,14 +217,16 @@ pub async fn get_doc_task_details(
             output.push_str("2. **Functions/Methods** - Signature, parameters, return values\n");
             output.push_str("3. **Examples** - Code snippets showing usage\n");
             output.push_str("4. **Error Handling** - What errors can occur\n");
+            "For public API documentation, include: Overview, Functions/Methods, Examples, Error Handling"
         }
         _ => {
             output.push_str("Write clear, concise documentation that explains:\n\n");
             output.push_str("1. What this code does\n");
             output.push_str("2. How to use it\n");
             output.push_str("3. Any important caveats or edge cases\n");
+            "Write clear, concise documentation explaining what the code does, how to use it, and important caveats"
         }
-    }
+    };
 
     output.push_str("\n---\n\n");
     output.push_str("## Instructions\n\n");
@@ -210,14 +237,29 @@ pub async fn get_doc_task_details(
         task.id
     ));
 
-    Ok(output)
+    Ok(Json(DocOutput {
+        action: "get".into(),
+        message: output,
+        data: Some(DocData::Get(DocGetData {
+            task_id: task.id,
+            target_doc_path: task.target_doc_path.clone(),
+            full_target_path: format!("{}/{}", project_path, task.target_doc_path),
+            doc_type: task.doc_type.clone(),
+            doc_category: task.doc_category.clone(),
+            priority: task.priority.clone(),
+            source_file_path: task.source_file_path.clone(),
+            full_source_path: task.source_file_path.as_ref().map(|s| format!("{}/{}", project_path, s)),
+            reason: task.reason.clone(),
+            guidelines: guidelines.to_string(),
+        })),
+    }))
 }
 
 /// Mark a documentation task as complete (after Claude has written the doc)
 pub async fn complete_doc_task(
     ctx: &(impl ToolContext + ?Sized),
     task_id: i64,
-) -> Result<String, String> {
+) -> Result<Json<DocOutput>, String> {
     // Require active project
     let current_project_id = ctx
         .project_id()
@@ -248,10 +290,11 @@ pub async fn complete_doc_task(
         .run(move |conn| mark_doc_task_applied(conn, task_id))
         .await?;
 
-    Ok(format!(
-        "Task {} marked complete. Documentation written to `{}`.",
-        task_id, task.target_doc_path
-    ))
+    Ok(Json(DocOutput {
+        action: "complete".into(),
+        message: format!("Task {} marked complete. Documentation written to `{}`.", task_id, task.target_doc_path),
+        data: None,
+    }))
 }
 
 /// Skip a documentation task (mark as not needed)
@@ -259,7 +302,7 @@ pub async fn skip_doc_task(
     ctx: &(impl ToolContext + ?Sized),
     task_id: i64,
     reason: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<DocOutput>, String> {
     // Require active project
     let current_project_id = ctx
         .project_id()
@@ -284,11 +327,15 @@ pub async fn skip_doc_task(
         .run(move |conn| mark_doc_task_skipped(conn, task_id, &skip_reason_clone))
         .await?;
 
-    Ok(format!("Task {} skipped: {}", task_id, skip_reason))
+    Ok(Json(DocOutput {
+        action: "skip".into(),
+        message: format!("Task {} skipped: {}", task_id, skip_reason),
+        data: None,
+    }))
 }
 
 /// Show documentation inventory with staleness indicators
-pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<String, String> {
+pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Json<DocOutput>, String> {
     let project_id_opt = ctx.project_id().await;
     let project_id = project_id_opt.ok_or("No active project")?;
 
@@ -298,7 +345,11 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
         .await?;
 
     if inventory.is_empty() {
-        return Ok("No documentation inventory found. Run scan to build inventory.".to_string());
+        return Ok(Json(DocOutput {
+            action: "inventory".into(),
+            message: "No documentation inventory found. Run scan to build inventory.".into(),
+            data: Some(DocData::Inventory(DocInventoryData { docs: vec![], total: 0, stale_count: 0 })),
+        }));
     }
 
     let mut output = String::from("## Documentation Inventory\n\n");
@@ -320,7 +371,7 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
         output.push_str(&format!("### {}\n\n", doc_type));
 
         for item in items {
-            let stale_indicator = if item.is_stale { " ⚠️ STALE" } else { "" };
+            let stale_indicator = if item.is_stale { " [STALE]" } else { "" };
             output.push_str(&format!("- `{}`{}\n", item.doc_path, stale_indicator));
 
             if let Some(title) = &item.title {
@@ -337,11 +388,24 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
         output.push('\n');
     }
 
-    Ok(output)
+    let items: Vec<DocInventoryItem> = inventory.iter().map(|item| DocInventoryItem {
+        doc_path: item.doc_path.clone(),
+        doc_type: item.doc_type.clone(),
+        is_stale: item.is_stale,
+        title: item.title.clone(),
+        staleness_reason: item.staleness_reason.clone(),
+    }).collect();
+    let total = items.len();
+
+    Ok(Json(DocOutput {
+        action: "inventory".into(),
+        message: output,
+        data: Some(DocData::Inventory(DocInventoryData { docs: items, total, stale_count })),
+    }))
 }
 
 /// Trigger manual documentation scan
-pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<String, String> {
+pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<Json<DocOutput>, String> {
     let project_id_opt = ctx.project_id().await;
     let project_id = project_id_opt.ok_or("No active project")?;
 
@@ -350,10 +414,11 @@ pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<Str
         .run(move |conn| clear_documentation_scan_marker_sync(conn, project_id))
         .await?;
 
-    Ok(
-        "Documentation scan triggered. Check `documentation(action=\"list\")` for results after scan completes."
-            .to_string(),
-    )
+    Ok(Json(DocOutput {
+        action: "scan".into(),
+        message: "Documentation scan triggered. Check `documentation(action=\"list\")` for results after scan completes.".into(),
+        data: None,
+    }))
 }
 
 /// Unified documentation tool with action parameter
@@ -366,7 +431,7 @@ pub async fn documentation<C: ToolContext>(
     doc_type: Option<String>,
     priority: Option<String>,
     status: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<DocOutput>, String> {
     match action {
         DocumentationAction::List => list_doc_tasks(ctx, status, doc_type, priority).await,
         DocumentationAction::Get => {
@@ -384,7 +449,12 @@ pub async fn documentation<C: ToolContext>(
         DocumentationAction::Inventory => show_doc_inventory(ctx).await,
         DocumentationAction::Scan => scan_documentation(ctx).await,
         DocumentationAction::ExportClaudeLocal => {
-            crate::tools::core::claude_local::export_claude_local(ctx).await
+            let message = crate::tools::core::claude_local::export_claude_local(ctx).await?;
+            Ok(Json(DocOutput {
+                action: "export_claude_local".into(),
+                message,
+                data: None,
+            }))
         }
     }
 }

@@ -6,6 +6,7 @@
 mod test_utils;
 
 use mira::mcp::requests::{ExpertConfigAction, GoalAction, IndexAction, SessionHistoryAction};
+use mira::mcp::responses::*;
 #[allow(unused_imports)]
 use mira::tools::core::{
     ToolContext, configure_expert, ensure_session, find_function_callees, find_function_callers,
@@ -13,6 +14,13 @@ use mira::tools::core::{
     reply_to_mira, search_code, session_history, session_start, set_project, summarize_codebase,
 };
 use test_utils::TestContext;
+
+/// Extract message text from Json<T> output for test assertions
+macro_rules! msg {
+    ($output:expr) => {
+        $output.0.message.as_str()
+    };
+}
 
 #[tokio::test]
 async fn test_session_start_basic() {
@@ -31,14 +39,14 @@ async fn test_session_start_basic() {
 
     // Verify output contains expected information
     assert!(
-        output.contains("Project:"),
+        msg!(output).contains("Project:"),
         "Output should contain project info"
     );
     assert!(
-        output.contains("Test Project"),
+        msg!(output).contains("Test Project"),
         "Output should contain project name"
     );
-    assert!(output.contains("Ready."), "Output should end with Ready.");
+    assert!(msg!(output).contains("Ready."), "Output should end with Ready.");
 
     // Verify project was set in context
     let project = ctx.get_project().await;
@@ -77,15 +85,15 @@ async fn test_set_project_get_project() {
 
     let output = get_result.unwrap();
     assert!(
-        output.contains("Current project:"),
+        msg!(output).contains("Current project:"),
         "Output should indicate current project"
     );
     assert!(
-        output.contains("/tmp/another_project"),
+        msg!(output).contains("/tmp/another_project"),
         "Output should contain project path"
     );
     assert!(
-        output.contains("Another Project"),
+        msg!(output).contains("Another Project"),
         "Output should contain project name"
     );
 
@@ -186,8 +194,8 @@ async fn test_remember_basic() {
 
     assert!(result.is_ok(), "remember failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("Stored memory"), "Output: {}", output);
-    assert!(output.contains("id:"), "Output should contain memory ID");
+    assert!(msg!(output).contains("Stored memory"), "Output: {}", msg!(output));
+    assert!(msg!(output).contains("id:"), "Output should contain memory ID");
 
     // Extract memory ID from output (optional)
     // We'll just verify that recall can find it
@@ -200,7 +208,7 @@ async fn test_remember_basic() {
     let recall_output = recall_result.unwrap();
     // Since embeddings are disabled, fallback to keyword search may find the memory
     // We'll just ensure no error
-    assert!(recall_output.contains("memories") || recall_output.contains("No memories"));
+    assert!(msg!(recall_output).contains("memories") || msg!(recall_output).contains("No memories"));
 }
 
 #[tokio::test]
@@ -233,20 +241,15 @@ async fn test_remember_with_key() {
 
     assert!(result.is_ok(), "remember failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("Stored memory"), "Output: {}", output);
-    assert!(output.contains("with key"), "Output should indicate key");
-    assert!(output.contains("id:"), "Output should contain memory ID");
+    assert!(msg!(output).contains("Stored memory"), "Output: {}", msg!(output));
+    assert!(msg!(output).contains("with key"), "Output should indicate key");
+    assert!(msg!(output).contains("id:"), "Output should contain memory ID");
 
-    // Parse memory ID from output
-    let id_str = output
-        .split("id:")
-        .nth(1)
-        .unwrap()
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .trim_matches(|c: char| !c.is_ascii_digit());
-    let memory_id: i64 = id_str.parse().expect("Failed to parse memory ID");
+    // Extract memory ID from structured data
+    let memory_id = match &output.0.data {
+        Some(MemoryData::Remember(data)) => data.id,
+        other => panic!("Expected Remember data, got: {:?}", other),
+    };
 
     // Try to forget the memory
     let forget_result = forget(&ctx, memory_id.to_string()).await;
@@ -256,7 +259,7 @@ async fn test_remember_with_key() {
         forget_result.err()
     );
     let forget_output = forget_result.unwrap();
-    assert!(forget_output.contains("deleted") || forget_output.contains("not found"));
+    assert!(msg!(forget_output).contains("deleted") || msg!(forget_output).contains("not found"));
 }
 
 #[tokio::test]
@@ -294,9 +297,9 @@ async fn test_search_code_empty() {
     assert!(result.is_ok(), "search_code failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(
-        output.contains("No code matches found"),
+        msg!(output).contains("No code matches found"),
         "Output: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -321,7 +324,7 @@ async fn test_find_function_callers_empty() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(output.contains("No callers found"), "Output: {}", output);
+    assert!(msg!(output).contains("No callers found"), "Output: {}", msg!(output));
 }
 
 #[tokio::test]
@@ -345,7 +348,7 @@ async fn test_find_function_callees_empty() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(output.contains("No callees found"), "Output: {}", output);
+    assert!(msg!(output).contains("No callees found"), "Output: {}", msg!(output));
 }
 
 #[tokio::test]
@@ -365,11 +368,11 @@ async fn test_index_status() {
     let result = index(&ctx, IndexAction::Status, None, false).await;
     assert!(result.is_ok(), "index status failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("Index status"), "Output: {}", output);
+    assert!(msg!(output).contains("Index status"), "Output: {}", msg!(output));
     assert!(
-        output.contains("symbols") && output.contains("embedded chunks"),
+        msg!(output).contains("symbols") && msg!(output).contains("embedded chunks"),
         "Output: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -404,12 +407,12 @@ impl Point {
     let result = get_symbols(file_path.clone(), None);
     assert!(result.is_ok(), "get_symbols failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("symbols"), "Output: {}", output);
+    assert!(msg!(output).contains("symbols"), "Output: {}", msg!(output));
     // Should contain function and struct
     assert!(
-        output.contains("hello_world") || output.contains("Point"),
+        msg!(output).contains("hello_world") || msg!(output).contains("Point"),
         "Output: {}",
-        output
+        msg!(output)
     );
 
     // Clean up (optional)
@@ -439,9 +442,9 @@ async fn test_summarize_codebase_no_deepseek() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("Summarized") || output.contains("All modules already have summaries"),
+        msg!(output).contains("Summarized") || msg!(output).contains("All modules already have summaries"),
         "Output: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -476,7 +479,7 @@ async fn test_session_history_current() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(output.contains("No active session"), "Output: {}", output);
+    assert!(msg!(output).contains("No active session"), "Output: {}", msg!(output));
 
     // Create a session via session_start
     let project_path = "/tmp/test_session_history".to_string();
@@ -496,7 +499,7 @@ async fn test_session_history_current() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(output.contains("Current session:"), "Output: {}", output);
+    assert!(msg!(output).contains("Current session:"), "Output: {}", msg!(output));
 }
 
 #[tokio::test]
@@ -523,9 +526,9 @@ async fn test_session_history_list_sessions() {
     let output = result.unwrap();
     // Output either lists sessions or says "No sessions found"
     assert!(
-        output.contains("sessions") || output.contains("No sessions"),
+        msg!(output).contains("sessions") || msg!(output).contains("No sessions"),
         "Output: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -563,11 +566,11 @@ async fn test_goal_create_and_list() {
     .await;
     assert!(result.is_ok(), "goal create failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("Created goal"), "Output: {}", output);
+    assert!(msg!(output).contains("Created goal"), "Output: {}", msg!(output));
     assert!(
-        output.contains("Implement new feature"),
+        msg!(output).contains("Implement new feature"),
         "Output: {}",
-        output
+        msg!(output)
     );
 
     // List goals
@@ -590,11 +593,11 @@ async fn test_goal_create_and_list() {
     .await;
     assert!(result.is_ok(), "goal list failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("goals"), "Output: {}", output);
+    assert!(msg!(output).contains("goals"), "Output: {}", msg!(output));
     assert!(
-        output.contains("Implement new feature"),
+        msg!(output).contains("Implement new feature"),
         "Output: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -830,9 +833,9 @@ async fn test_pool_concurrent_access() {
     );
     let output = recall_result.unwrap();
     assert!(
-        output.contains("memories"),
+        msg!(output).contains("memories"),
         "Should find memories: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -919,8 +922,9 @@ async fn test_pool_error_handling() {
     // Try forget with invalid ID
     let result = forget(&ctx, "invalid".to_string()).await;
     assert!(result.is_err(), "forget should fail with invalid ID");
+    let err = result.err().expect("should be Err");
     assert!(
-        result.unwrap_err().contains("Invalid"),
+        err.contains("Invalid"),
         "Error should mention invalid ID"
     );
 
@@ -932,9 +936,9 @@ async fn test_pool_error_handling() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("not found"),
+        msg!(output).contains("not found"),
         "Should indicate memory not found: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -1165,14 +1169,14 @@ async fn test_reply_to_mira_no_frontend() {
     assert!(result.is_ok(), "reply_to_mira should succeed in CLI mode");
     let output = result.unwrap();
     assert!(
-        output.contains("no frontend connected"),
+        msg!(output).contains("no frontend connected"),
         "Output should indicate no frontend: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("Test response content"),
+        msg!(output).contains("Test response content"),
         "Output should contain the content: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -1236,9 +1240,9 @@ async fn test_documentation_list_empty() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("No documentation tasks found"),
+        msg!(output).contains("No documentation tasks found"),
         "Output: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -1259,7 +1263,7 @@ async fn test_documentation_list_requires_project() {
     .await;
 
     assert!(result.is_err(), "Should fail without active project");
-    let error = result.unwrap_err();
+    let error = result.err().expect("should be Err");
     assert!(
         error.contains("No active project"),
         "Error should mention no active project: {}",
@@ -1327,19 +1331,19 @@ async fn test_documentation_list_with_tasks() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("Documentation Tasks"),
+        msg!(output).contains("Documentation Tasks"),
         "Output should contain header: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("docs/tools/example.md"),
+        msg!(output).contains("docs/tools/example.md"),
         "Output should contain task path: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("high"),
+        msg!(output).contains("high"),
         "Output should contain priority: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -1405,29 +1409,29 @@ async fn test_documentation_get_task_details() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("Documentation Task"),
+        msg!(output).contains("Documentation Task"),
         "Output should contain header: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("docs/tools/auth.md"),
+        msg!(output).contains("docs/tools/auth.md"),
         "Output should contain target path: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("src/tools/auth.rs"),
+        msg!(output).contains("src/tools/auth.rs"),
         "Output should contain source path: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("Writing Guidelines"),
+        msg!(output).contains("Writing Guidelines"),
         "Output should contain guidelines: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("MCP tool documentation"),
+        msg!(output).contains("MCP tool documentation"),
         "Output should have MCP-specific guidelines: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -1458,7 +1462,7 @@ async fn test_documentation_get_requires_task_id() {
     .await;
 
     assert!(result.is_err(), "Should fail without task_id");
-    let error = result.unwrap_err();
+    let error = result.err().expect("should be Err");
     assert!(
         error.contains("task_id is required"),
         "Error should mention task_id required: {}",
@@ -1493,7 +1497,7 @@ async fn test_documentation_get_nonexistent_task() {
     .await;
 
     assert!(result.is_err(), "Should fail for non-existent task");
-    let error = result.unwrap_err();
+    let error = result.err().expect("should be Err");
     assert!(
         error.contains("not found"),
         "Error should mention not found: {}",
@@ -1562,9 +1566,9 @@ async fn test_documentation_complete_task() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("marked complete"),
+        msg!(output).contains("marked complete"),
         "Output should confirm completion: {}",
-        output
+        msg!(output)
     );
 
     // Verify status changed in database
@@ -1638,7 +1642,7 @@ async fn test_documentation_complete_already_completed() {
     .await;
 
     assert!(result.is_err(), "Should fail for already-completed task");
-    let error = result.unwrap_err();
+    let error = result.err().expect("should be Err");
     assert!(
         error.contains("not pending"),
         "Error should mention not pending: {}",
@@ -1707,14 +1711,14 @@ async fn test_documentation_skip_task() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("skipped"),
+        msg!(output).contains("skipped"),
         "Output should confirm skip: {}",
-        output
+        msg!(output)
     );
     assert!(
-        output.contains("Internal API"),
+        msg!(output).contains("Internal API"),
         "Output should contain reason: {}",
-        output
+        msg!(output)
     );
 
     // Verify status changed in database
@@ -1767,9 +1771,9 @@ async fn test_documentation_inventory_empty() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("No documentation inventory") || output.contains("Run scan"),
+        msg!(output).contains("No documentation inventory") || msg!(output).contains("Run scan"),
         "Output should indicate empty inventory: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -1806,9 +1810,9 @@ async fn test_documentation_scan() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("scan triggered"),
+        msg!(output).contains("scan triggered"),
         "Output should confirm scan triggered: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -1884,7 +1888,7 @@ async fn test_documentation_project_scoping() {
         result.is_err(),
         "Should not access task from different project"
     );
-    let error = result.unwrap_err();
+    let error = result.err().expect("should be Err");
     assert!(
         error.contains("different project"),
         "Error should mention different project: {}",
@@ -1944,9 +1948,9 @@ async fn test_documentation_project_scoping() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("No documentation tasks found"),
+        msg!(output).contains("No documentation tasks found"),
         "Should not see project 1 tasks: {}",
-        output
+        msg!(output)
     );
 }
 
@@ -2025,13 +2029,13 @@ async fn test_documentation_list_filter_by_status() {
     );
     let output = result.unwrap();
     assert!(
-        output.contains("pending.md"),
+        msg!(output).contains("pending.md"),
         "Should show pending task: {}",
-        output
+        msg!(output)
     );
     assert!(
-        !output.contains("applied.md"),
+        !msg!(output).contains("applied.md"),
         "Should not show applied task: {}",
-        output
+        msg!(output)
     );
 }

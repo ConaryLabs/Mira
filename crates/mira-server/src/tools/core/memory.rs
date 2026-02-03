@@ -4,10 +4,12 @@ use crate::db::{
     StoreMemoryParams, recall_semantic_with_branch_info_sync, store_embedding_sync,
     store_memory_sync,
 };
+use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
 use regex::Regex;
+use rmcp::handler::server::wrapper::Json;
 use std::sync::LazyLock;
 
 /// Patterns that look like secrets/credentials.
@@ -63,7 +65,7 @@ fn detect_secret(content: &str) -> Option<&'static str> {
 pub async fn handle_memory<C: ToolContext>(
     ctx: &C,
     req: crate::mcp::requests::MemoryRequest,
-) -> Result<String, String> {
+) -> Result<Json<MemoryOutput>, String> {
     use crate::mcp::requests::MemoryAction;
     match req.action {
         MemoryAction::Remember => {
@@ -90,7 +92,7 @@ pub async fn remember<C: ToolContext>(
     category: Option<String>,
     confidence: Option<f64>,
     scope: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<MemoryOutput>, String> {
     // Security: warn if content looks like it contains secrets
     if let Some(pattern_name) = detect_secret(&content) {
         return Err(format!(
@@ -179,11 +181,15 @@ pub async fn remember<C: ToolContext>(
         cache.invalidate_memory(project_id).await;
     }
 
-    Ok(format!(
-        "Stored memory (id: {}){}",
-        id,
-        if key.is_some() { " with key" } else { "" }
-    ))
+    Ok(Json(MemoryOutput {
+        action: "remember".into(),
+        message: format!(
+            "Stored memory (id: {}){}",
+            id,
+            if key.is_some() { " with key" } else { "" }
+        ),
+        data: Some(MemoryData::Remember(RememberData { id })),
+    }))
 }
 
 /// Search memories using semantic similarity or keyword fallback
@@ -193,7 +199,7 @@ pub async fn recall<C: ToolContext>(
     limit: Option<i64>,
     _category: Option<String>,
     _fact_type: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<MemoryOutput>, String> {
     use crate::db::{record_memory_access_sync, search_memories_sync};
 
     let project_id = ctx.project_id().await;
@@ -253,22 +259,40 @@ pub async fn recall<C: ToolContext>(
                     });
                 }
 
-                let mut response = format!("{}Found {} memories:\n", context_header, results.len());
-                for (id, content, distance, branch) in results {
-                    let score = 1.0 - distance; // Convert distance to similarity
+                let items: Vec<MemoryItem> = results
+                    .iter()
+                    .map(|(id, content, distance, branch)| MemoryItem {
+                        id: *id,
+                        content: content.clone(),
+                        score: Some(1.0 - distance),
+                        fact_type: None,
+                        branch: branch.clone(),
+                    })
+                    .collect();
+                let total = items.len();
+                let mut response = format!("{}Found {} memories:\n", context_header, total);
+                for (id, content, distance, branch) in &results {
+                    let score = 1.0 - distance;
                     let preview = if content.len() > 100 {
                         format!("{}...", &content[..100])
                     } else {
-                        content
+                        content.clone()
                     };
-                    // Show branch tag if present
-                    let branch_tag = branch.map(|b| format!(" [{}]", b)).unwrap_or_default();
+                    let branch_tag =
+                        branch.as_ref().map(|b| format!(" [{}]", b)).unwrap_or_default();
                     response.push_str(&format!(
                         "  [{}] (score: {:.2}){} {}\n",
                         id, score, branch_tag, preview
                     ));
                 }
-                return Ok(response);
+                return Ok(Json(MemoryOutput {
+                    action: "recall".into(),
+                    message: response,
+                    data: Some(MemoryData::Recall(RecallData {
+                        memories: items,
+                        total,
+                    })),
+                }));
             }
         }
     }
@@ -303,12 +327,20 @@ pub async fn recall<C: ToolContext>(
                     });
                 }
 
-                let mut response = format!(
-                    "{}Found {} memories (fuzzy):\n",
-                    context_header,
-                    results.len()
-                );
-                for mem in results {
+                let items: Vec<MemoryItem> = results
+                    .iter()
+                    .map(|mem| MemoryItem {
+                        id: mem.id,
+                        content: mem.content.clone(),
+                        score: None,
+                        fact_type: Some(mem.fact_type.clone()),
+                        branch: None,
+                    })
+                    .collect();
+                let total = items.len();
+                let mut response =
+                    format!("{}Found {} memories (fuzzy):\n", context_header, total);
+                for mem in &results {
                     let preview = if mem.content.len() > 100 {
                         format!("{}...", &mem.content[..100])
                     } else {
@@ -316,7 +348,14 @@ pub async fn recall<C: ToolContext>(
                     };
                     response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
                 }
-                return Ok(response);
+                return Ok(Json(MemoryOutput {
+                    action: "recall".into(),
+                    message: response,
+                    data: Some(MemoryData::Recall(RecallData {
+                        memories: items,
+                        total,
+                    })),
+                }));
             }
         }
     }
@@ -338,7 +377,14 @@ pub async fn recall<C: ToolContext>(
         .await?;
 
     if results.is_empty() {
-        return Ok(format!("{}No memories found.", context_header));
+        return Ok(Json(MemoryOutput {
+            action: "recall".into(),
+            message: format!("{}No memories found.", context_header),
+            data: Some(MemoryData::Recall(RecallData {
+                memories: vec![],
+                total: 0,
+            })),
+        }));
     }
 
     // Record memory access for evidence-based tracking
@@ -364,8 +410,19 @@ pub async fn recall<C: ToolContext>(
         });
     }
 
-    let mut response = format!("{}Found {} memories:\n", context_header, results.len());
-    for mem in results {
+    let items: Vec<MemoryItem> = results
+        .iter()
+        .map(|mem| MemoryItem {
+            id: mem.id,
+            content: mem.content.clone(),
+            score: None,
+            fact_type: Some(mem.fact_type.clone()),
+            branch: None,
+        })
+        .collect();
+    let total = items.len();
+    let mut response = format!("{}Found {} memories:\n", context_header, total);
+    for mem in &results {
         let preview = if mem.content.len() > 100 {
             format!("{}...", &mem.content[..100])
         } else {
@@ -374,11 +431,18 @@ pub async fn recall<C: ToolContext>(
         response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
     }
 
-    Ok(response)
+    Ok(Json(MemoryOutput {
+        action: "recall".into(),
+        message: response,
+        data: Some(MemoryData::Recall(RecallData {
+            memories: items,
+            total,
+        })),
+    }))
 }
 
 /// Delete a memory
-pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, String> {
+pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOutput>, String> {
     use crate::db::delete_memory_sync;
 
     let id: i64 = id.parse().map_err(|_| "Invalid ID format".to_string())?;
@@ -397,9 +461,17 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<String, Strin
             let project_id = ctx.project_id().await;
             cache.invalidate_memory(project_id).await;
         }
-        Ok(format!("Memory {} deleted.", id))
+        Ok(Json(MemoryOutput {
+            action: "forget".into(),
+            message: format!("Memory {} deleted.", id),
+            data: None,
+        }))
     } else {
-        Ok(format!("Memory {} not found.", id))
+        Ok(Json(MemoryOutput {
+            action: "forget".into(),
+            message: format!("Memory {} not found.", id),
+            data: None,
+        }))
     }
 }
 

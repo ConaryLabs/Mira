@@ -9,8 +9,10 @@ use crate::background::diff_analysis::{
     resolve_ref,
 };
 use crate::db::get_recent_diff_analyses_sync;
+use crate::mcp::responses::{DiffAnalysisData, DiffData, DiffOutput};
 use crate::search::format_project_header;
 use crate::tools::core::ToolContext;
+use rmcp::handler::server::wrapper::Json;
 
 /// Analyze git diff semantically
 ///
@@ -20,7 +22,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     from_ref: Option<String>,
     to_ref: Option<String>,
     include_impact: Option<bool>,
-) -> Result<String, String> {
+) -> Result<Json<DiffOutput>, String> {
     let project = ctx.get_project().await;
     let (project_id, project_path) = match project.as_ref() {
         Some(p) => (Some(p.id), p.path.clone()),
@@ -100,11 +102,20 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     )
     .await?;
 
-    Ok(format!(
-        "{}{}",
-        context_header,
-        format_diff_analysis(&result)
-    ))
+    let formatted = format_diff_analysis(&result);
+    Ok(Json(DiffOutput {
+        action: "analyze".into(),
+        message: format!("{}{}", context_header, formatted),
+        data: Some(DiffData::Analysis(DiffAnalysisData {
+            from_ref: from.clone(),
+            to_ref: to.clone(),
+            files_changed: result.files_changed,
+            lines_added: result.lines_added,
+            lines_removed: result.lines_removed,
+            summary: Some(result.summary.clone()),
+            risk_level: Some(result.risk.overall.clone()),
+        })),
+    }))
 }
 
 /// Analyze staged or working directory changes (no caching, simpler flow)
@@ -116,7 +127,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
     analysis_type: &str,
     diff_content: &str,
     include_impact: bool,
-) -> Result<String, String> {
+) -> Result<Json<DiffOutput>, String> {
     use crate::background::diff_analysis::{
         analyze_diff_heuristic, analyze_diff_semantic, calculate_risk_level,
     };
@@ -131,10 +142,11 @@ async fn analyze_staged_or_working<C: ToolContext>(
     };
 
     if diff_content.is_empty() {
-        return Ok(format!(
-            "{}No {} changes to analyze.",
-            context_header, analysis_type
-        ));
+        return Ok(Json(DiffOutput {
+            action: "analyze".into(),
+            message: format!("{}No {} changes to analyze.", context_header, analysis_type),
+            data: None,
+        }));
     }
 
     // Semantic analysis via LLM or heuristic fallback
@@ -198,11 +210,20 @@ async fn analyze_staged_or_working<C: ToolContext>(
         lines_removed: stats.lines_removed,
     };
 
-    Ok(format!(
-        "{}{}",
-        context_header,
-        format_diff_analysis(&result)
-    ))
+    let formatted = format_diff_analysis(&result);
+    Ok(Json(DiffOutput {
+        action: "analyze".into(),
+        message: format!("{}{}", context_header, formatted),
+        data: Some(DiffData::Analysis(DiffAnalysisData {
+            from_ref: result.from_ref.clone(),
+            to_ref: result.to_ref.clone(),
+            files_changed: result.files_changed,
+            lines_added: result.lines_added,
+            lines_removed: result.lines_removed,
+            summary: Some(result.summary.clone()),
+            risk_level: Some(result.risk.overall.clone()),
+        })),
+    }))
 }
 
 /// Parse stats for staged changes
@@ -254,7 +275,7 @@ fn parse_numstat_output(stdout: &str) -> Result<DiffStats, String> {
 pub async fn list_diff_analyses<C: ToolContext>(
     ctx: &C,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<DiffOutput>, String> {
     let project = ctx.get_project().await;
     let project_id = project.as_ref().map(|p| p.id);
     let context_header = format_project_header(project.as_ref());
@@ -267,7 +288,11 @@ pub async fn list_diff_analyses<C: ToolContext>(
         .await?;
 
     if analyses.is_empty() {
-        return Ok(format!("{}No diff analyses found.", context_header));
+        return Ok(Json(DiffOutput {
+            action: "list".into(),
+            message: format!("{}No diff analyses found.", context_header),
+            data: None,
+        }));
     }
 
     let mut output = format!("{}## Recent Diff Analyses\n\n", context_header);
@@ -292,7 +317,11 @@ pub async fn list_diff_analyses<C: ToolContext>(
         ));
     }
 
-    Ok(output)
+    Ok(Json(DiffOutput {
+        action: "list".into(),
+        message: output,
+        data: None,
+    }))
 }
 
 #[cfg(test)]

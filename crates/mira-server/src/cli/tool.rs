@@ -15,20 +15,26 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
     let server = setup_server_context().await?;
 
     // Execute tool
-    let res = match name.as_str() {
+    let res: Result<String, String> = match name.as_str() {
         "project" => {
             let req: ProjectRequest = serde_json::from_str(&args)?;
             // For start action, use provided session ID or fall back to Claude's hook-generated ID
             let session_id = req.session_id.or_else(read_claude_session_id);
-            mira::tools::project(&server, req.action, req.project_path, req.name, session_id).await
+            mira::tools::project(&server, req.action, req.project_path, req.name, session_id)
+                .await
+                .map(|output| output.0.message)
         }
         "memory" => {
             let req: MemoryRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_memory(&server, req).await
+            mira::tools::handle_memory(&server, req)
+                .await
+                .map(|output| output.0.message)
         }
         "code" => {
             let req: CodeRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_code(&server, req).await
+            mira::tools::handle_code(&server, req)
+                .await
+                .map(|output| output.0.message)
         }
         "goal" => {
             let req: GoalRequest = serde_json::from_str(&args)?;
@@ -49,6 +55,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 req.weight,
             )
             .await
+            .map(|output| output.0.message)
         }
         "index" => {
             let req: IndexRequest = serde_json::from_str(&args)?;
@@ -59,14 +66,19 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 req.skip_embed.unwrap_or(false),
             )
             .await
+            .map(|output| output.0.message)
         }
         "session" => {
             let req: SessionRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_session(&server, req).await
+            mira::tools::handle_session(&server, req)
+                .await
+                .map(|output| output.0.message)
         }
         "expert" => {
             let req: ExpertRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_expert(&server, req).await
+            mira::tools::handle_expert(&server, req)
+                .await
+                .map(|output| output.0.message)
         }
         "reply_to_mira" => {
             let req: ReplyToMiraRequest = serde_json::from_str(&args)?;
@@ -77,6 +89,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 req.complete.unwrap_or(true),
             )
             .await
+            .map(|output| output.0.message)
         }
         "documentation" => {
             let req: DocumentationRequest = serde_json::from_str(&args)?;
@@ -90,6 +103,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 req.status,
             )
             .await
+            .map(|output| output.0.message)
         }
         "finding" => {
             let req: FindingRequest = serde_json::from_str(&args)?;
@@ -106,11 +120,13 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 req.limit,
             )
             .await
+            .map(|output| output.0.message)
         }
         "analyze_diff" => {
             let req: AnalyzeDiffRequest = serde_json::from_str(&args)?;
             mira::tools::analyze_diff_tool(&server, req.from_ref, req.to_ref, req.include_impact)
                 .await
+                .map(|output| output.0.message)
         }
         _ => Err(format!("Unknown tool: {}", name)),
     };

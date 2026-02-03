@@ -3,6 +3,9 @@
 
 use std::time::Duration;
 
+use crate::mcp::responses::ExpertOutput;
+use rmcp::handler::server::wrapper::Json;
+
 mod config;
 mod context;
 mod council;
@@ -43,7 +46,7 @@ pub use role::ExpertRole;
 pub async fn handle_expert<C: ToolContext + Clone + 'static>(
     ctx: &C,
     req: crate::mcp::requests::ExpertRequest,
-) -> Result<String, String> {
+) -> Result<Json<ExpertOutput>, String> {
     use crate::mcp::requests::ExpertAction;
     match req.action {
         ExpertAction::Consult => {
@@ -51,14 +54,25 @@ pub async fn handle_expert<C: ToolContext + Clone + 'static>(
             let context = req
                 .context
                 .ok_or("context is required for action 'consult'")?;
-            consult_experts(ctx, roles, context, req.question, req.mode).await
+            let message = consult_experts(ctx, roles, context, req.question, req.mode).await?;
+            Ok(Json(ExpertOutput {
+                action: "consult".into(),
+                message,
+                data: None,
+            }))
         }
         ExpertAction::Configure => {
             let config_action = req
                 .config_action
                 .ok_or("config_action is required for action 'configure'")?;
-            configure_expert(ctx, config_action, req.role, req.prompt, req.provider, req.model)
-                .await
+            let message =
+                configure_expert(ctx, config_action, req.role, req.prompt, req.provider, req.model)
+                    .await?;
+            Ok(Json(ExpertOutput {
+                action: "configure".into(),
+                message,
+                data: None,
+            }))
         }
     }
 }

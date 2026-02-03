@@ -31,8 +31,9 @@ pub async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
 
     match result {
         Ok(output) => {
-            println!("--- Session Start Output ({} chars) ---\n", output.len());
-            println!("{}", output);
+            let message = output.0.message;
+            println!("--- Session Start Output ({} chars) ---\n", message.len());
+            println!("{}", message);
         }
         Err(e) => {
             println!("ERROR: {}", e);

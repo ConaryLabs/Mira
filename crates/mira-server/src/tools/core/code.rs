@@ -8,18 +8,25 @@ use crate::cartographer;
 use crate::indexer;
 use crate::llm::{LlmClient, Message, record_llm_usage};
 use crate::mcp::requests::IndexAction;
+use crate::mcp::responses::{
+    CallGraphData, CallGraphEntry, CodeData, CodeOutput, CodeSearchResult, DependenciesData,
+    DependencyEdge, DebtFactor, IndexCompactData, IndexData, IndexOutput, IndexProjectData,
+    IndexStatusData, ModulePatterns, PatternEntry, PatternsData, SearchResultsData, SymbolInfo,
+    SymbolsData, TechDebtData, TechDebtModule, TechDebtTier,
+};
 use crate::search::{
     CrossRefType, crossref_search, expand_context_with_conn, find_callees, find_callers,
     format_crossref_results, format_project_header, hybrid_search,
 };
 use crate::tools::core::ToolContext;
 use crate::utils::ResultExt;
+use rmcp::handler::server::wrapper::Json;
 
 /// Unified code tool dispatcher
 pub async fn handle_code<C: ToolContext>(
     ctx: &C,
     req: crate::mcp::requests::CodeRequest,
-) -> Result<String, String> {
+) -> Result<Json<CodeOutput>, String> {
     use crate::mcp::requests::CodeAction;
     match req.action {
         CodeAction::Search => {
@@ -56,7 +63,7 @@ pub async fn search_code<C: ToolContext>(
     query: String,
     _language: Option<String>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<CodeOutput>, String> {
     let limit = limit.unwrap_or(10) as usize;
     let project_id = ctx.project_id().await;
     let project = ctx.get_project().await;
@@ -71,11 +78,15 @@ pub async fn search_code<C: ToolContext>(
         .await?;
 
     if let Some((target, ref_type, results)) = crossref_result {
-        return Ok(format!(
-            "{}{}",
-            context_header,
-            format_crossref_results(&target, ref_type, &results)
-        ));
+        return Ok(Json(CodeOutput {
+            action: "search".into(),
+            message: format!(
+                "{}{}",
+                context_header,
+                format_crossref_results(&target, ref_type, &results)
+            ),
+            data: None, // crossref results are text-only
+        }));
     }
 
     // Use shared hybrid search
@@ -92,7 +103,15 @@ pub async fn search_code<C: ToolContext>(
     .map_err(|e| e.to_string())?;
 
     if result.results.is_empty() {
-        return Ok(format!("{}No code matches found.", context_header));
+        return Ok(Json(CodeOutput {
+            action: "search".into(),
+            message: format!("{}No code matches found.", context_header),
+            data: Some(CodeData::Search(SearchResultsData {
+                results: vec![],
+                search_type: result.search_type.to_string(),
+                total: 0,
+            })),
+        }));
     }
 
     // Format results (MCP-style with box drawing characters)
@@ -131,6 +150,31 @@ pub async fn search_code<C: ToolContext>(
         })
         .await?;
 
+    let items: Vec<CodeSearchResult> = expanded_results
+        .iter()
+        .map(|(file_path, content, score, expanded)| CodeSearchResult {
+            file_path: file_path.clone(),
+            score: *score,
+            symbol_info: expanded.as_ref().and_then(|(info, _)| info.clone()),
+            content: expanded
+                .as_ref()
+                .map(|(_, code)| {
+                    if code.len() > 1500 {
+                        format!("{}...", &code[..1500])
+                    } else {
+                        code.clone()
+                    }
+                })
+                .unwrap_or_else(|| {
+                    if content.len() > 500 {
+                        format!("{}...", &content[..500])
+                    } else {
+                        content.clone()
+                    }
+                }),
+        })
+        .collect();
+
     for (file_path, content, score, expanded) in expanded_results {
         response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", file_path, score));
 
@@ -154,7 +198,16 @@ pub async fn search_code<C: ToolContext>(
         }
     }
 
-    Ok(response)
+    let total = items.len();
+    Ok(Json(CodeOutput {
+        action: "search".into(),
+        message: response,
+        data: Some(CodeData::Search(SearchResultsData {
+            results: items,
+            search_type: result.search_type.to_string(),
+            total,
+        })),
+    }))
 }
 
 /// Find functions that call a specific function
@@ -162,7 +215,7 @@ pub async fn find_function_callers<C: ToolContext>(
     ctx: &C,
     function_name: String,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<CodeOutput>, String> {
     if function_name.is_empty() {
         return Err("function_name is required".to_string());
     }
@@ -179,17 +232,40 @@ pub async fn find_function_callers<C: ToolContext>(
         .await?;
 
     if results.is_empty() {
-        return Ok(format!(
-            "{}No callers found for `{}`.",
-            context_header, function_name
-        ));
+        return Ok(Json(CodeOutput {
+            action: "callers".into(),
+            message: format!("{}No callers found for `{}`.", context_header, function_name),
+            data: Some(CodeData::CallGraph(CallGraphData {
+                target: function_name,
+                direction: "callers".into(),
+                functions: vec![],
+                total: 0,
+            })),
+        }));
     }
 
-    Ok(format!(
-        "{}{}",
-        context_header,
-        format_crossref_results(&function_name, CrossRefType::Caller, &results)
-    ))
+    let total = results.len();
+    Ok(Json(CodeOutput {
+        action: "callers".into(),
+        message: format!(
+            "{}{}",
+            context_header,
+            format_crossref_results(&function_name, CrossRefType::Caller, &results)
+        ),
+        data: Some(CodeData::CallGraph(CallGraphData {
+            target: function_name,
+            direction: "callers".into(),
+            functions: results
+                .iter()
+                .map(|r| CallGraphEntry {
+                    function_name: r.symbol_name.clone(),
+                    file_path: r.file_path.clone(),
+                    line: None,
+                })
+                .collect(),
+            total,
+        })),
+    }))
 }
 
 /// Find functions called by a specific function
@@ -197,7 +273,7 @@ pub async fn find_function_callees<C: ToolContext>(
     ctx: &C,
     function_name: String,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<CodeOutput>, String> {
     if function_name.is_empty() {
         return Err("function_name is required".to_string());
     }
@@ -214,21 +290,47 @@ pub async fn find_function_callees<C: ToolContext>(
         .await?;
 
     if results.is_empty() {
-        return Ok(format!(
-            "{}No callees found for `{}`.",
-            context_header, function_name
-        ));
+        return Ok(Json(CodeOutput {
+            action: "callees".into(),
+            message: format!("{}No callees found for `{}`.", context_header, function_name),
+            data: Some(CodeData::CallGraph(CallGraphData {
+                target: function_name,
+                direction: "callees".into(),
+                functions: vec![],
+                total: 0,
+            })),
+        }));
     }
 
-    Ok(format!(
-        "{}{}",
-        context_header,
-        format_crossref_results(&function_name, CrossRefType::Callee, &results)
-    ))
+    let total = results.len();
+    Ok(Json(CodeOutput {
+        action: "callees".into(),
+        message: format!(
+            "{}{}",
+            context_header,
+            format_crossref_results(&function_name, CrossRefType::Callee, &results)
+        ),
+        data: Some(CodeData::CallGraph(CallGraphData {
+            target: function_name,
+            direction: "callees".into(),
+            functions: results
+                .iter()
+                .map(|r| CallGraphEntry {
+                    function_name: r.symbol_name.clone(),
+                    file_path: r.file_path.clone(),
+                    line: None,
+                })
+                .collect(),
+            total,
+        })),
+    }))
 }
 
 /// Get symbols from a file
-pub fn get_symbols(file_path: String, symbol_type: Option<String>) -> Result<String, String> {
+pub fn get_symbols(
+    file_path: String,
+    symbol_type: Option<String>,
+) -> Result<Json<CodeOutput>, String> {
     let path = Path::new(&file_path);
 
     if !path.exists() {
@@ -239,7 +341,14 @@ pub fn get_symbols(file_path: String, symbol_type: Option<String>) -> Result<Str
     let symbols = indexer::extract_symbols(path).map_err(|e| e.to_string())?;
 
     if symbols.is_empty() {
-        return Ok("No symbols found.".to_string());
+        return Ok(Json(CodeOutput {
+            action: "symbols".into(),
+            message: "No symbols found.".to_string(),
+            data: Some(CodeData::Symbols(SymbolsData {
+                symbols: vec![],
+                total: 0,
+            })),
+        }));
     }
 
     // Filter by type if specified
@@ -269,7 +378,24 @@ pub fn get_symbols(file_path: String, symbol_type: Option<String>) -> Result<Str
         response.push_str(&format!("  ... and {} more\n", total - 10));
     }
 
-    Ok(response)
+    let symbol_items: Vec<SymbolInfo> = display
+        .iter()
+        .map(|sym| SymbolInfo {
+            name: sym.name.clone(),
+            symbol_type: sym.symbol_type.clone(),
+            start_line: sym.start_line as usize,
+            end_line: sym.end_line as usize,
+        })
+        .collect();
+
+    Ok(Json(CodeOutput {
+        action: "symbols".into(),
+        message: response,
+        data: Some(CodeData::Symbols(SymbolsData {
+            symbols: symbol_items,
+            total,
+        })),
+    }))
 }
 
 /// Index project
@@ -278,7 +404,7 @@ pub async fn index<C: ToolContext>(
     action: IndexAction,
     path: Option<String>,
     skip_embed: bool,
-) -> Result<String, String> {
+) -> Result<Json<IndexOutput>, String> {
     match action {
         IndexAction::Project | IndexAction::File => {
             let project = ctx.get_project().await;
@@ -313,6 +439,7 @@ pub async fn index<C: ToolContext>(
             );
 
             // Auto-summarize modules that don't have descriptions yet
+            let mut modules_summarized = None;
             if let Some(pid) = project_id {
                 if let Some(llm_client) = ctx.llm_factory().client_for_background() {
                     match auto_summarize_modules(
@@ -326,6 +453,7 @@ pub async fn index<C: ToolContext>(
                     {
                         Ok(count) if count > 0 => {
                             response.push_str(&format!(", summarized {} modules", count));
+                            modules_summarized = Some(count);
                         }
                         Ok(_) => {} // No modules needed summarization
                         Err(e) => {
@@ -335,7 +463,16 @@ pub async fn index<C: ToolContext>(
                 }
             }
 
-            Ok(response)
+            Ok(Json(IndexOutput {
+                action: "project".into(),
+                message: response,
+                data: Some(IndexData::Project(IndexProjectData {
+                    files: stats.files,
+                    symbols: stats.symbols,
+                    chunks: stats.chunks,
+                    modules_summarized,
+                })),
+            }))
         }
         IndexAction::Compact => {
             let stats = ctx
@@ -344,11 +481,20 @@ pub async fn index<C: ToolContext>(
                 .await
                 .str_err()?;
 
-            Ok(format!(
+            let message = format!(
                 "Compacted vec_code: {} rows preserved, ~{:.1} MB estimated savings.\n\
                  VACUUM complete — database file should now reflect reduced size.",
                 stats.rows_preserved, stats.estimated_savings_mb
-            ))
+            );
+
+            Ok(Json(IndexOutput {
+                action: "compact".into(),
+                message,
+                data: Some(IndexData::Compact(IndexCompactData {
+                    rows_preserved: stats.rows_preserved,
+                    estimated_savings_mb: stats.estimated_savings_mb,
+                })),
+            }))
         }
         IndexAction::Summarize => {
             return summarize_codebase(ctx).await;
@@ -368,10 +514,17 @@ pub async fn index<C: ToolContext>(
                 })
                 .await?;
 
-            Ok(format!(
-                "Index status: {} symbols, {} embedded chunks",
-                symbols, embedded
-            ))
+            Ok(Json(IndexOutput {
+                action: "status".into(),
+                message: format!(
+                    "Index status: {} symbols, {} embedded chunks",
+                    symbols, embedded
+                ),
+                data: Some(IndexData::Status(IndexStatusData {
+                    symbols: symbols as usize,
+                    embedded_chunks: embedded as usize,
+                })),
+            }))
         }
     }
 }
@@ -435,7 +588,7 @@ async fn auto_summarize_modules(
 }
 
 /// Summarize codebase modules using LLM (or heuristic fallback)
-pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, String> {
+pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput>, String> {
     use crate::background::summaries::generate_heuristic_summaries;
 
     // Get project context
@@ -455,7 +608,16 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         .await?;
 
     if modules.is_empty() {
-        return Ok("All modules already have summaries.".to_string());
+        return Ok(Json(IndexOutput {
+            action: "summarize".into(),
+            message: "All modules already have summaries.".to_string(),
+            data: Some(IndexData::Project(IndexProjectData {
+                files: 0,
+                symbols: 0,
+                chunks: 0,
+                modules_summarized: Some(0),
+            })),
+        }));
     }
 
     // Fill in code previews
@@ -521,7 +683,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
         })
         .await?;
 
-    Ok(format!(
+    let message = format!(
         "Summarized {} modules:\n{}",
         updated,
         summaries
@@ -529,11 +691,22 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<String, Strin
             .map(|(id, summary)| format!("  {}: {}", id, summary))
             .collect::<Vec<_>>()
             .join("\n")
-    ))
+    );
+
+    Ok(Json(IndexOutput {
+        action: "summarize".into(),
+        message,
+        data: Some(IndexData::Project(IndexProjectData {
+            files: 0,
+            symbols: 0,
+            chunks: 0,
+            modules_summarized: Some(updated),
+        })),
+    }))
 }
 
 /// Get module dependencies and circular dependency warnings
-async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<String, String> {
+async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
     let project_id = ctx
         .project_id()
         .await
@@ -548,10 +721,19 @@ async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<String, String> {
         .await?;
 
     if deps.is_empty() {
-        return Ok("No module dependencies found. Run a health scan or index the project first.".to_string());
+        return Ok(Json(CodeOutput {
+            action: "dependencies".into(),
+            message: "No module dependencies found. Run a health scan or index the project first.".to_string(),
+            data: Some(CodeData::Dependencies(DependenciesData {
+                edges: vec![],
+                circular_count: 0,
+                total: 0,
+            })),
+        }));
     }
 
     let circular: Vec<_> = deps.iter().filter(|d| d.is_circular).collect();
+    let circular_count = circular.len();
 
     let mut response = format!("Module dependencies ({} edges):\n\n", deps.len());
 
@@ -586,11 +768,32 @@ async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<String, String> {
         response.push_str(&format!("  ... and {} more\n", deps.len() - 30));
     }
 
-    Ok(response)
+    let total = deps.len();
+    let edges: Vec<DependencyEdge> = deps
+        .iter()
+        .map(|d| DependencyEdge {
+            source: d.source_module_id.clone(),
+            target: d.target_module_id.clone(),
+            dependency_type: d.dependency_type.clone(),
+            call_count: d.call_count,
+            import_count: d.import_count,
+            is_circular: d.is_circular,
+        })
+        .collect();
+
+    Ok(Json(CodeOutput {
+        action: "dependencies".into(),
+        message: response,
+        data: Some(CodeData::Dependencies(DependenciesData {
+            edges,
+            circular_count,
+            total,
+        })),
+    }))
 }
 
 /// Get detected architectural patterns
-async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<String, String> {
+async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
     let project_id = ctx
         .project_id()
         .await
@@ -604,45 +807,78 @@ async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<String, String> {
         .await?;
 
     if patterns.is_empty() {
-        return Ok("No architectural patterns detected yet. Run a health scan first.".to_string());
+        return Ok(Json(CodeOutput {
+            action: "patterns".into(),
+            message: "No architectural patterns detected yet. Run a health scan first.".to_string(),
+            data: Some(CodeData::Patterns(PatternsData {
+                modules: vec![],
+                total: 0,
+            })),
+        }));
     }
 
     let mut response = format!("Architectural patterns ({} modules):\n\n", patterns.len());
 
+    let mut module_patterns_list: Vec<ModulePatterns> = Vec::new();
+
     for (module_id, name, patterns_json) in &patterns {
         response.push_str(&format!("━━━ {} ({}) ━━━\n", module_id, name));
+
+        let mut pattern_entries: Vec<PatternEntry> = Vec::new();
 
         if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(patterns_json) {
             for p in &parsed {
                 let pattern = p.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
                 let confidence = p.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let evidence = p
+                let evidence_list = p
                     .get("evidence")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|v| v.as_str())
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
                             .collect::<Vec<_>>()
-                            .join(", ")
-                    })
+                    });
+                let evidence_str = evidence_list
+                    .as_ref()
+                    .map(|v| v.join(", "))
                     .unwrap_or_default();
 
                 response.push_str(&format!(
                     "  [{}] {:.0}% — {}\n",
                     pattern,
                     confidence * 100.0,
-                    evidence
+                    evidence_str
                 ));
+
+                pattern_entries.push(PatternEntry {
+                    pattern: pattern.to_string(),
+                    confidence,
+                    evidence: evidence_list,
+                });
             }
         }
         response.push('\n');
+
+        module_patterns_list.push(ModulePatterns {
+            module_id: module_id.clone(),
+            module_name: name.clone(),
+            patterns: pattern_entries,
+        });
     }
 
-    Ok(response)
+    let total = module_patterns_list.len();
+    Ok(Json(CodeOutput {
+        action: "patterns".into(),
+        message: response,
+        data: Some(CodeData::Patterns(PatternsData {
+            modules: module_patterns_list,
+            total,
+        })),
+    }))
 }
 
 /// Get tech debt scores for all modules
-async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<String, String> {
+async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
     use crate::background::code_health::scoring::tier_label;
 
     let project_id = ctx
@@ -659,7 +895,15 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<String, String> {
         .await?;
 
     if scores.is_empty() {
-        return Ok("No tech debt scores computed yet. Run a health scan first.".to_string());
+        return Ok(Json(CodeOutput {
+            action: "tech_debt".into(),
+            message: "No tech debt scores computed yet. Run a health scan first.".to_string(),
+            data: Some(CodeData::TechDebt(TechDebtData {
+                modules: vec![],
+                summary: vec![],
+                total: 0,
+            })),
+        }));
     }
 
     // Summary
@@ -682,6 +926,9 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<String, String> {
 
     // Per-module scores (worst first)
     response.push_str("Modules (worst first):\n\n");
+
+    let mut module_items: Vec<TechDebtModule> = Vec::new();
+
     for score in &scores {
         let line_info = score
             .line_count
@@ -703,6 +950,7 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<String, String> {
         ));
 
         // Show top factors for D/F tier
+        let mut top_factors: Option<Vec<DebtFactor>> = None;
         if score.tier == "D" || score.tier == "F" {
             if let Ok(factors) = serde_json::from_str::<serde_json::Value>(&score.factor_scores) {
                 let mut factor_list: Vec<(String, f64)> = Vec::new();
@@ -719,9 +967,45 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<String, String> {
                 for (name, s) in factor_list.iter().take(3) {
                     response.push_str(&format!("    ↳ {}: {:.0}\n", name, s));
                 }
+                if !factor_list.is_empty() {
+                    top_factors = Some(
+                        factor_list
+                            .into_iter()
+                            .take(3)
+                            .map(|(name, s)| DebtFactor { name, score: s })
+                            .collect(),
+                    );
+                }
             }
         }
+
+        module_items.push(TechDebtModule {
+            module_path: score.module_path.clone(),
+            tier: score.tier.clone(),
+            overall_score: score.overall_score,
+            line_count: score.line_count,
+            finding_count: score.finding_count,
+            top_factors,
+        });
     }
 
-    Ok(response)
+    let summary_items: Vec<TechDebtTier> = summary
+        .iter()
+        .map(|(tier, count)| TechDebtTier {
+            tier: tier.clone(),
+            label: tier_label(tier).to_string(),
+            count: *count as usize,
+        })
+        .collect();
+
+    let total = module_items.len();
+    Ok(Json(CodeOutput {
+        action: "tech_debt".into(),
+        message: response,
+        data: Some(CodeData::TechDebt(TechDebtData {
+            modules: module_items,
+            summary: summary_items,
+            total,
+        })),
+    }))
 }

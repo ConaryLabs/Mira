@@ -7,7 +7,12 @@ use crate::db::{
     get_finding_sync, get_findings_sync, get_relevant_corrections_sync, update_finding_status_sync,
 };
 use crate::mcp::requests::FindingAction;
+use crate::mcp::responses::{
+    FindingData, FindingGetData, FindingItem, FindingListData, FindingOutput, FindingPatternsData,
+    FindingStatsData, LearnedPattern,
+};
 use crate::utils::truncate;
+use rmcp::handler::server::wrapper::Json;
 
 /// List review findings with optional filters
 pub async fn list_findings<C: ToolContext>(
@@ -16,7 +21,7 @@ pub async fn list_findings<C: ToolContext>(
     file_path: Option<String>,
     expert_role: Option<String>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<FindingOutput>, String> {
     let project_id = ctx.project_id().await;
     let limit = limit.unwrap_or(20) as usize;
 
@@ -48,7 +53,22 @@ pub async fn list_findings<C: ToolContext>(
         if let Some(r) = &expert_role {
             msg.push_str(&format!(" from '{}'", r));
         }
-        return Ok(msg);
+        return Ok(Json(FindingOutput {
+            action: "list".into(),
+            message: msg,
+            data: Some(FindingData::List(FindingListData {
+                findings: vec![],
+                stats: FindingStatsData {
+                    pending: 0,
+                    accepted: 0,
+                    rejected: 0,
+                    fixed: 0,
+                    total: 0,
+                    acceptance_rate: 0.0,
+                },
+                total: 0,
+            })),
+        }));
     }
 
     // Get stats for context
@@ -57,6 +77,21 @@ pub async fn list_findings<C: ToolContext>(
         .run(move |conn| get_finding_stats_sync(conn, project_id))
         .await
         .unwrap_or((0, 0, 0, 0));
+
+    let items: Vec<FindingItem> = findings
+        .iter()
+        .map(|f| FindingItem {
+            id: f.id,
+            finding_type: f.finding_type.clone(),
+            severity: f.severity.clone(),
+            status: f.status.clone(),
+            content: f.content.clone(),
+            file_path: f.file_path.clone(),
+            suggestion: f.suggestion.clone(),
+            feedback: f.feedback.clone(),
+        })
+        .collect();
+    let total = items.len();
 
     let mut output = format!(
         "{} findings (pending: {}, accepted: {}, rejected: {}, fixed: {}):\n\n",
@@ -67,7 +102,7 @@ pub async fn list_findings<C: ToolContext>(
         fixed
     );
 
-    for f in findings {
+    for f in &findings {
         let file_info = f.file_path.as_deref().unwrap_or("(no file)");
         let severity_icon = match f.severity.as_str() {
             "critical" => "[!!]",
@@ -93,7 +128,29 @@ pub async fn list_findings<C: ToolContext>(
         output.push('\n');
     }
 
-    Ok(output)
+    let stats_total = pending + accepted + rejected + fixed;
+    let acceptance_rate = if accepted + rejected > 0 {
+        (accepted as f64 / (accepted + rejected) as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(Json(FindingOutput {
+        action: "list".into(),
+        message: output,
+        data: Some(FindingData::List(FindingListData {
+            findings: items,
+            stats: FindingStatsData {
+                pending,
+                accepted,
+                rejected,
+                fixed,
+                total: stats_total,
+                acceptance_rate,
+            },
+            total,
+        })),
+    }))
 }
 
 /// Review a single finding (accept/reject/fixed)
@@ -102,7 +159,7 @@ pub async fn review_finding<C: ToolContext>(
     finding_id: i64,
     status: String,
     feedback: Option<String>,
-) -> Result<String, String> {
+) -> Result<Json<FindingOutput>, String> {
     // Validate status
     let valid_statuses = ["accepted", "rejected", "fixed"];
     if !valid_statuses.contains(&status.as_str()) {
@@ -165,7 +222,11 @@ pub async fn review_finding<C: ToolContext>(
         response.push_str(&format!(" with feedback: {}", truncate(fb, 50)));
     }
 
-    Ok(response)
+    Ok(Json(FindingOutput {
+        action: "review".into(),
+        message: response,
+        data: None,
+    }))
 }
 
 /// Bulk review multiple findings
@@ -173,7 +234,7 @@ pub async fn bulk_review_findings<C: ToolContext>(
     ctx: &C,
     finding_ids: Vec<i64>,
     status: String,
-) -> Result<String, String> {
+) -> Result<Json<FindingOutput>, String> {
     // Validate status
     let valid_statuses = ["accepted", "rejected", "fixed"];
     if !valid_statuses.contains(&status.as_str()) {
@@ -203,14 +264,21 @@ pub async fn bulk_review_findings<C: ToolContext>(
         })
         .await?;
 
-    Ok(format!(
-        "Updated {} of {} findings to '{}'",
-        updated, finding_ids_len, status
-    ))
+    Ok(Json(FindingOutput {
+        action: "review".into(),
+        message: format!(
+            "Updated {} of {} findings to '{}'",
+            updated, finding_ids_len, status
+        ),
+        data: None,
+    }))
 }
 
 /// Get details of a specific finding
-pub async fn get_finding<C: ToolContext>(ctx: &C, finding_id: i64) -> Result<String, String> {
+pub async fn get_finding<C: ToolContext>(
+    ctx: &C,
+    finding_id: i64,
+) -> Result<Json<FindingOutput>, String> {
     let finding = ctx
         .pool()
         .run(move |conn| get_finding_sync(conn, finding_id))
@@ -256,7 +324,27 @@ pub async fn get_finding<C: ToolContext>(ctx: &C, finding_id: i64) -> Result<Str
         output.push_str(&format!(" (session: {})", &session[..8.min(session.len())]));
     }
 
-    Ok(output)
+    Ok(Json(FindingOutput {
+        action: "get".into(),
+        message: output,
+        data: Some(FindingData::Get(FindingGetData {
+            id: finding.id,
+            finding_type: finding.finding_type.clone(),
+            severity: finding.severity.clone(),
+            status: finding.status.clone(),
+            expert_role: finding.expert_role.clone(),
+            confidence: finding.confidence,
+            content: finding.content.clone(),
+            file_path: finding.file_path.clone(),
+            code_snippet: finding.code_snippet.clone(),
+            suggestion: finding.suggestion.clone(),
+            feedback: finding.feedback.clone(),
+            reviewed_by: finding.reviewed_by.clone(),
+            reviewed_at: finding.reviewed_at.clone(),
+            created_at: finding.created_at.clone(),
+            session_id: finding.session_id.clone(),
+        })),
+    }))
 }
 
 /// Get learned correction patterns
@@ -264,7 +352,7 @@ pub async fn get_learned_patterns<C: ToolContext>(
     ctx: &C,
     correction_type: Option<String>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<FindingOutput>, String> {
     let project_id = ctx.project_id().await;
     let limit = limit.unwrap_or(20) as usize;
 
@@ -276,12 +364,33 @@ pub async fn get_learned_patterns<C: ToolContext>(
         .await?;
 
     if corrections.is_empty() {
-        return Ok("No learned patterns yet. Review findings to build up patterns.".to_string());
+        return Ok(Json(FindingOutput {
+            action: "patterns".into(),
+            message: "No learned patterns yet. Review findings to build up patterns.".into(),
+            data: Some(FindingData::Patterns(FindingPatternsData {
+                patterns: vec![],
+                total: 0,
+            })),
+        }));
     }
+
+    let items: Vec<LearnedPattern> = corrections
+        .iter()
+        .map(|c| LearnedPattern {
+            id: c.id,
+            correction_type: c.correction_type.clone(),
+            confidence: c.confidence,
+            occurrence_count: c.occurrence_count,
+            acceptance_rate: c.acceptance_rate,
+            what_was_wrong: c.what_was_wrong.clone(),
+            what_is_right: c.what_is_right.clone(),
+        })
+        .collect();
+    let total = items.len();
 
     let mut output = format!("{} learned patterns:\n\n", corrections.len());
 
-    for c in corrections {
+    for c in &corrections {
         output.push_str(&format!(
             "[{}] {} (confidence: {:.0}%, seen: {}x, acceptance: {:.0}%)\n",
             c.id,
@@ -294,11 +403,18 @@ pub async fn get_learned_patterns<C: ToolContext>(
         output.push_str(&format!("  Fix: {}\n\n", truncate(&c.what_is_right, 80)));
     }
 
-    Ok(output)
+    Ok(Json(FindingOutput {
+        action: "patterns".into(),
+        message: output,
+        data: Some(FindingData::Patterns(FindingPatternsData {
+            patterns: items,
+            total,
+        })),
+    }))
 }
 
 /// Trigger pattern extraction from accepted findings
-pub async fn extract_patterns<C: ToolContext>(ctx: &C) -> Result<String, String> {
+pub async fn extract_patterns<C: ToolContext>(ctx: &C) -> Result<Json<FindingOutput>, String> {
     let project_id = ctx.project_id().await;
 
     let created = ctx
@@ -306,18 +422,24 @@ pub async fn extract_patterns<C: ToolContext>(ctx: &C) -> Result<String, String>
         .run(move |conn| extract_patterns_from_findings_sync(conn, project_id))
         .await?;
 
-    if created == 0 {
-        Ok("No new patterns extracted. Need more accepted findings with suggestions.".to_string())
+    let message = if created == 0 {
+        "No new patterns extracted. Need more accepted findings with suggestions.".to_string()
     } else {
-        Ok(format!(
+        format!(
             "Extracted {} new patterns from accepted findings",
             created
-        ))
-    }
+        )
+    };
+
+    Ok(Json(FindingOutput {
+        action: "extract".into(),
+        message,
+        data: None,
+    }))
 }
 
 /// Get finding statistics
-pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<String, String> {
+pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<Json<FindingOutput>, String> {
     let project_id = ctx.project_id().await;
 
     let (pending, accepted, rejected, fixed) = ctx
@@ -326,20 +448,33 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<String, String
         .await?;
 
     let total = pending + accepted + rejected + fixed;
-    if total == 0 {
-        return Ok("No review findings yet.".to_string());
-    }
-
     let acceptance_rate = if accepted + rejected > 0 {
         (accepted as f64 / (accepted + rejected) as f64) * 100.0
     } else {
         0.0
     };
 
-    Ok(format!(
-        "Review Finding Statistics:\n  Total: {}\n  Pending: {}\n  Accepted: {}\n  Rejected: {}\n  Fixed: {}\n  Acceptance rate: {:.1}%",
-        total, pending, accepted, rejected, fixed, acceptance_rate
-    ))
+    let message = if total == 0 {
+        "No review findings yet.".to_string()
+    } else {
+        format!(
+            "Review Finding Statistics:\n  Total: {}\n  Pending: {}\n  Accepted: {}\n  Rejected: {}\n  Fixed: {}\n  Acceptance rate: {:.1}%",
+            total, pending, accepted, rejected, fixed, acceptance_rate
+        )
+    };
+
+    Ok(Json(FindingOutput {
+        action: "stats".into(),
+        message,
+        data: Some(FindingData::Stats(FindingStatsData {
+            pending,
+            accepted,
+            rejected,
+            fixed,
+            total,
+            acceptance_rate,
+        })),
+    }))
 }
 
 /// Unified finding tool with action parameter
@@ -356,7 +491,7 @@ pub async fn finding<C: ToolContext>(
     expert_role: Option<String>,
     correction_type: Option<String>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<FindingOutput>, String> {
     match action {
         FindingAction::List => list_findings(ctx, status, file_path, expert_role, limit).await,
         FindingAction::Get => {

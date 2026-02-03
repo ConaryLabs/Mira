@@ -6,15 +6,20 @@ use crate::db::{
     get_unified_insights_sync,
 };
 use crate::mcp::requests::SessionHistoryAction;
+use crate::mcp::responses::{
+    HistoryEntry, InsightItem, InsightsData, ReplyOutput, SessionCurrentData, SessionData,
+    SessionHistoryData, SessionListData, SessionOutput, SessionSummary,
+};
 use crate::tools::core::ToolContext;
 use mira_types::{AgentRole, WsEvent};
+use rmcp::handler::server::wrapper::Json;
 use uuid::Uuid;
 
 /// Unified session tool dispatcher
 pub async fn handle_session<C: ToolContext>(
     ctx: &C,
     req: crate::mcp::requests::SessionRequest,
-) -> Result<String, String> {
+) -> Result<Json<SessionOutput>, String> {
     use crate::mcp::requests::SessionAction;
     match req.action {
         SessionAction::History => {
@@ -23,12 +28,25 @@ pub async fn handle_session<C: ToolContext>(
                 .ok_or("history_action is required for action 'history'")?;
             session_history(ctx, history_action, req.session_id, req.limit).await
         }
-        SessionAction::Recap => super::get_session_recap(ctx).await,
+        SessionAction::Recap => {
+            let message = super::get_session_recap(ctx).await?;
+            Ok(Json(SessionOutput {
+                action: "recap".into(),
+                message,
+                data: None,
+            }))
+        }
         SessionAction::Usage => {
             let usage_action = req
                 .usage_action
                 .ok_or("usage_action is required for action 'usage'")?;
-            super::usage(ctx, usage_action, req.group_by, req.since_days, req.limit).await
+            let message =
+                super::usage(ctx, usage_action, req.group_by, req.since_days, req.limit).await?;
+            Ok(Json(SessionOutput {
+                action: "usage".into(),
+                message,
+                data: None,
+            }))
         }
         SessionAction::Insights => {
             query_insights(ctx, req.insight_source, req.min_confidence, req.limit).await
@@ -42,7 +60,7 @@ async fn query_insights<C: ToolContext>(
     insight_source: Option<String>,
     min_confidence: Option<f64>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<SessionOutput>, String> {
     let project = ctx.get_project().await;
     let project_id = project.as_ref().map(|p| p.id).ok_or("No active project")?;
 
@@ -58,24 +76,53 @@ async fn query_insights<C: ToolContext>(
         .await?;
 
     if insights.is_empty() {
-        return Ok("No insights found.".to_string());
+        return Ok(Json(SessionOutput {
+            action: "insights".into(),
+            message: "No insights found.".into(),
+            data: Some(SessionData::Insights(InsightsData {
+                insights: vec![],
+                total: 0,
+            })),
+        }));
     }
 
     let mut output = format!("{} insights:\n\n", insights.len());
-    for insight in &insights {
-        output.push_str(&format!(
-            "• [{}] {} (score: {:.2}, confidence: {:.0}%)\n",
-            insight.source,
-            insight.description,
-            insight.priority_score,
-            insight.confidence * 100.0,
-        ));
-        if let Some(ref evidence) = insight.evidence {
-            output.push_str(&format!("  Evidence: {}\n", evidence));
-        }
-        output.push_str(&format!("  Type: {} | {}\n\n", insight.source, insight.source_type));
-    }
-    Ok(output)
+    let items: Vec<InsightItem> = insights
+        .iter()
+        .map(|insight| {
+            output.push_str(&format!(
+                "• [{}] {} (score: {:.2}, confidence: {:.0}%)\n",
+                insight.source,
+                insight.description,
+                insight.priority_score,
+                insight.confidence * 100.0,
+            ));
+            if let Some(ref evidence) = insight.evidence {
+                output.push_str(&format!("  Evidence: {}\n", evidence));
+            }
+            output.push_str(&format!(
+                "  Type: {} | {}\n\n",
+                insight.source, insight.source_type
+            ));
+            InsightItem {
+                source: insight.source.clone(),
+                source_type: insight.source_type.clone(),
+                description: insight.description.clone(),
+                priority_score: insight.priority_score,
+                confidence: insight.confidence,
+                evidence: insight.evidence.clone(),
+            }
+        })
+        .collect();
+    let total = items.len();
+    Ok(Json(SessionOutput {
+        action: "insights".into(),
+        message: output,
+        data: Some(SessionData::Insights(InsightsData {
+            insights: items,
+            total,
+        })),
+    }))
 }
 
 /// Query session history
@@ -84,15 +131,25 @@ pub async fn session_history<C: ToolContext>(
     action: SessionHistoryAction,
     session_id: Option<String>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<Json<SessionOutput>, String> {
     let limit = limit.unwrap_or(20) as usize;
 
     match action {
         SessionHistoryAction::Current => {
             let session_id = ctx.get_session_id().await;
             match session_id {
-                Some(id) => Ok(format!("Current session: {}", id)),
-                None => Ok("No active session".to_string()),
+                Some(id) => Ok(Json(SessionOutput {
+                    action: "current".into(),
+                    message: format!("Current session: {}", id),
+                    data: Some(SessionData::Current(SessionCurrentData {
+                        session_id: id,
+                    })),
+                })),
+                None => Ok(Json(SessionOutput {
+                    action: "current".into(),
+                    message: "No active session".into(),
+                    data: None,
+                })),
             }
         }
         SessionHistoryAction::ListSessions => {
@@ -105,20 +162,44 @@ pub async fn session_history<C: ToolContext>(
                 .await?;
 
             if sessions.is_empty() {
-                return Ok("No sessions found.".to_string());
+                return Ok(Json(SessionOutput {
+                    action: "list_sessions".into(),
+                    message: "No sessions found.".into(),
+                    data: Some(SessionData::ListSessions(SessionListData {
+                        sessions: vec![],
+                        total: 0,
+                    })),
+                }));
             }
 
             let mut output = format!("{} sessions:\n", sessions.len());
-            for s in sessions {
-                output.push_str(&format!(
-                    "  [{}] {} - {} ({} tool calls)\n",
-                    &s.id[..8],
-                    s.started_at,
-                    s.status,
-                    s.summary.as_deref().unwrap_or("no summary")
-                ));
-            }
-            Ok(output)
+            let items: Vec<SessionSummary> = sessions
+                .into_iter()
+                .map(|s| {
+                    output.push_str(&format!(
+                        "  [{}] {} - {} ({} tool calls)\n",
+                        &s.id[..8],
+                        s.started_at,
+                        s.status,
+                        s.summary.as_deref().unwrap_or("no summary")
+                    ));
+                    SessionSummary {
+                        id: s.id,
+                        started_at: s.started_at,
+                        status: s.status,
+                        summary: s.summary,
+                    }
+                })
+                .collect();
+            let total = items.len();
+            Ok(Json(SessionOutput {
+                action: "list_sessions".into(),
+                message: output,
+                data: Some(SessionData::ListSessions(SessionListData {
+                    sessions: items,
+                    total,
+                })),
+            }))
         }
         SessionHistoryAction::GetHistory => {
             // Use provided session_id or fall back to current session
@@ -137,10 +218,15 @@ pub async fn session_history<C: ToolContext>(
                 .await?;
 
             if history.is_empty() {
-                return Ok(format!(
-                    "No history for session {}",
-                    &target_session_id[..8]
-                ));
+                return Ok(Json(SessionOutput {
+                    action: "get_history".into(),
+                    message: format!("No history for session {}", &target_session_id[..8]),
+                    data: Some(SessionData::History(SessionHistoryData {
+                        session_id: target_session_id,
+                        entries: vec![],
+                        total: 0,
+                    })),
+                }));
             }
 
             let mut output = format!(
@@ -148,25 +234,49 @@ pub async fn session_history<C: ToolContext>(
                 history.len(),
                 &target_session_id[..8]
             );
-            for entry in history {
-                let status = if entry.success { "✓" } else { "✗" };
-                let preview = entry
-                    .result_summary
-                    .as_ref()
-                    .map(|s| {
-                        if s.len() > 60 {
-                            format!("{}...", &s[..60])
-                        } else {
-                            s.clone()
-                        }
-                    })
-                    .unwrap_or_default();
-                output.push_str(&format!(
-                    "  {} {} [{}] {}\n",
-                    status, entry.tool_name, entry.created_at, preview
-                ));
-            }
-            Ok(output)
+            let items: Vec<HistoryEntry> = history
+                .into_iter()
+                .map(|entry| {
+                    let status = if entry.success { "✓" } else { "✗" };
+                    let preview = entry
+                        .result_summary
+                        .as_ref()
+                        .map(|s| {
+                            if s.len() > 60 {
+                                format!("{}...", &s[..60])
+                            } else {
+                                s.clone()
+                            }
+                        })
+                        .unwrap_or_default();
+                    output.push_str(&format!(
+                        "  {} {} [{}] {}\n",
+                        status, entry.tool_name, entry.created_at, preview
+                    ));
+                    HistoryEntry {
+                        tool_name: entry.tool_name,
+                        created_at: entry.created_at,
+                        success: entry.success,
+                        result_preview: entry.result_summary.map(|s| {
+                            if s.len() > 60 {
+                                format!("{}...", &s[..60])
+                            } else {
+                                s
+                            }
+                        }),
+                    }
+                })
+                .collect();
+            let total = items.len();
+            Ok(Json(SessionOutput {
+                action: "get_history".into(),
+                message: output,
+                data: Some(SessionData::History(SessionHistoryData {
+                    session_id: target_session_id,
+                    entries: items,
+                    total,
+                })),
+            }))
         }
     }
 }
@@ -207,14 +317,14 @@ pub async fn reply_to_mira<C: ToolContext>(
     in_reply_to: String,
     content: String,
     complete: bool,
-) -> Result<String, String> {
+) -> Result<Json<ReplyOutput>, String> {
     // Check if we have pending_responses (MCP with active collaboration)
     let Some(pending) = ctx.pending_responses() else {
         // CLI mode or no collaboration active - just acknowledge
-        return Ok(format!(
-            "(Reply not sent - no frontend connected) Content: {}",
-            content
-        ));
+        return Ok(Json(ReplyOutput {
+            action: "reply".into(),
+            message: format!("(Reply not sent - no frontend connected) Content: {}", content),
+        }));
     };
 
     // Try to find and fulfill the pending response
@@ -238,7 +348,10 @@ pub async fn reply_to_mira<C: ToolContext>(
                 complete,
             });
 
-            Ok("Response sent to Mira".to_string())
+            Ok(Json(ReplyOutput {
+                action: "reply".into(),
+                message: "Response sent to Mira".into(),
+            }))
         }
         None => {
             // No pending request found
@@ -250,10 +363,10 @@ pub async fn reply_to_mira<C: ToolContext>(
                 ))
             } else {
                 // CLI/Offline mode: Log it and succeed
-                Ok(format!(
-                    "(Reply not sent - no pending request) Content: {}",
-                    content
-                ))
+                Ok(Json(ReplyOutput {
+                    action: "reply".into(),
+                    message: format!("(Reply not sent - no pending request) Content: {}", content),
+                }))
             }
         }
     }
