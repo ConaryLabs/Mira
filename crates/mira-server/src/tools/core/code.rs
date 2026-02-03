@@ -11,8 +11,8 @@ use crate::mcp::requests::IndexAction;
 use crate::mcp::responses::{
     CallGraphData, CallGraphEntry, CodeData, CodeOutput, CodeSearchResult, DependenciesData,
     DependencyEdge, DebtFactor, IndexCompactData, IndexData, IndexOutput, IndexProjectData,
-    IndexStatusData, ModulePatterns, PatternEntry, PatternsData, SearchResultsData, SymbolInfo,
-    SymbolsData, TechDebtData, TechDebtModule, TechDebtTier,
+    IndexStatusData, IndexSummarizeData, ModulePatterns, PatternEntry, PatternsData,
+    SearchResultsData, SymbolInfo, SymbolsData, TechDebtData, TechDebtModule, TechDebtTier,
 };
 use crate::search::{
     CrossRefType, crossref_search, expand_context_with_conn, find_callees, find_callers,
@@ -20,7 +20,7 @@ use crate::search::{
 };
 use crate::tools::core::ToolContext;
 use crate::utils::ResultExt;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 
 /// Unified code tool dispatcher
 pub async fn handle_code<C: ToolContext>(
@@ -78,6 +78,19 @@ pub async fn search_code<C: ToolContext>(
         .await?;
 
     if let Some((target, ref_type, results)) = crossref_result {
+        let direction = match ref_type {
+            CrossRefType::Caller => "callers",
+            CrossRefType::Callee => "callees",
+        };
+        let functions: Vec<CallGraphEntry> = results
+            .iter()
+            .map(|r| CallGraphEntry {
+                function_name: r.symbol_name.clone(),
+                file_path: r.file_path.clone(),
+                line: None,
+            })
+            .collect();
+        let total = functions.len();
         return Ok(Json(CodeOutput {
             action: "search".into(),
             message: format!(
@@ -85,7 +98,12 @@ pub async fn search_code<C: ToolContext>(
                 context_header,
                 format_crossref_results(&target, ref_type, &results)
             ),
-            data: None, // crossref results are text-only
+            data: Some(CodeData::CallGraph(CallGraphData {
+                target,
+                direction: direction.into(),
+                functions,
+                total,
+            })),
         }));
     }
 
@@ -362,7 +380,7 @@ pub fn get_symbols(
     };
 
     let total = symbols.len();
-    let display: Vec<_> = symbols.into_iter().take(10).collect();
+    let display: Vec<_> = symbols.iter().take(10).collect();
 
     let mut response = format!("{} symbols:\n", total);
     for sym in &display {
@@ -378,7 +396,7 @@ pub fn get_symbols(
         response.push_str(&format!("  ... and {} more\n", total - 10));
     }
 
-    let symbol_items: Vec<SymbolInfo> = display
+    let symbol_items: Vec<SymbolInfo> = symbols
         .iter()
         .map(|sym| SymbolInfo {
             name: sym.name.clone(),
@@ -611,11 +629,8 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
         return Ok(Json(IndexOutput {
             action: "summarize".into(),
             message: "All modules already have summaries.".to_string(),
-            data: Some(IndexData::Project(IndexProjectData {
-                files: 0,
-                symbols: 0,
-                chunks: 0,
-                modules_summarized: Some(0),
+            data: Some(IndexData::Summarize(IndexSummarizeData {
+                modules_summarized: 0,
             })),
         }));
     }
@@ -696,11 +711,8 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
     Ok(Json(IndexOutput {
         action: "summarize".into(),
         message,
-        data: Some(IndexData::Project(IndexProjectData {
-            files: 0,
-            symbols: 0,
-            chunks: 0,
-            modules_summarized: Some(updated),
+        data: Some(IndexData::Summarize(IndexSummarizeData {
+            modules_summarized: updated,
         })),
     }))
 }

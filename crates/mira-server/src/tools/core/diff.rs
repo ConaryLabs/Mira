@@ -12,7 +12,7 @@ use crate::db::get_recent_diff_analyses_sync;
 use crate::mcp::responses::{DiffAnalysisData, DiffData, DiffOutput};
 use crate::search::format_project_header;
 use crate::tools::core::ToolContext;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 
 /// Analyze git diff semantically
 ///

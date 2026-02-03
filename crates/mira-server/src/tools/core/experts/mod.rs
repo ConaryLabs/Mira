@@ -3,8 +3,12 @@
 
 use std::time::Duration;
 
-use crate::mcp::responses::ExpertOutput;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::{
+    ConfigureData, ConsultData, ExpertConfigEntry, ExpertData, ExpertOpinion, ExpertOutput,
+};
+use crate::mcp::responses::Json;
+use crate::mcp::requests::ExpertConfigAction;
+use crate::db::{ExpertConfig, get_expert_config_sync, list_custom_prompts_sync};
 
 mod config;
 mod context;
@@ -55,24 +59,94 @@ pub async fn handle_expert<C: ToolContext + Clone + 'static>(
                 .context
                 .ok_or("context is required for action 'consult'")?;
             let message = consult_experts(ctx, roles, context, req.question, req.mode).await?;
+            let opinions = parse_opinions(&message);
             Ok(Json(ExpertOutput {
                 action: "consult".into(),
                 message,
-                data: None,
+                data: Some(ExpertData::Consult(ConsultData { opinions })),
             }))
         }
         ExpertAction::Configure => {
             let config_action = req
                 .config_action
                 .ok_or("config_action is required for action 'configure'")?;
+            let role = req.role.clone();
             let message =
                 configure_expert(ctx, config_action, req.role, req.prompt, req.provider, req.model)
                     .await?;
+            let data = build_config_data(ctx, config_action, role).await?;
             Ok(Json(ExpertOutput {
                 action: "configure".into(),
                 message,
-                data: None,
+                data,
             }))
+        }
+    }
+}
+
+fn parse_opinions(message: &str) -> Vec<ExpertOpinion> {
+    let parts: Vec<&str> = message.split("\n\n---\n\n").collect();
+    let mut opinions = Vec::new();
+
+    for part in parts {
+        let mut lines = part.lines();
+        let header = lines.next().unwrap_or("");
+        let role = header
+            .strip_prefix("## ")
+            .and_then(|s| s.strip_suffix(" Analysis"))
+            .unwrap_or("expert")
+            .to_string();
+        opinions.push(ExpertOpinion {
+            role,
+            content: part.to_string(),
+        });
+    }
+
+    opinions
+}
+
+async fn build_config_data<C: ToolContext>(
+    ctx: &C,
+    action: ExpertConfigAction,
+    role: Option<String>,
+) -> Result<Option<ExpertData>, String> {
+    match action {
+        ExpertConfigAction::Providers => Ok(None),
+        ExpertConfigAction::List => {
+            let configs = ctx.pool().run(list_custom_prompts_sync).await?;
+            let entries = configs
+                .into_iter()
+                .map(|(role_key, prompt_text, provider_str, model_opt)| ExpertConfigEntry {
+                    role: role_key,
+                    provider: Some(provider_str),
+                    model: model_opt,
+                    has_custom_prompt: Some(!prompt_text.is_empty()),
+                })
+                .collect();
+            Ok(Some(ExpertData::Configure(ConfigureData { configs: entries })))
+        }
+        ExpertConfigAction::Get | ExpertConfigAction::Set | ExpertConfigAction::Delete => {
+            let role_key = role.ok_or("role is required for config output")?;
+            let role_key_clone = role_key.clone();
+            let config: ExpertConfig = ctx
+                .pool()
+                .run(move |conn| get_expert_config_sync(conn, &role_key_clone))
+                .await?;
+            let entry = ExpertConfigEntry {
+                role: role_key,
+                provider: Some(config.provider.to_string()),
+                model: config.model.clone(),
+                has_custom_prompt: Some(
+                    config
+                        .prompt
+                        .as_ref()
+                        .map(|p| !p.is_empty())
+                        .unwrap_or(false),
+                ),
+            };
+            Ok(Some(ExpertData::Configure(ConfigureData {
+                configs: vec![entry],
+            })))
         }
     }
 }

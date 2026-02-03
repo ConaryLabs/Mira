@@ -11,7 +11,7 @@ use crate::mcp::responses::{
     DocOutput, DocData, DocListData, DocTaskItem, DocGetData, DocInventoryData, DocInventoryItem,
 };
 use crate::tools::core::ToolContext;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 
 /// List documentation that needs to be written or updated
 pub async fn list_doc_tasks(

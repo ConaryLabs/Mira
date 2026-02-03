@@ -12,7 +12,7 @@ use crate::mcp::responses::{
 };
 use crate::tools::core::ToolContext;
 use mira_types::{AgentRole, WsEvent};
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 use uuid::Uuid;
 
 /// Unified session tool dispatcher

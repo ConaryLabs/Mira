@@ -20,20 +20,24 @@ use crate::fuzzy::FuzzyCache;
 use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
 use crate::llm::ProviderFactory;
 use mira_types::ProjectContext;
+use crate::mcp::responses::{HasMessage, Json};
 use rmcp::{
     ErrorData, ServerHandler,
     handler::server::{
         router::tool::ToolRouter,
         tool::ToolCallContext,
-        wrapper::{Json, Parameters},
+        tool::IntoCallToolResult,
+        wrapper::Parameters,
     },
     model::{
-        CallToolRequestParam, CallToolResult, ListToolsResult, PaginatedRequestParam,
+        CallToolRequestParam, CallToolResult, Content, ListToolsResult, PaginatedRequestParam,
         ServerCapabilities, ServerInfo,
     },
     service::{RequestContext, RoleServer},
     tool, tool_router,
 };
+use schemars::JsonSchema;
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -184,48 +188,66 @@ impl MiraServer {
     }
 }
 
+fn tool_result<T>(result: Result<Json<T>, String>) -> Result<CallToolResult, ErrorData>
+where
+    T: Serialize + JsonSchema + HasMessage + 'static,
+{
+    match result {
+        Ok(json) => json.into_call_tool_result(),
+        Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+    }
+}
+
 #[tool_router]
 impl MiraServer {
     #[tool(
-        description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current)."
+        description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ProjectOutput>()
+            .expect("ProjectOutput schema")
     )]
     async fn project(
         &self,
         Parameters(req): Parameters<ProjectRequest>,
-    ) -> Result<Json<responses::ProjectOutput>, String> {
+    ) -> Result<CallToolResult, ErrorData> {
         // For start action, use provided session ID or fall back to Claude's hook-generated ID
         let session_id = req.session_id.or_else(read_claude_session_id);
-        tools::project(self, req.action, req.project_path, req.name, session_id).await
+        tool_result(tools::project(self, req.action, req.project_path, req.name, session_id).await)
     }
 
     #[tool(
-        description = "Manage memories. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Scope controls visibility: personal, project (default), team."
+        description = "Manage memories. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Scope controls visibility: personal, project (default), team.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::MemoryOutput>()
+            .expect("MemoryOutput schema")
     )]
     async fn memory(
         &self,
         Parameters(req): Parameters<MemoryRequest>,
-    ) -> Result<Json<responses::MemoryOutput>, String> {
-        tools::handle_memory(self, req).await
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_memory(self, req).await)
     }
 
     #[tool(
-        description = "Code intelligence. Actions: search (by meaning), symbols (from file), callers (of function), callees (by function), dependencies (module graph + circular deps), patterns (architectural pattern detection), tech_debt (per-module debt scores)."
+        description = "Code intelligence. Actions: search (by meaning), symbols (from file), callers (of function), callees (by function), dependencies (module graph + circular deps), patterns (architectural pattern detection), tech_debt (per-module debt scores).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::CodeOutput>()
+            .expect("CodeOutput schema")
     )]
     async fn code(
         &self,
         Parameters(req): Parameters<CodeRequest>,
-    ) -> Result<Json<responses::CodeOutput>, String> {
-        tools::handle_code(self, req).await
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_code(self, req).await)
     }
 
     #[tool(
-        description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations."
+        description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::GoalOutput>()
+            .expect("GoalOutput schema")
     )]
     async fn goal(
         &self,
         Parameters(req): Parameters<GoalRequest>,
-    ) -> Result<Json<responses::GoalOutput>, String> {
-        tools::goal(
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::goal(
             self,
             req.action,
             req.goal_id,
@@ -241,61 +263,78 @@ impl MiraServer {
             req.milestone_id,
             req.weight,
         )
-        .await
+        .await)
     }
 
     #[tool(
-        description = "Index code and git history. Actions: project/file/status/compact/summarize"
+        description = "Index code and git history. Actions: project/file/status/compact/summarize",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
+            .expect("IndexOutput schema")
     )]
     async fn index(
         &self,
         Parameters(req): Parameters<IndexRequest>,
-    ) -> Result<Json<responses::IndexOutput>, String> {
-        tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::index(
+            self,
+            req.action,
+            req.path,
+            req.skip_embed.unwrap_or(false),
+        ).await)
     }
 
     #[tool(
-        description = "Session management. Actions: history (list_sessions/get_history/current via history_action), recap (preferences + context + goals), usage (summary/stats/list via usage_action), insights (unified digest of pondering/proactive/doc_gap insights)."
+        description = "Session management. Actions: history (list_sessions/get_history/current via history_action), recap (preferences + context + goals), usage (summary/stats/list via usage_action), insights (unified digest of pondering/proactive/doc_gap insights).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
+            .expect("SessionOutput schema")
     )]
     async fn session(
         &self,
         Parameters(req): Parameters<SessionRequest>,
-    ) -> Result<Json<responses::SessionOutput>, String> {
-        tools::handle_session(self, req).await
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_session(self, req).await)
     }
 
-    #[tool(description = "Send a response back to Mira during collaboration.")]
+    #[tool(
+        description = "Send a response back to Mira during collaboration.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ReplyOutput>()
+            .expect("ReplyOutput schema")
+    )]
     async fn reply_to_mira(
         &self,
         Parameters(req): Parameters<ReplyToMiraRequest>,
-    ) -> Result<Json<responses::ReplyOutput>, String> {
-        tools::reply_to_mira(
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::reply_to_mira(
             self,
             req.in_reply_to,
             req.content,
             req.complete.unwrap_or(true),
         )
-        .await
+        .await)
     }
 
     #[tool(
-        description = "Consult experts or configure them. Actions: consult (get expert opinions), configure (set/get/delete/list/providers for expert prompts)."
+        description = "Consult experts or configure them. Actions: consult (get expert opinions), configure (set/get/delete/list/providers for expert prompts).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ExpertOutput>()
+            .expect("ExpertOutput schema")
     )]
     async fn expert(
         &self,
         Parameters(req): Parameters<ExpertRequest>,
-    ) -> Result<Json<responses::ExpertOutput>, String> {
-        tools::handle_expert(self, req).await
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_expert(self, req).await)
     }
 
     #[tool(
-        description = "Manage documentation tasks. Actions: list (show needed docs), get (full task details for Claude to write), complete (mark done after writing), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md)."
+        description = "Manage documentation tasks. Actions: list (show needed docs), get (full task details for Claude to write), complete (mark done after writing), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DocOutput>()
+            .expect("DocOutput schema")
     )]
     async fn documentation(
         &self,
         Parameters(req): Parameters<DocumentationRequest>,
-    ) -> Result<Json<responses::DocOutput>, String> {
-        tools::documentation(
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::documentation(
             self,
             req.action,
             req.task_id,
@@ -304,17 +343,19 @@ impl MiraServer {
             req.priority,
             req.status,
         )
-        .await
+        .await)
     }
 
     #[tool(
-        description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract."
+        description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::FindingOutput>()
+            .expect("FindingOutput schema")
     )]
     async fn finding(
         &self,
         Parameters(req): Parameters<FindingRequest>,
-    ) -> Result<Json<responses::FindingOutput>, String> {
-        tools::finding(
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::finding(
             self,
             req.action,
             req.finding_id,
@@ -326,19 +367,23 @@ impl MiraServer {
             req.correction_type,
             req.limit,
         )
-        .await
+        .await)
     }
 
     // Semantic diff analysis tool
 
     #[tool(
-        description = "Analyze git diff semantically. Identifies change types, impact, and risks."
+        description = "Analyze git diff semantically. Identifies change types, impact, and risks.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DiffOutput>()
+            .expect("DiffOutput schema")
     )]
     async fn analyze_diff(
         &self,
         Parameters(req): Parameters<AnalyzeDiffRequest>,
-    ) -> Result<Json<responses::DiffOutput>, String> {
-        tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(
+            tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
+        )
     }
 
 }

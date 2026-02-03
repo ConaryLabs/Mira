@@ -12,7 +12,7 @@ use crate::mcp::responses::{
     FindingStatsData, LearnedPattern,
 };
 use crate::utils::truncate;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 
 /// List review findings with optional filters
 pub async fn list_findings<C: ToolContext>(

@@ -12,7 +12,7 @@ use crate::mcp::responses::{
     GoalOutput, GoalSummary, MilestoneInfo, MilestoneProgressData,
 };
 use crate::tools::core::ToolContext;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 use serde::Deserialize;
 
 /// Goal definition for bulk creation

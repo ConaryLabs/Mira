@@ -6,6 +6,48 @@
 
 use schemars::JsonSchema;
 use serde::Serialize;
+use rmcp::handler::server::tool::IntoCallToolResult;
+use rmcp::model::{CallToolResult, Content};
+use rmcp::ErrorData;
+use std::borrow::Cow;
+
+/// Trait for outputs that expose a human-readable message.
+pub trait HasMessage {
+    fn message(&self) -> &str;
+}
+
+/// JSON wrapper that preserves human-readable `message` in MCP content.
+pub struct Json<T>(pub T);
+
+// Implement JsonSchema for Json<T> to delegate to T's schema
+impl<T: JsonSchema> JsonSchema for Json<T> {
+    fn schema_name() -> Cow<'static, str> {
+        T::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        T::json_schema(generator)
+    }
+}
+
+impl<T: Serialize + JsonSchema + HasMessage + 'static> IntoCallToolResult for Json<T> {
+    fn into_call_tool_result(self) -> Result<CallToolResult, ErrorData> {
+        let message = self.0.message().to_string();
+        let value = serde_json::to_value(&self.0).map_err(|e| {
+            ErrorData::internal_error(
+                format!("Failed to serialize structured content: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult {
+            content: vec![Content::text(message)],
+            structured_content: Some(value),
+            is_error: Some(false),
+            meta: None,
+        })
+    }
+}
 
 // ============================================================================
 // Memory
@@ -331,6 +373,7 @@ pub enum IndexData {
     Project(IndexProjectData),
     Status(IndexStatusData),
     Compact(IndexCompactData),
+    Summarize(IndexSummarizeData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -352,6 +395,11 @@ pub struct IndexStatusData {
 pub struct IndexCompactData {
     pub rows_preserved: usize,
     pub estimated_savings_mb: f64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IndexSummarizeData {
+    pub modules_summarized: usize,
 }
 
 // ============================================================================
@@ -683,6 +731,76 @@ pub struct DiffAnalysisData {
 pub struct ReplyOutput {
     pub action: String,
     pub message: String,
+}
+
+// ============================================================================
+// HasMessage Implementations
+// ============================================================================
+
+impl HasMessage for MemoryOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for ProjectOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for CodeOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for GoalOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for IndexOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for SessionOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for ExpertOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for DocOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for FindingOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for DiffOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl HasMessage for ReplyOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 // ============================================================================

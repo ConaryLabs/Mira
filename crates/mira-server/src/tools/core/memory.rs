@@ -9,7 +9,7 @@ use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
 use regex::Regex;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 use std::sync::LazyLock;
 
 /// Patterns that look like secrets/credentials.

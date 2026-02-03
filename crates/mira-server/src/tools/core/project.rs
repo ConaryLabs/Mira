@@ -20,7 +20,7 @@ use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
 use crate::tools::core::claude_local;
 use crate::utils::ResultExt;
-use rmcp::handler::server::wrapper::Json;
+use crate::mcp::responses::Json;
 
 // Helper functions moved to db/project.rs:
 // - search_memories_text_sync
