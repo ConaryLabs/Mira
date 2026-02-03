@@ -256,23 +256,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<GoalRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::goal(
-            self,
-            req.action,
-            req.goal_id,
-            req.title,
-            req.description,
-            req.status,
-            req.priority,
-            req.progress_percent,
-            req.include_finished,
-            req.limit,
-            req.goals,
-            req.milestone_title,
-            req.milestone_id,
-            req.weight,
-        )
-        .await)
+        tool_result(tools::goal(self, req).await)
     }
 
     #[tool(

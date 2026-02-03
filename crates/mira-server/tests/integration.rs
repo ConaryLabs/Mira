@@ -6,7 +6,7 @@
 mod test_utils;
 
 use std::sync::Arc;
-use mira::mcp::requests::{ExpertConfigAction, GoalAction, IndexAction, SessionHistoryAction};
+use mira::mcp::requests::{ExpertConfigAction, GoalAction, GoalRequest, IndexAction, SessionHistoryAction};
 use mira::mcp::responses::*;
 #[allow(unused_imports)]
 use mira::tools::core::{
@@ -550,19 +550,22 @@ async fn test_goal_create_and_list() {
     // Create a goal
     let result = goal(
         &ctx,
-        GoalAction::Create,
-        None,                                        // goal_id
-        Some("Implement new feature".to_string()),   // title
-        Some("Add user authentication".to_string()), // description
-        Some("planning".to_string()),                // status
-        Some("high".to_string()),                    // priority
-        Some(0),                                     // progress_percent
-        None,                                        // include_finished
-        None,                                        // limit
-        None,                                        // goals (bulk)
-        None,                                        // milestone_title
-        None,                                        // milestone_id
-        None,                                        // weight
+        GoalRequest {
+            action: GoalAction::Create,
+            goal_id: None,
+            title: Some("Implement new feature".to_string()),
+            description: Some("Add user authentication".to_string()),
+            status: Some("planning".to_string()),
+            priority: Some("high".to_string()),
+            success_criteria: None,
+            progress_percent: Some(0),
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
     )
     .await;
     assert!(result.is_ok(), "goal create failed: {:?}", result.err());
@@ -577,19 +580,22 @@ async fn test_goal_create_and_list() {
     // List goals
     let result = goal(
         &ctx,
-        GoalAction::List,
-        None,        // goal_id
-        None,        // title
-        None,        // description
-        None,        // status
-        None,        // priority
-        None,        // progress_percent
-        Some(false), // include_finished
-        Some(10),    // limit
-        None,        // goals (bulk)
-        None,        // milestone_title
-        None,        // milestone_id
-        None,        // weight
+        GoalRequest {
+            action: GoalAction::List,
+            goal_id: None,
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            success_criteria: None,
+            progress_percent: None,
+            include_finished: Some(false),
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: Some(10),
+            goals: None,
+        },
     )
     .await;
     assert!(result.is_ok(), "goal list failed: {:?}", result.err());
@@ -1059,19 +1065,22 @@ async fn test_context_injection_with_goals() {
     // Create a goal
     goal(
         &ctx,
-        GoalAction::Create,
-        None,                                             // goal_id
-        Some("Fix authentication bug".to_string()),       // title
-        Some("High priority security issue".to_string()), // description
-        None,                                             // status
-        Some("high".to_string()),                         // priority
-        None,                                             // progress_percent
-        None,                                             // include_finished
-        None,                                             // limit
-        None,                                             // goals (bulk)
-        None,                                             // milestone_title
-        None,                                             // milestone_id
-        None,                                             // weight
+        GoalRequest {
+            action: GoalAction::Create,
+            goal_id: None,
+            title: Some("Fix authentication bug".to_string()),
+            description: Some("High priority security issue".to_string()),
+            status: None,
+            priority: Some("high".to_string()),
+            success_criteria: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
     )
     .await
     .expect("goal creation failed");

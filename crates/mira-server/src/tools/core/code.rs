@@ -118,7 +118,7 @@ pub async fn search_code<C: ToolContext>(
         limit,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
 
     if result.results.is_empty() {
         return Ok(Json(CodeOutput {
@@ -356,7 +356,7 @@ pub fn get_symbols(
     }
 
     // Parse file for symbols
-    let symbols = indexer::extract_symbols(path).map_err(|e| e.to_string())?;
+    let symbols = indexer::extract_symbols(path).str_err()?;
 
     if symbols.is_empty() {
         return Ok(Json(CodeOutput {
@@ -691,7 +691,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
 
             if has_llm {
                 use crate::db::clear_modules_without_purpose_sync;
-                clear_modules_without_purpose_sync(conn, project_id).map_err(|e| e.to_string())?;
+                clear_modules_without_purpose_sync(conn, project_id).str_err()?;
             }
 
             Ok::<_, String>(count)
@@ -728,7 +728,7 @@ async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
         .code_pool()
         .run(move |conn| {
             crate::db::dependencies::get_module_deps_sync(conn, project_id)
-                .map_err(|e| e.to_string())
+                .str_err()
         })
         .await?;
 
@@ -902,7 +902,7 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, Stri
         .pool()
         .run(move |conn| {
             crate::db::tech_debt::get_debt_scores_sync(conn, project_id)
-                .map_err(|e| e.to_string())
+                .str_err()
         })
         .await?;
 
@@ -923,7 +923,7 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, Stri
         .pool()
         .run(move |conn| {
             crate::db::tech_debt::get_debt_summary_sync(conn, project_id)
-                .map_err(|e| e.to_string())
+                .str_err()
         })
         .await?;
 

@@ -61,6 +61,27 @@ fn detect_secret(content: &str) -> Option<&'static str> {
     None
 }
 
+/// Fire-and-forget recording of memory access for evidence-based tracking.
+/// Spawns a background task that records each memory ID as accessed in the given session.
+fn spawn_record_access(pool: std::sync::Arc<crate::db::pool::DatabasePool>, ids: Vec<i64>, session_id: String) {
+    use crate::db::record_memory_access_sync;
+    tokio::spawn(async move {
+        if let Err(e) = pool
+            .interact(move |conn| {
+                for id in ids {
+                    if let Err(e) = record_memory_access_sync(conn, id, &session_id) {
+                        tracing::debug!("Failed to record memory access: {}", e);
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+        {
+            tracing::debug!("Failed to record memory access (pool error): {}", e);
+        }
+    });
+}
+
 /// Unified memory tool dispatcher
 pub async fn handle_memory<C: ToolContext>(
     ctx: &C,
@@ -234,7 +255,7 @@ pub async fn recall<C: ToolContext>(
     _category: Option<String>,
     _fact_type: Option<String>,
 ) -> Result<Json<MemoryOutput>, String> {
-    use crate::db::{record_memory_access_sync, search_memories_sync};
+    use crate::db::search_memories_sync;
 
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_session_id().await;
@@ -283,25 +304,7 @@ pub async fn recall<C: ToolContext>(
                 // Record memory access for evidence-based tracking
                 if let Some(ref sid) = session_id {
                     let ids: Vec<i64> = results.iter().map(|(id, _, _, _)| *id).collect();
-                    let pool_clone = ctx.pool().clone();
-                    let sid_clone = sid.clone();
-                    // Fire and forget - don't block on this
-                    tokio::spawn(async move {
-                        if let Err(e) = pool_clone
-                            .interact(move |conn| {
-                                for id in ids {
-                                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone)
-                                    {
-                                        tracing::debug!("Failed to record memory access: {}", e);
-                                    }
-                                }
-                                Ok::<_, anyhow::Error>(())
-                            })
-                            .await
-                        {
-                            tracing::debug!("Failed to record memory access (pool error): {}", e);
-                        }
-                    });
+                    spawn_record_access(ctx.pool().clone(), ids, sid.clone());
                 }
 
                 let items: Vec<MemoryItem> = results
@@ -352,24 +355,7 @@ pub async fn recall<C: ToolContext>(
                 // Record memory access for evidence-based tracking
                 if let Some(ref sid) = session_id {
                     let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
-                    let pool_clone = ctx.pool().clone();
-                    let sid_clone = sid.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = pool_clone
-                            .interact(move |conn| {
-                                for id in ids {
-                                    if let Err(e) = record_memory_access_sync(conn, id, &sid_clone)
-                                    {
-                                        tracing::debug!("Failed to record memory access: {}", e);
-                                    }
-                                }
-                                Ok::<_, anyhow::Error>(())
-                            })
-                            .await
-                        {
-                            tracing::debug!("Failed to record memory access (pool error): {}", e);
-                        }
-                    });
+                    spawn_record_access(ctx.pool().clone(), ids, sid.clone());
                 }
 
                 let items: Vec<MemoryItem> = results
@@ -435,24 +421,7 @@ pub async fn recall<C: ToolContext>(
     // Record memory access for evidence-based tracking
     if let Some(ref sid) = session_id {
         let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
-        let pool_clone = ctx.pool().clone();
-        let sid_clone = sid.clone();
-        // Fire and forget - don't block on this
-        tokio::spawn(async move {
-            if let Err(e) = pool_clone
-                .interact(move |conn| {
-                    for id in ids {
-                        if let Err(e) = record_memory_access_sync(conn, id, &sid_clone) {
-                            tracing::debug!("Failed to record memory access: {}", e);
-                        }
-                    }
-                    Ok::<_, anyhow::Error>(())
-                })
-                .await
-            {
-                tracing::debug!("Failed to record memory access (pool error): {}", e);
-            }
-        });
+        spawn_record_access(ctx.pool().clone(), ids, sid.clone());
     }
 
     let items: Vec<MemoryItem> = results

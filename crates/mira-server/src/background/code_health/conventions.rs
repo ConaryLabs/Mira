@@ -5,6 +5,7 @@
 // key imports, and naming conventions. Results stored in module_conventions (main DB)
 // for use by the convention injector during context injection.
 
+use crate::utils::ResultExt;
 use rusqlite::Connection;
 use std::collections::HashMap;
 
@@ -108,11 +109,11 @@ pub fn mark_conventions_extracted(
             "UPDATE codebase_modules SET conventions_extracted_at = datetime('now')
              WHERE project_id = ? AND path = ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for path in module_paths {
         stmt.execute(rusqlite::params![project_id, path])
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
     }
     Ok(())
 }
@@ -139,7 +140,7 @@ pub fn upsert_module_conventions(
                 confidence = excluded.confidence,
                 updated_at = datetime('now')",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut count = 0;
     for d in data {
@@ -154,7 +155,7 @@ pub fn upsert_module_conventions(
             d.detected_patterns,
             d.confidence,
         ])
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
         count += 1;
     }
 
@@ -402,7 +403,7 @@ fn get_modules_needing_extraction(
              AND (conventions_extracted_at IS NULL
                   OR updated_at > conventions_extracted_at)",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let modules = stmt
         .query_map([project_id], |row| {
@@ -412,7 +413,7 @@ fn get_modules_needing_extraction(
                 detected_patterns: row.get(2)?,
             })
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -431,13 +432,13 @@ fn get_module_chunks(
             "SELECT chunk_content FROM code_chunks
              WHERE project_id = ? AND file_path LIKE ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let chunks = stmt
         .query_map(rusqlite::params![project_id, pattern], |row| {
             row.get::<_, String>(0)
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -456,7 +457,7 @@ fn get_module_imports(
             "SELECT file_path, import_path FROM imports
              WHERE project_id = ? AND file_path LIKE ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let imports = stmt
         .query_map(rusqlite::params![project_id, pattern], |row| {
@@ -465,7 +466,7 @@ fn get_module_imports(
                 path: row.get(1)?,
             })
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -484,7 +485,7 @@ fn get_module_symbols(
             "SELECT name, symbol_type FROM code_symbols
              WHERE project_id = ? AND file_path LIKE ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let symbols = stmt
         .query_map(rusqlite::params![project_id, pattern], |row| {
@@ -493,7 +494,7 @@ fn get_module_symbols(
                 symbol_type: row.get(1)?,
             })
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -513,7 +514,7 @@ fn get_module_file_count(
         |row| row.get::<_, i64>(0),
     )
     .map(|c| c as usize)
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 // ============================================================================

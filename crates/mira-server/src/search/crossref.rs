@@ -101,160 +101,48 @@ pub fn find_callers(
 
 /// Check if a function name is a stdlib/utility call that should be filtered
 fn is_stdlib_call(name: &str) -> bool {
-    // Common Rust std methods and traits
-    const STDLIB_NAMES: &[&str] = &[
-        // Iterator/collection methods
-        "map",
-        "filter",
-        "collect",
-        "iter",
-        "into_iter",
-        "for_each",
-        "fold",
-        "reduce",
-        "find",
-        "any",
-        "all",
-        "count",
-        "take",
-        "skip",
-        "chain",
-        "zip",
-        "enumerate",
-        "filter_map",
-        "flat_map",
-        "flatten",
-        "peekable",
-        "rev",
-        "cycle",
-        // Option/Result methods
-        "unwrap",
-        "unwrap_or",
-        "unwrap_or_else",
-        "unwrap_or_default",
-        "expect",
-        "ok",
-        "err",
-        "is_some",
-        "is_none",
-        "is_ok",
-        "is_err",
-        "ok_or",
-        "ok_or_else",
-        "map_err",
-        "and_then",
-        "or_else",
-        "transpose",
-        "as_ref",
-        "as_mut",
-        // Common traits/constructors
-        "new",
-        "default",
-        "clone",
-        "to_string",
-        "to_owned",
-        "into",
-        "from",
-        "as_str",
-        "as_bytes",
-        "as_slice",
-        "to_vec",
-        "push",
-        "pop",
-        "insert",
-        "remove",
-        "get",
-        "get_mut",
-        "contains",
-        "len",
-        "is_empty",
-        "clear",
-        "extend",
-        // Result/Option constructors
-        "Ok",
-        "Err",
-        "Some",
-        "None",
-        // Formatting
-        "format",
-        "write",
-        "writeln",
-        "print",
-        "println",
-        "eprint",
-        "eprintln",
-        // Logging (without prefix)
-        "debug",
-        "info",
-        "warn",
-        "error",
-        "trace",
-        // Common string methods
-        "split",
-        "join",
-        "trim",
-        "replace",
-        "starts_with",
-        "ends_with",
-        "contains",
-        "to_lowercase",
-        "to_uppercase",
-        "parse",
-        "chars",
-        "bytes",
-        "lines",
-        // Sync primitives
-        "lock",
-        "read",
-        "write",
-        "try_lock",
-        "try_read",
-        "try_write",
-        // Async
-        "await",
-        "poll",
-        "spawn",
-        "block_on",
-        // Math/comparison
-        "max",
-        "min",
-        "abs",
-        "cmp",
-        "partial_cmp",
-        "eq",
-        "ne",
-        "lt",
-        "le",
-        "gt",
-        "ge",
-        // Database/connection
-        "conn",
-        "connection",
-        "execute",
-        "query",
-        "prepare",
-        "query_row",
-        "query_map",
-        // Misc
-        "drop",
-        "take",
-        "swap",
-        "mem",
-        "ptr",
-        "Box",
-        "Rc",
-        "Arc",
-        "Vec",
-        "String",
-        "HashMap",
-        "HashSet",
-        "BTreeMap",
-        "BTreeSet",
-        "VecDeque",
-    ];
+    use std::collections::HashSet;
+    use std::sync::LazyLock;
 
-    // Check exact match
-    if STDLIB_NAMES.contains(&name) {
+    static STDLIB_NAMES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+        HashSet::from([
+            // Iterator/collection methods
+            "map", "filter", "collect", "iter", "into_iter", "for_each", "fold", "reduce",
+            "find", "any", "all", "count", "take", "skip", "chain", "zip", "enumerate",
+            "filter_map", "flat_map", "flatten", "peekable", "rev", "cycle",
+            // Option/Result methods
+            "unwrap", "unwrap_or", "unwrap_or_else", "unwrap_or_default", "expect", "ok", "err",
+            "is_some", "is_none", "is_ok", "is_err", "ok_or", "ok_or_else", "map_err",
+            "and_then", "or_else", "transpose", "as_ref", "as_mut",
+            // Common traits/constructors
+            "new", "default", "clone", "to_string", "to_owned", "into", "from", "as_str",
+            "as_bytes", "as_slice", "to_vec", "push", "pop", "insert", "remove", "get",
+            "get_mut", "contains", "len", "is_empty", "clear", "extend",
+            // Result/Option constructors
+            "Ok", "Err", "Some", "None",
+            // Formatting
+            "format", "write", "writeln", "print", "println", "eprint", "eprintln",
+            // Logging (without prefix)
+            "debug", "info", "warn", "error", "trace",
+            // Common string methods
+            "split", "join", "trim", "replace", "starts_with", "ends_with", "to_lowercase",
+            "to_uppercase", "parse", "chars", "bytes", "lines",
+            // Sync primitives
+            "lock", "read", "try_lock", "try_read", "try_write",
+            // Async
+            "await", "poll", "spawn", "block_on",
+            // Math/comparison
+            "max", "min", "abs", "cmp", "partial_cmp", "eq", "ne", "lt", "le", "gt", "ge",
+            // Database/connection
+            "conn", "connection", "execute", "query", "prepare", "query_row", "query_map",
+            // Misc
+            "drop", "swap", "mem", "ptr", "Box", "Rc", "Arc", "Vec", "String", "HashMap",
+            "HashSet", "BTreeMap", "BTreeSet", "VecDeque",
+        ])
+    });
+
+    // Check exact match (O(1) lookup)
+    if STDLIB_NAMES.contains(name) {
         return true;
     }
 

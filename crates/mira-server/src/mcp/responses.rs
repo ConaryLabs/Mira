@@ -16,6 +16,15 @@ pub trait HasMessage {
     fn message(&self) -> &str;
 }
 
+/// Implement `HasMessage` for types with a `message: String` field.
+macro_rules! impl_has_message {
+    ($($ty:ty),+ $(,)?) => {
+        $(impl HasMessage for $ty {
+            fn message(&self) -> &str { &self.message }
+        })+
+    };
+}
+
 /// JSON wrapper that preserves human-readable `message` in MCP content.
 pub struct Json<T>(pub T);
 
@@ -761,71 +770,19 @@ pub struct ReplyOutput {
 // HasMessage Implementations
 // ============================================================================
 
-impl HasMessage for MemoryOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for ProjectOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for CodeOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for GoalOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for IndexOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for SessionOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for ExpertOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for DocOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for FindingOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for DiffOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl HasMessage for ReplyOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
+impl_has_message!(
+    MemoryOutput,
+    ProjectOutput,
+    CodeOutput,
+    GoalOutput,
+    IndexOutput,
+    SessionOutput,
+    ExpertOutput,
+    DocOutput,
+    FindingOutput,
+    DiffOutput,
+    ReplyOutput,
+);
 
 // ============================================================================
 // Tests
@@ -873,11 +830,7 @@ pub struct TasksStatusData {
     pub result_structured: Option<serde_json::Value>,
 }
 
-impl HasMessage for TasksOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
+impl_has_message!(TasksOutput);
 
 #[cfg(test)]
 mod tests {

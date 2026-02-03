@@ -3,6 +3,7 @@
 
 use crate::db::dependencies::{ModuleDependency, clear_module_dependencies_sync, upsert_module_dependency_sync};
 use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::utils::ResultExt;
 use rusqlite::Connection;
 use std::collections::HashMap;
 
@@ -56,7 +57,7 @@ pub fn analyze_module_dependencies(
     }
 
     // Step 6: Store results
-    clear_module_dependencies_sync(code_conn, project_id).map_err(|e| e.to_string())?;
+    clear_module_dependencies_sync(code_conn, project_id).str_err()?;
 
     let mut stored = 0;
     for ((src, tgt), (calls, imports)) in &merged {
@@ -78,7 +79,7 @@ pub fn analyze_module_dependencies(
         };
 
         upsert_module_dependency_sync(code_conn, project_id, &dep)
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         stored += 1;
     }
 
@@ -137,7 +138,7 @@ fn get_module_paths(conn: &Connection, project_id: i64) -> Result<Vec<ModuleInfo
         .prepare(
             "SELECT module_id, path FROM codebase_modules WHERE project_id = ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let modules = stmt
         .query_map([project_id], |row| {
@@ -146,7 +147,7 @@ fn get_module_paths(conn: &Connection, project_id: i64) -> Result<Vec<ModuleInfo
                 path: row.get(1)?,
             })
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -173,7 +174,7 @@ fn count_import_dependencies(
             "SELECT file_path, import_path FROM imports
              WHERE project_id = ? AND is_external = 0",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut deps: HashMap<(String, String), i64> = HashMap::new();
 
@@ -181,10 +182,10 @@ fn count_import_dependencies(
         .query_map([project_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for row in rows {
-        let (file_path, import_path) = row.map_err(|e| e.to_string())?;
+        let (file_path, import_path) = row.str_err()?;
         let source_module = file_to_module(&file_path, modules);
         let target_module = file_to_module(&import_path, modules);
 
@@ -213,7 +214,7 @@ fn count_call_dependencies(
              JOIN code_symbols cs_callee ON cg.callee_id = cs_callee.id
              WHERE cs_caller.project_id = ? AND cs_callee.project_id = ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let mut deps: HashMap<(String, String), i64> = HashMap::new();
 
@@ -225,10 +226,10 @@ fn count_call_dependencies(
                 row.get::<_, i64>(2)?,
             ))
         })
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for row in rows {
-        let (caller_file, callee_file, call_count) = row.map_err(|e| e.to_string())?;
+        let (caller_file, callee_file, call_count) = row.str_err()?;
         let source_module = file_to_module(&caller_file, modules);
         let target_module = file_to_module(&callee_file, modules);
 

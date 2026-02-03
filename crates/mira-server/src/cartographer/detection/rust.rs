@@ -224,19 +224,7 @@ pub fn resolve_import_to_module(import: &str, module_ids: &[(String, String)]) -
 
 /// Count lines in Rust module
 pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
-    let full_path = project_path.join(module_path);
-
-    let mut count = 0u32;
-    for path in FileWalker::new(&full_path)
-        .for_language("rust")
-        .walk_paths()
-        .filter_map(|p| p.ok())
-    {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            count += content.lines().count() as u32;
-        }
-    }
-    count
+    super::count_lines_with_walker(project_path, module_path, "rust")
 }
 
 #[cfg(test)]

@@ -184,7 +184,7 @@ fn get_module_line_counts(
         .prepare(
             "SELECT module_id, path, line_count FROM codebase_modules WHERE project_id = ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let modules = stmt
         .query_map([project_id], |row| {
@@ -194,7 +194,7 @@ fn get_module_line_counts(
                 line_count: row.get::<_, i64>(2).unwrap_or(100),
             })
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -217,16 +217,16 @@ fn gather_findings(
              WHERE project_id = ? AND fact_type = 'health'
              AND category IN ('complexity', 'error_handling', 'error_quality', 'unwrap', 'todo', 'unimplemented', 'unused')",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let rows = stmt
         .query_map([project_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for row in rows {
-        let (content, category) = row.map_err(|e| e.to_string())?;
+        let (content, category) = row.str_err()?;
 
         // Match finding to module by checking if content mentions a file in the module path
         let module_path = module_paths
@@ -275,14 +275,14 @@ fn gather_doc_gaps(
             "SELECT source_file_path FROM documentation_tasks
              WHERE project_id = ? AND status = 'pending'",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let rows = stmt
         .query_map([project_id], |row| row.get::<_, String>(0))
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     for row in rows {
-        let file_path = row.map_err(|e| e.to_string())?;
+        let file_path = row.str_err()?;
         if let Some(module_path) = module_paths.iter().find(|p| file_path.starts_with(p.as_str())) {
             *result.entry(module_path.clone()).or_default() += 1;
         }

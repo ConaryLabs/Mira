@@ -230,27 +230,23 @@ pub struct ChunkSearchResult {
     pub start_line: Option<i64>,
 }
 
-/// Search code chunks using LIKE patterns
-pub fn chunk_like_search_sync(
+/// Generic LIKE search: iterates patterns, accumulates rows up to `limit`.
+fn like_search_sync<T, F>(
     conn: &Connection,
+    sql: &str,
     patterns: &[String],
     project_id: i64,
     limit: usize,
-) -> Vec<ChunkSearchResult> {
+    map_row: F,
+) -> Vec<T>
+where
+    F: Fn(&rusqlite::Row) -> rusqlite::Result<T>,
+{
     let mut results = Vec::new();
-    let sql = "SELECT file_path, chunk_content, start_line FROM code_chunks
-               WHERE project_id = ? AND LOWER(chunk_content) LIKE ?
-               LIMIT ?";
-
     for pattern in patterns {
         if let Ok(mut stmt) = conn.prepare(sql) {
-            if let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], |row| {
-                Ok(ChunkSearchResult {
-                    file_path: row.get(0)?,
-                    chunk_content: row.get(1)?,
-                    start_line: row.get(2)?,
-                })
-            }) {
+            if let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], &map_row)
+            {
                 for row in rows.filter_map(|r| r.ok()) {
                     if results.len() >= limit {
                         break;
@@ -263,8 +259,32 @@ pub fn chunk_like_search_sync(
             break;
         }
     }
-
     results
+}
+
+/// Search code chunks using LIKE patterns
+pub fn chunk_like_search_sync(
+    conn: &Connection,
+    patterns: &[String],
+    project_id: i64,
+    limit: usize,
+) -> Vec<ChunkSearchResult> {
+    like_search_sync(
+        conn,
+        "SELECT file_path, chunk_content, start_line FROM code_chunks
+         WHERE project_id = ? AND LOWER(chunk_content) LIKE ?
+         LIMIT ?",
+        patterns,
+        project_id,
+        limit,
+        |row| {
+            Ok(ChunkSearchResult {
+                file_path: row.get(0)?,
+                chunk_content: row.get(1)?,
+                start_line: row.get(2)?,
+            })
+        },
+    )
 }
 
 /// Result from symbol LIKE search
@@ -284,37 +304,25 @@ pub fn symbol_like_search_sync(
     project_id: i64,
     limit: usize,
 ) -> Vec<SymbolSearchResult> {
-    let mut results = Vec::new();
-    let sql = "SELECT file_path, name, signature, start_line, end_line
-               FROM code_symbols
-               WHERE project_id = ? AND LOWER(name) LIKE ?
-               LIMIT ?";
-
-    for pattern in patterns {
-        if let Ok(mut stmt) = conn.prepare(sql) {
-            if let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], |row| {
-                Ok(SymbolSearchResult {
-                    file_path: row.get(0)?,
-                    name: row.get(1)?,
-                    signature: row.get(2)?,
-                    start_line: row.get(3)?,
-                    end_line: row.get(4)?,
-                })
-            }) {
-                for row in rows.filter_map(|r| r.ok()) {
-                    if results.len() >= limit {
-                        break;
-                    }
-                    results.push(row);
-                }
-            }
-        }
-        if results.len() >= limit {
-            break;
-        }
-    }
-
-    results
+    like_search_sync(
+        conn,
+        "SELECT file_path, name, signature, start_line, end_line
+         FROM code_symbols
+         WHERE project_id = ? AND LOWER(name) LIKE ?
+         LIMIT ?",
+        patterns,
+        project_id,
+        limit,
+        |row| {
+            Ok(SymbolSearchResult {
+                file_path: row.get(0)?,
+                name: row.get(1)?,
+                signature: row.get(2)?,
+                start_line: row.get(3)?,
+                end_line: row.get(4)?,
+            })
+        },
+    )
 }
 
 /// Result from semantic code search

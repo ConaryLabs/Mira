@@ -115,136 +115,52 @@ impl SlowLaneWorker {
             tracing::debug!("Slow lane: no LLM provider available, using fallbacks");
         }
 
-        // Process stale sessions (close and summarize)
-        processed += self.process_stale_sessions(client.as_ref()).await?;
+        let client = client.as_ref();
 
-        // Process summaries (rate limited) - uses code DB for module data
-        processed += self.process_summaries(client.as_ref()).await?;
+        processed += Self::run_task("stale sessions",
+            session_summaries::process_stale_sessions(&self.pool, client)).await?;
 
-        // Process project briefings
-        processed += self.process_briefings(client.as_ref()).await?;
+        processed += Self::run_task("summaries",
+            summaries::process_queue(&self.code_pool, &self.pool, client)).await?;
 
-        // Process documentation tasks (every Nth cycle)
-        if self
-            .cycle_count
-            .is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL)
-        {
-            processed += self.process_documentation().await?;
+        processed += Self::run_task("briefings",
+            briefings::process_briefings(&self.pool, client)).await?;
+
+        if self.cycle_count.is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL) {
+            processed += Self::run_task("documentation tasks",
+                documentation::process_documentation(&self.pool, &self.code_pool, &self.llm_factory)).await?;
         }
 
-        // Process code health (LLM analysis portions require client)
-        processed += self.process_code_health(client.as_ref()).await?;
+        processed += Self::run_task("health issues",
+            code_health::process_code_health(&self.pool, &self.code_pool, client)).await?;
 
-        // Process pondering (every Nth cycle) — heuristic fallback when no LLM
         if self.cycle_count.is_multiple_of(PONDERING_CYCLE_INTERVAL) {
-            processed += self.process_pondering(client.as_ref()).await?;
+            processed += Self::run_task("pondering insights",
+                pondering::process_pondering(&self.pool, client)).await?;
         }
 
-        // Process outcome scanning (every Nth cycle) — no LLM needed
-        if self
-            .cycle_count
-            .is_multiple_of(OUTCOME_SCAN_CYCLE_INTERVAL)
-        {
-            processed += self.process_outcome_scanning().await?;
+        if self.cycle_count.is_multiple_of(OUTCOME_SCAN_CYCLE_INTERVAL) {
+            processed += Self::run_task("diff outcomes",
+                outcome_scanner::process_outcome_scanning(&self.pool)).await?;
         }
 
-        // Process proactive suggestions (pattern mining every 3rd, LLM enhancement every 10th)
-        processed += self.process_proactive(client.as_ref()).await?;
+        processed += Self::run_task("proactive items",
+            proactive::process_proactive(&self.pool, client, self.cycle_count)).await?;
 
-        // Process entity backfill (every cycle until caught up, heuristic only — no LLM)
-        processed += self.process_entity_backfill().await?;
+        processed += Self::run_task("entity backfills",
+            entity_extraction::process_entity_backfill(&self.pool)).await?;
 
         Ok(processed)
     }
 
-    async fn process_proactive(
-        &self,
-        client: Option<&Arc<dyn LlmClient>>,
+    /// Run a background task, logging if any items were processed.
+    async fn run_task(
+        name: &str,
+        fut: impl std::future::Future<Output = Result<usize, String>>,
     ) -> Result<usize, String> {
-        let count = proactive::process_proactive(&self.pool, client, self.cycle_count).await?;
+        let count = fut.await?;
         if count > 0 {
-            tracing::info!("Slow lane: processed {} proactive items", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_summaries(
-        &self,
-        client: Option<&Arc<dyn LlmClient>>,
-    ) -> Result<usize, String> {
-        let count = summaries::process_queue(&self.code_pool, &self.pool, client).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: processed {} summaries", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_briefings(
-        &self,
-        client: Option<&Arc<dyn LlmClient>>,
-    ) -> Result<usize, String> {
-        let count = briefings::process_briefings(&self.pool, client).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: processed {} briefings", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_documentation(&self) -> Result<usize, String> {
-        let count =
-            documentation::process_documentation(&self.pool, &self.code_pool, &self.llm_factory)
-                .await?;
-        if count > 0 {
-            tracing::info!("Slow lane: processed {} documentation tasks", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_code_health(
-        &self,
-        client: Option<&Arc<dyn LlmClient>>,
-    ) -> Result<usize, String> {
-        let count = code_health::process_code_health(&self.pool, &self.code_pool, client).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: processed {} health issues", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_pondering(
-        &self,
-        client: Option<&Arc<dyn LlmClient>>,
-    ) -> Result<usize, String> {
-        let count = pondering::process_pondering(&self.pool, client).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: generated {} pondering insights", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_outcome_scanning(&self) -> Result<usize, String> {
-        let count = outcome_scanner::process_outcome_scanning(&self.pool).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: processed {} diff outcomes", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_entity_backfill(&self) -> Result<usize, String> {
-        let count = entity_extraction::process_entity_backfill(&self.pool).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: backfilled entities for {} facts", count);
-        }
-        Ok(count)
-    }
-
-    async fn process_stale_sessions(
-        &self,
-        client: Option<&Arc<dyn LlmClient>>,
-    ) -> Result<usize, String> {
-        let count = session_summaries::process_stale_sessions(&self.pool, client).await?;
-        if count > 0 {
-            tracing::info!("Slow lane: closed {} stale sessions", count);
+            tracing::info!("Slow lane: processed {} {}", count, name);
         }
         Ok(count)
     }

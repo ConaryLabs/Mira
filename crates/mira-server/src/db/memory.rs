@@ -87,6 +87,44 @@ pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SHARED SQL FRAGMENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Scope-filtering WHERE clause for memory queries.
+///
+/// Returns SQL fragment with parameter placeholders for (project_id, user_id).
+/// `prefix` is the table alias (e.g. "f." for JOINed queries, "" for direct).
+/// The caller must bind: project_id as the first param, user_id as the second.
+pub fn scope_filter_sql(prefix: &str) -> String {
+    format!(
+        "({p}project_id = ?{{pid}} OR {p}project_id IS NULL OR ?{{pid}} IS NULL)
+           AND (
+             {p}scope = 'project'
+             OR {p}scope IS NULL
+             OR ({p}scope = 'personal' AND {p}user_id = ?{{uid}})
+             OR {p}user_id IS NULL
+           )",
+        p = prefix,
+    )
+}
+
+/// Shared semantic recall query with scope filtering.
+///
+/// Returns SQL that selects (fact_id, content, distance, branch) from vec_memory + memory_facts.
+/// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id
+fn semantic_recall_sql() -> String {
+    format!(
+        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
+         FROM vec_memory v
+         JOIN memory_facts f ON v.fact_id = f.id
+         WHERE {}
+         ORDER BY distance
+         LIMIT ?3",
+        scope_filter_sql("f.").replace("?{pid}", "?2").replace("?{uid}", "?4")
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SYNC FUNCTIONS FOR POOL.INTERACT() USAGE
 // These take &Connection directly for use with DatabasePool::interact()
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -272,20 +310,8 @@ pub fn recall_semantic_with_entity_boost_sync(
     // Fetch more results than needed to allow for re-ranking after boosting
     let fetch_limit = (limit * 2).min(100);
 
-    let mut stmt = conn.prepare(
-        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
-         FROM vec_memory v
-         JOIN memory_facts f ON v.fact_id = f.id
-         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-           AND (
-             f.scope = 'project'
-             OR f.scope IS NULL
-             OR (f.scope = 'personal' AND f.user_id = ?4)
-             OR f.user_id IS NULL
-           )
-         ORDER BY distance
-         LIMIT ?3",
-    )?;
+    let sql = semantic_recall_sql();
+    let mut stmt = conn.prepare(&sql)?;
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
         .query_map(
@@ -336,20 +362,8 @@ pub fn recall_semantic_with_branch_sync(
     // Fetch more results than needed to allow for re-ranking after boosting
     let fetch_limit = (limit * 2).min(100);
 
-    let mut stmt = conn.prepare(
-        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
-         FROM vec_memory v
-         JOIN memory_facts f ON v.fact_id = f.id
-         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-           AND (
-             f.scope = 'project'
-             OR f.scope IS NULL
-             OR (f.scope = 'personal' AND f.user_id = ?4)
-             OR f.user_id IS NULL
-           )
-         ORDER BY distance
-         LIMIT ?3",
-    )?;
+    let sql = semantic_recall_sql();
+    let mut stmt = conn.prepare(&sql)?;
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
         .query_map(
@@ -391,20 +405,8 @@ pub fn recall_semantic_with_branch_info_sync(
     // Fetch more results than needed to allow for re-ranking after boosting
     let fetch_limit = (limit * 2).min(100);
 
-    let mut stmt = conn.prepare(
-        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
-         FROM vec_memory v
-         JOIN memory_facts f ON v.fact_id = f.id
-         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
-           AND (
-             f.scope = 'project'
-             OR f.scope IS NULL
-             OR (f.scope = 'personal' AND f.user_id = ?4)
-             OR f.user_id IS NULL
-           )
-         ORDER BY distance
-         LIMIT ?3",
-    )?;
+    let sql = semantic_recall_sql();
+    let mut stmt = conn.prepare(&sql)?;
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
         .query_map(
@@ -447,25 +449,21 @@ pub fn search_memories_sync(
         .replace('_', "\\_");
     let pattern = format!("%{}%", escaped);
 
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
                 user_id, scope, team_id
          FROM memory_facts
-         WHERE (project_id = ? OR project_id IS NULL)
-           AND content LIKE ? ESCAPE '\\'
-           AND (
-             scope = 'project'
-             OR scope IS NULL
-             OR (scope = 'personal' AND user_id = ?)
-             OR user_id IS NULL
-           )
+         WHERE {}
+           AND content LIKE ?2 ESCAPE '\\'
          ORDER BY updated_at DESC
-         LIMIT ?",
-    )?;
+         LIMIT ?3",
+        scope_filter_sql("").replace("?{pid}", "?1").replace("?{uid}", "?4")
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt.query_map(
-        rusqlite::params![project_id, pattern, user_id, limit as i64],
+        rusqlite::params![project_id, pattern, limit as i64, user_id],
         parse_memory_fact_row,
     )?;
 

@@ -379,7 +379,7 @@ pub async fn close_session_now(
             .map_err(|e| anyhow::anyhow!("Failed to close session: {}", e))
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
 
     Ok(summary)
 }

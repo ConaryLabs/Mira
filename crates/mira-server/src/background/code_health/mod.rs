@@ -348,7 +348,7 @@ async fn scan_dependencies_sharded(
     code_pool
         .run(move |conn| {
             use crate::db::dependencies::{clear_module_dependencies_sync, upsert_module_dependency_sync, ModuleDependency};
-            clear_module_dependencies_sync(conn, project_id).map_err(|e| e.to_string())?;
+            clear_module_dependencies_sync(conn, project_id).str_err()?;
             for d in &dep_data_for_code {
                 let dep = ModuleDependency {
                     source_module_id: d.source.clone(),
@@ -358,7 +358,7 @@ async fn scan_dependencies_sharded(
                     import_count: d.import_count,
                     is_circular: d.is_circular,
                 };
-                upsert_module_dependency_sync(conn, project_id, &dep).map_err(|e| e.to_string())?;
+                upsert_module_dependency_sync(conn, project_id, &dep).str_err()?;
             }
             Ok::<_, String>(())
         })
@@ -394,7 +394,7 @@ async fn scan_dependencies_sharded(
                             branch: None,
                         },
                     )
-                    .map_err(|e| e.to_string())?;
+                    .str_err()?;
                 }
                 Ok::<_, String>(())
             })
@@ -426,10 +426,10 @@ fn collect_dependency_data(
     // Get modules
     let mut stmt = conn
         .prepare("SELECT module_id, path FROM codebase_modules WHERE project_id = ?")
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
     let modules: Vec<(String, String)> = stmt
         .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -451,12 +451,12 @@ fn collect_dependency_data(
     {
         let mut stmt = conn
             .prepare("SELECT file_path, import_path FROM imports WHERE project_id = ? AND is_external = 0")
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         let rows = stmt
             .query_map([project_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         for row in rows {
-            let (fp, ip) = row.map_err(|e| e.to_string())?;
+            let (fp, ip) = row.str_err()?;
             if let (Some(src), Some(tgt)) = (file_to_mod(&fp), file_to_mod(&ip)) {
                 if src != tgt {
                     *import_deps.entry((src, tgt)).or_default() += 1;
@@ -476,14 +476,14 @@ fn collect_dependency_data(
                  JOIN code_symbols cs2 ON cg.callee_id = cs2.id
                  WHERE cs1.project_id = ? AND cs2.project_id = ?",
             )
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         let rows = stmt
             .query_map([project_id, project_id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
             })
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
         for row in rows {
-            let (f1, f2, cnt) = row.map_err(|e| e.to_string())?;
+            let (f1, f2, cnt) = row.str_err()?;
             if let (Some(src), Some(tgt)) = (file_to_mod(&f1), file_to_mod(&f2)) {
                 if src != tgt {
                     *call_deps.entry((src, tgt)).or_default() += cnt;
@@ -583,7 +583,7 @@ async fn scan_patterns_sharded(
                         branch: None,
                     },
                 )
-                .map_err(|e| e.to_string())?;
+                .str_err()?;
             }
             Ok::<_, String>(())
         })

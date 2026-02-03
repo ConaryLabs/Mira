@@ -6,7 +6,7 @@ use crate::db::{
     delete_milestone_sync, get_active_goals_sync, get_goal_by_id_sync, get_goals_sync,
     get_milestones_for_goal_sync, update_goal_progress_from_milestones_sync, update_goal_sync,
 };
-use crate::mcp::requests::GoalAction;
+use crate::mcp::requests::{GoalAction, GoalRequest};
 use crate::mcp::responses::{
     GoalBulkCreatedData, GoalCreatedData, GoalCreatedEntry, GoalData, GoalGetData, GoalListData,
     GoalOutput, GoalSummary, MilestoneInfo, MilestoneProgressData,
@@ -411,74 +411,62 @@ async fn action_delete_milestone<C: ToolContext>(
 /// add_milestone, complete_milestone, delete_milestone
 pub async fn goal<C: ToolContext>(
     ctx: &C,
-    action: GoalAction,
-    goal_id: Option<String>,
-    title: Option<String>,
-    description: Option<String>,
-    status: Option<String>,
-    priority: Option<String>,
-    progress_percent: Option<i32>,
-    include_finished: Option<bool>,
-    limit: Option<i64>,
-    goals: Option<String>,
-    milestone_title: Option<String>,
-    milestone_id: Option<String>,
-    weight: Option<i32>,
+    req: GoalRequest,
 ) -> Result<Json<GoalOutput>, String> {
     let project_id = ctx.project_id().await;
 
-    match action {
+    match req.action {
         GoalAction::Get => {
-            let id = goal_id.ok_or("Goal ID is required for get action")?;
+            let id = req.goal_id.ok_or("Goal ID is required for get action")?;
             action_get(ctx, &id).await
         }
         GoalAction::Create => {
-            let t = title.ok_or("Title is required for create action")?;
+            let t = req.title.ok_or("Title is required for create action")?;
             action_create(
                 ctx,
                 project_id,
                 t,
-                description,
-                status,
-                priority,
-                progress_percent,
+                req.description,
+                req.status,
+                req.priority,
+                req.progress_percent,
             )
             .await
         }
         GoalAction::BulkCreate => {
-            let g = goals.ok_or("goals parameter is required for bulk_create action")?;
+            let g = req.goals.ok_or("goals parameter is required for bulk_create action")?;
             action_bulk_create(ctx, project_id, &g).await
         }
         GoalAction::List => {
             action_list(
                 ctx,
                 project_id,
-                include_finished.unwrap_or(false),
-                limit.unwrap_or(10),
+                req.include_finished.unwrap_or(false),
+                req.limit.unwrap_or(10),
             )
             .await
         }
         GoalAction::Update | GoalAction::Progress => {
-            let id = goal_id.ok_or("Goal ID is required for update/progress action")?;
-            action_update(ctx, &id, title, status, priority, progress_percent).await
+            let id = req.goal_id.ok_or("Goal ID is required for update/progress action")?;
+            action_update(ctx, &id, req.title, req.status, req.priority, req.progress_percent).await
         }
         GoalAction::Delete => {
-            let id = goal_id.ok_or("Goal ID is required for delete action")?;
+            let id = req.goal_id.ok_or("Goal ID is required for delete action")?;
             action_delete(ctx, &id).await
         }
         GoalAction::AddMilestone => {
-            let gid = goal_id.ok_or("Goal ID is required for add_milestone action")?;
+            let gid = req.goal_id.ok_or("Goal ID is required for add_milestone action")?;
             let mt =
-                milestone_title.ok_or("milestone_title is required for add_milestone action")?;
-            action_add_milestone(ctx, &gid, mt, weight).await
+                req.milestone_title.ok_or("milestone_title is required for add_milestone action")?;
+            action_add_milestone(ctx, &gid, mt, req.weight).await
         }
         GoalAction::CompleteMilestone => {
             let mid =
-                milestone_id.ok_or("milestone_id is required for complete_milestone action")?;
+                req.milestone_id.ok_or("milestone_id is required for complete_milestone action")?;
             action_complete_milestone(ctx, &mid).await
         }
         GoalAction::DeleteMilestone => {
-            let mid = milestone_id.ok_or("milestone_id is required for delete_milestone action")?;
+            let mid = req.milestone_id.ok_or("milestone_id is required for delete_milestone action")?;
             action_delete_milestone(ctx, &mid).await
         }
     }

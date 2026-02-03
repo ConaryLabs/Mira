@@ -322,7 +322,7 @@ mod tests {
     fn test_format_conventions_empty() {
         let modules = vec![WorkingModule {
             module_path: "src/context".to_string(),
-            module_id: "context".to_string(),
+            _module_id: "context".to_string(),
         }];
         let conventions: Vec<ConventionRow> = vec![];
         assert!(format_conventions(&modules, &conventions).is_empty());
@@ -332,7 +332,7 @@ mod tests {
     fn test_format_conventions_with_data() {
         let modules = vec![WorkingModule {
             module_path: "src/context".to_string(),
-            module_id: "context".to_string(),
+            _module_id: "context".to_string(),
         }];
         let conventions = vec![ConventionRow {
             module_path: "src/context".to_string(),
@@ -358,7 +358,7 @@ mod tests {
     fn test_format_conventions_truncates() {
         let modules = vec![WorkingModule {
             module_path: "src/context".to_string(),
-            module_id: "context".to_string(),
+            _module_id: "context".to_string(),
         }];
         let conventions = vec![ConventionRow {
             module_path: "src/context".to_string(),
@@ -417,11 +417,11 @@ mod tests {
         let modules = vec![
             WorkingModule {
                 module_path: "src/b".to_string(),
-                module_id: "b".to_string(),
+                _module_id: "b".to_string(),
             },
             WorkingModule {
                 module_path: "src/a".to_string(),
-                module_id: "a".to_string(),
+                _module_id: "a".to_string(),
             },
         ];
 

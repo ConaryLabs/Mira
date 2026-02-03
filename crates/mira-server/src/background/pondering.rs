@@ -159,7 +159,7 @@ async fn should_ponder_project(pool: &Arc<DatabasePool>, project_id: i64) -> Res
         }
     })
     .await
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Update last pondering timestamp
@@ -177,7 +177,7 @@ async fn update_last_pondering(pool: &Arc<DatabasePool>, project_id: i64) -> Res
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Get recent tool usage history for a project
@@ -219,7 +219,7 @@ async fn get_recent_tool_history(
             .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
     })
     .await
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Summarize tool arguments to avoid leaking sensitive data
@@ -273,7 +273,7 @@ async fn get_recent_memories(
             .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
     })
     .await
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Generate insights using LLM
@@ -469,7 +469,7 @@ async fn store_insights(
         Ok(stored)
     })
     .await
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Confidence cap for heuristic insights (consistent with TEMPLATE_CONFIDENCE_MULTIPLIER)

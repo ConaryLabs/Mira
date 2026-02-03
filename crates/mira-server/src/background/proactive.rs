@@ -512,7 +512,7 @@ async fn store_suggestions(
         Ok::<usize, anyhow::Error>(stored)
     })
     .await
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 /// Get pre-generated suggestions for a trigger key (fast O(1) lookup)
@@ -587,7 +587,7 @@ pub async fn cleanup_expired_suggestions(pool: &Arc<DatabasePool>) -> Result<usi
         Ok(deleted)
     })
     .await
-    .map_err(|e| e.to_string())
+    .str_err()
 }
 
 #[cfg(test)]

@@ -4,13 +4,14 @@
 // Uses session_behavior_log (file_access events from PostToolUse hook) to determine
 // recently-touched files, then maps them to modules via module_conventions table.
 
+use crate::utils::ResultExt;
 use rusqlite::Connection;
 
 /// A module Claude is currently working in
 #[derive(Debug, Clone)]
 pub struct WorkingModule {
     pub module_path: String,
-    pub module_id: String,
+    pub _module_id: String,
 }
 
 /// Detect working modules from recent file access events.
@@ -71,7 +72,7 @@ pub fn detect_working_modules(
             if seen.insert(module_path.clone()) {
                 result.push(WorkingModule {
                     module_path,
-                    module_id,
+                    _module_id: module_id,
                 });
                 if result.len() >= 3 {
                     break;
@@ -98,13 +99,13 @@ fn get_recent_file_paths(
              ORDER BY created_at DESC
              LIMIT 10",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let paths = stmt
         .query_map(rusqlite::params![project_id, session_id], |row| {
             row.get::<_, String>(0)
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -120,13 +121,13 @@ fn get_module_paths(
         .prepare(
             "SELECT module_path, module_id FROM module_conventions WHERE project_id = ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let modules = stmt
         .query_map([project_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -284,7 +285,7 @@ mod tests {
 
         let result = detect_working_modules(&conn, 1, "sess1", Some("/project/"));
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].module_id, "context");
+        assert_eq!(result[0]._module_id, "context");
         assert_eq!(result[0].module_path, "src/context");
     }
 }

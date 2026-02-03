@@ -56,7 +56,7 @@ impl LlmHttpClient {
         &self.client
     }
 
-    /// Execute HTTP request with retry logic
+    /// Execute HTTP request with retry logic using Bearer auth
     /// Returns the response body as text on success
     pub async fn execute_with_retry(
         &self,
@@ -65,18 +65,34 @@ impl LlmHttpClient {
         api_key: &str,
         body: String,
     ) -> Result<String> {
+        self.execute_request_with_retry(request_id, body, |client, body| {
+            client
+                .post(url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .body(body)
+        })
+        .await
+    }
+
+    /// Execute HTTP request with retry logic using a custom request builder.
+    ///
+    /// The `build_request` closure is called on each attempt with the reqwest Client
+    /// and the request body, allowing callers to customize URL, headers, and auth.
+    pub async fn execute_request_with_retry<F>(
+        &self,
+        request_id: &str,
+        body: String,
+        build_request: F,
+    ) -> Result<String>
+    where
+        F: Fn(&Client, String) -> reqwest::RequestBuilder,
+    {
         let mut attempts = 0;
         let mut backoff = self.base_backoff;
 
         loop {
-            let response_result = self
-                .client
-                .post(url)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .header("Content-Type", "application/json")
-                .body(body.clone())
-                .send()
-                .await;
+            let response_result = build_request(&self.client, body.clone()).send().await;
 
             match response_result {
                 Ok(response) => {

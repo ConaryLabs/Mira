@@ -2,6 +2,7 @@
 // Nucleo-based fuzzy fallback search for code chunks and memories
 
 use crate::db::pool::DatabasePool;
+use crate::utils::ResultExt;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 use rusqlite::params;
@@ -163,7 +164,7 @@ impl FuzzyCache {
                 rows.collect::<Result<Vec<_>, _>>()
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
         let mut idx = self.code_index.write().await;
         idx.project_id = project_id;
@@ -222,7 +223,7 @@ impl FuzzyCache {
                 rows.collect::<Result<Vec<_>, _>>()
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .str_err()?;
 
         let mut idx = self.memory_index.write().await;
         idx.project_id = project_id;

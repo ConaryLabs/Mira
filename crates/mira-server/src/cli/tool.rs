@@ -39,22 +39,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "goal" => {
             let req: GoalRequest = serde_json::from_str(&args)?;
-            mira::tools::goal(
-                &server,
-                req.action,
-                req.goal_id,
-                req.title,
-                req.description,
-                req.status,
-                req.priority,
-                req.progress_percent,
-                req.include_finished,
-                req.limit,
-                req.goals,
-                req.milestone_title,
-                req.milestone_id,
-                req.weight,
-            )
+            mira::tools::goal(&server, req)
             .await
             .map(|output| output.0.message)
         }

@@ -7,7 +7,33 @@ mod python;
 pub mod rust;
 
 use super::types::Module;
+use crate::project_files::walker::FileWalker;
 use std::path::Path;
+
+/// Count lines by walking files with `FileWalker` for a given language.
+/// If `module_path` is a single file, counts its lines directly.
+pub(crate) fn count_lines_with_walker(project_path: &Path, module_path: &str, language: &'static str) -> u32 {
+    let full_path = project_path.join(module_path);
+
+    // Single-file modules
+    if full_path.is_file() {
+        return std::fs::read_to_string(&full_path)
+            .map(|c| c.lines().count() as u32)
+            .unwrap_or(0);
+    }
+
+    let mut count = 0u32;
+    for path in FileWalker::new(&full_path)
+        .for_language(language)
+        .walk_paths()
+        .filter_map(|p| p.ok())
+    {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            count += content.lines().count() as u32;
+        }
+    }
+    count
+}
 
 /// Detect modules based on project type
 ///

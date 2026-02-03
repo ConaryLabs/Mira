@@ -10,7 +10,6 @@ use crate::db::{
     store_memory_sync,
 };
 use crate::utils::ResultExt;
-use std::process::Command;
 use std::sync::Arc;
 
 pub use detection::*;
@@ -291,31 +290,7 @@ fn parse_impact_response(response: &str) -> (String, String) {
     (impact, summary)
 }
 
-/// Get the current git HEAD commit hash
-pub fn get_git_head(project_path: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(project_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Check if a commit is an ancestor of HEAD (handles rebases, force pushes)
-/// Copied from briefings.rs for documentation staleness detection
-pub fn is_ancestor(project_path: &str, commit: &str) -> bool {
-    Command::new("git")
-        .args(["merge-base", "--is-ancestor", commit, "HEAD"])
-        .current_dir(project_path)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+pub use crate::git::{get_git_head, is_ancestor};
 
 /// Calculate SHA256 checksum of file content
 pub fn file_checksum(path: &std::path::Path) -> Option<String> {

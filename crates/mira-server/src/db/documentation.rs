@@ -128,7 +128,7 @@ pub fn get_pending_doc_tasks(
          LIMIT ?1"
     };
 
-    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(sql).str_err()?;
 
     let rows = if let Some(pid) = project_id {
         stmt.query_map(params![pid, limit as i64], parse_doc_task)
@@ -177,7 +177,7 @@ pub fn list_doc_tasks(
         END, created_at DESC",
     );
 
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(&sql).str_err()?;
 
     let params_refs: Vec<&dyn rusqlite::ToSql> =
         params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();

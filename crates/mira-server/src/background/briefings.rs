@@ -118,30 +118,7 @@ pub async fn process_briefings(
     Ok(processed)
 }
 
-/// Get the current git HEAD commit hash
-fn get_git_head(project_path: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(project_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Check if a commit is an ancestor of HEAD (handles rebases, force pushes)
-fn is_ancestor(project_path: &str, commit: &str) -> bool {
-    Command::new("git")
-        .args(["merge-base", "--is-ancestor", commit, "HEAD"])
-        .current_dir(project_path)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+use crate::git::{get_git_head, is_ancestor};
 
 /// Max commits to include in briefing to prevent context overflow
 const MAX_COMMITS: usize = 50;
