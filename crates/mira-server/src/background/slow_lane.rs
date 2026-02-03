@@ -11,8 +11,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::{
-    briefings, code_health, documentation, outcome_scanner, pondering, proactive,
-    session_summaries, summaries,
+    briefings, code_health, documentation, entity_extraction, outcome_scanner, pondering,
+    proactive, session_summaries, summaries,
 };
 
 /// Delay before first cycle to let the service start up
@@ -151,6 +151,9 @@ impl SlowLaneWorker {
         // Process proactive suggestions (pattern mining every 3rd, LLM enhancement every 10th)
         processed += self.process_proactive(client.as_ref()).await?;
 
+        // Process entity backfill (every cycle until caught up, heuristic only — no LLM)
+        processed += self.process_entity_backfill().await?;
+
         Ok(processed)
     }
 
@@ -223,6 +226,14 @@ impl SlowLaneWorker {
         let count = outcome_scanner::process_outcome_scanning(&self.pool).await?;
         if count > 0 {
             tracing::info!("Slow lane: processed {} diff outcomes", count);
+        }
+        Ok(count)
+    }
+
+    async fn process_entity_backfill(&self) -> Result<usize, String> {
+        let count = entity_extraction::process_entity_backfill(&self.pool).await?;
+        if count > 0 {
+            tracing::info!("Slow lane: backfilled entities for {} facts", count);
         }
         Ok(count)
     }

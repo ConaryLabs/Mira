@@ -15,6 +15,7 @@ pub mod cross_project;
 pub mod db;
 pub mod elicitation;
 pub mod embeddings;
+pub mod entities;
 pub mod error;
 pub mod fuzzy;
 pub mod git;

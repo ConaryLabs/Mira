@@ -16,11 +16,29 @@ pub struct RankedMemory {
 // Branch-aware boosting constants (tunable)
 // Lower multiplier = better score (distances are minimized)
 
+/// Per-entity match boost factor (10% per match, applied as 0.90^n)
+const ENTITY_MATCH_BOOST: f32 = 0.90;
+
+/// Maximum number of entity matches to apply boost for (floor = 0.90^3 = 0.729)
+const MAX_ENTITY_BOOST_MATCHES: u32 = 3;
+
 /// Boost factor for memories on the same branch (15% boost)
 const SAME_BRANCH_BOOST: f32 = 0.85;
 
 /// Boost factor for memories on main/master branch (5% boost)
 const MAIN_BRANCH_BOOST: f32 = 0.95;
+
+/// Apply entity-overlap boosting to a distance score.
+///
+/// Each matching entity reduces distance by 10%, up to 3 matches (floor 0.729).
+/// Returns the original distance if match_count is 0.
+pub fn apply_entity_boost(distance: f32, match_count: u32) -> f32 {
+    if match_count == 0 {
+        return distance;
+    }
+    let capped = match_count.min(MAX_ENTITY_BOOST_MATCHES);
+    distance * ENTITY_MATCH_BOOST.powi(capped as i32)
+}
 
 /// Apply branch-aware boosting to a distance score
 ///
@@ -233,6 +251,73 @@ pub fn recall_semantic_sync(
 ) -> rusqlite::Result<Vec<(i64, String, f32)>> {
     // Delegate to branch-aware version with no branch (no boosting)
     recall_semantic_with_branch_sync(conn, embedding_bytes, project_id, user_id, None, limit)
+}
+
+/// Semantic search with entity boost applied.
+///
+/// Wraps the branch-info recall to also apply entity-overlap ranking boost.
+/// `query_entity_names` are the canonical names extracted from the query.
+/// If empty, skips entity boost entirely (no extra query).
+pub fn recall_semantic_with_entity_boost_sync(
+    conn: &rusqlite::Connection,
+    embedding_bytes: &[u8],
+    project_id: Option<i64>,
+    user_id: Option<&str>,
+    current_branch: Option<&str>,
+    query_entity_names: &[String],
+    limit: usize,
+) -> rusqlite::Result<Vec<(i64, String, f32, Option<String>)>> {
+    use super::entities::get_entity_match_counts_sync;
+
+    // Fetch more results than needed to allow for re-ranking after boosting
+    let fetch_limit = (limit * 2).min(100);
+
+    let mut stmt = conn.prepare(
+        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
+         FROM vec_memory v
+         JOIN memory_facts f ON v.fact_id = f.id
+         WHERE (f.project_id = ?2 OR f.project_id IS NULL OR ?2 IS NULL)
+           AND (
+             f.scope = 'project'
+             OR f.scope IS NULL
+             OR (f.scope = 'personal' AND f.user_id = ?4)
+             OR f.user_id IS NULL
+           )
+         ORDER BY distance
+         LIMIT ?3",
+    )?;
+
+    let results: Vec<(i64, String, f32, Option<String>)> = stmt
+        .query_map(
+            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Get entity match counts (skip entirely if no query entities)
+    let entity_counts = if !query_entity_names.is_empty() {
+        get_entity_match_counts_sync(conn, project_id, query_entity_names).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // Apply branch boost + entity boost, then re-sort
+    let mut boosted: Vec<(i64, String, f32, Option<String>)> = results
+        .into_iter()
+        .map(|(id, content, distance, branch)| {
+            let mut d = apply_branch_boost(distance, branch.as_deref(), current_branch);
+            if let Some(&match_count) = entity_counts.get(&id) {
+                d = apply_entity_boost(d, match_count);
+            }
+            (id, content, d, branch)
+        })
+        .collect();
+
+    boosted.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    boosted.truncate(limit);
+
+    Ok(boosted)
 }
 
 /// Branch-aware semantic recall with boosting

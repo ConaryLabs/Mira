@@ -9,6 +9,7 @@ pub mod dependencies;
 mod diff_analysis;
 pub mod diff_outcomes;
 pub mod documentation;
+pub mod entities;
 mod embeddings;
 mod index;
 mod insights;
@@ -115,6 +116,7 @@ pub use memory::{
     parse_memory_fact_row,
     recall_semantic_sync,
     recall_semantic_with_branch_info_sync,
+    recall_semantic_with_entity_boost_sync,
     record_memory_access_sync,
     search_memories_sync,
     store_embedding_sync,

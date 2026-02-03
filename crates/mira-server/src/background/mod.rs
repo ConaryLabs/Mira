@@ -8,6 +8,7 @@
 mod briefings;
 
 pub(crate) mod change_patterns;
+pub(crate) mod entity_extraction;
 pub mod code_health;
 pub mod diff_analysis;
 pub mod documentation;

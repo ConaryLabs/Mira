@@ -5,6 +5,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 pub mod code;
+mod entities;
 mod fts;
 mod intelligence;
 mod memory;
@@ -85,6 +86,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
 
     // Add module conventions table for convention-aware context injection
     migrate_module_conventions(conn)?;
+
+    // Add entity tables for memory entity linking (recall boost)
+    entities::migrate_entity_tables(conn)?;
 
     Ok(())
 }

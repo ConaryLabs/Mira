@@ -1,7 +1,7 @@
 //! Unified memory tools (recall, remember, forget)
 
 use crate::db::{
-    StoreMemoryParams, recall_semantic_with_branch_info_sync, store_embedding_sync,
+    StoreMemoryParams, store_embedding_sync,
     store_memory_sync,
 };
 use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
@@ -177,6 +177,40 @@ pub async fn remember<C: ToolContext>(
         }
     }
 
+    // Extract and link entities in a separate transaction
+    // If this fails, the fact is still stored — backfill will pick it up later
+    {
+        use crate::db::entities::{
+            link_entity_to_fact_sync, mark_fact_has_entities_sync, upsert_entity_sync,
+        };
+        use crate::entities::extract_entities_heuristic;
+
+        let entities = extract_entities_heuristic(&content);
+        let pool_for_entities = ctx.pool().clone();
+        if let Err(e) = pool_for_entities
+            .run(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                for entity in &entities {
+                    let entity_id = upsert_entity_sync(
+                        &tx,
+                        project_id,
+                        &entity.canonical_name,
+                        entity.entity_type.as_str(),
+                        &entity.name,
+                    )?;
+                    link_entity_to_fact_sync(&tx, id, entity_id)?;
+                }
+                // Always mark as processed, even if zero entities found
+                mark_fact_has_entities_sync(&tx, id)?;
+                tx.commit()?;
+                Ok::<(), rusqlite::Error>(())
+            })
+            .await
+        {
+            tracing::warn!("Entity extraction failed for fact {}: {}", id, e);
+        }
+    }
+
     if let Some(cache) = ctx.fuzzy_cache() {
         cache.invalidate_memory(project_id).await;
     }
@@ -211,24 +245,35 @@ pub async fn recall<C: ToolContext>(
 
     let limit = limit.unwrap_or(10) as usize;
 
-    // Try semantic search first if embeddings available (with branch-aware boosting)
+    // Extract entities from query for entity-based recall boost
+    let query_entity_names: Vec<String> = {
+        use crate::entities::extract_entities_heuristic;
+        extract_entities_heuristic(&query)
+            .into_iter()
+            .map(|e| e.canonical_name)
+            .collect()
+    };
+
+    // Try semantic search first if embeddings available (with branch-aware + entity boosting)
     // Uses RETRIEVAL_QUERY task type for optimal search results
     if let Some(embeddings) = ctx.embeddings() {
         if let Ok(query_embedding) = embeddings.embed_for_query(&query).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
             let user_id_for_query = user_id.clone();
             let branch_for_query = current_branch.clone();
+            let entity_names_for_query = query_entity_names.clone();
 
-            // Run vector search via connection pool with branch boosting
+            // Run vector search via connection pool with branch + entity boosting
             let results: Vec<(i64, String, f32, Option<String>)> = ctx
                 .pool()
                 .run(move |conn| {
-                    recall_semantic_with_branch_info_sync(
+                    crate::db::recall_semantic_with_entity_boost_sync(
                         conn,
                         &embedding_bytes,
                         project_id,
                         user_id_for_query.as_deref(),
                         branch_for_query.as_deref(),
+                        &entity_names_for_query,
                         limit,
                     )
                 })
