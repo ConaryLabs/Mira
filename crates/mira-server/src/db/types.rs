@@ -85,6 +85,18 @@ pub struct Milestone {
     pub weight: i32,
 }
 
+/// Unified insight from pondering, proactive suggestions, or doc gaps
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UnifiedInsight {
+    pub source: String,
+    pub source_type: String,
+    pub description: String,
+    pub priority_score: f64,
+    pub confidence: f64,
+    pub timestamp: String,
+    pub evidence: Option<String>,
+}
+
 /// Project briefing (What's New since last session)
 #[derive(Debug, Clone)]
 pub struct ProjectBriefing {

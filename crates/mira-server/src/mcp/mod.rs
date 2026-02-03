@@ -235,7 +235,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session management. Actions: history (list_sessions/get_history/current via history_action), recap (preferences + context + goals), usage (summary/stats/list via usage_action)."
+        description = "Session management. Actions: history (list_sessions/get_history/current via history_action), recap (preferences + context + goals), usage (summary/stats/list via usage_action), insights (unified digest of pondering/proactive/doc_gap insights)."
     )]
     async fn session(
         &self,

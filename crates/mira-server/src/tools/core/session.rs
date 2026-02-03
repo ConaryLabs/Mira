@@ -1,7 +1,10 @@
 // crates/mira-server/src/tools/core/session.rs
 // Unified session management and collaboration tools
 
-use crate::db::{create_session_sync, get_recent_sessions_sync, get_session_history_sync};
+use crate::db::{
+    create_session_sync, get_recent_sessions_sync, get_session_history_sync,
+    get_unified_insights_sync,
+};
 use crate::mcp::requests::SessionHistoryAction;
 use crate::tools::core::ToolContext;
 use mira_types::{AgentRole, WsEvent};
@@ -27,7 +30,52 @@ pub async fn handle_session<C: ToolContext>(
                 .ok_or("usage_action is required for action 'usage'")?;
             super::usage(ctx, usage_action, req.group_by, req.since_days, req.limit).await
         }
+        SessionAction::Insights => {
+            query_insights(ctx, req.insight_source, req.min_confidence, req.limit).await
+        }
     }
+}
+
+/// Query unified insights digest
+async fn query_insights<C: ToolContext>(
+    ctx: &C,
+    insight_source: Option<String>,
+    min_confidence: Option<f64>,
+    limit: Option<i64>,
+) -> Result<String, String> {
+    let project = ctx.get_project().await;
+    let project_id = project.as_ref().map(|p| p.id).ok_or("No active project")?;
+
+    let filter_source = insight_source.clone();
+    let min_conf = min_confidence.unwrap_or(0.3);
+    let lim = limit.unwrap_or(20) as usize;
+
+    let insights = ctx
+        .pool()
+        .run(move |conn| {
+            get_unified_insights_sync(conn, project_id, filter_source.as_deref(), min_conf, 30, lim)
+        })
+        .await?;
+
+    if insights.is_empty() {
+        return Ok("No insights found.".to_string());
+    }
+
+    let mut output = format!("{} insights:\n\n", insights.len());
+    for insight in &insights {
+        output.push_str(&format!(
+            "• [{}] {} (score: {:.2}, confidence: {:.0}%)\n",
+            insight.source,
+            insight.description,
+            insight.priority_score,
+            insight.confidence * 100.0,
+        ));
+        if let Some(ref evidence) = insight.evidence {
+            output.push_str(&format!("  Evidence: {}\n", evidence));
+        }
+        output.push_str(&format!("  Type: {} | {}\n\n", insight.source, insight.source_type));
+    }
+    Ok(output)
 }
 
 /// Query session history

@@ -341,11 +341,13 @@ pub enum SessionAction {
     Recap,
     /// Query LLM usage analytics (summary, stats, list via usage_action)
     Usage,
+    /// Query unified insights digest (pondering, proactive, doc gaps)
+    Insights,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
-    #[schemars(description = "Action: history, recap, usage")]
+    #[schemars(description = "Action: history, recap, usage, insights")]
     pub action: SessionAction,
     #[schemars(description = "History sub-action: list_sessions/get_history/current")]
     pub history_action: Option<SessionHistoryAction>,
@@ -361,6 +363,10 @@ pub struct SessionRequest {
     pub group_by: Option<String>,
     #[schemars(description = "Filter to last N days (default: 30)")]
     pub since_days: Option<u32>,
+    #[schemars(description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)")]
+    pub insight_source: Option<String>,
+    #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.3)")]
+    pub min_confidence: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
