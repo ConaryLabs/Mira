@@ -29,6 +29,13 @@ pub struct InjectionConfig {
     pub enable_file_aware: bool,
     /// Enable task-aware injection
     pub enable_task_aware: bool,
+    /// Enable convention-aware injection
+    #[serde(default = "default_true")]
+    pub enable_convention: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for InjectionConfig {
@@ -42,6 +49,7 @@ impl Default for InjectionConfig {
             enable_semantic: true,
             enable_file_aware: true,
             enable_task_aware: true,
+            enable_convention: true,
         }
     }
 }
@@ -95,6 +103,9 @@ impl InjectionConfig {
         if self.enable_task_aware {
             sources.push("tasks");
         }
+        if self.enable_convention {
+            sources.push("convention");
+        }
         parts.push(format!("sources=[{}]", sources.join(",")));
 
         format!("Context injection: {}", parts.join(", "))
@@ -135,6 +146,11 @@ impl InjectionConfigBuilder {
 
     pub fn enable_task_aware(mut self, enable: bool) -> Self {
         self.config.enable_task_aware = enable;
+        self
+    }
+
+    pub fn enable_convention(mut self, enable: bool) -> Self {
+        self.config.enable_convention = enable;
         self
     }
 

@@ -11,14 +11,17 @@ mod analytics;
 mod budget;
 mod cache;
 mod config;
+mod convention;
 mod file_aware;
 mod goal_aware;
 mod semantic;
+mod working_context;
 
 pub use analytics::{InjectionAnalytics, InjectionEvent};
 pub use budget::BudgetManager;
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;
+pub use convention::ConventionInjector;
 pub use file_aware::FileAwareInjector;
 pub use goal_aware::GoalAwareInjector;
 pub use semantic::SemanticInjector;
@@ -83,6 +86,7 @@ pub enum InjectionSource {
     Semantic,
     FileAware,
     TaskAware,
+    Convention,
 }
 
 impl InjectionSource {
@@ -91,6 +95,7 @@ impl InjectionSource {
             Self::Semantic => "semantic",
             Self::FileAware => "files",
             Self::TaskAware => "tasks",
+            Self::Convention => "convention",
         }
     }
 }
@@ -101,6 +106,7 @@ pub struct ContextInjectionManager {
     semantic_injector: SemanticInjector,
     file_injector: FileAwareInjector,
     goal_injector: GoalAwareInjector,
+    convention_injector: ConventionInjector,
     budget_manager: BudgetManager,
     cache: InjectionCache,
     analytics: InjectionAnalytics,
@@ -121,6 +127,7 @@ impl ContextInjectionManager {
             semantic_injector: SemanticInjector::new(pool.clone(), embeddings, fuzzy),
             file_injector: FileAwareInjector::new(pool.clone()),
             goal_injector: GoalAwareInjector::new(pool.clone()),
+            convention_injector: ConventionInjector::new(pool.clone()),
             budget_manager: BudgetManager::with_limit(config.max_chars),
             cache: InjectionCache::new(),
             analytics: InjectionAnalytics::new(pool.clone()),
@@ -377,6 +384,18 @@ impl ContextInjectionManager {
         // Collect context from different injectors
         let mut contexts = Vec::new();
         let mut sources = Vec::new();
+
+        // Convention context (based on working modules, not message text)
+        if self.config.enable_convention {
+            let conv = self
+                .convention_injector
+                .inject_convention_context(session_id, project_id, project_path.as_deref())
+                .await;
+            if !conv.is_empty() {
+                contexts.push(conv);
+                sources.push(InjectionSource::Convention);
+            }
+        }
 
         // Semantic context
         if self.config.enable_semantic {

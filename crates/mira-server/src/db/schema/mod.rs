@@ -77,6 +77,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add tech debt scores table for per-module debt tracking
     migrate_tech_debt_scores(conn)?;
 
+    // Add module conventions table for convention-aware context injection
+    migrate_module_conventions(conn)?;
+
     Ok(())
 }
 
@@ -102,6 +105,32 @@ fn migrate_tech_debt_scores(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_tech_debt_project ON tech_debt_scores(project_id);
         CREATE INDEX IF NOT EXISTS idx_tech_debt_tier ON tech_debt_scores(project_id, tier);
+    "#,
+    )
+}
+
+/// Add module_conventions table for convention-aware context injection
+fn migrate_module_conventions(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::create_table_if_missing;
+    create_table_if_missing(
+        conn,
+        "module_conventions",
+        r#"
+        CREATE TABLE IF NOT EXISTS module_conventions (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            module_id TEXT NOT NULL,
+            module_path TEXT NOT NULL,
+            error_handling TEXT,
+            test_pattern TEXT,
+            key_imports TEXT,
+            naming TEXT,
+            detected_patterns TEXT,
+            confidence REAL DEFAULT 0.7,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, module_path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_module_conventions_project ON module_conventions(project_id);
     "#,
     )
 }

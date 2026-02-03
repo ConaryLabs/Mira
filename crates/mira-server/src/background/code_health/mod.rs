@@ -3,6 +3,7 @@
 
 mod analysis;
 mod cargo;
+pub mod conventions;
 pub mod dependencies;
 mod detection;
 pub mod patterns;
@@ -303,6 +304,18 @@ async fn scan_project_health(
         }
     }
 
+    // 12. Convention extraction (for context-aware suggestions)
+    match scan_conventions_sharded(main_pool, code_pool, project_id).await {
+        Ok(count) => {
+            if count > 0 {
+                tracing::info!("Code health: extracted conventions for {} modules", count);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Code health: convention extraction failed: {}", e);
+        }
+    }
+
     Ok(total)
 }
 
@@ -574,6 +587,40 @@ async fn scan_patterns_sharded(
             }
             Ok::<_, String>(())
         })
+        .await?;
+
+    Ok(count)
+}
+
+/// Scan coding conventions using sharded pools.
+/// Reads code_chunks/imports/symbols from code_pool, writes to module_conventions in main_pool.
+async fn scan_conventions_sharded(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<usize, String> {
+    // Collect convention data from code DB
+    let convention_data = code_pool
+        .run(move |conn| conventions::collect_convention_data(conn, project_id))
+        .await?;
+
+    if convention_data.is_empty() {
+        return Ok(0);
+    }
+
+    let count = convention_data.len();
+
+    // Collect module paths for marking as extracted
+    let module_paths: Vec<String> = convention_data.iter().map(|d| d.module_path.clone()).collect();
+
+    // Store convention data in main DB
+    main_pool
+        .run(move |conn| conventions::upsert_module_conventions(conn, project_id, &convention_data))
+        .await?;
+
+    // Mark modules as extracted in code DB
+    code_pool
+        .run(move |conn| conventions::mark_conventions_extracted(conn, project_id, &module_paths))
         .await?;
 
     Ok(count)

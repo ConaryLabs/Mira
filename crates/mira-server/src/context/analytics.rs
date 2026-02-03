@@ -106,6 +106,7 @@ impl InjectionAnalytics {
         let mut semantic_count = 0u64;
         let mut file_count = 0u64;
         let mut task_count = 0u64;
+        let mut convention_count = 0u64;
 
         for event in events.iter() {
             for source in &event.sources {
@@ -113,13 +114,14 @@ impl InjectionAnalytics {
                     InjectionSource::Semantic => semantic_count += 1,
                     InjectionSource::FileAware => file_count += 1,
                     InjectionSource::TaskAware => task_count += 1,
+                    InjectionSource::Convention => convention_count += 1,
                 }
             }
         }
 
         format!(
-            "Injection analytics:\n  Total: {} injections, {} chars ({} avg)\n  Sources: semantic={}, files={}, tasks={}",
-            total, chars, avg_chars, semantic_count, file_count, task_count
+            "Injection analytics:\n  Total: {} injections, {} chars ({} avg)\n  Sources: semantic={}, files={}, tasks={}, convention={}",
+            total, chars, avg_chars, semantic_count, file_count, task_count, convention_count
         )
     }
 
