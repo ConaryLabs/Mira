@@ -477,11 +477,11 @@ mod tests {
         let original = 0.5;
         let mut noisy_values: Vec<f64> = Vec::new();
 
-        for _ in 0..100 {
+        for _ in 0..1000 {
             noisy_values.push(anonymizer.add_laplace_noise(original));
         }
 
-        // Mean should be close to original
+        // Mean should be close to original (SE ≈ 0.045 at n=1000, threshold is ~6.7σ)
         let mean: f64 = noisy_values.iter().sum::<f64>() / noisy_values.len() as f64;
         assert!((mean - original).abs() < 0.3);
     }
