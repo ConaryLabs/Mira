@@ -3,7 +3,7 @@
 
 use crate::llm::Tool;
 use crate::tools::core::McpToolInfo;
-use rmcp::model::{CallToolRequestParam, CallToolResult, ClientInfo};
+use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo};
 use rmcp::service::{Peer, RunningService};
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::{RoleClient, serve_client};
@@ -185,6 +185,7 @@ impl McpClientManager {
 
         // Connect as MCP client
         let client_info = ClientInfo {
+            meta: None,
             protocol_version: Default::default(),
             capabilities: Default::default(),
             client_info: rmcp::model::Implementation {
@@ -325,9 +326,11 @@ impl McpClientManager {
 
         let result: CallToolResult = server
             .peer
-            .call_tool(CallToolRequestParam {
+            .call_tool(CallToolRequestParams {
+                meta: None,
                 name: tool_name_owned,
                 arguments,
+                task: None,
             })
             .await
             .map_err(|e| format!("MCP tool call failed: {}", e))?;

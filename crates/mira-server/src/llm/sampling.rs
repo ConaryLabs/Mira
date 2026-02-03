@@ -5,7 +5,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use rmcp::model::{
-    Content, CreateMessageRequestParam, ModelHint, ModelPreferences, Role, SamplingMessage,
+    Content, CreateMessageRequestParams, ModelHint, ModelPreferences, Role, SamplingMessage,
 };
 use rmcp::service::{Peer, RoleServer};
 use std::sync::Arc;
@@ -92,7 +92,9 @@ impl LlmClient for SamplingClient {
             return Err(anyhow!("No user/assistant messages to send via sampling"));
         }
 
-        let params = CreateMessageRequestParam {
+        let params = CreateMessageRequestParams {
+            meta: None,
+            task: None,
             messages: sampling_messages,
             model_preferences: Some(ModelPreferences {
                 hints: Some(vec![ModelHint {

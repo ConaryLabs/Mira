@@ -161,6 +161,7 @@ pub mod reviews;
 pub mod session;
 pub mod session_notes;
 pub mod teams;
+pub mod tasks;
 pub mod usage;
 
 // Re-export commonly used functions

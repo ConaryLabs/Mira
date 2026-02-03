@@ -5,8 +5,8 @@
 // degrade to existing behavior when the client doesn't support elicitation.
 
 use rmcp::model::{
-    CreateElicitationRequestParam, ElicitationAction, ElicitationSchema, EnumSchema,
-    PrimitiveSchema,
+    CreateElicitationRequestParams, ElicitationAction, ElicitationSchema,
+    EnumSchemaBuilder, PrimitiveSchema,
 };
 use rmcp::service::{Peer, RoleServer};
 use std::sync::Arc;
@@ -81,7 +81,8 @@ impl ElicitationClient {
             None => return ElicitationOutcome::NotSupported,
         };
 
-        let params = CreateElicitationRequestParam {
+        let params = CreateElicitationRequestParams {
+            meta: None,
             message: message.into(),
             requested_schema: schema,
         };
@@ -118,15 +119,17 @@ impl ElicitationClient {
 /// - `api_key`: required string, min 10 chars
 /// - `persist`: optional bool (default false) — save to ~/.mira/.env
 pub fn api_key_schema() -> ElicitationSchema {
-    let provider_enum = EnumSchema::new(vec![
+    let provider_enum = EnumSchemaBuilder::new(vec![
         "deepseek".to_string(),
         "gemini".to_string(),
     ])
-    .enum_names(vec![
+    .enum_titles(vec![
         "DeepSeek".to_string(),
         "Google Gemini".to_string(),
     ])
-    .description("Which LLM provider is this key for?");
+    .expect("enum titles count matches values")
+    .description("Which LLM provider is this key for?")
+    .build();
 
     ElicitationSchema::builder()
         .title("API Key Setup")

@@ -7,6 +7,7 @@ use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
     AnalyzeDiffRequest, CodeRequest, DocumentationRequest, ExpertRequest, FindingRequest,
     GoalRequest, IndexRequest, MemoryRequest, ProjectRequest, ReplyToMiraRequest, SessionRequest,
+    TasksRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -128,6 +129,12 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 .await
                 .map(|output| output.0.message)
         }
+        "tasks" => {
+            let req: TasksRequest = serde_json::from_str(&args)?;
+            mira::tools::tasks::handle_tasks(&server, req)
+                .await
+                .map(|output| output.0.message)
+        }
         _ => Err(format!("Unknown tool: {}", name)),
     };
 
@@ -154,6 +161,7 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "documentation",
         "finding",
         "analyze_diff",
+        "tasks",
     ]
 }
 

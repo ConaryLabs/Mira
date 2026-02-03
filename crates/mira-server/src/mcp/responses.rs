@@ -807,6 +807,54 @@ impl HasMessage for ReplyOutput {
 // Tests
 // ============================================================================
 
+// ============================================================================
+// Tasks (fallback for clients without native task support)
+// ============================================================================
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TasksOutput {
+    pub action: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<TasksData>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum TasksData {
+    List(TasksListData),
+    Status(TasksStatusData),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TasksListData {
+    pub tasks: Vec<TaskSummary>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TaskSummary {
+    pub task_id: String,
+    pub tool_name: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TasksStatusData {
+    pub task_id: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_structured: Option<serde_json::Value>,
+}
+
+impl HasMessage for TasksOutput {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -835,5 +883,6 @@ mod tests {
         );
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
         assert!(schema_for_output::<ReplyOutput>().is_ok(), "ReplyOutput");
+        assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");
     }
 }

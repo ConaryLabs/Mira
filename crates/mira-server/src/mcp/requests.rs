@@ -494,3 +494,26 @@ pub struct AnalyzeDiffRequest {
     pub include_impact: Option<bool>,
 }
 
+// ============================================================================
+// Tasks fallback tool (for clients without native task support)
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TasksAction {
+    /// List all running and recently completed tasks
+    List,
+    /// Get status and result of a specific task
+    Get,
+    /// Cancel a running task
+    Cancel,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TasksRequest {
+    #[schemars(description = "Action: list, get (by task_id), cancel (by task_id)")]
+    pub action: TasksAction,
+    #[schemars(description = "Task ID (required for get and cancel)")]
+    pub task_id: Option<String>,
+}
+

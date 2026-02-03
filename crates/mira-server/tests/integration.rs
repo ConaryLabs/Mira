@@ -5,6 +5,7 @@
 
 mod test_utils;
 
+use std::sync::Arc;
 use mira::mcp::requests::{ExpertConfigAction, GoalAction, IndexAction, SessionHistoryAction};
 use mira::mcp::responses::*;
 #[allow(unused_imports)]
@@ -2036,6 +2037,221 @@ async fn test_documentation_list_filter_by_status() {
     assert!(
         !msg!(output).contains("applied.md"),
         "Should not show applied task: {}",
+        msg!(output)
+    );
+}
+
+// ============================================================================
+// Tasks fallback tool tests
+// ============================================================================
+
+use mira::mcp::requests::{TasksAction, TasksRequest};
+use mira::mcp::MiraServer;
+use rmcp::task_manager::{OperationDescriptor, OperationMessage, ToolCallTaskResult};
+
+/// Helper to create a MiraServer with in-memory DBs for task tests
+async fn make_task_server() -> MiraServer {
+    let pool = Arc::new(
+        mira::db::pool::DatabasePool::open_in_memory()
+            .await
+            .expect("pool"),
+    );
+    let code_pool = Arc::new(
+        mira::db::pool::DatabasePool::open_code_db_in_memory()
+            .await
+            .expect("code pool"),
+    );
+    MiraServer::new(pool, code_pool, None)
+}
+
+#[tokio::test]
+async fn test_tasks_list_empty() {
+    let server = make_task_server().await;
+    let req = TasksRequest {
+        action: TasksAction::List,
+        task_id: None,
+    };
+    let output = mira::tools::tasks::handle_tasks(&server, req)
+        .await
+        .ok()
+        .expect("tasks list should succeed");
+    assert!(
+        msg!(output).contains("No tasks"),
+        "Expected 'No tasks', got: {}",
+        msg!(output)
+    );
+}
+
+#[tokio::test]
+async fn test_tasks_get_not_found() {
+    let server = make_task_server().await;
+    let req = TasksRequest {
+        action: TasksAction::Get,
+        task_id: Some("nonexistent-id".to_string()),
+    };
+    let result = mira::tools::tasks::handle_tasks(&server, req).await;
+    let err = result.err().expect("expected error");
+    assert!(
+        err.contains("not found"),
+        "Expected 'not found' error, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_tasks_cancel_not_found() {
+    let server = make_task_server().await;
+    let req = TasksRequest {
+        action: TasksAction::Cancel,
+        task_id: Some("nonexistent-id".to_string()),
+    };
+    let result = mira::tools::tasks::handle_tasks(&server, req).await;
+    let err = result.err().expect("expected error");
+    assert!(
+        err.contains("not found"),
+        "Expected 'not found' error, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_tasks_get_missing_task_id() {
+    let server = make_task_server().await;
+    let req = TasksRequest {
+        action: TasksAction::Get,
+        task_id: None,
+    };
+    let result = mira::tools::tasks::handle_tasks(&server, req).await;
+    let err = result.err().expect("expected error");
+    assert!(
+        err.contains("task_id is required"),
+        "Expected 'task_id is required' error, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_tasks_lifecycle() {
+    let server = make_task_server().await;
+
+    // Manually submit a short operation to the processor
+    let task_id = "test-task-123".to_string();
+    let tid = task_id.clone();
+    let future: rmcp::task_manager::OperationFuture = Box::pin(async move {
+        // Simulate a short operation
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let result = rmcp::model::CallToolResult {
+            content: vec![rmcp::model::Content::text("Task completed successfully")],
+            structured_content: Some(serde_json::json!({"status": "done"})),
+            is_error: Some(false),
+            meta: None,
+        };
+        let transport = ToolCallTaskResult::new(tid, Ok(result));
+        Ok(Box::new(transport) as Box<dyn rmcp::task_manager::OperationResultTransport>)
+    });
+
+    let descriptor = OperationDescriptor::new(task_id.clone(), "test_tool").with_ttl(60);
+    let message = OperationMessage::new(descriptor, future);
+
+    {
+        let mut proc = server.processor.lock().await;
+        proc.submit_operation(message).expect("submit should succeed");
+    }
+
+    // List — should show one working task
+    let req = TasksRequest {
+        action: TasksAction::List,
+        task_id: None,
+    };
+    let output = mira::tools::tasks::handle_tasks(&server, req)
+        .await
+        .ok()
+        .expect("tasks list should succeed");
+    assert!(
+        msg!(output).contains("1 task(s)"),
+        "Expected 1 task, got: {}",
+        msg!(output)
+    );
+
+    // Wait for the operation to complete
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Get — should return completed result
+    let req = TasksRequest {
+        action: TasksAction::Get,
+        task_id: Some(task_id.clone()),
+    };
+    let output = mira::tools::tasks::handle_tasks(&server, req)
+        .await
+        .ok()
+        .expect("tasks get should succeed");
+    assert!(
+        msg!(output).contains("completed"),
+        "Expected 'completed' status, got: {}",
+        msg!(output)
+    );
+    assert!(
+        msg!(output).contains("Task completed successfully"),
+        "Expected result text, got: {}",
+        msg!(output)
+    );
+}
+
+#[tokio::test]
+async fn test_tasks_cancel_running() {
+    let server = make_task_server().await;
+
+    // Submit a slow operation
+    let task_id = "slow-task-456".to_string();
+    let tid = task_id.clone();
+    let future: rmcp::task_manager::OperationFuture = Box::pin(async move {
+        // Very long sleep — will be cancelled
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        let result = rmcp::model::CallToolResult {
+            content: vec![rmcp::model::Content::text("should not reach here")],
+            structured_content: None,
+            is_error: Some(false),
+            meta: None,
+        };
+        let transport = ToolCallTaskResult::new(tid, Ok(result));
+        Ok(Box::new(transport) as Box<dyn rmcp::task_manager::OperationResultTransport>)
+    });
+
+    let descriptor = OperationDescriptor::new(task_id.clone(), "slow_tool").with_ttl(300);
+    let message = OperationMessage::new(descriptor, future);
+
+    {
+        let mut proc = server.processor.lock().await;
+        proc.submit_operation(message).expect("submit should succeed");
+    }
+
+    // Cancel
+    let req = TasksRequest {
+        action: TasksAction::Cancel,
+        task_id: Some(task_id.clone()),
+    };
+    let output = mira::tools::tasks::handle_tasks(&server, req)
+        .await
+        .ok()
+        .expect("cancel should succeed");
+    assert!(
+        msg!(output).contains("cancelled"),
+        "Expected 'cancelled' message, got: {}",
+        msg!(output)
+    );
+
+    // Get after cancel — should show cancelled status
+    let req = TasksRequest {
+        action: TasksAction::Get,
+        task_id: Some(task_id.clone()),
+    };
+    let output = mira::tools::tasks::handle_tasks(&server, req)
+        .await
+        .ok()
+        .expect("get after cancel should succeed");
+    assert!(
+        msg!(output).contains("cancelled"),
+        "Expected 'cancelled' status after cancel, got: {}",
         msg!(output)
     );
 }

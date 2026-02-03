@@ -4,6 +4,7 @@
 mod extraction;
 pub mod requests;
 pub mod responses;
+mod tasks;
 
 use crate::mcp_client::McpClientManager;
 use crate::tools::core as tools;
@@ -30,10 +31,15 @@ use rmcp::{
         wrapper::Parameters,
     },
     model::{
-        CallToolRequestParam, CallToolResult, Content, ListToolsResult, PaginatedRequestParam,
-        ServerCapabilities, ServerInfo,
+        CallToolRequestParams, CallToolResult, CancelTaskParams, Content, CreateTaskResult,
+        GetTaskInfoParams, GetTaskInfoResult, GetTaskResultParams, ListToolsResult,
+        ListTasksResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
+        Task, TaskResult as ModelTaskResult, TaskStatus, TasksCapability,
     },
     service::{RequestContext, RoleServer},
+    task_manager::{
+        self, OperationDescriptor, OperationMessage, OperationProcessor, ToolCallTaskResult,
+    },
     tool, tool_router,
 };
 use schemars::JsonSchema;
@@ -71,6 +77,8 @@ pub struct MiraServer {
     pub fuzzy_enabled: bool,
     /// MCP peer for sampling/createMessage fallback (captured on first tool call)
     pub peer: Arc<RwLock<Option<rmcp::service::Peer<RoleServer>>>>,
+    /// Task processor for async long-running operations (SEP-1686)
+    pub processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -107,6 +115,7 @@ impl MiraServer {
             fuzzy_cache: Arc::new(FuzzyCache::new()),
             fuzzy_enabled,
             peer,
+            processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -386,6 +395,17 @@ impl MiraServer {
         )
     }
 
+    #[tool(
+        description = "Manage async tasks. Actions: list, get (by task_id), cancel (by task_id).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::TasksOutput>()
+            .expect("TasksOutput schema")
+    )]
+    async fn tasks(
+        &self,
+        Parameters(req): Parameters<TasksRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::tasks::handle_tasks(self, req).await)
+    }
 }
 
 impl MiraServer {
@@ -463,11 +483,108 @@ impl MiraServer {
     }
 }
 
+impl MiraServer {
+    /// Execute a tool call with full lifecycle (session init, broadcast, logging, extraction).
+    /// Called from both synchronous `call_tool` and async task futures (`enqueue_task`).
+    pub(crate) async fn run_tool_call(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let tool_name = request.name.to_string();
+        let call_id = uuid::Uuid::new_v4().to_string();
+        let start = std::time::Instant::now();
+
+        // Capture peer on first tool call (for MCP sampling fallback)
+        if self.peer.read().await.is_none() {
+            let peer_clone = context.peer.clone();
+            if let Some(info) = peer_clone.peer_info() {
+                if info.capabilities.sampling.is_some() {
+                    tracing::info!("[mira] Client supports MCP sampling");
+                }
+                if info.capabilities.elicitation.is_some() {
+                    tracing::info!("[mira] Client supports MCP elicitation");
+                }
+            }
+            *self.peer.write().await = Some(peer_clone);
+        }
+
+        // Get or create session for persistence
+        let session_id = self.get_or_create_session().await;
+
+        // Auto-initialize project from Claude's cwd if needed
+        // Skip if the tool being called IS the project tool (avoid recursion)
+        if tool_name != "project" {
+            self.maybe_auto_init_project().await;
+        }
+
+        // Serialize arguments for storage
+        let args_json = request
+            .arguments
+            .as_ref()
+            .map(|a| serde_json::to_string(a).unwrap_or_default())
+            .unwrap_or_default();
+
+        // Broadcast tool start (direct, no HTTP)
+        self.broadcast(mira_types::WsEvent::ToolStart {
+            tool_name: tool_name.clone(),
+            arguments: serde_json::Value::Object(request.arguments.clone().unwrap_or_default()),
+            call_id: call_id.clone(),
+        });
+
+        let ctx = ToolCallContext::new(self, request, context);
+        let result = self.tool_router.call(ctx).await;
+
+        // Extract result and broadcast
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let (success, result_text) = Self::extract_result_text(&result);
+
+        self.broadcast(mira_types::WsEvent::ToolResult {
+            tool_name: tool_name.clone(),
+            result: result_text.clone(),
+            success,
+            call_id,
+            duration_ms,
+        });
+
+        // Persist to tool_history (fire-and-forget, never blocks tool response)
+        {
+            let server = self.clone();
+            let sid = session_id.clone();
+            let tn = tool_name.clone();
+            let aj = args_json.clone();
+            let rt = result_text.clone();
+            tokio::spawn(async move {
+                server.log_tool_call(&sid, &tn, &aj, &rt, success).await;
+            });
+        }
+
+        // Extract meaningful outcomes from tool results (async, non-blocking)
+        if success {
+            let project_id = self.project.read().await.as_ref().map(|p| p.id);
+            extraction::spawn_tool_extraction(
+                self.pool.clone(),
+                self.embeddings.clone(),
+                self.llm_factory.client_for_background(),
+                project_id,
+                tool_name,
+                args_json,
+                result_text,
+            );
+        }
+
+        result
+    }
+}
+
 impl ServerHandler for MiraServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: Default::default(),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tasks_with(TasksCapability::server_default())
+                .build(),
             server_info: rmcp::model::Implementation {
                 name: "mira".into(),
                 title: Some("Mira - Memory and Intelligence Layer for Claude Code".into()),
@@ -483,7 +600,7 @@ impl ServerHandler for MiraServer {
 
     fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
         std::future::ready(Ok(ListToolsResult {
@@ -496,93 +613,286 @@ impl ServerHandler for MiraServer {
     #[allow(clippy::manual_async_fn)]
     fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + Send + '_ {
+        self.run_tool_call(request, context)
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn enqueue_task(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CreateTaskResult, ErrorData>> + Send + '_ {
         async move {
             let tool_name = request.name.to_string();
-            let call_id = uuid::Uuid::new_v4().to_string();
-            let start = std::time::Instant::now();
 
-            // Capture peer on first tool call (for MCP sampling fallback)
-            if self.peer.read().await.is_none() {
-                let peer_clone = context.peer.clone();
-                if let Some(info) = peer_clone.peer_info() {
-                    if info.capabilities.sampling.is_some() {
-                        tracing::info!("[mira] Client supports MCP sampling");
-                    }
-                    if info.capabilities.elicitation.is_some() {
-                        tracing::info!("[mira] Client supports MCP elicitation");
-                    }
-                }
-                *self.peer.write().await = Some(peer_clone);
-            }
-
-            // Get or create session for persistence
-            let session_id = self.get_or_create_session().await;
-
-            // Auto-initialize project from Claude's cwd if needed
-            // Skip if the tool being called IS the project tool (avoid recursion)
-            if tool_name != "project" {
-                self.maybe_auto_init_project().await;
-            }
-
-            // Serialize arguments for storage
-            let args_json = request
+            // Extract action from arguments for eligibility check
+            let action = request
                 .arguments
                 .as_ref()
-                .map(|a| serde_json::to_string(a).unwrap_or_default())
-                .unwrap_or_default();
+                .and_then(|a| a.get("action"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
 
-            // Broadcast tool start (direct, no HTTP)
-            self.broadcast(mira_types::WsEvent::ToolStart {
-                tool_name: tool_name.clone(),
-                arguments: serde_json::Value::Object(request.arguments.clone().unwrap_or_default()),
-                call_id: call_id.clone(),
+            // Check eligibility by tool name + action
+            let ttl = match tasks::task_ttl(&tool_name, action.as_deref()) {
+                Some(ttl) => ttl,
+                None => {
+                    return Err(ErrorData::internal_error(
+                        format!(
+                            "Tool '{}' (action: {:?}) does not support async tasks",
+                            tool_name, action
+                        ),
+                        None,
+                    ));
+                }
+            };
+
+            // Generate task ID
+            let task_id = uuid::Uuid::new_v4().to_string();
+            let now = task_manager::current_timestamp();
+
+            // Strip the `task` field to prevent re-enqueue loops
+            let mut clean_request = request;
+            clean_request.task = None;
+
+            // Build the async future that calls run_tool_call
+            let server = self.clone();
+            let ctx = context.clone();
+            let tid = task_id.clone();
+            let future: task_manager::OperationFuture = Box::pin(async move {
+                let result = server.run_tool_call(clean_request, ctx).await;
+                let transport = ToolCallTaskResult::new(tid, result);
+                Ok(Box::new(transport)
+                    as Box<dyn task_manager::OperationResultTransport>)
             });
 
-            let ctx = ToolCallContext::new(self, request, context);
-            let result = self.tool_router.call(ctx).await;
+            // Build descriptor and submit
+            let descriptor = OperationDescriptor::new(task_id.clone(), tool_name.clone())
+                .with_ttl(ttl);
+            let message = OperationMessage::new(descriptor, future);
 
-            // Extract result and broadcast
-            let duration_ms = start.elapsed().as_millis() as u64;
-            let (success, result_text) = Self::extract_result_text(&result);
+            let mut proc = self.processor.lock().await;
+            proc.submit_operation(message).map_err(|e| {
+                ErrorData::internal_error(format!("Failed to enqueue task: {}", e), None)
+            })?;
 
-            self.broadcast(mira_types::WsEvent::ToolResult {
-                tool_name: tool_name.clone(),
-                result: result_text.clone(),
-                success,
-                call_id,
-                duration_ms,
-            });
+            tracing::info!(
+                task_id = %task_id,
+                tool = %tool_name,
+                ttl_secs = ttl,
+                "Enqueued async task"
+            );
 
-            // Persist to tool_history (fire-and-forget, never blocks tool response)
-            {
-                let server = self.clone();
-                let sid = session_id.clone();
-                let tn = tool_name.clone();
-                let aj = args_json.clone();
-                let rt = result_text.clone();
-                tokio::spawn(async move {
-                    server.log_tool_call(&sid, &tn, &aj, &rt, success).await;
+            Ok(CreateTaskResult {
+                task: Task {
+                    task_id,
+                    status: TaskStatus::Working,
+                    status_message: Some(format!("Running {} asynchronously", tool_name)),
+                    created_at: now,
+                    last_updated_at: None,
+                    ttl: Some(ttl * 1000), // Protocol uses milliseconds
+                    poll_interval: Some(2000),
+                },
+            })
+        }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn list_tasks(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListTasksResult, ErrorData>> + Send + '_ {
+        async move {
+            let mut proc = self.processor.lock().await;
+            proc.check_timeouts();
+
+            let running_ids = proc.list_running();
+            let mut all_tasks: Vec<Task> = running_ids
+                .iter()
+                .filter_map(|id| {
+                    proc.task_descriptor(id).map(|desc| Task {
+                        task_id: id.clone(),
+                        status: TaskStatus::Working,
+                        status_message: Some(format!("Running {}", desc.name)),
+                        created_at: String::new(), // Not tracked in descriptor
+                        last_updated_at: None,
+                        ttl: desc.ttl.map(|t| t * 1000),
+                        poll_interval: Some(2000),
+                    })
+                })
+                .collect();
+
+            // Include completed results that haven't been collected yet
+            for result in proc.peek_completed() {
+                let status = match &result.result {
+                    Ok(_) => TaskStatus::Completed,
+                    Err(e) if e.to_string().contains("cancelled") => TaskStatus::Cancelled,
+                    Err(_) => TaskStatus::Failed,
+                };
+                all_tasks.push(Task {
+                    task_id: result.descriptor.operation_id.clone(),
+                    status,
+                    status_message: Some(result.descriptor.name.clone()),
+                    created_at: String::new(),
+                    last_updated_at: None,
+                    ttl: None,
+                    poll_interval: None,
                 });
             }
 
-            // Extract meaningful outcomes from tool results (async, non-blocking)
-            if success {
-                let project_id = self.project.read().await.as_ref().map(|p| p.id);
-                extraction::spawn_tool_extraction(
-                    self.pool.clone(),
-                    self.embeddings.clone(),
-                    self.llm_factory.client_for_background(),
-                    project_id,
-                    tool_name,
-                    args_json,
-                    result_text,
-                );
+            Ok(ListTasksResult {
+                tasks: all_tasks,
+                next_cursor: None,
+                total: None,
+            })
+        }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn get_task_info(
+        &self,
+        request: GetTaskInfoParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<GetTaskInfoResult, ErrorData>> + Send + '_ {
+        async move {
+            let proc = self.processor.lock().await;
+
+            // Check running tasks first
+            if let Some(desc) = proc.task_descriptor(&request.task_id) {
+                return Ok(GetTaskInfoResult {
+                    task: Some(Task {
+                        task_id: request.task_id,
+                        status: TaskStatus::Working,
+                        status_message: Some(format!("Running {}", desc.name)),
+                        created_at: String::new(),
+                        last_updated_at: None,
+                        ttl: desc.ttl.map(|t| t * 1000),
+                        poll_interval: Some(2000),
+                    }),
+                });
             }
 
-            result
+            // Check completed results
+            for result in proc.peek_completed() {
+                if result.descriptor.operation_id == request.task_id {
+                    let status = match &result.result {
+                        Ok(_) => TaskStatus::Completed,
+                        Err(e) if e.to_string().contains("cancelled") => TaskStatus::Cancelled,
+                        Err(_) => TaskStatus::Failed,
+                    };
+                    return Ok(GetTaskInfoResult {
+                        task: Some(Task {
+                            task_id: request.task_id,
+                            status,
+                            status_message: Some(result.descriptor.name.clone()),
+                            created_at: String::new(),
+                            last_updated_at: None,
+                            ttl: None,
+                            poll_interval: None,
+                        }),
+                    });
+                }
+            }
+
+            // Not found
+            Ok(GetTaskInfoResult {
+                task: None,
+            })
+        }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn get_task_result(
+        &self,
+        request: GetTaskResultParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ModelTaskResult, ErrorData>> + Send + '_ {
+        async move {
+            let mut proc = self.processor.lock().await;
+            // Collect any newly completed results
+            proc.collect_completed_results();
+
+            match proc.take_completed_result(&request.task_id) {
+                Some(task_result) => match task_result.result {
+                    Ok(boxed) => {
+                        // Downcast to ToolCallTaskResult
+                        if let Some(tcr) = boxed.as_any().downcast_ref::<ToolCallTaskResult>() {
+                            let value = match &tcr.result {
+                                Ok(call_result) => {
+                                    serde_json::to_value(call_result).unwrap_or_default()
+                                }
+                                Err(e) => serde_json::json!({ "error": e.message }),
+                            };
+                            let summary = match &tcr.result {
+                                Ok(r) => r
+                                    .content
+                                    .first()
+                                    .and_then(|c| c.as_text())
+                                    .map(|t| {
+                                        if t.text.len() > 200 {
+                                            format!("{}...", &t.text[..200])
+                                        } else {
+                                            t.text.to_string()
+                                        }
+                                    }),
+                                Err(e) => Some(e.message.to_string()),
+                            };
+                            Ok(ModelTaskResult {
+                                content_type: "application/json".to_string(),
+                                value,
+                                summary,
+                            })
+                        } else {
+                            Err(ErrorData::internal_error(
+                                "Task result has unexpected type".to_string(),
+                                None,
+                            ))
+                        }
+                    }
+                    Err(e) => Err(ErrorData::internal_error(
+                        format!("Task failed: {}", e),
+                        None,
+                    )),
+                },
+                None => {
+                    // Check if still running
+                    if proc.task_descriptor(&request.task_id).is_some() {
+                        Err(ErrorData::internal_error(
+                            "Task is still running".to_string(),
+                            None,
+                        ))
+                    } else {
+                        Err(ErrorData::internal_error(
+                            format!("Task '{}' not found", request.task_id),
+                            None,
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn cancel_task(
+        &self,
+        request: CancelTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<(), ErrorData>> + Send + '_ {
+        async move {
+            let mut proc = self.processor.lock().await;
+            if proc.cancel_task(&request.task_id) {
+                tracing::info!(task_id = %request.task_id, "Task cancelled");
+                Ok(())
+            } else {
+                Err(ErrorData::internal_error(
+                    format!("Task '{}' not found or already completed", request.task_id),
+                    None,
+                ))
+            }
         }
     }
 }
