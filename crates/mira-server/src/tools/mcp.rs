@@ -162,4 +162,21 @@ impl ToolContext for MiraServer {
             })
             .unwrap_or(false)
     }
+
+    fn has_elicitation(&self) -> bool {
+        self.peer
+            .try_read()
+            .ok()
+            .and_then(|guard| {
+                guard.as_ref().and_then(|p| {
+                    p.peer_info()
+                        .map(|info| info.capabilities.elicitation.is_some())
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    fn elicitation_client(&self) -> Option<crate::elicitation::ElicitationClient> {
+        Some(crate::elicitation::ElicitationClient::new(self.peer.clone()))
+    }
 }

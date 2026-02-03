@@ -9,7 +9,7 @@ use super::{
     EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
     PARALLEL_EXPERT_TIMEOUT, ToolContext,
 };
-use crate::llm::{Message, Provider, record_llm_usage};
+use crate::llm::{DeepSeekClient, GeminiClient, LlmClient, Message, Provider, record_llm_usage};
 use crate::utils::ResultExt;
 use std::sync::Arc;
 use tokio::time::timeout;
@@ -26,13 +26,27 @@ pub async fn consult_expert<C: ToolContext>(
 
     // Expert consultation fundamentally requires LLM reasoning — no heuristic fallback
     let llm_factory = ctx.llm_factory();
-    if !llm_factory.has_providers() {
-        return Err(format!(
-            "Expert consultation ({}) requires an LLM provider. This tool uses AI models \
-             to reason about code. Set DEEPSEEK_API_KEY or GEMINI_API_KEY in ~/.mira/.env, \
-             or unset MIRA_DISABLE_LLM to enable expert consultation.",
-            expert.name()
-        ));
+
+    // Check for real API-keyed providers (not just sampling)
+    let has_real_providers = !llm_factory.available_providers().is_empty();
+
+    if !has_real_providers {
+        // Try elicitation to get an API key before falling back to sampling or error
+        if let Some(one_shot) = try_elicit_api_key(ctx).await {
+            tracing::info!(expert = %expert_key, "Using elicitated one-shot client");
+            return consult_expert_one_shot(ctx, expert, &expert_key, context, question, one_shot)
+                .await;
+        }
+
+        // No elicitation result — fall through to sampling or error
+        if !llm_factory.has_providers() {
+            return Err(format!(
+                "Expert consultation ({}) requires an LLM provider. This tool uses AI models \
+                 to reason about code. Set DEEPSEEK_API_KEY or GEMINI_API_KEY in ~/.mira/.env, \
+                 or unset MIRA_DISABLE_LLM to enable expert consultation.",
+                expert.name()
+            ));
+        }
     }
 
     // Get reasoning strategy: Single (one model) or Decoupled (chat + reasoner)
@@ -469,4 +483,116 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
     }
 
     Ok(output)
+}
+
+/// Try to get an API key from the user via MCP elicitation.
+///
+/// Returns a one-shot `Arc<dyn LlmClient>` if the user provides a valid key,
+/// `None` if elicitation is unavailable, unsupported, or the user declines.
+async fn try_elicit_api_key<C: ToolContext>(ctx: &C) -> Option<Arc<dyn LlmClient>> {
+    let elicit = ctx.elicitation_client()?;
+    if !elicit.is_available().await {
+        return None;
+    }
+
+    let (provider, key, persist) = crate::elicitation::request_api_key(&elicit).await?;
+
+    let client: Arc<dyn LlmClient> = match provider {
+        // Use deepseek-chat (tool-capable) rather than deepseek-reasoner for one-shot
+        Provider::DeepSeek => Arc::new(DeepSeekClient::with_model(key.clone(), "deepseek-chat".into())),
+        Provider::Gemini => Arc::new(GeminiClient::new(key.clone())),
+        _ => return None,
+    };
+
+    if persist {
+        crate::elicitation::persist_api_key(provider.api_key_env_var(), &key);
+    }
+
+    tracing::info!(provider = %provider, "[expert] Using elicitated API key (one-shot)");
+    Some(client)
+}
+
+/// Single-shot expert consultation using a one-shot LLM client (from elicitation).
+///
+/// Similar to `consult_expert_via_sampling` but uses a real provider client,
+/// so it supports tools and the agentic loop.
+async fn consult_expert_one_shot<C: ToolContext>(
+    ctx: &C,
+    expert: ExpertRole,
+    expert_key: &str,
+    context: String,
+    question: Option<String>,
+    chat_client: Arc<dyn LlmClient>,
+) -> Result<String, String> {
+    let provider = chat_client.provider_type();
+    tracing::info!(expert = %expert_key, provider = %provider, "One-shot expert consultation starting");
+
+    // Get system prompt
+    let system_prompt = expert.system_prompt(ctx).await;
+
+    // Inject learned patterns for code reviewer and security experts
+    let patterns_context = if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
+        get_patterns_context(ctx, expert_key).await
+    } else {
+        String::new()
+    };
+
+    let enriched_context = if patterns_context.is_empty() {
+        context
+    } else {
+        format!("{}\n{}", context, patterns_context)
+    };
+
+    let user_prompt = build_user_prompt(&enriched_context, question.as_deref());
+    let messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
+
+    // Single LLM call with tools
+    let mut tools = get_expert_tools();
+    tools.push(web_fetch_tool());
+    if std::env::var("BRAVE_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .is_some()
+    {
+        tools.push(web_search_tool());
+    }
+
+    let result = timeout(
+        LLM_CALL_TIMEOUT,
+        chat_client.chat(messages, Some(tools)),
+    )
+    .await
+    .map_err(|_| format!("One-shot expert timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
+    .map_err(|e| format!("One-shot expert consultation failed: {}", e))?;
+
+    // Record usage
+    let role_for_usage = format!("expert:{}", expert_key);
+    record_llm_usage(
+        ctx.pool(),
+        provider,
+        &chat_client.model_name(),
+        &role_for_usage,
+        &result,
+        ctx.project_id().await,
+        ctx.get_session_id().await,
+    )
+    .await;
+
+    // Parse and store findings for code reviewer and security experts
+    if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
+        if let Some(ref content) = result.content {
+            let findings = parse_expert_findings(content, expert_key);
+            if !findings.is_empty() {
+                let stored = store_findings(ctx, &findings, expert_key).await;
+                tracing::debug!(
+                    expert = %expert_key,
+                    parsed = findings.len(),
+                    stored,
+                    "Parsed and stored review findings (elicitation one-shot)"
+                );
+            }
+        }
+    }
+
+    Ok(format_expert_response(expert, result, 0, 1))
 }

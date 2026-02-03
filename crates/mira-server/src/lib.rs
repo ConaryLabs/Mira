@@ -13,6 +13,7 @@ pub mod config;
 pub mod context;
 pub mod cross_project;
 pub mod db;
+pub mod elicitation;
 pub mod embeddings;
 pub mod error;
 pub mod fuzzy;

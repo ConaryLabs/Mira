@@ -435,6 +435,9 @@ impl ServerHandler for MiraServer {
                     if info.capabilities.sampling.is_some() {
                         tracing::info!("[mira] Client supports MCP sampling");
                     }
+                    if info.capabilities.elicitation.is_some() {
+                        tracing::info!("[mira] Client supports MCP elicitation");
+                    }
                 }
                 *self.peer.write().await = Some(peer_clone);
             }

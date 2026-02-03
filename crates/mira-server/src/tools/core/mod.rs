@@ -134,6 +134,16 @@ pub trait ToolContext: Send + Sync {
     fn has_sampling(&self) -> bool {
         false
     }
+
+    /// Whether the MCP client supports elicitation (interactive user input)
+    fn has_elicitation(&self) -> bool {
+        false
+    }
+
+    /// Get an elicitation client for requesting user input during tool execution
+    fn elicitation_client(&self) -> Option<crate::elicitation::ElicitationClient> {
+        None
+    }
 }
 
 // Sub-modules with tool implementations
