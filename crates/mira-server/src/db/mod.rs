@@ -7,6 +7,7 @@ mod chat;
 mod config;
 pub mod dependencies;
 mod diff_analysis;
+pub mod diff_outcomes;
 pub mod documentation;
 mod embeddings;
 mod index;

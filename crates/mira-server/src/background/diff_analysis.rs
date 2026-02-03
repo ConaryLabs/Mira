@@ -7,6 +7,8 @@ use crate::db::{
     store_diff_analysis_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::proactive::PatternType;
+use crate::proactive::patterns::{PatternData, get_patterns_by_type};
 use crate::search::find_callers;
 use crate::utils::ResultExt;
 use crate::utils::json::parse_json_hardened;
@@ -58,6 +60,9 @@ pub struct DiffAnalysisResult {
     pub files_changed: i64,
     pub lines_added: i64,
     pub lines_removed: i64,
+    /// Full list of changed file paths (from git numstat)
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 /// Diff statistics from git
@@ -67,6 +72,186 @@ pub struct DiffStats {
     pub lines_added: i64,
     pub lines_removed: i64,
     pub files: Vec<String>,
+}
+
+/// Historical risk assessment computed from mined change patterns
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalRisk {
+    /// Overall risk adjustment: "elevated" or "normal"
+    pub risk_delta: String,
+    /// Patterns that matched the current diff
+    pub matching_patterns: Vec<MatchedPattern>,
+    /// Weighted average confidence across matched patterns
+    pub overall_confidence: f64,
+}
+
+/// A single pattern that matched the current diff
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchedPattern {
+    /// Pattern subtype: "module_hotspot", "co_change_gap", "size_risk"
+    pub pattern_subtype: String,
+    /// Human-readable description of the match
+    pub description: String,
+    /// Pattern confidence (0.0-1.0)
+    pub confidence: f64,
+    /// Bad outcome rate from historical data
+    pub bad_rate: f64,
+}
+
+/// Compute historical risk by matching current diff files against mined ChangePattern patterns.
+///
+/// This is computed LIVE at query time (never cached) so it always reflects
+/// the latest mined patterns.
+pub fn compute_historical_risk(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    files: &[String],
+    files_changed: i64,
+) -> Option<HistoricalRisk> {
+    let patterns = get_patterns_by_type(conn, project_id, &PatternType::ChangePattern, 50).ok()?;
+
+    if patterns.is_empty() {
+        return None;
+    }
+
+    let file_set: HashSet<&str> = files.iter().map(|f| f.as_str()).collect();
+
+    // Extract top-level module for each file (same logic as mining)
+    let file_modules: HashSet<&str> = files
+        .iter()
+        .map(|f| match f.find('/') {
+            Some(idx) => &f[..idx],
+            None => f.as_str(),
+        })
+        .collect();
+
+    // Determine size bucket (same buckets as mining)
+    let size_bucket = if files_changed <= 3 {
+        "small"
+    } else if files_changed <= 10 {
+        "medium"
+    } else {
+        "large"
+    };
+
+    let mut matches = Vec::new();
+
+    for pattern in &patterns {
+        if let PatternData::ChangePattern {
+            ref files,
+            ref module,
+            ref pattern_subtype,
+            ref outcome_stats,
+            ..
+        } = pattern.pattern_data
+        {
+            let bad_rate = if outcome_stats.total > 0 {
+                (outcome_stats.reverted + outcome_stats.follow_up_fix) as f64
+                    / outcome_stats.total as f64
+            } else {
+                0.0
+            };
+
+            match pattern_subtype.as_str() {
+                "module_hotspot" => {
+                    if let Some(m) = module {
+                        if file_modules.contains(m.as_str()) {
+                            matches.push(MatchedPattern {
+                                pattern_subtype: pattern_subtype.clone(),
+                                description: format!(
+                                    "Module '{}' has {:.0}% bad outcome rate ({} of {} changes)",
+                                    m,
+                                    bad_rate * 100.0,
+                                    outcome_stats.reverted + outcome_stats.follow_up_fix,
+                                    outcome_stats.total
+                                ),
+                                confidence: pattern.confidence,
+                                bad_rate,
+                            });
+                        }
+                    }
+                }
+                "co_change_gap" => {
+                    if files.len() >= 2 {
+                        let file_a = &files[0];
+                        let file_b = &files[1];
+                        // Flag if file_a is in diff but file_b is NOT
+                        if file_set.contains(file_a.as_str())
+                            && !file_set.contains(file_b.as_str())
+                        {
+                            matches.push(MatchedPattern {
+                                pattern_subtype: pattern_subtype.clone(),
+                                description: format!(
+                                    "'{}' changed without '{}' — historically {:.0}% bad outcome rate",
+                                    file_a,
+                                    file_b,
+                                    bad_rate * 100.0
+                                ),
+                                confidence: pattern.confidence,
+                                bad_rate,
+                            });
+                        }
+                        // Also check the reverse: file_b without file_a
+                        if file_set.contains(file_b.as_str())
+                            && !file_set.contains(file_a.as_str())
+                        {
+                            matches.push(MatchedPattern {
+                                pattern_subtype: pattern_subtype.clone(),
+                                description: format!(
+                                    "'{}' changed without '{}' — historically {:.0}% bad outcome rate",
+                                    file_b,
+                                    file_a,
+                                    bad_rate * 100.0
+                                ),
+                                confidence: pattern.confidence,
+                                bad_rate,
+                            });
+                        }
+                    }
+                }
+                "size_risk" => {
+                    // Extract bucket from pattern_key: "size_risk:small"
+                    let pattern_bucket = pattern
+                        .pattern_key
+                        .strip_prefix("size_risk:")
+                        .unwrap_or("");
+                    if pattern_bucket == size_bucket {
+                        matches.push(MatchedPattern {
+                            pattern_subtype: pattern_subtype.clone(),
+                            description: format!(
+                                "{} changes ({} files) have {:.0}% bad outcome rate historically",
+                                size_bucket.to_uppercase(),
+                                files_changed,
+                                bad_rate * 100.0
+                            ),
+                            confidence: pattern.confidence,
+                            bad_rate,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if matches.is_empty() {
+        return None;
+    }
+
+    let total_confidence: f64 = matches.iter().map(|m| m.confidence).sum();
+    let overall_confidence = total_confidence / matches.len() as f64;
+
+    let risk_delta = if matches.iter().any(|m| m.confidence > 0.5) {
+        "elevated".to_string()
+    } else {
+        "normal".to_string()
+    };
+
+    Some(HistoricalRisk {
+        risk_delta,
+        matching_patterns: matches,
+        overall_confidence,
+    })
 }
 
 /// Get unified diff between two refs
@@ -525,6 +710,12 @@ pub fn calculate_risk_level(flags: &[String], changes: &[SemanticChange]) -> Str
 
 /// Reconstruct a DiffAnalysisResult from cached database row
 fn result_from_cache(cached: DiffAnalysis, from_ref: String, to_ref: String) -> DiffAnalysisResult {
+    let files: Vec<String> = cached
+        .files_json
+        .as_deref()
+        .and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default();
+
     DiffAnalysisResult {
         from_ref,
         to_ref,
@@ -543,6 +734,7 @@ fn result_from_cache(cached: DiffAnalysis, from_ref: String, to_ref: String) -> 
         files_changed: cached.files_changed.unwrap_or(0),
         lines_added: cached.lines_added.unwrap_or(0),
         lines_removed: cached.lines_removed.unwrap_or(0),
+        files,
     }
 }
 
@@ -567,6 +759,13 @@ async fn cache_result(
     let lines_removed = result.lines_removed;
     let analysis_type = analysis_type.to_string();
 
+    // Use the full file list from git numstat for outcome tracking
+    let files_json = if result.files.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&result.files).ok()
+    };
+
     if let Err(e) = pool
         .interact(move |conn| {
             store_diff_analysis_sync(
@@ -582,6 +781,7 @@ async fn cache_result(
                 Some(files_changed),
                 Some(lines_added),
                 Some(lines_removed),
+                files_json.as_deref(),
             )
             .map_err(|e| anyhow::anyhow!("{}", e))
         })
@@ -644,6 +844,7 @@ pub async fn analyze_diff(
                 flags: vec![],
             },
             summary: "No changes between the specified commits.".to_string(),
+            files: vec![],
             files_changed: 0,
             lines_added: 0,
             lines_removed: 0,
@@ -699,6 +900,7 @@ pub async fn analyze_diff(
         impact,
         risk,
         summary,
+        files: stats.files.clone(),
         files_changed: stats.files_changed,
         lines_added: stats.lines_added,
         lines_removed: stats.lines_removed,
@@ -710,7 +912,10 @@ pub async fn analyze_diff(
 }
 
 /// Format diff analysis result for display
-pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
+pub fn format_diff_analysis(
+    result: &DiffAnalysisResult,
+    historical_risk: Option<&HistoricalRisk>,
+) -> String {
     let mut output = String::new();
 
     output.push_str(&format!(
@@ -743,6 +948,22 @@ pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
     output.push_str(&format!("### Risk: {}\n", result.risk.overall));
     for flag in &result.risk.flags {
         output.push_str(&format!("- {}\n", flag));
+    }
+
+    // Historical Risk (from mined change patterns)
+    if let Some(hr) = historical_risk {
+        output.push_str(&format!(
+            "\n### Historical Risk: {}\n",
+            hr.risk_delta.to_uppercase()
+        ));
+        output.push_str(&format!(
+            "Based on {} matching pattern(s) (confidence: {:.0}%)\n",
+            hr.matching_patterns.len(),
+            hr.overall_confidence * 100.0
+        ));
+        for mp in &hr.matching_patterns {
+            output.push_str(&format!("- **{}**: {}\n", mp.pattern_subtype, mp.description));
+        }
     }
 
     output
@@ -1020,12 +1241,13 @@ Some trailing text"#;
                 flags: vec![],
             },
             summary: "No significant changes".to_string(),
+            files: vec!["src/main.rs".to_string()],
             files_changed: 1,
             lines_added: 10,
             lines_removed: 5,
         };
 
-        let output = format_diff_analysis(&result);
+        let output = format_diff_analysis(&result, None);
         assert!(output.contains("## Semantic Diff Analysis: abc123..def456"));
         assert!(output.contains("No significant changes"));
         assert!(output.contains("1 files changed, +10 -5"));
@@ -1067,12 +1289,13 @@ Some trailing text"#;
                 flags: vec!["breaking_change".to_string()],
             },
             summary: "Added new feature and modified existing function".to_string(),
+            files: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
             files_changed: 2,
             lines_added: 50,
             lines_removed: 10,
         };
 
-        let output = format_diff_analysis(&result);
+        let output = format_diff_analysis(&result, None);
         assert!(output.contains("### Changes (2)"));
         assert!(output.contains("**New Features**"));
         assert!(output.contains("Added init function"));
@@ -1134,5 +1357,333 @@ Some trailing text"#;
 
         assert_eq!(deserialized.affected_functions.len(), 2);
         assert_eq!(deserialized.affected_files.len(), 2);
+    }
+
+    // =========================================================================
+    // Historical Risk Tests
+    // =========================================================================
+
+    fn setup_patterns_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE behavior_patterns (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER,
+                pattern_type TEXT NOT NULL,
+                pattern_key TEXT NOT NULL,
+                pattern_data TEXT NOT NULL,
+                confidence REAL DEFAULT 0.5,
+                occurrence_count INTEGER DEFAULT 1,
+                last_triggered_at TEXT,
+                first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, pattern_type, pattern_key)
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn seed_pattern(conn: &rusqlite::Connection, project_id: i64, key: &str, data: &str, confidence: f64, count: i64) {
+        conn.execute(
+            "INSERT INTO behavior_patterns (project_id, pattern_type, pattern_key, pattern_data, confidence, occurrence_count)
+             VALUES (?, 'change_pattern', ?, ?, ?, ?)",
+            rusqlite::params![project_id, key, data, confidence, count],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_historical_risk_no_patterns() {
+        let conn = setup_patterns_db();
+        let result = compute_historical_risk(&conn, 1, &["src/main.rs".into()], 1);
+        assert!(result.is_none(), "Should return None when no patterns exist");
+    }
+
+    #[test]
+    fn test_historical_risk_module_hotspot_match() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": "src",
+            "pattern_subtype": "module_hotspot",
+            "outcome_stats": { "total": 10, "clean": 5, "reverted": 3, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "module_hotspot:src", &data.to_string(), 0.7, 10);
+
+        let result = compute_historical_risk(
+            &conn, 1, &["src/lib.rs".into(), "src/main.rs".into()], 2,
+        );
+        assert!(result.is_some());
+        let hr = result.unwrap();
+        assert_eq!(hr.risk_delta, "elevated");
+        assert_eq!(hr.matching_patterns.len(), 1);
+        assert_eq!(hr.matching_patterns[0].pattern_subtype, "module_hotspot");
+        assert!((hr.matching_patterns[0].bad_rate - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_historical_risk_module_hotspot_no_match() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": "tests",
+            "pattern_subtype": "module_hotspot",
+            "outcome_stats": { "total": 10, "clean": 3, "reverted": 5, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "module_hotspot:tests", &data.to_string(), 0.8, 10);
+
+        // Files are in "src", not "tests"
+        let result = compute_historical_risk(&conn, 1, &["src/main.rs".into()], 1);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_historical_risk_co_change_gap_match() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": ["src/schema.rs", "src/migrations.rs"],
+            "module": null,
+            "pattern_subtype": "co_change_gap",
+            "outcome_stats": { "total": 5, "clean": 1, "reverted": 2, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "co_change_gap:src/schema.rs|src/migrations.rs", &data.to_string(), 0.65, 5);
+
+        // schema.rs changed WITHOUT migrations.rs
+        let result = compute_historical_risk(
+            &conn, 1, &["src/schema.rs".into(), "src/lib.rs".into()], 2,
+        );
+        assert!(result.is_some());
+        let hr = result.unwrap();
+        assert_eq!(hr.matching_patterns.len(), 1);
+        assert_eq!(hr.matching_patterns[0].pattern_subtype, "co_change_gap");
+        assert!(hr.matching_patterns[0].description.contains("schema.rs"));
+        assert!(hr.matching_patterns[0].description.contains("migrations.rs"));
+    }
+
+    #[test]
+    fn test_historical_risk_co_change_gap_both_present() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": ["src/schema.rs", "src/migrations.rs"],
+            "module": null,
+            "pattern_subtype": "co_change_gap",
+            "outcome_stats": { "total": 5, "clean": 1, "reverted": 2, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "co_change_gap:src/schema.rs|src/migrations.rs", &data.to_string(), 0.65, 5);
+
+        // Both files present — no gap, no match
+        let result = compute_historical_risk(
+            &conn, 1, &["src/schema.rs".into(), "src/migrations.rs".into()], 2,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_historical_risk_size_risk_match() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": null,
+            "pattern_subtype": "size_risk",
+            "outcome_stats": { "total": 8, "clean": 3, "reverted": 3, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "size_risk:large", &data.to_string(), 0.6, 8);
+
+        // 15 files = "large" bucket
+        let files: Vec<String> = (0..15).map(|i| format!("src/file{}.rs", i)).collect();
+        let result = compute_historical_risk(&conn, 1, &files, 15);
+        assert!(result.is_some());
+        let hr = result.unwrap();
+        assert_eq!(hr.matching_patterns.len(), 1);
+        assert_eq!(hr.matching_patterns[0].pattern_subtype, "size_risk");
+        assert!(hr.matching_patterns[0].description.contains("LARGE"));
+    }
+
+    #[test]
+    fn test_historical_risk_size_bucket_no_match() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": null,
+            "pattern_subtype": "size_risk",
+            "outcome_stats": { "total": 8, "clean": 3, "reverted": 3, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "size_risk:large", &data.to_string(), 0.6, 8);
+
+        // 2 files = "small" bucket, pattern is for "large"
+        let result = compute_historical_risk(
+            &conn, 1, &["src/a.rs".into(), "src/b.rs".into()], 2,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_historical_risk_multiple_matches() {
+        let conn = setup_patterns_db();
+
+        // Module hotspot
+        let hotspot = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": "src",
+            "pattern_subtype": "module_hotspot",
+            "outcome_stats": { "total": 10, "clean": 5, "reverted": 3, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "module_hotspot:src", &hotspot.to_string(), 0.7, 10);
+
+        // Size risk for medium
+        let size = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": null,
+            "pattern_subtype": "size_risk",
+            "outcome_stats": { "total": 6, "clean": 2, "reverted": 2, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "size_risk:medium", &size.to_string(), 0.55, 6);
+
+        // 5 files in src = matches both module_hotspot:src AND size_risk:medium
+        let files: Vec<String> = (0..5).map(|i| format!("src/file{}.rs", i)).collect();
+        let result = compute_historical_risk(&conn, 1, &files, 5);
+        assert!(result.is_some());
+        let hr = result.unwrap();
+        assert_eq!(hr.matching_patterns.len(), 2);
+        assert_eq!(hr.risk_delta, "elevated");
+        // Confidence should be average of 0.7 and 0.55
+        assert!((hr.overall_confidence - 0.625).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_historical_risk_low_confidence_normal() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": "src",
+            "pattern_subtype": "module_hotspot",
+            "outcome_stats": { "total": 3, "clean": 1, "reverted": 1, "follow_up_fix": 1 },
+            "sample_commits": []
+        });
+        // Low confidence (0.4) — should match but risk_delta = "normal"
+        seed_pattern(&conn, 1, "module_hotspot:src", &data.to_string(), 0.4, 3);
+
+        let result = compute_historical_risk(&conn, 1, &["src/main.rs".into()], 1);
+        assert!(result.is_some());
+        let hr = result.unwrap();
+        assert_eq!(hr.risk_delta, "normal");
+    }
+
+    #[test]
+    fn test_historical_risk_wrong_project() {
+        let conn = setup_patterns_db();
+        let data = serde_json::json!({
+            "type": "change_pattern",
+            "files": [],
+            "module": "src",
+            "pattern_subtype": "module_hotspot",
+            "outcome_stats": { "total": 10, "clean": 5, "reverted": 3, "follow_up_fix": 2 },
+            "sample_commits": []
+        });
+        seed_pattern(&conn, 1, "module_hotspot:src", &data.to_string(), 0.7, 10);
+
+        // Query for project 2 — shouldn't match project 1's patterns
+        let result = compute_historical_risk(&conn, 2, &["src/main.rs".into()], 1);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_historical_risk_serialization_roundtrip() {
+        let hr = HistoricalRisk {
+            risk_delta: "elevated".to_string(),
+            matching_patterns: vec![
+                MatchedPattern {
+                    pattern_subtype: "module_hotspot".to_string(),
+                    description: "Module 'src' has 50% bad outcome rate".to_string(),
+                    confidence: 0.7,
+                    bad_rate: 0.5,
+                },
+            ],
+            overall_confidence: 0.7,
+        };
+
+        let json = serde_json::to_string(&hr).unwrap();
+        let deserialized: HistoricalRisk = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.risk_delta, "elevated");
+        assert_eq!(deserialized.matching_patterns.len(), 1);
+        assert!((deserialized.overall_confidence - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_format_diff_analysis_with_historical_risk() {
+        let result = DiffAnalysisResult {
+            from_ref: "abc123".to_string(),
+            to_ref: "def456".to_string(),
+            changes: vec![],
+            impact: None,
+            risk: RiskAssessment {
+                overall: "Medium".to_string(),
+                flags: vec![],
+            },
+            summary: "Test".to_string(),
+            files: vec!["src/main.rs".to_string()],
+            files_changed: 1,
+            lines_added: 5,
+            lines_removed: 2,
+        };
+
+        let hr = HistoricalRisk {
+            risk_delta: "elevated".to_string(),
+            matching_patterns: vec![
+                MatchedPattern {
+                    pattern_subtype: "module_hotspot".to_string(),
+                    description: "Module 'src' has 50% bad outcome rate".to_string(),
+                    confidence: 0.7,
+                    bad_rate: 0.5,
+                },
+            ],
+            overall_confidence: 0.7,
+        };
+
+        let output = format_diff_analysis(&result, Some(&hr));
+        assert!(output.contains("### Historical Risk: ELEVATED"));
+        assert!(output.contains("1 matching pattern(s)"));
+        assert!(output.contains("module_hotspot"));
+        assert!(output.contains("50% bad outcome rate"));
+    }
+
+    #[test]
+    fn test_format_diff_analysis_without_historical_risk() {
+        let result = DiffAnalysisResult {
+            from_ref: "abc123".to_string(),
+            to_ref: "def456".to_string(),
+            changes: vec![],
+            impact: None,
+            risk: RiskAssessment {
+                overall: "Low".to_string(),
+                flags: vec![],
+            },
+            summary: "Test".to_string(),
+            files: vec![],
+            files_changed: 0,
+            lines_added: 0,
+            lines_removed: 0,
+        };
+
+        let output = format_diff_analysis(&result, None);
+        assert!(!output.contains("Historical Risk"));
     }
 }

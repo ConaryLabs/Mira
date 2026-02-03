@@ -53,10 +53,11 @@ impl EventType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PatternType {
-    FileSequence, // Files accessed together or in sequence
-    ToolChain,    // Tools used in sequence
-    SessionFlow,  // Common session patterns
-    QueryPattern, // Common query patterns
+    FileSequence,  // Files accessed together or in sequence
+    ToolChain,     // Tools used in sequence
+    SessionFlow,   // Common session patterns
+    QueryPattern,  // Common query patterns
+    ChangePattern, // Recurring code change patterns correlated with outcomes
 }
 
 impl PatternType {
@@ -66,6 +67,7 @@ impl PatternType {
             PatternType::ToolChain => "tool_chain",
             PatternType::SessionFlow => "session_flow",
             PatternType::QueryPattern => "query_pattern",
+            PatternType::ChangePattern => "change_pattern",
         }
     }
 
@@ -76,6 +78,7 @@ impl PatternType {
             "tool_chain" => Some(PatternType::ToolChain),
             "session_flow" => Some(PatternType::SessionFlow),
             "query_pattern" => Some(PatternType::QueryPattern),
+            "change_pattern" => Some(PatternType::ChangePattern),
             _ => None,
         }
     }
@@ -302,6 +305,7 @@ mod tests {
         assert_eq!(PatternType::ToolChain.as_str(), "tool_chain");
         assert_eq!(PatternType::SessionFlow.as_str(), "session_flow");
         assert_eq!(PatternType::QueryPattern.as_str(), "query_pattern");
+        assert_eq!(PatternType::ChangePattern.as_str(), "change_pattern");
     }
 
     #[test]
@@ -322,6 +326,10 @@ mod tests {
             PatternType::from_str("query_pattern"),
             Some(PatternType::QueryPattern)
         );
+        assert_eq!(
+            PatternType::from_str("change_pattern"),
+            Some(PatternType::ChangePattern)
+        );
         assert_eq!(PatternType::from_str("invalid"), None);
     }
 
@@ -332,6 +340,7 @@ mod tests {
             PatternType::ToolChain,
             PatternType::SessionFlow,
             PatternType::QueryPattern,
+            PatternType::ChangePattern,
         ];
         for pattern in &patterns {
             let s = pattern.as_str();

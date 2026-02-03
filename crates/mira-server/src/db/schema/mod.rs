@@ -55,6 +55,12 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add diff analyses table for semantic diff analysis
     reviews::migrate_diff_analyses_table(conn)?;
 
+    // Add files_json column to diff_analyses for outcome tracking
+    reviews::migrate_diff_analyses_files_json(conn)?;
+
+    // Add diff_outcomes table for tracking change outcomes
+    reviews::migrate_diff_outcomes_table(conn)?;
+
     // Add LLM usage tracking table for cost analytics
     reviews::migrate_llm_usage_table(conn)?;
 

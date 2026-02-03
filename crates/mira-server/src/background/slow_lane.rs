@@ -11,7 +11,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::{
-    briefings, code_health, documentation, pondering, proactive, session_summaries, summaries,
+    briefings, code_health, documentation, outcome_scanner, pondering, proactive,
+    session_summaries, summaries,
 };
 
 /// Delay before first cycle to let the service start up
@@ -26,6 +27,8 @@ const ERROR_DELAY_SECS: u64 = 120;
 const DOCUMENTATION_CYCLE_INTERVAL: u64 = 3;
 /// Run pondering tasks every Nth cycle
 const PONDERING_CYCLE_INTERVAL: u64 = 10;
+/// Run outcome scanning every Nth cycle
+const OUTCOME_SCAN_CYCLE_INTERVAL: u64 = 5;
 
 /// Slow lane worker for LLM-dependent background tasks
 pub struct SlowLaneWorker {
@@ -137,6 +140,14 @@ impl SlowLaneWorker {
             processed += self.process_pondering(client.as_ref()).await?;
         }
 
+        // Process outcome scanning (every Nth cycle) — no LLM needed
+        if self
+            .cycle_count
+            .is_multiple_of(OUTCOME_SCAN_CYCLE_INTERVAL)
+        {
+            processed += self.process_outcome_scanning().await?;
+        }
+
         // Process proactive suggestions (pattern mining every 3rd, LLM enhancement every 10th)
         processed += self.process_proactive(client.as_ref()).await?;
 
@@ -204,6 +215,14 @@ impl SlowLaneWorker {
         let count = pondering::process_pondering(&self.pool, client).await?;
         if count > 0 {
             tracing::info!("Slow lane: generated {} pondering insights", count);
+        }
+        Ok(count)
+    }
+
+    async fn process_outcome_scanning(&self) -> Result<usize, String> {
+        let count = outcome_scanner::process_outcome_scanning(&self.pool).await?;
+        if count > 0 {
+            tracing::info!("Slow lane: processed {} diff outcomes", count);
         }
         Ok(count)
     }

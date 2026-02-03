@@ -7,11 +7,13 @@
 
 mod briefings;
 
+pub(crate) mod change_patterns;
 pub mod code_health;
 pub mod diff_analysis;
 pub mod documentation;
 mod embeddings;
 mod fast_lane;
+pub(crate) mod outcome_scanner;
 mod pondering;
 pub mod proactive;
 pub mod session_summaries;

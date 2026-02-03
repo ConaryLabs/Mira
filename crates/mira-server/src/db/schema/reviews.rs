@@ -106,6 +106,40 @@ pub fn migrate_diff_analyses_table(conn: &Connection) -> Result<()> {
     )
 }
 
+/// Migrate to add files_json column to diff_analyses
+pub fn migrate_diff_analyses_files_json(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "diff_analyses", "files_json") {
+        tracing::info!("Adding files_json column to diff_analyses table");
+        conn.execute_batch("ALTER TABLE diff_analyses ADD COLUMN files_json TEXT;")?;
+    }
+    Ok(())
+}
+
+/// Migrate to add diff_outcomes table for tracking change outcomes
+pub fn migrate_diff_outcomes_table(conn: &Connection) -> Result<()> {
+    create_table_if_missing(
+        conn,
+        "diff_outcomes",
+        r#"
+        CREATE TABLE IF NOT EXISTS diff_outcomes (
+            id INTEGER PRIMARY KEY,
+            diff_analysis_id INTEGER NOT NULL REFERENCES diff_analyses(id),
+            project_id INTEGER REFERENCES projects(id),
+            outcome_type TEXT NOT NULL,
+            evidence_commit TEXT,
+            evidence_message TEXT,
+            time_to_outcome_seconds INTEGER,
+            detected_by TEXT DEFAULT 'git_scan',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(diff_analysis_id, outcome_type, evidence_commit)
+        );
+        CREATE INDEX IF NOT EXISTS idx_diff_outcomes_analysis ON diff_outcomes(diff_analysis_id);
+        CREATE INDEX IF NOT EXISTS idx_diff_outcomes_project ON diff_outcomes(project_id, outcome_type);
+        CREATE INDEX IF NOT EXISTS idx_diff_outcomes_type ON diff_outcomes(outcome_type);
+    "#,
+    )
+}
+
 /// Migrate to add llm_usage table for LLM cost/token tracking
 pub fn migrate_llm_usage_table(conn: &Connection) -> Result<()> {
     create_table_if_missing(

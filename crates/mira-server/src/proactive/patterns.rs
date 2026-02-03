@@ -41,6 +41,27 @@ pub enum PatternData {
         query_type: String,
         typical_context: Option<String>,
     },
+    ChangePattern {
+        /// Files involved in this change pattern
+        files: Vec<String>,
+        /// Module/directory this pattern applies to
+        module: Option<String>,
+        /// Pattern subtype: "module_hotspot", "co_change_gap", "size_risk"
+        pattern_subtype: String,
+        /// Outcome statistics
+        outcome_stats: OutcomeStats,
+        /// Sample commit hashes for reference
+        sample_commits: Vec<String>,
+    },
+}
+
+/// Outcome statistics for change patterns
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutcomeStats {
+    pub total: i64,
+    pub clean: i64,
+    pub reverted: i64,
+    pub follow_up_fix: i64,
 }
 
 impl PatternData {
@@ -389,6 +410,19 @@ pub fn run_pattern_mining(conn: &Connection, project_id: i64) -> Result<usize> {
         patterns_stored += 1;
     }
 
+    // Mine change patterns from diff outcomes (change intelligence)
+    match crate::background::change_patterns::mine_change_patterns(conn, project_id) {
+        Ok(count) => {
+            if count > 0 {
+                tracing::debug!("Mined {} change patterns for project {}", count, project_id);
+            }
+            patterns_stored += count;
+        }
+        Err(e) => {
+            tracing::warn!("Change pattern mining failed for project {}: {}", project_id, e);
+        }
+    }
+
     Ok(patterns_stored)
 }
 
@@ -491,6 +525,47 @@ mod tests {
             assert_eq!(keywords.len(), 2);
             assert_eq!(query_type, "search");
             assert_eq!(typical_context, Some("debugging session".to_string()));
+        } else {
+            panic!("Wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_pattern_data_change_pattern_json_roundtrip() {
+        let data = PatternData::ChangePattern {
+            files: vec!["src/auth.rs".to_string(), "src/middleware.rs".to_string()],
+            module: Some("src".to_string()),
+            pattern_subtype: "co_change_gap".to_string(),
+            outcome_stats: OutcomeStats {
+                total: 10,
+                clean: 4,
+                reverted: 2,
+                follow_up_fix: 4,
+            },
+            sample_commits: vec!["abc123".to_string()],
+        };
+
+        let json = data.to_json();
+        assert!(json.contains("change_pattern"));
+        assert!(json.contains("co_change_gap"));
+        assert!(json.contains("outcome_stats"));
+
+        let parsed = PatternData::from_json(&json).unwrap();
+        if let PatternData::ChangePattern {
+            files,
+            module,
+            pattern_subtype,
+            outcome_stats,
+            sample_commits,
+        } = parsed
+        {
+            assert_eq!(files.len(), 2);
+            assert_eq!(module, Some("src".to_string()));
+            assert_eq!(pattern_subtype, "co_change_gap");
+            assert_eq!(outcome_stats.total, 10);
+            assert_eq!(outcome_stats.reverted, 2);
+            assert_eq!(outcome_stats.follow_up_fix, 4);
+            assert_eq!(sample_commits.len(), 1);
         } else {
             panic!("Wrong variant");
         }

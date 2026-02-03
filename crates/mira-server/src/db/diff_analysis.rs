@@ -20,6 +20,7 @@ pub struct DiffAnalysis {
     pub lines_removed: Option<i64>,
     pub status: String,
     pub created_at: String,
+    pub files_json: Option<String>,
 }
 
 /// Parse DiffAnalysis from a rusqlite Row
@@ -39,6 +40,7 @@ pub fn parse_diff_analysis_row(row: &rusqlite::Row) -> rusqlite::Result<DiffAnal
         lines_removed: row.get(11)?,
         status: row.get(12)?,
         created_at: row.get(13)?,
+        files_json: row.get(14)?,
     })
 }
 
@@ -60,13 +62,14 @@ pub fn store_diff_analysis_sync(
     files_changed: Option<i64>,
     lines_added: Option<i64>,
     lines_removed: Option<i64>,
+    files_json: Option<&str>,
 ) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO diff_analyses (
             project_id, from_commit, to_commit, analysis_type,
             changes_json, impact_json, risk_json, summary,
-            files_changed, lines_added, lines_removed
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            files_changed, lines_added, lines_removed, files_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             project_id,
             from_commit,
@@ -78,7 +81,8 @@ pub fn store_diff_analysis_sync(
             summary,
             files_changed,
             lines_added,
-            lines_removed
+            lines_removed,
+            files_json,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -93,7 +97,8 @@ pub fn get_cached_diff_analysis_sync(
 ) -> rusqlite::Result<Option<DiffAnalysis>> {
     let sql = "SELECT id, project_id, from_commit, to_commit, analysis_type,
                       changes_json, impact_json, risk_json, summary,
-                      files_changed, lines_added, lines_removed, status, created_at
+                      files_changed, lines_added, lines_removed, status, created_at,
+                      files_json
                FROM diff_analyses
                WHERE (project_id = ? OR (project_id IS NULL AND ? IS NULL))
                      AND from_commit = ? AND to_commit = ?
@@ -119,7 +124,8 @@ pub fn get_recent_diff_analyses_sync(
 ) -> rusqlite::Result<Vec<DiffAnalysis>> {
     let sql = "SELECT id, project_id, from_commit, to_commit, analysis_type,
                       changes_json, impact_json, risk_json, summary,
-                      files_changed, lines_added, lines_removed, status, created_at
+                      files_changed, lines_added, lines_removed, status, created_at,
+                      files_json
                FROM diff_analyses
                WHERE project_id = ? OR project_id IS NULL
                ORDER BY created_at DESC
