@@ -31,7 +31,7 @@ sqlite-vec = "0.1"
 deadpool-sqlite = { version = "0.12", features = ["rt_tokio_1", "tracing"] }
 
 # MCP Server
-rmcp = { version = "0.14", features = ["server", "client", "transport-io", "transport-child-process", "macros", "elicitation"] }
+rmcp = { version = "0.14", features = ["server", "client", "transport-io", "transport-child-process", "transport-streamable-http-client-reqwest", "macros", "elicitation"] }
 schemars = "1"
 
 # CLI

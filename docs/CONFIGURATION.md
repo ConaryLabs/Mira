@@ -106,6 +106,26 @@ Configure Mira as an MCP server in `.mcp.json`:
 - **Project-specific**: `.mcp.json` in project root
 - **Global**: `~/.claude/mcp.json`
 
+### Codex CLI (config.toml)
+
+If you use the Codex CLI, you can configure Mira in `~/.codex/config.toml` (global) or
+`.codex/config.toml` (project). Example:
+
+```toml
+[mcp_servers.mira]
+command = "/path/to/mira"
+args = ["serve"]
+
+[mcp_servers.mira.env]
+MIRA_PROJECT_PATH = "/path/to/project"
+```
+
+Notes:
+- `MIRA_PROJECT_PATH` lets Mira auto-initialize the project when Claude hooks are not present.
+- Mira reads `mcp_servers.*` from Codex config to discover external MCP servers for expert tool access.
+- STDIO servers (`command`/`args`) and streamable HTTP servers (`url`) are supported.
+- HTTP servers support `bearer_token_env_var` for authentication. `http_headers` and `env_http_headers` are parsed but not currently passed to the transport (rmcp's streamable HTTP config only supports bearer auth). OAuth flows are not handled.
+
 ---
 
 ## 4. Claude Code Hooks

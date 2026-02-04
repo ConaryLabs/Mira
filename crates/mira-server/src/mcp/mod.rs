@@ -129,7 +129,17 @@ impl MiraServer {
     /// Auto-initialize project from Claude's cwd if not already set or mismatched
     async fn maybe_auto_init_project(&self) {
         // Read the cwd that Claude's SessionStart hook captured
-        let Some(cwd) = read_claude_cwd() else {
+        let mut cwd = read_claude_cwd();
+
+        // Codex-friendly fallback: allow explicit project path via env var
+        if cwd.is_none() {
+            cwd = std::env::var("MIRA_PROJECT_PATH")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+
+        let Some(cwd) = cwd else {
             return; // No cwd captured yet, skip auto-init
         };
 

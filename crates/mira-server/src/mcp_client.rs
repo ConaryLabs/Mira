@@ -6,6 +6,8 @@ use crate::tools::core::McpToolInfo;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo};
 use rmcp::service::{Peer, RunningService};
 use rmcp::transport::child_process::TokioChildProcess;
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, serve_client};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -13,15 +15,30 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
+use toml::Value as TomlValue;
 use tracing::{debug, info, warn};
 
 /// Configuration for an external MCP server
 #[derive(Debug, Clone)]
 pub struct McpServerConfig {
     pub name: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
+    pub transport: McpTransport,
+}
+
+#[derive(Debug, Clone)]
+pub enum McpTransport {
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: HashMap<String, String>,
+        cwd: Option<String>,
+    },
+    Http {
+        url: String,
+        bearer_token_env_var: Option<String>,
+        http_headers: HashMap<String, String>,
+        env_http_headers: HashMap<String, String>,
+    },
 }
 
 /// A connected MCP server with its peer handle
@@ -42,7 +59,7 @@ pub struct McpClientManager {
 
 impl McpClientManager {
     /// Create a new manager from MCP config files
-    /// Reads .mcp.json from project path and ~/.claude/mcp.json (global)
+    /// Reads .mcp.json and Codex config.toml from project path and global locations.
     pub fn from_mcp_configs(project_path: Option<&str>) -> Self {
         let mut configs = Vec::new();
         let mut seen_names = std::collections::HashSet::new();
@@ -57,12 +74,32 @@ impl McpClientManager {
             }
         }
 
+        // Read project-level .codex/config.toml (Codex MCP config)
+        if let Some(path) = project_path {
+            let project_codex = format!("{}/.codex/config.toml", path);
+            if let Ok(content) = std::fs::read_to_string(&project_codex) {
+                if let Ok(parsed) = toml::from_str::<TomlValue>(&content) {
+                    Self::parse_codex_servers(&parsed, &mut configs, &mut seen_names);
+                }
+            }
+        }
+
         // Read global ~/.claude/mcp.json
         if let Some(home) = dirs::home_dir() {
             let global_mcp = home.join(".claude/mcp.json");
             if let Ok(content) = std::fs::read_to_string(&global_mcp) {
                 if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
                     Self::parse_mcp_servers(&parsed, &mut configs, &mut seen_names);
+                }
+            }
+        }
+
+        // Read global ~/.codex/config.toml (Codex MCP config)
+        if let Some(home) = dirs::home_dir() {
+            let global_codex = home.join(".codex/config.toml");
+            if let Ok(content) = std::fs::read_to_string(&global_codex) {
+                if let Ok(parsed) = toml::from_str::<TomlValue>(&content) {
+                    Self::parse_codex_servers(&parsed, &mut configs, &mut seen_names);
                 }
             }
         }
@@ -131,14 +168,143 @@ impl McpClientManager {
                 })
                 .unwrap_or_default();
 
+            let cwd = server_config
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             seen.insert(name.clone());
             configs.push(McpServerConfig {
                 name: name.clone(),
-                command,
-                args,
-                env,
+                transport: McpTransport::Stdio {
+                    command,
+                    args,
+                    env,
+                    cwd,
+                },
             });
         }
+    }
+
+    /// Parse mcp_servers from a Codex config.toml
+    fn parse_codex_servers(
+        config: &TomlValue,
+        configs: &mut Vec<McpServerConfig>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        let servers = match config.get("mcp_servers").and_then(|v| v.as_table()) {
+            Some(s) => s,
+            None => return,
+        };
+
+        for (name, server_value) in servers {
+            // Skip "mira" (ourselves)
+            if name == "mira" {
+                continue;
+            }
+
+            // Skip if already seen (project overrides global, .mcp.json overrides .codex)
+            if seen.contains(name) {
+                continue;
+            }
+
+            let server = match server_value.as_table() {
+                Some(t) => t,
+                None => continue,
+            };
+
+            if let Some(command) = server.get("command").and_then(|v| v.as_str()) {
+                let args: Vec<String> = server
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let env: HashMap<String, String> = server
+                    .get("env")
+                    .and_then(|v| v.as_table())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let cwd = server
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                seen.insert(name.clone());
+                configs.push(McpServerConfig {
+                    name: name.clone(),
+                    transport: McpTransport::Stdio {
+                        command: command.to_string(),
+                        args,
+                        env,
+                        cwd,
+                    },
+                });
+            } else if let Some(url) = server.get("url").and_then(|v| v.as_str()) {
+                let bearer_token_env_var = server
+                    .get("bearer_token_env_var")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let http_headers: HashMap<String, String> = server
+                    .get("http_headers")
+                    .and_then(|v| v.as_table())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let env_http_headers: HashMap<String, String> = server
+                    .get("env_http_headers")
+                    .and_then(|v| v.as_table())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                seen.insert(name.clone());
+                configs.push(McpServerConfig {
+                    name: name.clone(),
+                    transport: McpTransport::Http {
+                        url: url.to_string(),
+                        bearer_token_env_var,
+                        http_headers,
+                        env_http_headers,
+                    },
+                });
+            }
+        }
+    }
+
+    /// Resolve the bearer token from an env var name, if configured.
+    fn resolve_bearer_token(server_name: &str, bearer_token_env_var: &Option<String>) -> Option<String> {
+        bearer_token_env_var.as_ref().and_then(|env_var| {
+            match std::env::var(env_var) {
+                Ok(token) => Some(token),
+                Err(_) => {
+                    warn!(
+                        server = %server_name,
+                        env_var = %env_var,
+                        "Missing bearer token env var for MCP HTTP server"
+                    );
+                    None
+                }
+            }
+        })
     }
 
     /// Ensure a server is connected, lazily connecting if needed
@@ -159,30 +325,6 @@ impl McpClientManager {
             .ok_or_else(|| format!("MCP server '{}' not configured", server_name))?
             .clone();
 
-        // Security: log the full command being spawned so users can audit .mcp.json behavior
-        let env_keys: Vec<&str> = config.env.keys().map(|k| k.as_str()).collect();
-        warn!(
-            server = %server_name,
-            command = %config.command,
-            args = ?config.args,
-            env_vars = ?env_keys,
-            "Spawning MCP server child process from .mcp.json"
-        );
-
-        // Build the command
-        let mut cmd = Command::new(&config.command);
-        cmd.args(&config.args);
-        for (key, value) in &config.env {
-            cmd.env(key, value);
-        }
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null()); // Suppress server stderr
-
-        // Spawn the child process transport
-        let transport = TokioChildProcess::new(cmd)
-            .map_err(|e| format!("Failed to spawn MCP server '{}': {}", server_name, e))?;
-
         // Connect as MCP client
         let client_info = ClientInfo {
             meta: None,
@@ -196,13 +338,86 @@ impl McpClientManager {
                 website_url: None,
             },
         };
+        let service = match &config.transport {
+            McpTransport::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => {
+                // Security: log the full command being spawned so users can audit config behavior
+                let env_keys: Vec<&str> = env.keys().map(|k| k.as_str()).collect();
+                warn!(
+                    server = %server_name,
+                    command = %command,
+                    args = ?args,
+                    env_vars = ?env_keys,
+                    cwd = ?cwd,
+                    "Spawning MCP server child process from MCP config files"
+                );
 
-        let service = serve_client(client_info, transport).await.map_err(|e| {
-            format!(
-                "Failed to initialize MCP client for '{}': {}",
-                server_name, e
-            )
-        })?;
+                // Build the command
+                let mut cmd = Command::new(command);
+                cmd.args(args);
+                if let Some(cwd) = cwd {
+                    cmd.current_dir(cwd);
+                }
+                for (key, value) in env {
+                    cmd.env(key, value);
+                }
+                cmd.stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null()); // Suppress server stderr
+
+                // Spawn the child process transport
+                let transport = TokioChildProcess::new(cmd)
+                    .map_err(|e| format!("Failed to spawn MCP server '{}': {}", server_name, e))?;
+
+                serve_client(client_info, transport).await.map_err(|e| {
+                    format!(
+                        "Failed to initialize MCP client for '{}': {}",
+                        server_name, e
+                    )
+                })?
+            }
+            McpTransport::Http {
+                url,
+                bearer_token_env_var,
+                http_headers,
+                env_http_headers,
+            } => {
+                info!(
+                    server = %server_name,
+                    url = %url,
+                    "Connecting to MCP HTTP server"
+                );
+
+                // Warn about unsupported custom headers — rmcp's transport config
+                // only supports bearer auth, not arbitrary headers.
+                if !http_headers.is_empty() || !env_http_headers.is_empty() {
+                    warn!(
+                        server = %server_name,
+                        "http_headers and env_http_headers are not supported for MCP HTTP transport; \
+                         only bearer_token_env_var is used for authentication"
+                    );
+                }
+
+                let auth_token = Self::resolve_bearer_token(server_name, bearer_token_env_var);
+
+                let mut config = StreamableHttpClientTransportConfig::with_uri(url.as_str());
+                if let Some(token) = auth_token {
+                    config = config.auth_header(token);
+                }
+
+                let transport = StreamableHttpClientTransport::from_config(config);
+                serve_client(client_info, transport).await.map_err(|e| {
+                    format!(
+                        "Failed to initialize MCP HTTP client for '{}': {}",
+                        server_name, e
+                    )
+                })?
+            }
+        };
 
         let peer = service.peer().clone();
 
@@ -396,9 +611,19 @@ mod tests {
         // "mira" should be filtered out
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].name, "context7");
-        assert_eq!(configs[0].command, "npx");
-        assert_eq!(configs[0].args, vec!["-y", "@context7/mcp"]);
-        assert_eq!(configs[0].env.get("API_KEY").unwrap(), "test");
+        match &configs[0].transport {
+            McpTransport::Stdio {
+                command,
+                args,
+                env,
+                ..
+            } => {
+                assert_eq!(command, "npx");
+                assert_eq!(args, &vec!["-y", "@context7/mcp"]);
+                assert_eq!(env.get("API_KEY").unwrap(), "test");
+            }
+            McpTransport::Http { .. } => panic!("Expected stdio transport"),
+        }
     }
 
     #[test]
@@ -502,9 +727,12 @@ mod tests {
         let manager = McpClientManager {
             configs: vec![McpServerConfig {
                 name: "test".to_string(),
-                command: "cmd".to_string(),
-                args: vec![],
-                env: HashMap::new(),
+                transport: McpTransport::Stdio {
+                    command: "cmd".to_string(),
+                    args: vec![],
+                    env: HashMap::new(),
+                    cwd: None,
+                },
             }],
             clients: Arc::new(RwLock::new(HashMap::new())),
         };
