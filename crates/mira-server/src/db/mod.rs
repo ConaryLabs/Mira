@@ -18,6 +18,7 @@ mod memory;
 mod memory_tests;
 mod migration_helpers;
 mod milestones;
+mod expert_config;
 pub mod pool;
 mod project;
 #[cfg(test)]

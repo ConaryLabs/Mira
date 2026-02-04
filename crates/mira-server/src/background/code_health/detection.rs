@@ -1,6 +1,9 @@
 // crates/mira-server/src/background/code_health/detection.rs
 // Pattern-based detection for code health issues
 // Uses pure Rust implementation (no shell commands) for cross-platform support
+//
+// All detectors run in a single pass over each file, reducing IO and traversal
+// overhead by ~3-4x compared to separate per-detector walks.
 
 use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::project_files::walker;
@@ -9,6 +12,9 @@ use regex::Regex;
 use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
+
+// ---- Limits ----
 
 /// Maximum TODO/FIXME/HACK findings to store per scan
 const MAX_TODO_FINDINGS: usize = 50;
@@ -19,18 +25,39 @@ const MAX_UNWRAP_FINDINGS: usize = 30;
 /// Maximum error handling findings to store per scan
 const MAX_ERROR_HANDLING_FINDINGS: usize = 20;
 
-/// Confidence level for TODO comment findings
+// ---- Confidence levels ----
+
 const CONFIDENCE_TODO: f64 = 0.7;
-/// Confidence level for unimplemented macro findings
 const CONFIDENCE_UNIMPLEMENTED: f64 = 0.8;
-/// Confidence level for high-severity unwrap findings
 const CONFIDENCE_UNWRAP_HIGH: f64 = 0.85;
-/// Confidence level for medium-severity unwrap findings
 const CONFIDENCE_UNWRAP_MEDIUM: f64 = 0.7;
-/// Confidence level for high-severity error handling findings
 const CONFIDENCE_ERROR_HIGH: f64 = 0.8;
-/// Confidence level for lower-severity error handling findings
 const CONFIDENCE_ERROR_LOW: f64 = 0.6;
+
+// ---- Precompiled regexes ----
+
+static RE_TODO: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").unwrap());
+
+static RE_UNIMPLEMENTED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(unimplemented!|todo!)\s*\(").unwrap());
+
+/// Results from a single-pass scan of all detection patterns
+pub struct DetectionResults {
+    pub todos: usize,
+    pub unimplemented: usize,
+    pub unwraps: usize,
+    pub error_handling: usize,
+}
+
+impl DetectionResults {
+    fn all_maxed(&self) -> bool {
+        self.todos >= MAX_TODO_FINDINGS
+            && self.unimplemented >= MAX_UNIMPLEMENTED_FINDINGS
+            && self.unwraps >= MAX_UNWRAP_FINDINGS
+            && self.error_handling >= MAX_ERROR_HANDLING_FINDINGS
+    }
+}
 
 /// Check if a line contains a #[cfg(...)] attribute that includes `test`
 fn is_cfg_test(line: &str) -> bool {
@@ -42,17 +69,14 @@ fn is_cfg_test(line: &str) -> bool {
         let mut pos = cfg_start + "#[cfg(".len();
         let mut paren_count = 1;
 
-        // Parse until we find the matching closing parenthesis
         while let Some(ch) = line[pos..].chars().next() {
             match ch {
                 '(' => paren_count += 1,
                 ')' => {
                     paren_count -= 1;
                     if paren_count == 0 {
-                        // Check if next character is ']'
                         if line[pos + 1..].starts_with(']') {
                             let content = &line[cfg_start + "#[cfg(".len()..pos];
-                            // Check if content contains "test" as a separate word
                             if content
                                 .split(|c: char| !c.is_alphanumeric() && c != '_')
                                 .any(|part| part == "test")
@@ -68,7 +92,6 @@ fn is_cfg_test(line: &str) -> bool {
             pos += ch.len_utf8();
         }
 
-        // Continue searching after this position
         search_start = cfg_start + 1;
     }
 
@@ -80,37 +103,68 @@ fn walk_rust_files(project_path: &str) -> Result<Vec<String>, String> {
     walker::walk_rust_files(project_path).str_err()
 }
 
-/// Scan for TODO/FIXME/HACK comments
-pub fn scan_todo_comments(
+/// Single-pass scan for TODO/FIXME, unimplemented!(), .unwrap(), and error handling patterns.
+///
+/// Walks all Rust files once, reads each file once, and applies all detectors to each line.
+/// This replaces the previous four separate scan functions that each walked the file tree independently.
+pub fn scan_all(
     conn: &Connection,
     project_id: i64,
     project_path: &str,
-) -> Result<usize, String> {
-    let pattern = Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").str_err()?;
-
-    let mut stored = 0;
+) -> Result<DetectionResults, String> {
+    let mut r = DetectionResults {
+        todos: 0,
+        unimplemented: 0,
+        unwraps: 0,
+        error_handling: 0,
+    };
 
     for file in walk_rust_files(project_path)? {
+        if r.all_maxed() {
+            break;
+        }
+
+        let skip_test_file = file.contains("/tests/") || file.ends_with("_test.rs");
+
         let full_path = Path::new(project_path).join(&file);
         let content = match fs::read_to_string(&full_path) {
             Ok(c) => c,
             Err(_) => continue,
         };
 
-        for (line_num, line) in content.lines().enumerate() {
-            let line_num = line_num + 1; // 1-indexed
+        // Test module tracking (shared by unwrap + error handling detectors)
+        let mut in_test_module = false;
+        let mut brace_depth: usize = 0;
+        let mut test_module_start_depth: usize = 0;
 
-            if pattern.is_match(line) {
-                let comment = line.trim();
-                let content = format!("[todo] {}:{} - {}", file, line_num, comment);
+        for (line_idx, line) in content.lines().enumerate() {
+            let line_num = line_idx + 1;
+            let trimmed = line.trim();
+
+            // ---- Test module tracking ----
+            if is_cfg_test(trimmed) {
+                in_test_module = true;
+                test_module_start_depth = brace_depth;
+            }
+            brace_depth += line.matches('{').count();
+            brace_depth = brace_depth.saturating_sub(line.matches('}').count());
+            if in_test_module && brace_depth <= test_module_start_depth && trimmed.contains('}') {
+                in_test_module = false;
+            }
+
+            let is_comment =
+                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
+
+            // ---- 1. TODO/FIXME/HACK (all files, all lines) ----
+            if r.todos < MAX_TODO_FINDINGS && RE_TODO.is_match(line) {
+                let content_str = format!("[todo] {}:{} - {}", file, line_num, trimmed);
                 let key = format!("health:todo:{}:{}", file, line_num);
-
                 store_memory_sync(
                     conn,
                     StoreMemoryParams {
                         project_id: Some(project_id),
                         key: Some(&key),
-                        content: &content,
+                        content: &content_str,
                         fact_type: "health",
                         category: Some("todo"),
                         confidence: CONFIDENCE_TODO,
@@ -121,56 +175,22 @@ pub fn scan_todo_comments(
                     },
                 )
                 .str_err()?;
-
-                stored += 1;
-
-                // Limit to prevent flooding
-                if stored >= MAX_TODO_FINDINGS {
-                    return Ok(stored);
-                }
-            }
-        }
-    }
-
-    Ok(stored)
-}
-
-/// Scan for unimplemented!() and todo!() macros
-pub fn scan_unimplemented(
-    conn: &Connection,
-    project_id: i64,
-    project_path: &str,
-) -> Result<usize, String> {
-    let pattern = Regex::new(r"(unimplemented!|todo!)\s*\(").str_err()?;
-
-    let mut stored = 0;
-
-    for file in walk_rust_files(project_path)? {
-        let full_path = Path::new(project_path).join(&file);
-        let content = match fs::read_to_string(&full_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        for (line_num, line) in content.lines().enumerate() {
-            let line_num = line_num + 1;
-            let code = line.trim();
-
-            // Skip comments (doc comments and regular comments)
-            if code.starts_with("//") || code.starts_with("/*") || code.starts_with('*') {
-                continue;
+                r.todos += 1;
             }
 
-            if pattern.is_match(line) {
-                let content = format!("[unimplemented] {}:{} - {}", file, line_num, code);
+            // ---- 2. unimplemented!/todo! macros (all files, skip comments) ----
+            if r.unimplemented < MAX_UNIMPLEMENTED_FINDINGS
+                && !is_comment
+                && RE_UNIMPLEMENTED.is_match(line)
+            {
+                let content_str = format!("[unimplemented] {}:{} - {}", file, line_num, trimmed);
                 let key = format!("health:unimplemented:{}:{}", file, line_num);
-
                 store_memory_sync(
                     conn,
                     StoreMemoryParams {
                         project_id: Some(project_id),
                         key: Some(&key),
-                        content: &content,
+                        content: &content_str,
                         fact_type: "health",
                         category: Some("unimplemented"),
                         confidence: CONFIDENCE_UNIMPLEMENTED,
@@ -181,143 +201,118 @@ pub fn scan_unimplemented(
                     },
                 )
                 .str_err()?;
-
-                stored += 1;
-
-                if stored >= MAX_UNIMPLEMENTED_FINDINGS {
-                    return Ok(stored);
-                }
-            }
-        }
-    }
-
-    Ok(stored)
-}
-
-/// Scan for .unwrap() and .expect() calls in non-test code
-/// These are potential panic points that should use proper error handling
-pub fn scan_unwrap_usage(
-    conn: &Connection,
-    project_id: i64,
-    project_path: &str,
-) -> Result<usize, String> {
-    let mut stored = 0;
-
-    for file in walk_rust_files(project_path)? {
-        // Skip test files entirely
-        if file.contains("/tests/") || file.ends_with("_test.rs") {
-            continue;
-        }
-
-        let full_path = Path::new(project_path).join(&file);
-        let content = match fs::read_to_string(&full_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        // Track if we're inside a #[cfg(test)] module
-        let mut in_test_module = false;
-        let mut brace_depth = 0;
-        let mut test_module_start_depth = 0;
-
-        for (line_num, line) in content.lines().enumerate() {
-            let line_num = line_num + 1; // 1-indexed
-            let trimmed = line.trim();
-
-            // Track #[cfg(test)] modules
-            if is_cfg_test(trimmed) {
-                in_test_module = true;
-                test_module_start_depth = brace_depth;
+                r.unimplemented += 1;
             }
 
-            // Track brace depth for module boundaries
-            brace_depth += line.matches('{').count();
-            brace_depth = brace_depth.saturating_sub(line.matches('}').count());
+            // Shared gate: skip test files & test contexts for unwrap + error handling
+            let in_test_fn =
+                trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test]");
 
-            // Exit test module when we close its braces
-            if in_test_module && brace_depth <= test_module_start_depth && trimmed.contains('}') {
-                in_test_module = false;
-            }
-
-            // Skip if in test module or test function
-            if in_test_module
-                || trimmed.starts_with("#[test]")
-                || trimmed.starts_with("#[tokio::test]")
+            // ---- 3. .unwrap() / .expect() (non-test code, skip comments) ----
+            if r.unwraps < MAX_UNWRAP_FINDINGS
+                && !skip_test_file
+                && !in_test_module
+                && !in_test_fn
+                && !is_comment
             {
-                continue;
-            }
+                let has_unwrap = line.contains(".unwrap()");
+                let has_expect = line.contains(".expect(");
 
-            // Skip comments
-            if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
-                continue;
-            }
+                if (has_unwrap || has_expect) && !is_safe_unwrap(line) {
+                    let (severity, pattern) = if has_expect {
+                        ("medium", "expect")
+                    } else {
+                        ("high", "unwrap")
+                    };
 
-            // Check for unwrap/expect
-            let has_unwrap = line.contains(".unwrap()");
-            let has_expect = line.contains(".expect(");
+                    let content_str = format!(
+                        "[{}] .{}() at {}:{} - {}",
+                        severity,
+                        pattern,
+                        file,
+                        line_num,
+                        trimmed.chars().take(100).collect::<String>()
+                    );
+                    let key = format!("health:unwrap:{}:{}", file, line_num);
 
-            if has_unwrap || has_expect {
-                // Determine severity based on context
-                let (severity, pattern) = if has_expect {
-                    ("medium", "expect")
-                } else {
-                    ("high", "unwrap")
-                };
-
-                // Skip some known-safe patterns
-                if is_safe_unwrap(line) {
-                    continue;
-                }
-
-                let content_str = format!(
-                    "[{}] .{}() at {}:{} - {}",
-                    severity,
-                    pattern,
-                    file,
-                    line_num,
-                    trimmed.chars().take(100).collect::<String>()
-                );
-                let key = format!("health:unwrap:{}:{}", file, line_num);
-
-                store_memory_sync(
-                    conn,
-                    StoreMemoryParams {
-                        project_id: Some(project_id),
-                        key: Some(&key),
-                        content: &content_str,
-                        fact_type: "health",
-                        category: Some("unwrap"),
-                        confidence: if severity == "high" {
-                            CONFIDENCE_UNWRAP_HIGH
-                        } else {
-                            CONFIDENCE_UNWRAP_MEDIUM
+                    store_memory_sync(
+                        conn,
+                        StoreMemoryParams {
+                            project_id: Some(project_id),
+                            key: Some(&key),
+                            content: &content_str,
+                            fact_type: "health",
+                            category: Some("unwrap"),
+                            confidence: if severity == "high" {
+                                CONFIDENCE_UNWRAP_HIGH
+                            } else {
+                                CONFIDENCE_UNWRAP_MEDIUM
+                            },
+                            session_id: None,
+                            user_id: None,
+                            scope: "project",
+                            branch: None,
                         },
-                        session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
-                    },
-                )
-                .str_err()?;
+                    )
+                    .str_err()?;
+                    r.unwraps += 1;
+                }
+            }
 
-                stored += 1;
+            // ---- 4. Error handling patterns (non-test code, skip comments) ----
+            // Note: uses in_test_module but NOT in_test_fn (original behavior preserved)
+            if r.error_handling < MAX_ERROR_HANDLING_FINDINGS
+                && !skip_test_file
+                && !in_test_module
+                && !is_comment
+            {
+                if let Some((severity, pattern, description)) = check_error_pattern(trimmed) {
+                    if !is_acceptable_error_swallow(trimmed) {
+                        let content_str = format!(
+                            "[{}] {} at {}:{} - {}",
+                            severity,
+                            description,
+                            file,
+                            line_num,
+                            trimmed.chars().take(80).collect::<String>()
+                        );
+                        let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
 
-                // Limit to prevent flooding
-                if stored >= MAX_UNWRAP_FINDINGS {
-                    return Ok(stored);
+                        store_memory_sync(
+                            conn,
+                            StoreMemoryParams {
+                                project_id: Some(project_id),
+                                key: Some(&key),
+                                content: &content_str,
+                                fact_type: "health",
+                                category: Some("error_handling"),
+                                confidence: if severity == "high" {
+                                    CONFIDENCE_ERROR_HIGH
+                                } else {
+                                    CONFIDENCE_ERROR_LOW
+                                },
+                                session_id: None,
+                                user_id: None,
+                                scope: "project",
+                                branch: None,
+                            },
+                        )
+                        .str_err()?;
+                        r.error_handling += 1;
+                    }
                 }
             }
         }
     }
 
-    Ok(stored)
+    Ok(r)
 }
 
 /// Check if an unwrap is in a known-safe pattern
 fn is_safe_unwrap(line: &str) -> bool {
     let trimmed = line.trim();
 
-    // Skip string literals that contain ".unwrap()" or ".expect(" (e.g., this scanner)
+    // Skip string literals that contain ".unwrap()" or ".expect("
     if trimmed.contains(r#"".unwrap()"#) || trimmed.contains(r#"".expect("#) {
         return true;
     }
@@ -325,15 +320,12 @@ fn is_safe_unwrap(line: &str) -> bool {
         return true;
     }
 
-    // Static/const initializers (Selector::parse, Regex::new, etc.)
-    if trimmed.contains("Selector::parse(") {
-        return true;
-    }
-    if trimmed.contains("Regex::new(") {
+    // Static/const initializers
+    if trimmed.contains("Selector::parse(") || trimmed.contains("Regex::new(") {
         return true;
     }
 
-    // Mutex/RwLock (poisoning is usually not recoverable anyway)
+    // Mutex/RwLock (poisoning is usually not recoverable)
     if trimmed.contains(".lock().unwrap()")
         || trimmed.contains(".lock().expect(")
         || trimmed.contains(".read().unwrap()")
@@ -358,105 +350,6 @@ fn is_safe_unwrap(line: &str) -> bool {
     false
 }
 
-/// Pattern-based scan for error handling issues
-pub fn scan_error_handling(
-    conn: &Connection,
-    project_id: i64,
-    project_path: &str,
-) -> Result<usize, String> {
-    let mut stored = 0;
-
-    for file in walk_rust_files(project_path)? {
-        // Skip test files
-        if file.contains("/tests/") || file.ends_with("_test.rs") {
-            continue;
-        }
-
-        let full_path = Path::new(project_path).join(&file);
-        let content = match fs::read_to_string(&full_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        // Track test modules
-        let mut in_test_module = false;
-        let mut brace_depth = 0;
-        let mut test_module_start_depth = 0;
-
-        for (line_num, line) in content.lines().enumerate() {
-            let line_num = line_num + 1;
-            let trimmed = line.trim();
-
-            // Track test modules
-            if is_cfg_test(trimmed) {
-                in_test_module = true;
-                test_module_start_depth = brace_depth;
-            }
-            brace_depth += line.matches('{').count();
-            brace_depth = brace_depth.saturating_sub(line.matches('}').count());
-            if in_test_module && brace_depth <= test_module_start_depth && trimmed.contains('}') {
-                in_test_module = false;
-            }
-            if in_test_module {
-                continue;
-            }
-
-            // Skip comments
-            if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
-                continue;
-            }
-
-            // Check for silent error swallowing patterns
-            let issue = check_error_pattern(trimmed);
-            if let Some((severity, pattern, description)) = issue {
-                // Skip known acceptable patterns
-                if is_acceptable_error_swallow(trimmed) {
-                    continue;
-                }
-
-                let content_str = format!(
-                    "[{}] {} at {}:{} - {}",
-                    severity,
-                    description,
-                    file,
-                    line_num,
-                    trimmed.chars().take(80).collect::<String>()
-                );
-                let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
-
-                store_memory_sync(
-                    conn,
-                    StoreMemoryParams {
-                        project_id: Some(project_id),
-                        key: Some(&key),
-                        content: &content_str,
-                        fact_type: "health",
-                        category: Some("error_handling"),
-                        confidence: if severity == "high" {
-                            CONFIDENCE_ERROR_HIGH
-                        } else {
-                            CONFIDENCE_ERROR_LOW
-                        },
-                        session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
-                    },
-                )
-                .str_err()?;
-
-                stored += 1;
-
-                if stored >= MAX_ERROR_HANDLING_FINDINGS {
-                    return Ok(stored);
-                }
-            }
-        }
-    }
-
-    Ok(stored)
-}
-
 /// Check for problematic error handling patterns
 fn check_error_pattern(line: &str) -> Option<(&'static str, &'static str, &'static str)> {
     // High severity: silently discarding Results
@@ -475,13 +368,11 @@ fn check_error_pattern(line: &str) -> Option<(&'static str, &'static str, &'stat
 
     // Medium severity: .ok() on non-optional contexts
     if line.contains(".ok()") && !line.contains(".ok()?") {
-        // Skip lines that are just method chain continuations (start with .)
         let trimmed = line.trim();
         if trimmed.starts_with('.') {
             return None;
         }
 
-        // Skip env vars (both std::env::var and env::var), file reads, and parsing
         if line.contains("env::var")
             || line.contains("read_to_string")
             || line.contains("from_str")
@@ -491,7 +382,6 @@ fn check_error_pattern(line: &str) -> Option<(&'static str, &'static str, &'stat
             return None;
         }
 
-        // Check if it's being used to convert Result to Option for control flow
         if !line.contains(".ok().") && !line.contains(".ok()?") {
             return Some((
                 "medium",
@@ -501,9 +391,8 @@ fn check_error_pattern(line: &str) -> Option<(&'static str, &'static str, &'stat
         }
     }
 
-    // Medium severity: ignoring send errors on channels (may indicate receiver dropped)
+    // Low severity: ignoring send errors on channels
     if line.contains("let _ =") && line.contains(".send(") && !line.contains("// ") {
-        // This is often intentional but worth flagging
         return Some((
             "low",
             "send_ignore",
@@ -529,12 +418,12 @@ fn is_acceptable_error_swallow(line: &str) -> bool {
         return true;
     }
 
-    // Filter operations (expected to filter out errors)
+    // Filter operations
     if line.contains("filter_map") || line.contains("filter(|") {
         return true;
     }
 
-    // .ok() with explicit fallback handling (intentional conversion to Option)
+    // .ok() with explicit fallback handling
     if line.contains(".ok().flatten()")
         || line.contains(".ok().unwrap_or")
         || line.contains(".ok().map(")

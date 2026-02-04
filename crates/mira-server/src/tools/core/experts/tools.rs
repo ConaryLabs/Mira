@@ -9,30 +9,49 @@ use crate::search::embedding_to_bytes;
 use crate::tools::core::code::{query_callers, query_callees, query_search_code};
 use serde_json::{json, Value};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tracing::debug;
 
-/// Define the tools available to experts
-pub fn get_expert_tools() -> Vec<Tool> {
+/// Helper: define a tool with a query + optional limit parameter.
+fn query_tool(name: &str, desc: &str, query_desc: &str, default_limit: u64) -> Tool {
+    Tool::function(
+        name,
+        desc,
+        json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": query_desc },
+                "limit": { "type": "integer", "description": format!("Maximum number of results (default: {})", default_limit), "default": default_limit }
+            },
+            "required": ["query"]
+        }),
+    )
+}
+
+/// Helper: define a tool with a function_name + optional limit parameter.
+fn function_name_tool(name: &str, desc: &str, fn_desc: &str, default_limit: u64) -> Tool {
+    Tool::function(
+        name,
+        desc,
+        json!({
+            "type": "object",
+            "properties": {
+                "function_name": { "type": "string", "description": fn_desc },
+                "limit": { "type": "integer", "description": format!("Maximum number of results (default: {})", default_limit), "default": default_limit }
+            },
+            "required": ["function_name"]
+        }),
+    )
+}
+
+/// Base tools available to all experts (built once, cloned per invocation).
+static EXPERT_TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
     vec![
-        Tool::function(
+        query_tool(
             "search_code",
             "Search for code by meaning. Use this to find relevant code snippets, functions, or patterns.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language description of what you're looking for (e.g., 'authentication middleware', 'error handling in API routes')"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 5)",
-                        "default": 5
-                    }
-                },
-                "required": ["query"]
-            }),
+            "Natural language description of what you're looking for (e.g., 'authentication middleware', 'error handling in API routes')",
+            5,
         ),
         Tool::function(
             "get_symbols",
@@ -40,10 +59,7 @@ pub fn get_expert_tools() -> Vec<Tool> {
             json!({
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to the file (relative to project root)"
-                    }
+                    "file_path": { "type": "string", "description": "Path to the file (relative to project root)" }
                 },
                 "required": ["file_path"]
             }),
@@ -54,162 +70,85 @@ pub fn get_expert_tools() -> Vec<Tool> {
             json!({
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to the file (relative to project root)"
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "Starting line number (1-indexed, optional)"
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "Ending line number (inclusive, optional)"
-                    }
+                    "file_path": { "type": "string", "description": "Path to the file (relative to project root)" },
+                    "start_line": { "type": "integer", "description": "Starting line number (1-indexed, optional)" },
+                    "end_line": { "type": "integer", "description": "Ending line number (inclusive, optional)" }
                 },
                 "required": ["file_path"]
             }),
         ),
-        Tool::function(
+        function_name_tool(
             "find_callers",
             "Find all functions that call a given function.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "function_name": {
-                        "type": "string",
-                        "description": "Name of the function to find callers for"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 10)",
-                        "default": 10
-                    }
-                },
-                "required": ["function_name"]
-            }),
+            "Name of the function to find callers for",
+            10,
         ),
-        Tool::function(
+        function_name_tool(
             "find_callees",
             "Find all functions that a given function calls.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "function_name": {
-                        "type": "string",
-                        "description": "Name of the function to find callees for"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 10)",
-                        "default": 10
-                    }
-                },
-                "required": ["function_name"]
-            }),
+            "Name of the function to find callees for",
+            10,
         ),
-        Tool::function(
+        query_tool(
             "recall",
             "Recall past decisions, context, or preferences stored in memory.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "What to search for in memory (e.g., 'authentication approach', 'database schema decisions')"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 5)",
-                        "default": 5
-                    }
-                },
-                "required": ["query"]
-            }),
+            "What to search for in memory (e.g., 'authentication approach', 'database schema decisions')",
+            5,
         ),
     ]
-}
+});
 
-/// Store finding tool definition (used during council mode)
-pub fn store_finding_tool() -> Tool {
+static STORE_FINDING_TOOL: LazyLock<Tool> = LazyLock::new(|| {
     Tool::function(
         "store_finding",
         "Record a key finding from your analysis. Use this whenever you discover something significant.",
         json!({
             "type": "object",
             "properties": {
-                "topic": {
-                    "type": "string",
-                    "description": "Brief topic name (e.g., 'error handling', 'auth flow')"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The finding itself — what you discovered"
-                },
-                "severity": {
-                    "type": "string",
-                    "enum": ["info", "low", "medium", "high", "critical"],
-                    "description": "Severity level of this finding (default: info)"
-                },
-                "evidence": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "File paths, code snippets, or references supporting this finding"
-                },
-                "recommendation": {
-                    "type": "string",
-                    "description": "What to do about it (optional)"
-                }
+                "topic": { "type": "string", "description": "Brief topic name (e.g., 'error handling', 'auth flow')" },
+                "content": { "type": "string", "description": "The finding itself — what you discovered" },
+                "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"], "description": "Severity level of this finding (default: info)" },
+                "evidence": { "type": "array", "items": { "type": "string" }, "description": "File paths, code snippets, or references supporting this finding" },
+                "recommendation": { "type": "string", "description": "What to do about it (optional)" }
             },
             "required": ["topic", "content"]
         }),
     )
-}
+});
 
-/// Web fetch tool definition
-pub fn web_fetch_tool() -> Tool {
+static WEB_FETCH_TOOL: LazyLock<Tool> = LazyLock::new(|| {
     Tool::function(
         "web_fetch",
         "Fetch a web page and extract its text content. Use this to read documentation, articles, or any web resource.",
         json!({
             "type": "object",
             "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to fetch (must start with http:// or https://)"
-                },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Maximum characters to return (default: 15000)",
-                    "default": 15000
-                }
+                "url": { "type": "string", "description": "The URL to fetch (must start with http:// or https://)" },
+                "max_chars": { "type": "integer", "description": "Maximum characters to return (default: 15000)", "default": 15000 }
             },
             "required": ["url"]
         }),
     )
-}
+});
 
-/// Web search tool definition (Brave Search API)
-pub fn web_search_tool() -> Tool {
+static WEB_SEARCH_TOOL: LazyLock<Tool> = LazyLock::new(|| {
     Tool::function(
         "web_search",
         "Search the web for current information using Brave Search. Use this to find documentation, recent articles, or answers to technical questions.",
         json!({
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query"
-                },
-                "count": {
-                    "type": "integer",
-                    "description": "Number of results to return (default: 5, max: 10)",
-                    "default": 5
-                }
+                "query": { "type": "string", "description": "The search query" },
+                "count": { "type": "integer", "description": "Number of results to return (default: 5, max: 10)", "default": 5 }
             },
             "required": ["query"]
         }),
     )
+});
+
+/// Define the tools available to experts
+pub fn get_expert_tools() -> Vec<Tool> {
+    EXPERT_TOOLS.clone()
 }
 
 /// Build the full expert toolset: base tools + optionally store_finding + web tools + MCP tools.
@@ -222,13 +161,13 @@ pub async fn build_expert_toolset<C: ToolContext>(
     let mut tools = get_expert_tools();
 
     if include_store_finding {
-        tools.push(store_finding_tool());
+        tools.push(STORE_FINDING_TOOL.clone());
     }
 
-    tools.push(web_fetch_tool());
+    tools.push(WEB_FETCH_TOOL.clone());
 
     if has_brave_search() {
-        tools.push(web_search_tool());
+        tools.push(WEB_SEARCH_TOOL.clone());
     }
 
     let mcp_tools = ctx.mcp_expert_tools().await;
@@ -910,7 +849,7 @@ mod tests {
 
     #[test]
     fn test_web_fetch_tool_definition() {
-        let tool = web_fetch_tool();
+        let tool = &*WEB_FETCH_TOOL;
         assert_eq!(tool.function.name, "web_fetch");
         assert!(tool.function.description.contains("Fetch"));
         let params = &tool.function.parameters;
@@ -922,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_web_search_tool_definition() {
-        let tool = web_search_tool();
+        let tool = &*WEB_SEARCH_TOOL;
         assert_eq!(tool.function.name, "web_search");
         assert!(tool.function.description.contains("Search"));
         let params = &tool.function.parameters;

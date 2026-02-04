@@ -49,6 +49,31 @@ pub async fn enrich_context_for_role<C: ToolContext>(
     }
 }
 
+/// Parse and store review findings for code_reviewer and security experts.
+/// No-op for other roles.
+async fn maybe_store_findings<C: ToolContext>(
+    ctx: &C,
+    expert: &ExpertRole,
+    expert_key: &str,
+    result: &crate::llm::ChatResult,
+) {
+    if !matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
+        return;
+    }
+    if let Some(ref content) = result.content {
+        let findings = parse_expert_findings(content, expert_key);
+        if !findings.is_empty() {
+            let stored = store_findings(ctx, &findings, expert_key).await;
+            tracing::debug!(
+                expert = %expert_key,
+                parsed = findings.len(),
+                stored,
+                "Parsed and stored review findings"
+            );
+        }
+    }
+}
+
 /// Core function to consult an expert with agentic tool access
 pub async fn consult_expert<C: ToolContext>(
     ctx: &C,
@@ -134,21 +159,7 @@ pub async fn consult_expert<C: ToolContext>(
     let tool_calls = loop_result.total_tool_calls;
     let iters = loop_result.iterations;
 
-    // Parse and store findings for code reviewer and security experts
-    if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
-        if let Some(ref content) = final_result.content {
-            let findings = parse_expert_findings(content, expert_key.as_str());
-            if !findings.is_empty() {
-                let stored = store_findings(ctx, &findings, expert_key.as_str()).await;
-                tracing::debug!(
-                    expert = %expert_key,
-                    parsed = findings.len(),
-                    stored,
-                    "Parsed and stored review findings"
-                );
-            }
-        }
-    }
+    maybe_store_findings(ctx, &expert, &expert_key, &final_result).await;
 
     Ok(format_expert_response(
         expert,
@@ -198,21 +209,7 @@ async fn consult_expert_via_sampling<C: ToolContext>(
     )
     .await;
 
-    // Parse and store findings for code reviewer and security experts
-    if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
-        if let Some(ref content) = result.content {
-            let findings = parse_expert_findings(content, expert_key);
-            if !findings.is_empty() {
-                let stored = store_findings(ctx, &findings, expert_key).await;
-                tracing::debug!(
-                    expert = %expert_key,
-                    parsed = findings.len(),
-                    stored,
-                    "Parsed and stored review findings (sampling)"
-                );
-            }
-        }
-    }
+    maybe_store_findings(ctx, &expert, expert_key, &result).await;
 
     Ok(format_expert_response(expert, result, 0, 1))
 }
@@ -431,21 +428,7 @@ async fn consult_expert_one_shot<C: ToolContext>(
     )
     .await;
 
-    // Parse and store findings for code reviewer and security experts
-    if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
-        if let Some(ref content) = result.content {
-            let findings = parse_expert_findings(content, expert_key);
-            if !findings.is_empty() {
-                let stored = store_findings(ctx, &findings, expert_key).await;
-                tracing::debug!(
-                    expert = %expert_key,
-                    parsed = findings.len(),
-                    stored,
-                    "Parsed and stored review findings (elicitation one-shot)"
-                );
-            }
-        }
-    }
+    maybe_store_findings(ctx, &expert, expert_key, &result).await;
 
     Ok(format_expert_response(expert, result, 0, 1))
 }

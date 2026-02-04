@@ -63,86 +63,36 @@ pub struct DatabasePool {
     memory_uri: Option<String>,
 }
 
+/// Whether to run main or code-specific migrations.
+enum DbKind {
+    Main,
+    Code,
+}
+
+/// Whether to use a file path or shared in-memory URI.
+enum DbStorage {
+    File(PathBuf),
+    InMemory { label: &'static str },
+}
+
 impl DatabasePool {
     /// Open a pooled database at the given path.
-    ///
-    /// This will:
-    /// 1. Register sqlite-vec extension globally (if not already done)
-    /// 2. Ensure parent directory exists with secure permissions
-    /// 3. Create the pool with post_create hooks for per-connection setup
-    /// 4. Run schema migrations on a dedicated connection before returning
     pub async fn open(path: &Path) -> Result<Self> {
-        ensure_sqlite_vec_registered();
-        ensure_parent_directory(path)?;
-
-        let path_str = path_to_string(path);
-        let cfg = Config::new(&path_str);
-        let pool = cfg
-            .builder(Runtime::Tokio1)
-            .context("Failed to create pool builder")?
-            .post_create(make_file_post_create_hook(path.to_path_buf()))
-            .build()
-            .context("Failed to build connection pool")?;
-
-        let db_pool = Self {
-            pool,
-            path: Some(path.to_path_buf()),
-            memory_uri: None,
-        };
-        db_pool.run_migrations().await?;
-        Ok(db_pool)
+        Self::open_internal(DbStorage::File(path.to_path_buf()), DbKind::Main).await
     }
 
     /// Open a pooled database for the code index at the given path.
     ///
-    /// Same setup as `open()` but runs code-specific migrations instead
-    /// of the main schema migrations. The code database holds:
-    /// code_symbols, call_graph, imports, codebase_modules, vec_code,
-    /// code_fts, and pending_embeddings.
+    /// Runs code-specific migrations instead of the main schema migrations.
+    /// The code database holds: code_symbols, call_graph, imports,
+    /// codebase_modules, vec_code, code_fts, and pending_embeddings.
     pub async fn open_code_db(path: &Path) -> Result<Self> {
-        ensure_sqlite_vec_registered();
-        ensure_parent_directory(path)?;
-
-        let path_str = path_to_string(path);
-        let cfg = Config::new(&path_str);
-        let pool = cfg
-            .builder(Runtime::Tokio1)
-            .context("Failed to create pool builder")?
-            .post_create(make_file_post_create_hook(path.to_path_buf()))
-            .build()
-            .context("Failed to build connection pool")?;
-
-        let db_pool = Self {
-            pool,
-            path: Some(path.to_path_buf()),
-            memory_uri: None,
-        };
-        db_pool.run_code_migrations().await?;
-        Ok(db_pool)
+        Self::open_internal(DbStorage::File(path.to_path_buf()), DbKind::Code).await
     }
 
     /// Open a pooled in-memory database for the code index (for tests).
     pub async fn open_code_db_in_memory() -> Result<Self> {
-        ensure_sqlite_vec_registered();
-
-        let unique_id = uuid::Uuid::new_v4();
-        let uri = format!("file:memdb_code_{unique_id}?mode=memory&cache=shared");
-
-        let cfg = Config::new(&uri);
-        let pool = cfg
-            .builder(Runtime::Tokio1)
-            .context("Failed to create pool builder")?
-            .post_create(make_memory_post_create_hook())
-            .build()
-            .context("Failed to build connection pool")?;
-
-        let db_pool = Self {
-            pool,
-            path: None,
-            memory_uri: Some(uri),
-        };
-        db_pool.run_code_migrations().await?;
-        Ok(db_pool)
+        Self::open_internal(DbStorage::InMemory { label: "memdb_code" }, DbKind::Code).await
     }
 
     /// Open a pooled in-memory database.
@@ -151,26 +101,50 @@ impl DatabasePool {
     /// This is critical for tests - without shared cache, each connection would get
     /// its own separate in-memory database.
     pub async fn open_in_memory() -> Result<Self> {
+        Self::open_internal(DbStorage::InMemory { label: "memdb" }, DbKind::Main).await
+    }
+
+    /// Internal constructor shared by all open variants.
+    ///
+    /// 1. Registers sqlite-vec extension globally (if not already done)
+    /// 2. Creates the pool with appropriate hooks (file permissions or in-memory setup)
+    /// 3. Runs schema migrations (main or code) on a dedicated connection
+    async fn open_internal(storage: DbStorage, kind: DbKind) -> Result<Self> {
         ensure_sqlite_vec_registered();
 
-        // Use shared cache mode so all pool connections share the same in-memory DB.
-        let unique_id = uuid::Uuid::new_v4();
-        let uri = format!("file:memdb_{unique_id}?mode=memory&cache=shared");
+        let (conn_str, path, memory_uri, hook) = match storage {
+            DbStorage::File(p) => {
+                ensure_parent_directory(&p)?;
+                let s = path_to_string(&p);
+                let hook = make_file_post_create_hook(p.clone());
+                (s, Some(p), None, hook)
+            }
+            DbStorage::InMemory { label } => {
+                let uri = format!("file:{}_{:?}?mode=memory&cache=shared", label, uuid::Uuid::new_v4());
+                let hook = make_memory_post_create_hook();
+                (uri.clone(), None, Some(uri), hook)
+            }
+        };
 
-        let cfg = Config::new(&uri);
+        let cfg = Config::new(&conn_str);
         let pool = cfg
             .builder(Runtime::Tokio1)
             .context("Failed to create pool builder")?
-            .post_create(make_memory_post_create_hook())
+            .post_create(hook)
             .build()
             .context("Failed to build connection pool")?;
 
         let db_pool = Self {
             pool,
-            path: None,
-            memory_uri: Some(uri),
+            path,
+            memory_uri,
         };
-        db_pool.run_migrations().await?;
+
+        match kind {
+            DbKind::Main => db_pool.run_migrations().await?,
+            DbKind::Code => db_pool.run_code_migrations().await?,
+        }
+
         Ok(db_pool)
     }
 
@@ -386,68 +360,6 @@ impl DatabasePool {
         }
     }
 
-    // =========================================================================
-    // Expert Configuration (async versions to avoid blocking)
-    // =========================================================================
-
-    /// Get custom system prompt for an expert role (async).
-    /// Returns None if no custom prompt is set.
-    pub async fn get_custom_prompt(&self, role: &str) -> Result<Option<String>> {
-        let role = role.to_string();
-        self.interact(move |conn| {
-            let result = conn.query_row(
-                "SELECT prompt FROM system_prompts WHERE role = ?",
-                rusqlite::params![role],
-                |row| row.get(0),
-            );
-
-            match result {
-                Ok(prompt) => Ok(Some(prompt)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(e) => Err(e.into()),
-            }
-        })
-        .await
-    }
-
-    /// Get full expert configuration for a role (async).
-    /// Returns default config if no custom config is set.
-    pub async fn get_expert_config(&self, role: &str) -> Result<super::config::ExpertConfig> {
-        use crate::llm::Provider;
-
-        let role = role.to_string();
-        self.interact(move |conn| {
-            let result = conn.query_row(
-                "SELECT prompt, provider, model FROM system_prompts WHERE role = ?",
-                rusqlite::params![role],
-                |row| {
-                    let prompt: Option<String> = row.get(0)?;
-                    let provider_str: Option<String> = row.get(1)?;
-                    let model: Option<String> = row.get(2)?;
-                    Ok((prompt, provider_str, model))
-                },
-            );
-
-            match result {
-                Ok((prompt, provider_str, model)) => {
-                    let provider = provider_str
-                        .as_deref()
-                        .and_then(Provider::from_str)
-                        .unwrap_or(Provider::DeepSeek);
-                    Ok(super::config::ExpertConfig {
-                        prompt,
-                        provider,
-                        model,
-                    })
-                }
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    Ok(super::config::ExpertConfig::default())
-                }
-                Err(e) => Err(e.into()),
-            }
-        })
-        .await
-    }
 }
 
 /// Pool status for monitoring.

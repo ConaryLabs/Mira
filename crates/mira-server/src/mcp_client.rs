@@ -9,6 +9,7 @@ use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, serve_client};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,8 +17,64 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use toml::Value as TomlValue;
 use tracing::{debug, info, warn};
+
+// ---- Typed config structs for serde deserialization ----
+
+/// Root of a .mcp.json file
+#[derive(Deserialize)]
+struct McpJsonRoot {
+    #[serde(rename = "mcpServers", default)]
+    mcp_servers: HashMap<String, ServerEntry>,
+}
+
+/// Root of a Codex config.toml file
+#[derive(Deserialize)]
+struct CodexTomlRoot {
+    #[serde(default)]
+    mcp_servers: HashMap<String, ServerEntry>,
+}
+
+/// A single server entry (works for both JSON and TOML formats).
+/// Fields for both stdio and HTTP transports are optional; `command` takes
+/// precedence over `url` when both are present.
+#[derive(Deserialize)]
+struct ServerEntry {
+    command: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    cwd: Option<String>,
+    url: Option<String>,
+    bearer_token_env_var: Option<String>,
+    #[serde(default)]
+    http_headers: HashMap<String, String>,
+    #[serde(default)]
+    env_http_headers: HashMap<String, String>,
+}
+
+impl ServerEntry {
+    fn into_transport(self) -> Option<McpTransport> {
+        if let Some(command) = self.command {
+            Some(McpTransport::Stdio {
+                command,
+                args: self.args,
+                env: self.env,
+                cwd: self.cwd,
+            })
+        } else if let Some(url) = self.url {
+            Some(McpTransport::Http {
+                url,
+                bearer_token_env_var: self.bearer_token_env_var,
+                http_headers: self.http_headers,
+                env_http_headers: self.env_http_headers,
+            })
+        } else {
+            None
+        }
+    }
+}
 
 /// Configuration for an external MCP server
 #[derive(Debug, Clone)]
@@ -109,8 +166,8 @@ impl McpClientManager {
         seen: &mut std::collections::HashSet<String>,
     ) {
         if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                Self::parse_mcp_servers(&parsed, configs, seen);
+            if let Ok(root) = serde_json::from_str::<McpJsonRoot>(&content) {
+                Self::add_servers(root.mcp_servers, configs, seen);
             }
         }
     }
@@ -122,178 +179,26 @@ impl McpClientManager {
         seen: &mut std::collections::HashSet<String>,
     ) {
         if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(parsed) = toml::from_str::<TomlValue>(&content) {
-                Self::parse_codex_servers(&parsed, configs, seen);
+            if let Ok(root) = toml::from_str::<CodexTomlRoot>(&content) {
+                Self::add_servers(root.mcp_servers, configs, seen);
             }
         }
     }
 
-    /// Parse mcpServers from a JSON config object
-    fn parse_mcp_servers(
-        config: &Value,
+    /// Convert parsed server entries into configs, deduplicating by name.
+    /// Shared by both JSON and TOML loaders.
+    fn add_servers(
+        servers: HashMap<String, ServerEntry>,
         configs: &mut Vec<McpServerConfig>,
         seen: &mut std::collections::HashSet<String>,
     ) {
-        let servers = match config.get("mcpServers").and_then(|v| v.as_object()) {
-            Some(s) => s,
-            None => return,
-        };
-
-        for (name, server_config) in servers {
-            // Skip "mira" (ourselves)
-            if name == "mira" {
+        for (name, entry) in servers {
+            if name == "mira" || seen.contains(&name) {
                 continue;
             }
-
-            // Skip if already seen (project overrides global)
-            if seen.contains(name) {
-                continue;
-            }
-
-            let command = match server_config.get("command").and_then(|v| v.as_str()) {
-                Some(c) => c.to_string(),
-                None => continue,
-            };
-
-            let args: Vec<String> = server_config
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .map(String::from)
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let env: HashMap<String, String> = server_config
-                .get("env")
-                .and_then(|v| v.as_object())
-                .map(|obj| {
-                    obj.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let cwd = server_config
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            seen.insert(name.clone());
-            configs.push(McpServerConfig {
-                name: name.clone(),
-                transport: McpTransport::Stdio {
-                    command,
-                    args,
-                    env,
-                    cwd,
-                },
-            });
-        }
-    }
-
-    /// Parse mcp_servers from a Codex config.toml
-    fn parse_codex_servers(
-        config: &TomlValue,
-        configs: &mut Vec<McpServerConfig>,
-        seen: &mut std::collections::HashSet<String>,
-    ) {
-        let servers = match config.get("mcp_servers").and_then(|v| v.as_table()) {
-            Some(s) => s,
-            None => return,
-        };
-
-        for (name, server_value) in servers {
-            // Skip "mira" (ourselves)
-            if name == "mira" {
-                continue;
-            }
-
-            // Skip if already seen (project overrides global, .mcp.json overrides .codex)
-            if seen.contains(name) {
-                continue;
-            }
-
-            let server = match server_value.as_table() {
-                Some(t) => t,
-                None => continue,
-            };
-
-            if let Some(command) = server.get("command").and_then(|v| v.as_str()) {
-                let args: Vec<String> = server
-                    .get("args")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .map(String::from)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let env: HashMap<String, String> = server
-                    .get("env")
-                    .and_then(|v| v.as_table())
-                    .map(|obj| {
-                        obj.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let cwd = server
-                    .get("cwd")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
+            if let Some(transport) = entry.into_transport() {
                 seen.insert(name.clone());
-                configs.push(McpServerConfig {
-                    name: name.clone(),
-                    transport: McpTransport::Stdio {
-                        command: command.to_string(),
-                        args,
-                        env,
-                        cwd,
-                    },
-                });
-            } else if let Some(url) = server.get("url").and_then(|v| v.as_str()) {
-                let bearer_token_env_var = server
-                    .get("bearer_token_env_var")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                let http_headers: HashMap<String, String> = server
-                    .get("http_headers")
-                    .and_then(|v| v.as_table())
-                    .map(|obj| {
-                        obj.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let env_http_headers: HashMap<String, String> = server
-                    .get("env_http_headers")
-                    .and_then(|v| v.as_table())
-                    .map(|obj| {
-                        obj.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                seen.insert(name.clone());
-                configs.push(McpServerConfig {
-                    name: name.clone(),
-                    transport: McpTransport::Http {
-                        url: url.to_string(),
-                        bearer_token_env_var,
-                        http_headers,
-                        env_http_headers,
-                    },
-                });
+                configs.push(McpServerConfig { name, transport });
             }
         }
     }
@@ -596,9 +501,19 @@ impl McpClientManager {
 mod tests {
     use super::*;
 
+    /// Helper: deserialize JSON and run add_servers, mirroring try_load_mcp_json.
+    fn parse_json(
+        json: &str,
+        configs: &mut Vec<McpServerConfig>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        let root: McpJsonRoot = serde_json::from_str(json).unwrap();
+        McpClientManager::add_servers(root.mcp_servers, configs, seen);
+    }
+
     #[test]
     fn test_parse_mcp_servers_basic() {
-        let config: Value = serde_json::json!({
+        let json = r#"{
             "mcpServers": {
                 "context7": {
                     "command": "npx",
@@ -610,11 +525,11 @@ mod tests {
                     "args": ["serve"]
                 }
             }
-        });
+        }"#;
 
         let mut configs = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        McpClientManager::parse_mcp_servers(&config, &mut configs, &mut seen);
+        parse_json(json, &mut configs, &mut seen);
 
         // "mira" should be filtered out
         assert_eq!(configs.len(), 1);
@@ -627,7 +542,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(command, "npx");
-                assert_eq!(args, &vec!["-y", "@context7/mcp"]);
+                assert_eq!(args, &["-y", "@context7/mcp"]);
                 assert_eq!(env.get("API_KEY").unwrap(), "test");
             }
             McpTransport::Http { .. } => panic!("Expected stdio transport"),
@@ -636,50 +551,103 @@ mod tests {
 
     #[test]
     fn test_parse_mcp_servers_dedup() {
-        let config: Value = serde_json::json!({
+        let json = r#"{
             "mcpServers": {
-                "server1": {"command": "cmd1", "args": []},
-                "server2": {"command": "cmd2", "args": []}
+                "server1": {"command": "cmd1"},
+                "server2": {"command": "cmd2"}
             }
-        });
+        }"#;
 
         let mut configs = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
         // Parse once
-        McpClientManager::parse_mcp_servers(&config, &mut configs, &mut seen);
+        parse_json(json, &mut configs, &mut seen);
         assert_eq!(configs.len(), 2);
 
         // Parse again - should not add duplicates
-        McpClientManager::parse_mcp_servers(&config, &mut configs, &mut seen);
+        parse_json(json, &mut configs, &mut seen);
         assert_eq!(configs.len(), 2);
     }
 
     #[test]
     fn test_parse_mcp_servers_no_servers() {
-        let config: Value = serde_json::json!({"other": "data"});
-        let mut configs = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        McpClientManager::parse_mcp_servers(&config, &mut configs, &mut seen);
-        assert!(configs.is_empty());
+        let root: Result<McpJsonRoot, _> = serde_json::from_str(r#"{"other": "data"}"#);
+        // mcpServers defaults to empty HashMap, so deserialization succeeds
+        let root = root.unwrap();
+        assert!(root.mcp_servers.is_empty());
     }
 
     #[test]
     fn test_parse_mcp_servers_missing_command() {
-        let config: Value = serde_json::json!({
+        let json = r#"{
             "mcpServers": {
                 "no_cmd": {"args": ["arg1"]},
-                "has_cmd": {"command": "test", "args": []}
+                "has_cmd": {"command": "test"}
             }
-        });
+        }"#;
 
         let mut configs = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        McpClientManager::parse_mcp_servers(&config, &mut configs, &mut seen);
+        parse_json(json, &mut configs, &mut seen);
 
         // Only server with command should be included
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].name, "has_cmd");
+    }
+
+    #[test]
+    fn test_parse_http_server() {
+        let json = r#"{
+            "mcpServers": {
+                "remote": {
+                    "url": "https://example.com/mcp",
+                    "bearer_token_env_var": "MY_TOKEN"
+                }
+            }
+        }"#;
+
+        let mut configs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        parse_json(json, &mut configs, &mut seen);
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].name, "remote");
+        match &configs[0].transport {
+            McpTransport::Http {
+                url,
+                bearer_token_env_var,
+                ..
+            } => {
+                assert_eq!(url, "https://example.com/mcp");
+                assert_eq!(bearer_token_env_var.as_deref(), Some("MY_TOKEN"));
+            }
+            McpTransport::Stdio { .. } => panic!("Expected HTTP transport"),
+        }
+    }
+
+    #[test]
+    fn test_parse_codex_toml() {
+        let toml_str = r#"
+            [mcp_servers.myserver]
+            command = "my-mcp"
+            args = ["--port", "8080"]
+        "#;
+
+        let root: CodexTomlRoot = toml::from_str(toml_str).unwrap();
+        let mut configs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        McpClientManager::add_servers(root.mcp_servers, &mut configs, &mut seen);
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].name, "myserver");
+        match &configs[0].transport {
+            McpTransport::Stdio { command, args, .. } => {
+                assert_eq!(command, "my-mcp");
+                assert_eq!(args, &["--port", "8080"]);
+            }
+            McpTransport::Http { .. } => panic!("Expected stdio transport"),
+        }
     }
 
     // ========================================================================

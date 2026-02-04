@@ -187,11 +187,12 @@ pub(crate) async fn scan_project_health(
     let mut total = 0;
 
     // Run file-based detection operations using main_pool (they only write to memory_facts)
+    // Cargo check runs separately; all pattern detectors run in a single pass over each file.
     let project_path_owned = project_path.to_string();
     let detection_results = main_pool
         .interact(
             move |conn| -> Result<(usize, usize, usize, usize, usize), anyhow::Error> {
-                // 1. Cargo check warnings (most important)
+                // 1. Cargo check warnings (most important, runs cargo externally)
                 tracing::debug!(
                     "Code health: running cargo check for {}",
                     project_path_owned
@@ -202,42 +203,23 @@ pub(crate) async fn scan_project_health(
                     tracing::info!("Code health: found {} cargo warnings", warnings);
                 }
 
-                // 2. TODO/FIXME comments
-                let todos = detection::scan_todo_comments(conn, project_id, &project_path_owned)
+                // 2-5. Single-pass pattern detection (TODOs, unimplemented, unwrap, error handling)
+                let det = detection::scan_all(conn, project_id, &project_path_owned)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
-                if todos > 0 {
-                    tracing::info!("Code health: found {} TODOs", todos);
+                if det.todos > 0 {
+                    tracing::info!("Code health: found {} TODOs", det.todos);
+                }
+                if det.unimplemented > 0 {
+                    tracing::info!("Code health: found {} unimplemented! macros", det.unimplemented);
+                }
+                if det.unwraps > 0 {
+                    tracing::info!("Code health: found {} unwrap/expect calls in non-test code", det.unwraps);
+                }
+                if det.error_handling > 0 {
+                    tracing::info!("Code health: found {} error handling issues", det.error_handling);
                 }
 
-                // 3. Unimplemented macros
-                let unimpl = detection::scan_unimplemented(conn, project_id, &project_path_owned)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-                if unimpl > 0 {
-                    tracing::info!("Code health: found {} unimplemented! macros", unimpl);
-                }
-
-                // 4. Unwrap/expect audit (panic risks)
-                let unwraps = detection::scan_unwrap_usage(conn, project_id, &project_path_owned)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-                if unwraps > 0 {
-                    tracing::info!(
-                        "Code health: found {} unwrap/expect calls in non-test code",
-                        unwraps
-                    );
-                }
-
-                // 5. Error handling quality (pattern-based)
-                let error_handling =
-                    detection::scan_error_handling(conn, project_id, &project_path_owned)
-                        .map_err(|e| anyhow::anyhow!("{}", e))?;
-                if error_handling > 0 {
-                    tracing::info!(
-                        "Code health: found {} error handling issues",
-                        error_handling
-                    );
-                }
-
-                Ok((warnings, todos, unimpl, unwraps, error_handling))
+                Ok((warnings, det.todos, det.unimplemented, det.unwraps, det.error_handling))
             },
         )
         .await
