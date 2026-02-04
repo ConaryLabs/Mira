@@ -53,6 +53,18 @@ fn ensure_sqlite_vec_registered() {
     });
 }
 
+/// Check if an error is SQLite contention (SQLITE_BUSY or SQLITE_LOCKED).
+///
+/// SQLITE_BUSY ("database is locked") occurs with file-based databases under write contention.
+/// SQLITE_LOCKED ("database table is locked") occurs with shared-cache in-memory databases
+/// when another connection holds a write lock on the same table.
+fn is_sqlite_contention(err: &str) -> bool {
+    err.contains("database is locked")
+        || err.contains("database table is locked")
+        || err.contains("SQLITE_BUSY")
+        || err.contains("SQLITE_LOCKED")
+}
+
 /// Database pool wrapper with sqlite-vec support and per-connection setup.
 ///
 /// Connection pool that scales for concurrent access.
@@ -239,12 +251,51 @@ impl DatabasePool {
             .str_err()
     }
 
-    /// Run a closure with retry on SQLITE_BUSY errors.
+    /// Like [`run`](Self::run) but with retry on SQLite contention errors.
     ///
-    /// Uses exponential backoff (100ms, 500ms, 2000ms) for up to 3 attempts.
-    /// Use this for critical writes that must not be lost (session creation,
-    /// memory storage, goal updates). For non-critical writes (tool history,
-    /// analytics), prefer fire-and-forget with `tokio::spawn`.
+    /// Uses exponential backoff (100ms, 500ms, 2000ms) for up to 3 retries.
+    /// Use this for critical writes that must not be lost (memory storage,
+    /// session creation, goal updates). The closure must be `Clone` to
+    /// support retries.
+    pub async fn run_with_retry<F, R, E>(&self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + Clone + 'static,
+        R: Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+    {
+        let delays = [
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(2000),
+        ];
+
+        for (attempt, delay) in delays.iter().enumerate() {
+            let f_clone = f.clone();
+            match self.run(f_clone).await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    if is_sqlite_contention(&e) {
+                        tracing::warn!(
+                            "SQLite contention on attempt {}/{}, retrying in {:?}",
+                            attempt + 1,
+                            delays.len(),
+                            delay
+                        );
+                        tokio::time::sleep(*delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        self.run(f).await
+    }
+
+    /// Run a closure with retry on SQLite contention errors.
+    ///
+    /// Uses exponential backoff (100ms, 500ms, 2000ms) for up to 3 retries.
+    /// Like [`run_with_retry`](Self::run_with_retry) but returns `anyhow::Result`.
     pub async fn interact_with_retry<F, R>(&self, f: F) -> Result<R>
     where
         F: FnOnce(&Connection) -> Result<R> + Send + Clone + 'static,
@@ -262,9 +313,9 @@ impl DatabasePool {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     let err_str = e.to_string();
-                    if err_str.contains("database is locked") || err_str.contains("SQLITE_BUSY") {
+                    if is_sqlite_contention(&err_str) {
                         tracing::warn!(
-                            "SQLITE_BUSY on attempt {}/{}, retrying in {:?}",
+                            "SQLite contention on attempt {}/{}, retrying in {:?}",
                             attempt + 1,
                             delays.len(),
                             delay

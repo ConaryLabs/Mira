@@ -165,7 +165,7 @@ pub async fn remember<C: ToolContext>(
     let key_for_later = key.clone(); // needed for response message
     let id: i64 = ctx
         .pool()
-        .run(move |conn| {
+        .run_with_retry(move |conn| {
             let params = StoreMemoryParams {
                 project_id,
                 key: key.as_deref(),
