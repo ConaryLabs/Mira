@@ -3,6 +3,7 @@
 
 use mira_types::MemoryFact;
 use rusqlite::OptionalExtension;
+use std::sync::LazyLock;
 
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
 #[derive(Debug, Clone)]
@@ -108,11 +109,11 @@ pub fn scope_filter_sql(prefix: &str) -> String {
     )
 }
 
-/// Shared semantic recall query with scope filtering.
+/// Cached semantic recall query with scope filtering.
 ///
 /// Returns SQL that selects (fact_id, content, distance, branch) from vec_memory + memory_facts.
 /// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id
-fn semantic_recall_sql() -> String {
+static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
          FROM vec_memory v
@@ -124,6 +125,10 @@ fn semantic_recall_sql() -> String {
             .replace("?{pid}", "?2")
             .replace("?{uid}", "?4")
     )
+});
+
+fn semantic_recall_sql() -> &'static str {
+    &SEMANTIC_RECALL_SQL
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -423,12 +423,15 @@ fn make_file_post_create_hook(path: PathBuf) -> Hook {
 
 /// Create a post_create hook for in-memory databases.
 ///
-/// Only enables foreign keys (WAL mode is not applicable to in-memory DBs).
+/// Enables foreign keys and busy_timeout (WAL mode is not applicable to in-memory DBs).
 fn make_memory_post_create_hook() -> Hook {
     Hook::async_fn(|conn, _metrics| {
         Box::pin(async move {
             conn.interact(|conn| {
-                conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+                conn.execute_batch(
+                    "PRAGMA foreign_keys=ON; \
+                     PRAGMA busy_timeout=5000;",
+                )?;
                 Ok::<_, rusqlite::Error>(())
             })
             .await

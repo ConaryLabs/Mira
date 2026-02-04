@@ -23,49 +23,25 @@ pub fn find_callers_sync(
     project_id: Option<i64>,
     limit: usize,
 ) -> Vec<CrossRefResult> {
-    let query = if project_id.is_some() {
+    conn.prepare(
         "SELECT cs.name, cs.file_path, cg.call_count
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cg.callee_name = ?1 AND cs.project_id = ?2
+         WHERE cg.callee_name = ?1 AND (?2 IS NULL OR cs.project_id = ?2)
          ORDER BY cg.call_count DESC
-         LIMIT ?3"
-    } else {
-        "SELECT cs.name, cs.file_path, cg.call_count
-         FROM call_graph cg
-         JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cg.callee_name = ?1
-         ORDER BY cg.call_count DESC
-         LIMIT ?2"
-    };
-
-    if let Some(pid) = project_id {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![target_name, pid, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+         LIMIT ?3",
+    )
+    .and_then(|mut stmt| {
+        stmt.query_map(params![target_name, project_id, limit as i64], |row| {
+            Ok(CrossRefResult {
+                symbol_name: row.get(0)?,
+                file_path: row.get(1)?,
+                call_count: row.get::<_, i32>(2).unwrap_or(1),
             })
-            .unwrap_or_default()
-    } else {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![target_name, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    }
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
 }
 
 /// Find functions that are called by the given function
@@ -75,51 +51,26 @@ pub fn find_callees_sync(
     project_id: Option<i64>,
     limit: usize,
 ) -> Vec<CrossRefResult> {
-    let query = if project_id.is_some() {
+    conn.prepare(
         "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cs.name = ?1 AND cs.project_id = ?2
+         WHERE cs.name = ?1 AND (?2 IS NULL OR cs.project_id = ?2)
          GROUP BY cg.callee_name
          ORDER BY cnt DESC
-         LIMIT ?3"
-    } else {
-        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
-         FROM call_graph cg
-         JOIN code_symbols cs ON cg.caller_id = cs.id
-         WHERE cs.name = ?1
-         GROUP BY cg.callee_name
-         ORDER BY cnt DESC
-         LIMIT ?2"
-    };
-
-    if let Some(pid) = project_id {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![caller_name, pid, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+         LIMIT ?3",
+    )
+    .and_then(|mut stmt| {
+        stmt.query_map(params![caller_name, project_id, limit as i64], |row| {
+            Ok(CrossRefResult {
+                symbol_name: row.get(0)?,
+                file_path: row.get(1)?,
+                call_count: row.get::<_, i32>(2).unwrap_or(1),
             })
-            .unwrap_or_default()
-    } else {
-        conn.prepare(query)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![caller_name, limit as i64], |row| {
-                    Ok(CrossRefResult {
-                        symbol_name: row.get(0)?,
-                        file_path: row.get(1)?,
-                        call_count: row.get::<_, i32>(2).unwrap_or(1),
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    }
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
 }
 
 /// Get the start and end line of a symbol
@@ -129,27 +80,14 @@ pub fn get_symbol_bounds_sync(
     symbol_name: &str,
     project_id: Option<i64>,
 ) -> Option<(u32, u32)> {
-    let query = if project_id.is_some() {
+    conn.query_row(
         "SELECT start_line, end_line FROM code_symbols
-         WHERE project_id = ?1 AND file_path = ?2 AND name = ?3
-         LIMIT 1"
-    } else {
-        "SELECT start_line, end_line FROM code_symbols
-         WHERE file_path = ?1 AND name = ?2
-         LIMIT 1"
-    };
-
-    if let Some(pid) = project_id {
-        conn.query_row(query, params![pid, file_path, symbol_name], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .ok()
-    } else {
-        conn.query_row(query, params![file_path, symbol_name], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .ok()
-    }
+         WHERE (?1 IS NULL OR project_id = ?1) AND file_path = ?2 AND name = ?3
+         LIMIT 1",
+        params![project_id, file_path, symbol_name],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .ok()
 }
 
 /// Result from FTS search
@@ -175,51 +113,26 @@ pub fn fts_search_sync(
         .collect::<Vec<_>>()
         .join(" ");
 
-    let sql = if project_id.is_some() {
+    conn.prepare(
         "SELECT c.file_path, c.chunk_content, bm25(code_fts, 1.0, 2.0) as score, c.start_line
          FROM code_fts f
          JOIN code_chunks c ON c.rowid = f.rowid
-         WHERE code_fts MATCH ?1 AND c.project_id = ?2
+         WHERE code_fts MATCH ?1 AND (?2 IS NULL OR c.project_id = ?2)
          ORDER BY bm25(code_fts, 1.0, 2.0)
-         LIMIT ?3"
-    } else {
-        "SELECT c.file_path, c.chunk_content, bm25(code_fts, 1.0, 2.0) as score, c.start_line
-         FROM code_fts f
-         JOIN code_chunks c ON c.rowid = f.rowid
-         WHERE code_fts MATCH ?1
-         ORDER BY bm25(code_fts, 1.0, 2.0)
-         LIMIT ?2"
-    };
-
-    if let Some(pid) = project_id {
-        conn.prepare(sql)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![fts_query, pid, limit as i64], |row| {
-                    Ok(FtsSearchResult {
-                        file_path: row.get(0)?,
-                        chunk_content: row.get(1)?,
-                        score: row.get(2)?,
-                        start_line: row.get(3)?,
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+         LIMIT ?3",
+    )
+    .and_then(|mut stmt| {
+        stmt.query_map(params![fts_query, project_id, limit as i64], |row| {
+            Ok(FtsSearchResult {
+                file_path: row.get(0)?,
+                chunk_content: row.get(1)?,
+                score: row.get(2)?,
+                start_line: row.get(3)?,
             })
-            .unwrap_or_default()
-    } else {
-        conn.prepare(sql)
-            .and_then(|mut stmt| {
-                stmt.query_map(params![fts_query, limit as i64], |row| {
-                    Ok(FtsSearchResult {
-                        file_path: row.get(0)?,
-                        chunk_content: row.get(1)?,
-                        score: row.get(2)?,
-                        start_line: row.get(3)?,
-                    })
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    }
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    })
+    .unwrap_or_default()
 }
 
 /// Result from chunk LIKE search
@@ -244,7 +157,7 @@ where
 {
     let mut results = Vec::new();
     for pattern in patterns {
-        if let Ok(mut stmt) = conn.prepare(sql) {
+        if let Ok(mut stmt) = conn.prepare_cached(sql) {
             if let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], &map_row) {
                 for row in rows.filter_map(|r| r.ok()) {
                     if results.len() >= limit {

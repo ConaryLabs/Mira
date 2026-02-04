@@ -16,6 +16,18 @@ use rmcp::{
     task_manager::{self, OperationDescriptor, OperationMessage, ToolCallTaskResult},
 };
 
+/// Extract the "action" field from tool arguments and look up the task TTL.
+fn extract_action_ttl(request: &CallToolRequestParams) -> (Option<String>, Option<u64>) {
+    let action = request
+        .arguments
+        .as_ref()
+        .and_then(|a| a.get("action"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let ttl = tasks::task_ttl(&request.name, action.as_deref());
+    (action, ttl)
+}
+
 impl ServerHandler for MiraServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
@@ -58,15 +70,8 @@ impl ServerHandler for MiraServer {
         async move {
             // Auto-enqueue task-eligible tools that arrive via synchronous call_tool
             // (i.e. not already going through the native task protocol).
-            // Extract tool name + action up front to avoid borrow conflicts with the move.
             let maybe_enqueue = if request.task.is_none() {
-                let action = request
-                    .arguments
-                    .as_ref()
-                    .and_then(|a| a.get("action"))
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                tasks::task_ttl(&request.name, action.as_deref())
+                extract_action_ttl(&request).1
             } else {
                 None
             };
@@ -91,16 +96,9 @@ impl ServerHandler for MiraServer {
         async move {
             let tool_name = request.name.to_string();
 
-            // Extract action from arguments for eligibility check
-            let action = request
-                .arguments
-                .as_ref()
-                .and_then(|a| a.get("action"))
-                .and_then(|v| v.as_str())
-                .map(String::from);
-
-            // Check eligibility by tool name + action
-            let ttl = match tasks::task_ttl(&tool_name, action.as_deref()) {
+            // Extract action + check eligibility by tool name + action
+            let (action, maybe_ttl) = extract_action_ttl(&request);
+            let ttl = match maybe_ttl {
                 Some(ttl) => ttl,
                 None => {
                     return Err(ErrorData::internal_error(

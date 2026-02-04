@@ -102,41 +102,18 @@ pub fn get_pending_doc_tasks(
     project_id: Option<i64>,
     limit: usize,
 ) -> Result<Vec<DocTask>, String> {
-    let sql = if project_id.is_some() {
+    let sql = format!(
         "SELECT * FROM documentation_tasks
-         WHERE project_id = ?1 AND status = 'pending'
-         ORDER BY
-             CASE priority
-                 WHEN 'urgent' THEN 1
-                 WHEN 'high' THEN 2
-                 WHEN 'medium' THEN 3
-                 ELSE 4
-             END,
-             created_at DESC
-         LIMIT ?2"
-    } else {
-        "SELECT * FROM documentation_tasks
-         WHERE status = 'pending'
-         ORDER BY
-             CASE priority
-                 WHEN 'urgent' THEN 1
-                 WHEN 'high' THEN 2
-                 WHEN 'medium' THEN 3
-                 ELSE 4
-             END,
-             created_at DESC
-         LIMIT ?1"
-    };
+         WHERE (?1 IS NULL OR project_id = ?1) AND status = 'pending'
+         ORDER BY {}, created_at DESC
+         LIMIT ?2",
+        super::PRIORITY_ORDER_SQL
+    );
 
-    let mut stmt = conn.prepare(sql).str_err()?;
-
-    let rows = if let Some(pid) = project_id {
-        stmt.query_map(params![pid, limit as i64], parse_doc_task)
-    } else {
-        stmt.query_map(params![limit as i64], parse_doc_task)
-    }
-    .str_err()?;
-
+    let mut stmt = conn.prepare(&sql).str_err()?;
+    let rows = stmt
+        .query_map(params![project_id, limit as i64], parse_doc_task)
+        .str_err()?;
     rows.collect::<Result<Vec<_>, _>>().str_err()
 }
 
@@ -149,40 +126,32 @@ pub fn list_doc_tasks(
     priority: Option<&str>,
 ) -> Result<Vec<DocTask>, String> {
     let mut sql = "SELECT * FROM documentation_tasks WHERE 1=1".to_string();
-    let mut params = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
     if let Some(pid) = project_id {
         sql.push_str(" AND project_id = ?");
-        params.push(pid.to_string());
+        params.push(Box::new(pid));
     }
     if let Some(s) = status {
         sql.push_str(" AND status = ?");
-        params.push(s.to_string());
+        params.push(Box::new(s.to_string()));
     }
     if let Some(t) = doc_type {
         sql.push_str(" AND doc_type = ?");
-        params.push(t.to_string());
+        params.push(Box::new(t.to_string()));
     }
     if let Some(p) = priority {
         sql.push_str(" AND priority = ?");
-        params.push(p.to_string());
+        params.push(Box::new(p.to_string()));
     }
 
-    sql.push_str(
-        " ORDER BY CASE priority
-            WHEN 'urgent' THEN 1
-            WHEN 'high' THEN 2
-            WHEN 'medium' THEN 3
-            ELSE 4
-        END, created_at DESC",
-    );
+    sql.push_str(&format!(
+        " ORDER BY {}, created_at DESC",
+        super::PRIORITY_ORDER_SQL
+    ));
 
     let mut stmt = conn.prepare(&sql).str_err()?;
-
-    let params_refs: Vec<&dyn rusqlite::ToSql> =
-        params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
-
-    stmt.query_map(params_refs.as_slice(), parse_doc_task)
+    stmt.query_map(rusqlite::params_from_iter(params), parse_doc_task)
         .str_err()?
         .collect::<Result<Vec<_>, _>>()
         .str_err()
@@ -442,37 +411,19 @@ pub fn count_doc_tasks_by_status(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
 ) -> Result<Vec<(String, i64)>, String> {
-    match project_id {
-        Some(pid) => {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT status, COUNT(*) as count FROM documentation_tasks
-                     WHERE project_id = ?
-                     GROUP BY status",
-                )
-                .str_err()?;
-            stmt.query_map([pid], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .str_err()?
-            .collect::<Result<Vec<_>, _>>()
-            .str_err()
-        }
-        None => {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT status, COUNT(*) as count FROM documentation_tasks
-                     GROUP BY status",
-                )
-                .str_err()?;
-            stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .str_err()?
-            .collect::<Result<Vec<_>, _>>()
-            .str_err()
-        }
-    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT status, COUNT(*) as count FROM documentation_tasks
+             WHERE ?1 IS NULL OR project_id = ?1
+             GROUP BY status",
+        )
+        .str_err()?;
+    stmt.query_map(params![project_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })
+    .str_err()?
+    .collect::<Result<Vec<_>, _>>()
+    .str_err()
 }
 
 /// Get stale docs that need impact analysis (stale but not yet analyzed)

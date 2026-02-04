@@ -21,8 +21,6 @@ pub(super) struct CompilerMessage {
     level: String,
     message: String,
     spans: Vec<Span>,
-    #[allow(dead_code)]
-    rendered: Option<String>,
 }
 
 #[derive(Deserialize)]

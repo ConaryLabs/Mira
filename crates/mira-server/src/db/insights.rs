@@ -153,20 +153,15 @@ fn fetch_doc_gap_insights(
     conn: &Connection,
     project_id: i64,
 ) -> rusqlite::Result<Vec<UnifiedInsight>> {
-    let mut stmt = conn.prepare(
-        r#"SELECT doc_type, doc_category, target_doc_path, priority, reason, created_at
+    let sql = format!(
+        "SELECT doc_type, doc_category, target_doc_path, priority, reason, created_at
            FROM documentation_tasks
            WHERE project_id = ?1
              AND status = 'pending'
-           ORDER BY
-             CASE priority
-               WHEN 'urgent' THEN 1
-               WHEN 'high' THEN 2
-               WHEN 'medium' THEN 3
-               WHEN 'low' THEN 4
-               ELSE 5
-             END"#,
-    )?;
+           ORDER BY {}",
+        super::PRIORITY_ORDER_SQL
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt.query_map(params![project_id], |row| {
         let doc_type: String = row.get(0)?;
@@ -189,13 +184,7 @@ fn fetch_doc_gap_insights(
     for row in rows {
         let (doc_type, doc_category, target_doc_path, priority, reason, timestamp) = row?;
 
-        let priority_score = match priority.as_str() {
-            "urgent" => 1.0,
-            "high" => 0.85,
-            "medium" => 0.6,
-            "low" => 0.4,
-            _ => 0.5,
-        };
+        let priority_score = super::priority_score(&priority);
 
         let description = format!(
             "Missing {} documentation: {} ({})",

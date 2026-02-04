@@ -160,29 +160,23 @@ pub async fn remember<C: ToolContext>(
     // Get current branch for branch-aware memory
     let branch = ctx.get_branch().await;
 
-    // Store in SQL with session tracking via connection pool
-    let content_for_store = content.clone();
-    let key_for_store = key.clone();
-    let category_for_store = category.clone();
-    let fact_type_for_store = fact_type.clone();
-    let session_id_for_store = session_id.clone();
-    let user_id_for_store = user_id.clone();
-    let scope_for_store = scope.clone();
-    let branch_for_store = branch.clone();
+    // Clone only what's needed after the closure; move the rest directly
+    let content_for_later = content.clone(); // needed for embedding + entity extraction
+    let key_for_later = key.clone(); // needed for response message
     let id: i64 = ctx
         .pool()
         .run(move |conn| {
             let params = StoreMemoryParams {
                 project_id,
-                key: key_for_store.as_deref(),
-                content: &content_for_store,
-                fact_type: &fact_type_for_store,
-                category: category_for_store.as_deref(),
+                key: key.as_deref(),
+                content: &content,
+                fact_type: &fact_type,
+                category: category.as_deref(),
                 confidence,
-                session_id: session_id_for_store.as_deref(),
-                user_id: user_id_for_store.as_deref(),
-                scope: &scope_for_store,
-                branch: branch_for_store.as_deref(),
+                session_id: session_id.as_deref(),
+                user_id: user_id.as_deref(),
+                scope: &scope,
+                branch: branch.as_deref(),
             };
             store_memory_sync(conn, params)
         })
@@ -190,14 +184,14 @@ pub async fn remember<C: ToolContext>(
 
     // Store embedding if available (using RETRIEVAL_DOCUMENT task type for storage)
     if let Some(embeddings) = ctx.embeddings() {
-        match embeddings.embed_for_storage(&content).await {
+        match embeddings.embed_for_storage(&content_for_later).await {
             Ok(embedding) => {
                 let embedding_bytes = embedding_to_bytes(&embedding);
-                let content_clone = content.clone();
+                let content_for_embed = content_for_later.clone();
                 let result = ctx
                     .pool()
                     .run(move |conn| {
-                        store_embedding_sync(conn, id, &content_clone, &embedding_bytes)
+                        store_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
                     })
                     .await;
                 if let Err(e) = result {
@@ -218,7 +212,7 @@ pub async fn remember<C: ToolContext>(
         };
         use crate::entities::extract_entities_heuristic;
 
-        let entities = extract_entities_heuristic(&content);
+        let entities = extract_entities_heuristic(&content_for_later);
         let pool_for_entities = ctx.pool().clone();
         if let Err(e) = pool_for_entities
             .run(move |conn| {
@@ -253,7 +247,7 @@ pub async fn remember<C: ToolContext>(
         message: format!(
             "Stored memory (id: {}){}",
             id,
-            if key.is_some() { " with key" } else { "" }
+            if key_for_later.is_some() { " with key" } else { "" }
         ),
         data: Some(MemoryData::Remember(RememberData { id })),
     }))

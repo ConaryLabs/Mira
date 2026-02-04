@@ -213,17 +213,17 @@ fn get_documentation_interventions_sync(
     }
 
     // Get high-priority pending doc tasks (missing docs)
-    let mut pending_stmt = conn.prepare(
-        r#"SELECT target_doc_path, source_file_path, doc_category
+    let pending_sql = format!(
+        "SELECT target_doc_path, source_file_path, doc_category
            FROM documentation_tasks
            WHERE project_id = ?
              AND status = 'pending'
              AND priority IN ('high', 'urgent')
-           ORDER BY
-             CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
-             created_at DESC
-           LIMIT 2"#,
-    )?;
+           ORDER BY {}, created_at DESC
+           LIMIT 2",
+        crate::db::PRIORITY_ORDER_SQL
+    );
+    let mut pending_stmt = conn.prepare(&pending_sql)?;
 
     let pending_rows = pending_stmt.query_map(params![project_id], |row| {
         Ok((

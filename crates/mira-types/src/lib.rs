@@ -43,9 +43,8 @@ pub struct ProjectContext {
 ///
 /// Controls visibility via the `scope` field:
 /// - `"project"` (default): Visible only within `project_id`.
-/// - `"user"`: Visible to the specific `user_id` across all their projects.
+/// - `"personal"`: Visible only to the specific `user_id` (creator).
 /// - `"team"`: Visible to all members of `team_id`.
-/// - `"global"`: Universal constants (rare).
 ///
 /// # Fact Types
 ///
@@ -90,7 +89,7 @@ pub struct MemoryFact {
     /// Owner of the memory (for user-scoped memories).
     #[serde(default)]
     pub user_id: Option<String>,
-    /// Visibility scope: "project", "user", "team", or "global".
+    /// Visibility scope: "personal", "project", or "team".
     #[serde(default = "default_scope")]
     pub scope: String,
     /// Team ID (required if scope is "team").

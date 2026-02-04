@@ -49,12 +49,12 @@ svg-term --in demo.cast --out demo.svg --window
 
 **Option 1: asciinema.org link**
 ```markdown
-[![Demo](https://asciinema.org/a/XXXXX.svg)](https://asciinema.org/a/XXXXX)
+[![Demo](https://asciinema.org/a/<your-id>.svg)](https://asciinema.org/a/<your-id>)
 ```
 
 **Option 2: GIF in repo**
 ```markdown
-![Demo](scripts/demo.gif)
+![Demo](demo.gif)
 ```
 
 ## Tips

@@ -179,3 +179,19 @@ pub use usage::{
 
 // All database access goes through DatabasePool (db::pool).
 // All functions are available as _sync variants that take &Connection directly.
+
+/// Shared SQL fragment for ordering by priority (urgent > high > medium > low > rest).
+/// Append to ORDER BY clauses to keep priority ranking consistent across modules.
+pub const PRIORITY_ORDER_SQL: &str =
+    "CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+
+/// Map a priority string to a numeric score (1.0 = urgent, 0.4 = low).
+pub fn priority_score(priority: &str) -> f64 {
+    match priority {
+        "urgent" => 1.0,
+        "high" => 0.85,
+        "medium" => 0.6,
+        "low" => 0.4,
+        _ => 0.5,
+    }
+}
