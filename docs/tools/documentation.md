@@ -18,7 +18,7 @@ Manage documentation tasks. Tracks what needs documenting across the project, pr
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | Action to perform: `list`, `get`, `complete`, `skip`, `inventory`, or `scan` |
+| action | String | Yes | Action to perform: `list`, `get`, `complete`, `skip`, `inventory`, `scan`, or `export_claude_local` |
 | task_id | Integer | Conditional | Task ID (required for `get`, `complete`, `skip`) |
 | reason | String | No | Reason for skipping (used with `skip` action, defaults to "Skipped by user") |
 | doc_type | String | No | Filter by documentation type (used with `list` action, e.g. `mcp_tool`, `module`, `public_api`) |
@@ -35,6 +35,7 @@ Manage documentation tasks. Tracks what needs documenting across the project, pr
 | `skip` | Mark a task as not needed | `action`, `task_id` |
 | `inventory` | Show all existing documentation with staleness indicators | `action` |
 | `scan` | Trigger a fresh documentation scan of the project | `action` |
+| `export_claude_local` | Export Mira memories to CLAUDE.local.md | `action` |
 
 ## Returns
 
@@ -61,6 +62,10 @@ Markdown inventory of all existing documentation grouped by type, with staleness
 ### `scan`
 
 Confirmation that the scan was triggered. Results appear in subsequent `list` calls.
+
+### `export_claude_local`
+
+Exports Mira memories to the project's `CLAUDE.local.md` file, organized by category (preferences, decisions, general).
 
 ## Examples
 

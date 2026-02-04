@@ -6,7 +6,8 @@ LLM provider abstraction layer. Provides a unified interface for inference acros
 
 - **DeepSeek** - Primary provider for expert consultation
 - **Gemini** - Alternative provider, also used for embeddings
-- **OpenAI-compatible** - Generic client for OpenAI-compatible endpoints
+
+**Note:** The `openai_compat` sub-module is a shared request/response format used internally by DeepSeek and other providers. It is not a separately selectable provider.
 
 ## Key Types
 
@@ -28,7 +29,7 @@ LLM provider abstraction layer. Provides a unified interface for inference acros
 | `factory` | `ProviderFactory` for client instantiation |
 | `deepseek` | DeepSeek API client |
 | `gemini` | Gemini API client |
-| `openai_compat` | OpenAI-compatible client |
+| `openai_compat` | Shared OpenAI-compatible request/response format (used by DeepSeek, GLM) |
 | `pricing` | Usage tracking and cost calculation |
 | `prompt` | `PromptBuilder` for message construction |
 | `types` | `Message`, `Tool`, `FunctionCall`, `ChatResult`, `Usage` |

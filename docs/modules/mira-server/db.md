@@ -31,4 +31,9 @@ Unified database layer providing sync operations for all Mira features. Built on
 | `background` | Background task support |
 | `cartographer` | Module/dependency mapping |
 | `diff_analysis` | Git diff semantic analysis |
+| `diff_outcomes` | Diff outcome tracking |
+| `entities` | Entity storage and retrieval |
+| `insights` | Insight storage from pondering/proactive |
+| `tech_debt` | Tech debt scores per module |
+| `dependencies` | Module dependency tracking |
 | `types` | Shared database types |

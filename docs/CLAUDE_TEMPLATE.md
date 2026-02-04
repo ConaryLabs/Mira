@@ -10,27 +10,11 @@ Mira uses a modular structure to keep always-loaded context small:
 
 ---
 
-## Quick Setup
+## Setup
 
-Run the install script — it creates all files automatically:
+> **Note:** `mira init` is planned but not yet implemented. For now, create these files manually.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
-```
-
-Then from your project directory:
-
-```bash
-mira init
-```
-
-This creates `CLAUDE.md`, `.claude/rules/`, and `.claude/skills/` with all Mira guidance.
-
----
-
-## Manual Setup
-
-If you prefer to set up manually, create these files:
+Create these files in your project:
 
 ### 1. `CLAUDE.md` (root) — Always loaded
 

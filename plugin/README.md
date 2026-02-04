@@ -65,7 +65,7 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 11 action-based tools:
+The plugin bundles the Mira MCP server with 12 action-based tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
@@ -79,6 +79,7 @@ The plugin bundles the Mira MCP server with 11 action-based tools:
 | `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
 | `index` | project, file, status, compact, summarize, health | Code indexing and health |
 | `analyze_diff` | — | Semantic git diff analysis |
+| `reply_to_mira` | — | Send a response back during collaboration |
 | `tasks` | list, get, cancel | Async background operations |
 
 All tools return structured JSON via MCP outputSchema.
@@ -94,24 +95,6 @@ The plugin uses Claude Code hooks for bidirectional communication:
 | `PostToolUse` | Track file changes, queue re-indexing |
 | `PreCompact` | Extract important context before summarization |
 | `Stop` | Save session state, auto-export CLAUDE.local.md, check goal progress |
-
-## Configuration
-
-Create `~/.mira/config.toml` to customize behavior:
-
-```toml
-[hooks]
-enabled = true
-
-[hooks.user_prompt]
-min_prompt_length = 10  # Skip very short prompts
-
-[hooks.post_tool]
-security_scan = true    # Run quick security checks
-
-[hooks.stop]
-auto_continue_goals = false  # Don't auto-continue incomplete goals
-```
 
 ## Testing
 

@@ -17,10 +17,10 @@ Think of it as giving Claude Code long-term memory, deep code understanding, and
 - **Zero-Key Expert Consultation** — MCP Sampling lets experts consult via the host client, no API keys required
 - **Interactive Setup** — MCP Elicitation guides you through API key configuration on first run
 - **Async Operations** — Long-running tools (indexing, health scans) now run in the background via MCP Tasks
-- **Structured Responses** — All 11 tools return typed JSON via MCP outputSchema
+- **Structured Responses** — All 12 tools return typed JSON via MCP outputSchema
 - **Change Intelligence** — Outcome tracking, pattern mining, and predictive risk for your commits
 - **Entity Layer** — Lightweight entity extraction boosts memory recall relevance
-- **Tool Consolidation** — Streamlined from ~20 tools to 11 unified action-based interfaces
+- **Tool Consolidation** — Streamlined from ~20 tools to 12 unified action-based interfaces
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
@@ -153,20 +153,12 @@ Get your keys from:
 
 ### Add Mira Instructions to Your Project
 
-From your project directory, run:
+> **Note:** `mira init` is planned but not yet implemented. For now, set up project instructions manually.
 
-```bash
-mira init
-```
-
-This creates a modular instruction layout:
+See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for manual setup instructions. The modular structure uses:
 - `CLAUDE.md` — Core identity, tool selection, build commands (always loaded)
 - `.claude/rules/` — Detailed guidance for tools, memory, tasks, experts (always loaded)
 - `.claude/skills/` — Reference docs like Context7 and tool APIs (loaded on-demand)
-
-This modular structure keeps always-loaded context small (~225 lines) while putting reference material in on-demand skills.
-
-See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for manual setup instructions and the full file layout.
 
 ### Enable Hooks (Required for Full Features)
 

@@ -25,7 +25,7 @@ Manage persistent memories. Actions: `remember` (store), `recall` (search), `for
 | key | String | No | Unique key for upsert (remember) |
 | fact_type | String | No | `preference`, `decision`, `context`, or `general` (default: `general`) |
 | category | String | No | Organizational category for grouping |
-| confidence | Float | No | 0.0–1.0 (default: 1.0) |
+| confidence | Float | No | 0.0–1.0 (default: 0.5 — evidence-based system starts low) |
 | scope | String | No | `personal`, `project` (default), or `team` |
 | query | String | For recall | Search query for semantic similarity |
 | limit | Integer | No | Max results for recall (default: 10) |

@@ -92,6 +92,4 @@ let fact = MemoryFact {
 
 ## See Also
 
-- [remember](../tools/remember.md) - Store new memories
-- [recall](../tools/recall.md) - Search memories by semantic similarity
-- [forget](../tools/forget.md) - Delete a memory by ID
+- [memory](../tools/memory.md) - Store, search, and delete memories (`remember`, `recall`, `forget` actions)

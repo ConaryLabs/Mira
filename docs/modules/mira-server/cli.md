@@ -6,7 +6,7 @@ Command-line interface using clap. Defines subcommands and dispatches to handler
 
 | Command | Purpose |
 |---------|---------|
-| `serve` | Start the MCP server (stdio or WebSocket mode) |
+| `serve` | Start the MCP server (stdio) |
 | `tool` | Run a single tool invocation |
 | `index` | Index a project's code |
 | `hook` | Handle Claude Code lifecycle hooks |

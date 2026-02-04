@@ -16,16 +16,10 @@ Implementation layer for all MCP tool handlers. Each file contains the business 
 | `experts/` | `expert` — consult, configure (includes council mode, role definitions, finding parsing) |
 | `session.rs` | `session` — history, recap, usage, insights; `reply_to_mira` |
 | `tasks.rs` | `tasks` — list, get, cancel (async background operations) |
-| `teams.rs` | `team` — create, invite, remove, list, members |
-| `cross_project.rs` | `cross_project` — privacy-preserving intelligence sharing |
+| `teams.rs` | Team management (internal, not exposed as MCP tool) |
+| `cross_project.rs` | Cross-project patterns (internal, not exposed as MCP tool) |
 | `claude_local.rs` | CLAUDE.local.md export (called via `documentation(action="export_claude_local")`) |
 
 ## Pattern
 
-All tool functions follow the same signature pattern:
-
-```rust
-pub async fn tool_name<C: ToolContext>(ctx: &C, ...) -> Result<String, String>
-```
-
-The `ToolContext` trait provides access to database pools, embeddings client, LLM factory, and project context.
+Tool functions take a `ToolContext` and return structured JSON responses (via `Json<...>` output types in the MCP layer). The `ToolContext` trait provides access to database pools, embeddings client, LLM factory, and project context.

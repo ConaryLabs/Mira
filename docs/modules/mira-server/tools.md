@@ -26,5 +26,5 @@ The MCP layer calls into these functions after deserializing request parameters.
 | `session.rs` | `session` | `history`, `recap`, `usage`, `insights` |
 | `session.rs` | `reply_to_mira` | (standalone) |
 | `tasks.rs` | `tasks` | `list`, `get`, `cancel` |
-| `teams.rs` | `team` | `create`, `invite`, `remove`, `list`, `members` |
-| `cross_project.rs` | `cross_project` | `get_preferences`, `enable_sharing`, `disable_sharing`, `reset_budget`, `get_stats`, `extract_patterns`, `sync` |
+| `teams.rs` | — | Team management (internal, not exposed as MCP tool) |
+| `cross_project.rs` | — | Cross-project patterns (internal, not exposed as MCP tool) |

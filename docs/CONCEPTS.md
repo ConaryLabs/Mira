@@ -23,8 +23,6 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 | **user_id** | User identity for personal-scoped memories |
 | **team_id** | Team reference for team-scoped memories |
 | **session_count** | Number of sessions where this memory was accessed |
-| **has_embedding** | Whether the memory has a vector embedding |
-| **branch** | Git branch for branch-aware context boosting |
 
 ### Fact Types
 
@@ -63,7 +61,7 @@ This ensures only useful, recurring information becomes permanent.
 | `personal` | Visible across all your projects (requires user identity) |
 | `team` | Shared with team members (requires team membership) |
 
-**Note:** Personal scope requires a user identity (from git config or `MIRA_USER_ID`). Team scope requires team membership configured via the `team` tool.
+**Note:** Personal scope requires a user identity (from git config, `MIRA_USER_ID`, or system username). Team scope requires team membership.
 
 ### Branch-Aware Context
 

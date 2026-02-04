@@ -14,10 +14,12 @@ Mira uses environment variables for API keys and configuration. These can be set
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, capabilities, documentation (default provider) |
 | `GEMINI_API_KEY` | Recommended | For embeddings (semantic search) and as alternative expert provider |
+| `GOOGLE_API_KEY` | Optional | Alternative to `GEMINI_API_KEY` (used as fallback if `GEMINI_API_KEY` is not set) |
+| `BRAVE_API_KEY` | Optional | Enables web search for expert consultations |
 | `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `gemini` |
 | `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
-| `MIRA_USER_ID` | Optional | User identity override (defaults to git config user.email) |
+| `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |
 
 *API keys are optional. Mira runs without any keys using heuristic fallbacks — diff analysis uses pattern-based parsing, module summaries use metadata extraction, and background insights use tool history analysis. Expert consultation works without keys via MCP Sampling (uses the host client). Semantic search requires `GEMINI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it. At least one provider key is recommended for full LLM-powered intelligence features.*
 
@@ -28,7 +30,7 @@ Mira uses environment variables for API keys and configuration. These can be set
 | `MIRA_EMBEDDING_DIMENSIONS` | Output dimensions for Google embeddings | 1536 |
 | `MIRA_EMBEDDING_TASK_TYPE` | Task type for embeddings (see below) | `SEMANTIC_SIMILARITY` |
 
-**Embedding Task Types:** `SEMANTIC_SIMILARITY` (default), `RETRIEVAL_DOCUMENT`, `RETRIEVAL_QUERY`, `CODE_RETRIEVAL_QUERY`
+**Embedding Task Types:** `SEMANTIC_SIMILARITY` (default), `RETRIEVAL_DOCUMENT`, `RETRIEVAL_QUERY`, `CODE_RETRIEVAL_QUERY`, `CLASSIFICATION`, `CLUSTERING`, `QUESTION_ANSWERING`, `FACT_VERIFICATION`
 
 ### Environment File Loading
 
@@ -70,7 +72,7 @@ Mira loads environment files in this order (later overrides earlier):
 | `CLAUDE.local.md` | Local-only instructions (gitignored) |
 | `.miraignore` | Files to exclude from indexing |
 
-Run `mira init` in your project to create all instruction files automatically.
+See [CLAUDE_TEMPLATE.md](CLAUDE_TEMPLATE.md) for manual setup instructions. (`mira init` is planned but not yet implemented.)
 
 ---
 
