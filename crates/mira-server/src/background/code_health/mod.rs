@@ -130,7 +130,7 @@ fn needs_health_scan(conn: &rusqlite::Connection, project_id: i64) -> Result<boo
 }
 
 /// Mark project as health-scanned and clear the "needs scan" flag
-fn mark_health_scanned(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
+pub(crate) fn mark_health_scanned(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
     mark_health_scanned_sync(conn, project_id).str_err()
 }
 
@@ -164,7 +164,7 @@ pub fn mark_health_scan_needed_sync(
 ///
 /// - `main_pool`: for writing findings to memory_facts
 /// - `code_pool`: for reading code_symbols/call_graph
-async fn scan_project_health(
+pub(crate) async fn scan_project_health(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
     client: Option<&Arc<dyn LlmClient>>,

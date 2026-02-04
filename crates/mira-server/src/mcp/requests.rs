@@ -68,6 +68,8 @@ pub enum IndexAction {
     Compact,
     /// Generate LLM-powered summaries for codebase modules
     Summarize,
+    /// Run a full code health scan (dependencies, patterns, tech debt, etc.)
+    Health,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -318,7 +320,7 @@ pub struct CrossProjectRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
-    #[schemars(description = "Action: project/file/status/compact/summarize")]
+    #[schemars(description = "Action: project/file/status/compact/summarize/health")]
     pub action: IndexAction,
     #[schemars(description = "Path")]
     pub path: Option<String>,

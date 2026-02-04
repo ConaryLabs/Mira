@@ -260,7 +260,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Index code and git history. Actions: project/file/status/compact/summarize",
+        description = "Index code and git history. Actions: project/file/status/compact/summarize/health",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
             .expect("IndexOutput schema")
     )]
@@ -468,6 +468,67 @@ impl MiraServer {
 }
 
 impl MiraServer {
+    /// Auto-enqueue a task-eligible tool call via the OperationProcessor.
+    /// Returns a CallToolResult immediately with the task ID so the client can poll.
+    async fn auto_enqueue_task(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+        tool_name: &str,
+        ttl: u64,
+    ) -> Result<CallToolResult, ErrorData> {
+        let task_id = uuid::Uuid::new_v4().to_string();
+        let now = task_manager::current_timestamp();
+
+        // Strip task field to prevent re-enqueue loops
+        let mut clean_request = request;
+        clean_request.task = None;
+
+        // Build the async future that calls run_tool_call
+        let server = self.clone();
+        let ctx = context.clone();
+        let tid = task_id.clone();
+        let future: task_manager::OperationFuture = Box::pin(async move {
+            let result = server.run_tool_call(clean_request, ctx).await;
+            let transport = ToolCallTaskResult::new(tid, result);
+            Ok(Box::new(transport) as Box<dyn task_manager::OperationResultTransport>)
+        });
+
+        // Build descriptor and submit
+        let tn = tool_name.to_string();
+        let descriptor = OperationDescriptor::new(task_id.clone(), tn.clone()).with_ttl(ttl);
+        let message = OperationMessage::new(descriptor, future);
+
+        let mut proc = self.processor.lock().await;
+        proc.submit_operation(message).map_err(|e| {
+            ErrorData::internal_error(format!("Failed to enqueue task: {}", e), None)
+        })?;
+
+        tracing::info!(
+            task_id = %task_id,
+            tool = %tn,
+            ttl_secs = ttl,
+            "Auto-enqueued async task (client used call_tool)"
+        );
+
+        let poll_hint = format!("tasks(action=\"get\", task_id=\"{}\")", task_id);
+        Ok(CallToolResult {
+            content: vec![Content::text(format!(
+                "Task {} started. Check status with: {}",
+                task_id, poll_hint
+            ))],
+            structured_content: Some(serde_json::json!({
+                "task_id": task_id,
+                "status": "working",
+                "message": format!("Running {} asynchronously", tn),
+                "poll_with": poll_hint,
+                "created_at": now,
+            })),
+            is_error: Some(false),
+            meta: None,
+        })
+    }
+
     /// Execute a tool call with full lifecycle (session init, broadcast, logging, extraction).
     /// Called from both synchronous `call_tool` and async task futures (`enqueue_task`).
     pub(crate) async fn run_tool_call(
@@ -600,7 +661,31 @@ impl ServerHandler for MiraServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + Send + '_ {
-        self.run_tool_call(request, context)
+        async move {
+            // Auto-enqueue task-eligible tools that arrive via synchronous call_tool
+            // (i.e. not already going through the native task protocol).
+            // Extract tool name + action up front to avoid borrow conflicts with the move.
+            let maybe_enqueue = if request.task.is_none() {
+                let action = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|a| a.get("action"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                tasks::task_ttl(&request.name, action.as_deref())
+            } else {
+                None
+            };
+
+            if let Some(ttl) = maybe_enqueue {
+                let tool_name = request.name.to_string();
+                return self
+                    .auto_enqueue_task(request, context, &tool_name, ttl)
+                    .await;
+            }
+
+            self.run_tool_call(request, context).await
+        }
     }
 
     #[allow(clippy::manual_async_fn)]

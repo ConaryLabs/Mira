@@ -6,7 +6,8 @@ pub fn task_ttl(tool_name: &str, action: Option<&str>) -> Option<u64> {
     match (tool_name, action) {
         ("expert", Some("consult")) => Some(900),
         ("index", Some("project" | "summarize")) => Some(600),
-        ("analyze_diff", _) => Some(120),
+        ("index", Some("health")) => Some(600),
+        ("analyze_diff", _) => Some(300),
         _ => None,
     }
 }
@@ -20,8 +21,9 @@ mod tests {
         assert_eq!(task_ttl("expert", Some("consult")), Some(900));
         assert_eq!(task_ttl("index", Some("project")), Some(600));
         assert_eq!(task_ttl("index", Some("summarize")), Some(600));
-        assert_eq!(task_ttl("analyze_diff", None), Some(120));
-        assert_eq!(task_ttl("analyze_diff", Some("anything")), Some(120));
+        assert_eq!(task_ttl("index", Some("health")), Some(600));
+        assert_eq!(task_ttl("analyze_diff", None), Some(300));
+        assert_eq!(task_ttl("analyze_diff", Some("anything")), Some(300));
     }
 
     #[test]

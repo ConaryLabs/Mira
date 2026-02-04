@@ -383,6 +383,7 @@ pub enum IndexData {
     Status(IndexStatusData),
     Compact(IndexCompactData),
     Summarize(IndexSummarizeData),
+    Health(IndexHealthData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -409,6 +410,11 @@ pub struct IndexCompactData {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct IndexSummarizeData {
     pub modules_summarized: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IndexHealthData {
+    pub issues_found: usize,
 }
 
 // ============================================================================

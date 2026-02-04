@@ -10,9 +10,10 @@ use crate::llm::{LlmClient, Message, record_llm_usage};
 use crate::mcp::requests::IndexAction;
 use crate::mcp::responses::{
     CallGraphData, CallGraphEntry, CodeData, CodeOutput, CodeSearchResult, DependenciesData,
-    DependencyEdge, DebtFactor, IndexCompactData, IndexData, IndexOutput, IndexProjectData,
-    IndexStatusData, IndexSummarizeData, ModulePatterns, PatternEntry, PatternsData,
-    SearchResultsData, SymbolInfo, SymbolsData, TechDebtData, TechDebtModule, TechDebtTier,
+    DependencyEdge, DebtFactor, IndexCompactData, IndexData, IndexHealthData, IndexOutput,
+    IndexProjectData, IndexStatusData, IndexSummarizeData, ModulePatterns, PatternEntry,
+    PatternsData, SearchResultsData, SymbolInfo, SymbolsData, TechDebtData, TechDebtModule,
+    TechDebtTier,
 };
 use crate::search::{
     CrossRefType, crossref_search, expand_context_with_conn, find_callees, find_callers,
@@ -517,6 +518,9 @@ pub async fn index<C: ToolContext>(
         IndexAction::Summarize => {
             return summarize_codebase(ctx).await;
         }
+        IndexAction::Health => {
+            return run_health_scan(ctx).await;
+        }
         IndexAction::Status => {
             use crate::db::{count_embedded_chunks_sync, count_symbols_sync};
 
@@ -713,6 +717,61 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
         message,
         data: Some(IndexData::Summarize(IndexSummarizeData {
             modules_summarized: updated,
+        })),
+    }))
+}
+
+/// Run a full code health scan (dependencies, patterns, tech debt, etc.)
+async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput>, String> {
+    use crate::db::count_symbols_sync;
+
+    let project = ctx.get_project().await;
+    let (project_id, project_path) = match project.as_ref() {
+        Some(p) => (p.id, p.path.clone()),
+        None => return Err("No active project. Call project(action='start') first.".to_string()),
+    };
+
+    // Guard: ensure the project has been indexed
+    let has_symbols = ctx
+        .code_pool()
+        .run(move |conn| Ok::<_, String>(count_symbols_sync(conn, Some(project_id))))
+        .await?;
+
+    if has_symbols == 0 {
+        return Err("No code indexed yet. Run index(action=\"project\") first.".to_string());
+    }
+
+    // Get LLM client for complexity/error-quality analysis (optional)
+    let llm_client = ctx.llm_factory().client_for_background();
+
+    // Run the full health scan (same as background worker, but forced)
+    let issues = crate::background::code_health::scan_project_health(
+        ctx.pool(),
+        ctx.code_pool(),
+        llm_client.as_ref(),
+        project_id,
+        &project_path,
+    )
+    .await?;
+
+    // Mark as scanned so the background worker doesn't re-run immediately
+    let pid = project_id;
+    ctx.pool()
+        .interact(move |conn| {
+            crate::background::code_health::mark_health_scanned(conn, pid)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| format!("Failed to mark health scanned: {}", e))?;
+
+    Ok(Json(IndexOutput {
+        action: "health".into(),
+        message: format!(
+            "Health scan complete: {} issues found for project {}",
+            issues, project_path
+        ),
+        data: Some(IndexData::Health(IndexHealthData {
+            issues_found: issues,
         })),
     }))
 }
