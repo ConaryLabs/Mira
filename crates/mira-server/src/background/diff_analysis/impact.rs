@@ -154,8 +154,7 @@ pub fn compute_historical_risk(
                         let file_a = &files[0];
                         let file_b = &files[1];
                         // Flag if file_a is in diff but file_b is NOT
-                        if file_set.contains(file_a.as_str())
-                            && !file_set.contains(file_b.as_str())
+                        if file_set.contains(file_a.as_str()) && !file_set.contains(file_b.as_str())
                         {
                             matches.push(MatchedPattern {
                                 pattern_subtype: pattern_subtype.clone(),
@@ -170,8 +169,7 @@ pub fn compute_historical_risk(
                             });
                         }
                         // Also check the reverse: file_b without file_a
-                        if file_set.contains(file_b.as_str())
-                            && !file_set.contains(file_a.as_str())
+                        if file_set.contains(file_b.as_str()) && !file_set.contains(file_a.as_str())
                         {
                             matches.push(MatchedPattern {
                                 pattern_subtype: pattern_subtype.clone(),

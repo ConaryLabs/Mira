@@ -10,9 +10,11 @@ use super::{
     EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
     PARALLEL_EXPERT_TIMEOUT, ToolContext,
 };
-use async_trait::async_trait;
-use crate::llm::{DeepSeekClient, GeminiClient, LlmClient, Message, Provider, record_llm_usage, ToolCall};
+use crate::llm::{
+    DeepSeekClient, GeminiClient, LlmClient, Message, Provider, ToolCall, record_llm_usage,
+};
 use crate::utils::ResultExt;
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::time::timeout;
 

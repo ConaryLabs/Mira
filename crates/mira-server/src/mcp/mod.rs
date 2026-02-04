@@ -13,8 +13,8 @@ use crate::tools::core as tools;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::oneshot;
 use tokio::sync::RwLock;
+use tokio::sync::oneshot;
 
 use crate::background::watcher::WatcherHandle;
 use crate::config::ApiKeys;
@@ -25,8 +25,7 @@ use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
 use crate::llm::ProviderFactory;
 use mira_types::ProjectContext;
 use rmcp::{
-    handler::server::router::tool::ToolRouter,
-    service::RoleServer,
+    handler::server::router::tool::ToolRouter, service::RoleServer,
     task_manager::OperationProcessor,
 };
 

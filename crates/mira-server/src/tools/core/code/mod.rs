@@ -10,9 +10,11 @@ pub use analysis::*;
 pub use index::*;
 pub use search::*;
 
-use crate::mcp::responses::Json;
 use crate::mcp::responses::CodeOutput;
-use crate::search::{CrossRefResult, HybridSearchResult, find_callees, find_callers, hybrid_search};
+use crate::mcp::responses::Json;
+use crate::search::{
+    CrossRefResult, HybridSearchResult, find_callees, find_callers, hybrid_search,
+};
 use crate::tools::core::ToolContext;
 use crate::utils::ResultExt;
 
@@ -106,5 +108,13 @@ pub async fn handle_code<C: ToolContext>(
         CodeAction::Dependencies => get_dependencies(ctx).await,
         CodeAction::Patterns => get_patterns(ctx).await,
         CodeAction::TechDebt => get_tech_debt(ctx).await,
+        CodeAction::Diff => {
+            // Handled at router level (returns DiffOutput, not CodeOutput).
+            // This arm should never be reached.
+            Err(
+                "Diff action is handled at the router level. Use code(action=\"diff\") via MCP."
+                    .into(),
+            )
+        }
     }
 }

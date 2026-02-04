@@ -11,12 +11,12 @@ pub mod diff_outcomes;
 pub mod documentation;
 mod embeddings;
 pub mod entities;
+mod expert_config;
 mod index;
 mod insights;
 mod memory;
 mod migration_helpers;
 mod milestones;
-mod expert_config;
 pub mod pool;
 mod project;
 mod reviews;
@@ -182,8 +182,7 @@ pub use usage::{
 
 /// Shared SQL fragment for ordering by priority (urgent > high > medium > low > rest).
 /// Append to ORDER BY clauses to keep priority ranking consistent across modules.
-pub const PRIORITY_ORDER_SQL: &str =
-    "CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+pub const PRIORITY_ORDER_SQL: &str = "CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
 
 /// Map a priority string to a numeric score (1.0 = urgent, 0.4 = low).
 pub fn priority_score(priority: &str) -> f64 {

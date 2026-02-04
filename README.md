@@ -12,15 +12,12 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.5.0
+## What's New in v0.5.1
 
-- **Zero-Key Expert Consultation** — MCP Sampling lets experts consult via the host client, no API keys required
-- **Interactive Setup** — MCP Elicitation guides you through API key configuration on first run
-- **Async Operations** — Long-running tools (indexing, health scans) now run in the background via MCP Tasks
-- **Structured Responses** — All 12 tools return typed JSON via MCP outputSchema
-- **Change Intelligence** — Outcome tracking, pattern mining, and predictive risk for your commits
-- **Entity Layer** — Lightweight entity extraction boosts memory recall relevance
-- **Tool Consolidation** — Streamlined from ~20 tools to 12 unified action-based interfaces
+- **Tool Consolidation (12 → 10)** — Merged `analyze_diff` into `code(action="diff")` and `tasks` into `session(action="tasks")` for a leaner tool surface
+- **Codex HTTP Transport** — Run Mira as an HTTP-based MCP server for Codex and similar clients
+- **Smarter Tool Discovery** — Keyword-rich descriptions help models find the right tool via Tool Search
+- **4,500 Lines Removed** — Six rounds of Codex-audit refactoring: split monolithic modules, extracted shared patterns, deduplicated code
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 

@@ -141,7 +141,11 @@ impl DeepSeekClient {
             "DeepSeek",
             duration_ms,
             result.content.as_ref().map(|c| c.len()).unwrap_or(0),
-            result.reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+            result
+                .reasoning_content
+                .as_ref()
+                .map(|r| r.len())
+                .unwrap_or(0),
             result.tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
         );
 

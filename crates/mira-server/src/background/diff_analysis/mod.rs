@@ -21,8 +21,8 @@ pub use heuristic::{analyze_diff_heuristic, calculate_risk_level};
 pub use impact::{build_impact_graph, compute_historical_risk, map_to_symbols};
 pub use llm::analyze_diff_semantic;
 pub use types::{
-    DiffAnalysisResult, DiffStats, HistoricalRisk, ImpactAnalysis, MatchedPattern,
-    RiskAssessment, SemanticChange,
+    DiffAnalysisResult, DiffStats, HistoricalRisk, ImpactAnalysis, MatchedPattern, RiskAssessment,
+    SemanticChange,
 };
 
 use crate::db::pool::DatabasePool;

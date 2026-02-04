@@ -5,9 +5,9 @@ use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    AnalyzeDiffRequest, CodeRequest, DocumentationRequest, ExpertRequest, FindingRequest,
-    GoalRequest, IndexRequest, MemoryRequest, ProjectRequest, ReplyToMiraRequest, SessionRequest,
-    TasksRequest,
+    CodeAction, CodeRequest, DocumentationRequest, ExpertRequest, FindingRequest, GoalRequest,
+    IndexRequest, MemoryRequest, ProjectRequest, ReplyToMiraRequest, SessionAction, SessionRequest,
+    TasksAction, TasksRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -33,9 +33,20 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "code" => {
             let req: CodeRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_code(&server, req)
+            if matches!(req.action, CodeAction::Diff) {
+                mira::tools::analyze_diff_tool(
+                    &server,
+                    req.from_ref,
+                    req.to_ref,
+                    req.include_impact,
+                )
                 .await
                 .map(|output| output.0.message)
+            } else {
+                mira::tools::handle_code(&server, req)
+                    .await
+                    .map(|output| output.0.message)
+            }
         }
         "goal" => {
             let req: GoalRequest = serde_json::from_str(&args)?;
@@ -56,9 +67,19 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "session" => {
             let req: SessionRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_session(&server, req)
-                .await
-                .map(|output| output.0.message)
+            if matches!(req.action, SessionAction::Tasks) {
+                let tasks_req = TasksRequest {
+                    action: req.tasks_action.unwrap_or(TasksAction::List),
+                    task_id: req.task_id.clone(),
+                };
+                mira::tools::tasks::handle_tasks(&server, tasks_req)
+                    .await
+                    .map(|output| output.0.message)
+            } else {
+                mira::tools::handle_session(&server, req)
+                    .await
+                    .map(|output| output.0.message)
+            }
         }
         "expert" => {
             let req: ExpertRequest = serde_json::from_str(&args)?;
@@ -108,18 +129,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             .await
             .map(|output| output.0.message)
         }
-        "analyze_diff" => {
-            let req: AnalyzeDiffRequest = serde_json::from_str(&args)?;
-            mira::tools::analyze_diff_tool(&server, req.from_ref, req.to_ref, req.include_impact)
-                .await
-                .map(|output| output.0.message)
-        }
-        "tasks" => {
-            let req: TasksRequest = serde_json::from_str(&args)?;
-            mira::tools::tasks::handle_tasks(&server, req)
-                .await
-                .map(|output| output.0.message)
-        }
         _ => Err(format!("Unknown tool: {}", name)),
     };
 
@@ -145,8 +154,6 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "reply_to_mira",
         "documentation",
         "finding",
-        "analyze_diff",
-        "tasks",
     ]
 }
 

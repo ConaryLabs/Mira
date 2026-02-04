@@ -16,7 +16,7 @@ use crate::search::{
 use crate::tools::core::ToolContext;
 use crate::utils::ResultExt;
 
-use super::{query_callers, query_callees, query_search_code};
+use super::{query_callees, query_callers, query_search_code};
 
 /// Search code using semantic similarity or keyword fallback
 pub async fn search_code<C: ToolContext>(

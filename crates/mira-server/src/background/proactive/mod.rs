@@ -68,8 +68,8 @@ pub async fn process_proactive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proactive::patterns::{BehaviorPattern, PatternData};
     use crate::proactive::PatternType;
+    use crate::proactive::patterns::{BehaviorPattern, PatternData};
 
     #[test]
     fn test_parse_suggestions_json() {

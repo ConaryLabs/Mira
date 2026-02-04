@@ -12,9 +12,9 @@ use super::tools::{build_expert_toolset, execute_tool_with_findings};
 use super::{
     EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS, ToolContext,
 };
-use async_trait::async_trait;
 use crate::llm::{Message, ToolCall, record_llm_usage};
 use crate::utils::ResultExt;
+use async_trait::async_trait;
 use mira_types::{CouncilEvent, WsEvent};
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,15 +36,14 @@ impl<C: ToolContext> ToolHandler for CouncilToolHandler<'_, C> {
 
     async fn on_tool_executed(&self, tool_call: &ToolCall, _result: &str) {
         if tool_call.function.name == "store_finding" {
-            self.ctx.broadcast(WsEvent::Council(CouncilEvent::FindingAdded {
-                role: self.role_key.to_string(),
-                topic: serde_json::from_str::<serde_json::Value>(
-                    &tool_call.function.arguments,
-                )
-                .ok()
-                .and_then(|v| v["topic"].as_str().map(String::from))
-                .unwrap_or_default(),
-            }));
+            self.ctx
+                .broadcast(WsEvent::Council(CouncilEvent::FindingAdded {
+                    role: self.role_key.to_string(),
+                    topic: serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
+                        .ok()
+                        .and_then(|v| v["topic"].as_str().map(String::from))
+                        .unwrap_or_default(),
+                }));
         }
     }
 

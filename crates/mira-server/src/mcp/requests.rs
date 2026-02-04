@@ -244,12 +244,14 @@ pub enum CodeAction {
     Patterns,
     /// Compute per-module tech debt scores
     TechDebt,
+    /// Analyze git diff semantically (change types, impact, risks)
+    Diff,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CodeRequest {
     #[schemars(
-        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt"
+        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff"
     )]
     pub action: CodeAction,
     #[schemars(description = "Search query (required for search)")]
@@ -264,6 +266,16 @@ pub struct CodeRequest {
     pub symbol_type: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+    #[schemars(
+        description = "Starting git ref for diff (commit, branch, tag). Default: HEAD~1 or staged/working changes"
+    )]
+    pub from_ref: Option<String>,
+    #[schemars(description = "Ending git ref for diff. Default: HEAD")]
+    pub to_ref: Option<String>,
+    #[schemars(
+        description = "Include impact analysis in diff (find affected callers). Default: true"
+    )]
+    pub include_impact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -345,18 +357,24 @@ pub enum SessionAction {
     Usage,
     /// Query unified insights digest (pondering, proactive, doc gaps)
     Insights,
+    /// Manage async background tasks (list, get, cancel)
+    Tasks,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
-    #[schemars(description = "Action: history, recap, usage, insights")]
+    #[schemars(description = "Action: history, recap, usage, insights, tasks")]
     pub action: SessionAction,
     #[schemars(description = "History sub-action: list_sessions/get_history/current")]
     pub history_action: Option<SessionHistoryAction>,
     #[schemars(description = "Usage sub-action: summary/stats/list")]
     pub usage_action: Option<UsageAction>,
+    #[schemars(description = "Tasks sub-action: list/get/cancel (for action 'tasks')")]
+    pub tasks_action: Option<TasksAction>,
     #[schemars(description = "Session ID (for get_history)")]
     pub session_id: Option<String>,
+    #[schemars(description = "Task ID (for tasks get/cancel)")]
+    pub task_id: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
     #[schemars(

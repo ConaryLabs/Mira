@@ -80,6 +80,18 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-02-04
+
+### Added
+- **Codex HTTP MCP server support** — Added `--transport http` mode for running Mira as an HTTP-based MCP server, enabling integration with OpenAI Codex and similar HTTP-based MCP clients.
+
+### Changed
+- **Tool consolidation (12 → 10)** — Merged `analyze_diff` into `code(action="diff")` and `tasks` into `session(action="tasks")`. Reduces tool count and schema overhead while keeping all functionality accessible.
+- **Keyword-rich tool descriptions** — Rewrote all tool descriptions for better discoverability via BM25 Tool Search. Descriptions are now concise but keyword-dense, improving how models find and select the right tool.
+- **Sub-agents rule updated** — Sub-agents can now access Mira MCP tools directly (Claude Code v2.1.30+). Context pre-injection is still recommended for efficiency but no longer required.
+- **Major codebase refactoring** — Six rounds of Codex-audit cleanups: split 1800-line `responses.rs` into focused modules, added `db!` test macro, extracted shared agentic loop and query core, deduplicated LLM logging. Net reduction of ~4,500 lines across the codebase.
+- **Documentation-code alignment** — Fixed 15 mismatches between documentation and actual code behavior identified by Codex review.
+
 ## [0.5.0] - 2026-02-03
 
 ### Added

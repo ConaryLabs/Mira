@@ -34,7 +34,11 @@ pub(crate) fn git_cmd(project_path: &Path, args: &[&str]) -> Result<String, Stri
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git {} failed: {}", args.first().unwrap_or(&""), stderr));
+        return Err(format!(
+            "git {} failed: {}",
+            args.first().unwrap_or(&""),
+            stderr
+        ));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())

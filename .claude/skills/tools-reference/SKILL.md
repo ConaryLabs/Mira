@@ -1,6 +1,6 @@
 # Mira Consolidated Tools Reference
 
-Mira uses 11 action-based tools. Reference for tool signatures and workflows.
+Mira uses 10 action-based tools. Reference for tool signatures and workflows.
 
 ## `project` — Project/Session Management
 
@@ -28,6 +28,9 @@ code(action="callees", function_name="process_request", limit=20)
 code(action="dependencies")                 # Module dependency graph
 code(action="patterns")                     # Architectural pattern detection
 code(action="tech_debt")                    # Per-module tech debt scores
+code(action="diff")                         # Auto-detects staged/working/last commit
+code(action="diff", from_ref="main", to_ref="feature/x")
+code(action="diff", from_ref="v1.0", to_ref="v1.1", include_impact=true)
 ```
 
 ## `session` — Session Management & Analytics
@@ -41,6 +44,9 @@ session(action="usage", usage_action="summary", since_days=7)
 session(action="usage", usage_action="stats", group_by="provider_model")
 session(action="usage", usage_action="list", limit=50)
 session(action="insights", insight_source="pondering", min_confidence=0.5)
+session(action="tasks", tasks_action="list")          # Show running/completed tasks
+session(action="tasks", tasks_action="get", task_id="abc123")  # Get task status
+session(action="tasks", tasks_action="cancel", task_id="abc123")  # Cancel task
 ```
 
 ## `expert` — Expert Consultation & Configuration
@@ -107,22 +113,6 @@ index(action="status")                      # Show index statistics
 index(action="compact")                     # VACUUM vec tables
 index(action="summarize")                   # Generate module summaries
 index(action="health")                      # Full code health scan (background task)
-```
-
-## `analyze_diff` — Semantic Diff Analysis
-
-```
-analyze_diff()                              # Auto-detects staged/working/last commit
-analyze_diff(from_ref="main", to_ref="feature/x")
-analyze_diff(from_ref="v1.0", to_ref="v1.1", include_impact=true)
-```
-
-## `tasks` — Async Background Operations
-
-```
-tasks(action="list")                        # Show running/completed tasks
-tasks(action="get", task_id="abc123")       # Get task status and result
-tasks(action="cancel", task_id="abc123")    # Cancel a running task
 ```
 
 ## Other Tools

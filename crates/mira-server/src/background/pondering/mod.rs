@@ -61,8 +61,7 @@ pub async fn process_pondering(
         // Generate insights
         let insights = match client {
             Some(c) => {
-                llm::generate_insights(pool, project_id, &name, &tool_history, &memories, c)
-                    .await?
+                llm::generate_insights(pool, project_id, &name, &tool_history, &memories, c).await?
             }
             None => heuristic::generate_insights_heuristic(&tool_history, &memories),
         };

@@ -114,7 +114,13 @@ pub fn get_commit_message(project_path: &str, commit_hash: &str) -> Option<Strin
 pub fn get_files_for_commit(project_path: &str, commit_hash: &str) -> Vec<String> {
     match git_cmd_opt(
         Path::new(project_path),
-        &["diff-tree", "--no-commit-id", "-r", "--name-only", commit_hash],
+        &[
+            "diff-tree",
+            "--no-commit-id",
+            "-r",
+            "--name-only",
+            commit_hash,
+        ],
     ) {
         Some(output) => output
             .lines()

@@ -210,16 +210,31 @@ pub(crate) async fn scan_project_health(
                     tracing::info!("Code health: found {} TODOs", det.todos);
                 }
                 if det.unimplemented > 0 {
-                    tracing::info!("Code health: found {} unimplemented! macros", det.unimplemented);
+                    tracing::info!(
+                        "Code health: found {} unimplemented! macros",
+                        det.unimplemented
+                    );
                 }
                 if det.unwraps > 0 {
-                    tracing::info!("Code health: found {} unwrap/expect calls in non-test code", det.unwraps);
+                    tracing::info!(
+                        "Code health: found {} unwrap/expect calls in non-test code",
+                        det.unwraps
+                    );
                 }
                 if det.error_handling > 0 {
-                    tracing::info!("Code health: found {} error handling issues", det.error_handling);
+                    tracing::info!(
+                        "Code health: found {} error handling issues",
+                        det.error_handling
+                    );
                 }
 
-                Ok((warnings, det.todos, det.unimplemented, det.unwraps, det.error_handling))
+                Ok((
+                    warnings,
+                    det.todos,
+                    det.unimplemented,
+                    det.unwraps,
+                    det.error_handling,
+                ))
             },
         )
         .await

@@ -34,11 +34,7 @@ pub fn analyze_diff_heuristic(
     stats: &DiffStats,
 ) -> (Vec<SemanticChange>, String, Vec<String>) {
     if diff_content.is_empty() {
-        return (
-            Vec::new(),
-            "[heuristic] No changes".to_string(),
-            Vec::new(),
-        );
+        return (Vec::new(), "[heuristic] No changes".to_string(), Vec::new());
     }
 
     let mut changes = Vec::new();

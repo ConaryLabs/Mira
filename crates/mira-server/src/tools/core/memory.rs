@@ -247,7 +247,11 @@ pub async fn remember<C: ToolContext>(
         message: format!(
             "Stored memory (id: {}){}",
             id,
-            if key_for_later.is_some() { " with key" } else { "" }
+            if key_for_later.is_some() {
+                " with key"
+            } else {
+                ""
+            }
         ),
         data: Some(MemoryData::Remember(RememberData { id })),
     }))

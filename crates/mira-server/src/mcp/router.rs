@@ -33,7 +33,7 @@ where
 #[tool_router]
 impl MiraServer {
     #[tool(
-        description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current).",
+        description = "Manage project context and workspace initialization. Actions: start (initialize session with codebase map), set (change project), get (show current). Use for workspace setup, project configuration, and session initialization.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ProjectOutput>()
             .expect("ProjectOutput schema")
     )]
@@ -47,7 +47,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Manage memories. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Scope controls visibility: personal, project (default), team.",
+        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Store and retrieve decisions, preferences, patterns, and context across sessions. Scope: personal, project (default), team.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::MemoryOutput>()
             .expect("MemoryOutput schema")
     )]
@@ -59,7 +59,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Code intelligence. Actions: search (by meaning), symbols (from file), callers (of function), callees (by function), dependencies (module graph + circular deps), patterns (architectural pattern detection), tech_debt (per-module debt scores).",
+        description = "Code intelligence: semantic search, call graph, and static analysis. Actions: search (find code by meaning), symbols (list definitions in file), callers/callees (trace call graph), dependencies (module graph + circular deps), patterns (detect architectural patterns), tech_debt (per-module scores), diff (analyze git changes semantically with impact and risk assessment).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::CodeOutput>()
             .expect("CodeOutput schema")
     )]
@@ -67,11 +67,17 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<CodeRequest>,
     ) -> Result<CallToolResult, ErrorData> {
+        use crate::mcp::requests::CodeAction;
+        if matches!(req.action, CodeAction::Diff) {
+            return tool_result(
+                tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
+            );
+        }
         tool_result(tools::handle_code(self, req).await)
     }
 
     #[tool(
-        description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations.",
+        description = "Track cross-session objectives, progress, and milestones. Actions: create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, progress. Use for multi-session work planning and progress tracking.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::GoalOutput>()
             .expect("GoalOutput schema")
     )]
@@ -83,7 +89,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Index code and git history. Actions: project/file/status/compact/summarize/health",
+        description = "Index codebase for semantic search and analysis. Actions: project (full reindex), file (single file), status (index stats), compact (optimize storage), summarize (generate module summaries), health (full code health scan). Builds embeddings and symbol tables.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
             .expect("IndexOutput schema")
     )]
@@ -95,7 +101,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session management. Actions: history (list_sessions/get_history/current via history_action), recap (preferences + context + goals), usage (summary/stats/list via usage_action), insights (unified digest of pondering/proactive/doc_gap insights).",
+        description = "Session management, analytics, and background task tracking. Actions: history (list/get sessions), recap (preferences + context + goals), usage (LLM analytics: summary/stats/list), insights (pondering/proactive/doc_gap digest), tasks (list/get/cancel async background operations).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
             .expect("SessionOutput schema")
     )]
@@ -103,6 +109,14 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<SessionRequest>,
     ) -> Result<CallToolResult, ErrorData> {
+        use crate::mcp::requests::SessionAction;
+        if matches!(req.action, SessionAction::Tasks) {
+            let tasks_req = TasksRequest {
+                action: req.tasks_action.unwrap_or(TasksAction::List),
+                task_id: req.task_id.clone(),
+            };
+            return tool_result(tools::tasks::handle_tasks(self, tasks_req).await);
+        }
         tool_result(tools::handle_session(self, req).await)
     }
 
@@ -127,7 +141,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Consult experts or configure them. Actions: consult (get expert opinions), configure (set/get/delete/list/providers for expert prompts).",
+        description = "Get second opinions from AI experts for code review, architecture, security, and planning. Actions: consult (parallel expert opinions), configure (set/get/delete/list/providers for expert LLM routing). Roles: architect, plan_reviewer, scope_analyst, code_reviewer, security.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ExpertOutput>()
             .expect("ExpertOutput schema")
     )]
@@ -139,7 +153,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Manage documentation tasks. Actions: list (show needed docs), get (full task details for Claude to write), complete (mark done after writing), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md).",
+        description = "Manage documentation gap detection and writing tasks. Actions: list (show needed docs), get (task details with writing guidelines), complete (mark done), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DocOutput>()
             .expect("DocOutput schema")
     )]
@@ -162,7 +176,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract.",
+        description = "Manage code review findings, bugs, and learned quality patterns. Actions: list, get, review (single or bulk), stats, patterns (learned corrections), extract (derive patterns from accepted findings). Filter by status, expert role, file path, or correction type.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::FindingOutput>()
             .expect("FindingOutput schema")
     )]
@@ -186,34 +200,6 @@ impl MiraServer {
             .await,
         )
     }
-
-    // Semantic diff analysis tool
-
-    #[tool(
-        description = "Analyze git diff semantically. Identifies change types, impact, and risks.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DiffOutput>()
-            .expect("DiffOutput schema")
-    )]
-    async fn analyze_diff(
-        &self,
-        Parameters(req): Parameters<AnalyzeDiffRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(
-            tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
-        )
-    }
-
-    #[tool(
-        description = "Manage async tasks. Actions: list, get (by task_id), cancel (by task_id).",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::TasksOutput>()
-            .expect("TasksOutput schema")
-    )]
-    async fn tasks(
-        &self,
-        Parameters(req): Parameters<TasksRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::tasks::handle_tasks(self, req).await)
-    }
 }
 
 impl MiraServer {
@@ -233,7 +219,9 @@ impl MiraServer {
     }
 
     /// Extract result text and success status from a tool call result
-    pub(crate) fn extract_result_text(result: &Result<CallToolResult, ErrorData>) -> (bool, String) {
+    pub(crate) fn extract_result_text(
+        result: &Result<CallToolResult, ErrorData>,
+    ) -> (bool, String) {
         match result {
             Ok(r) => {
                 if let Some(structured) = r.structured_content.as_ref() {
@@ -340,7 +328,10 @@ impl MiraServer {
             "Auto-enqueued async task (client used call_tool)"
         );
 
-        let poll_hint = format!("tasks(action=\"get\", task_id=\"{}\")", task_id);
+        let poll_hint = format!(
+            "session(action=\"tasks\", tasks_action=\"get\", task_id=\"{}\")",
+            task_id
+        );
         Ok(CallToolResult {
             content: vec![Content::text(format!(
                 "Task {} started. Check status with: {}",

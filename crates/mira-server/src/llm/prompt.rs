@@ -27,7 +27,10 @@ Safety guidelines:
 /// Canonical list of expert tool names (code exploration).
 /// Referenced by TOOL_GUIDANCE and available for validation elsewhere.
 pub const EXPERT_CODE_TOOLS: &[(&str, &str)] = &[
-    ("search_code", "Find code by meaning (e.g., \"authentication\", \"error handling\")"),
+    (
+        "search_code",
+        "Find code by meaning (e.g., \"authentication\", \"error handling\")",
+    ),
     ("get_symbols", "See file structure (functions, structs)"),
     ("read_file", "Read file contents"),
     ("find_callers", "See what calls a function"),
@@ -37,8 +40,14 @@ pub const EXPERT_CODE_TOOLS: &[(&str, &str)] = &[
 
 /// Canonical list of expert tool names (web access).
 pub const EXPERT_WEB_TOOLS: &[(&str, &str)] = &[
-    ("web_fetch", "Fetch and read a web page (pass a URL to retrieve documentation, articles, references)"),
-    ("web_search", "Search the web for current information (queries return titles, URLs, and snippets)"),
+    (
+        "web_fetch",
+        "Fetch and read a web page (pass a URL to retrieve documentation, articles, references)",
+    ),
+    (
+        "web_search",
+        "Search the web for current information (queries return titles, URLs, and snippets)",
+    ),
 ];
 
 /// Tool usage guidance (appended when tools are available)

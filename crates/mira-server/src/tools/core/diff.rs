@@ -7,11 +7,11 @@ use crate::background::diff_analysis::{
     DiffAnalysisResult, HistoricalRisk, RiskAssessment, analyze_diff, build_impact_graph,
     compute_historical_risk, format_diff_analysis, map_to_symbols,
 };
+use crate::db::get_recent_diff_analyses_sync;
 use crate::git::{
     get_head_commit, get_staged_diff, get_working_diff, parse_staged_stats, parse_working_stats,
     resolve_ref,
 };
-use crate::db::get_recent_diff_analyses_sync;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     DiffAnalysisData, DiffData, DiffOutput, HistoricalRiskData, PatternMatchInfo,

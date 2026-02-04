@@ -258,8 +258,15 @@ Summary:"#,
 
     let messages = PromptBuilder::for_briefings().build_messages(prompt);
 
-    match chat_with_usage(&**client, pool, messages, "background:briefing", Some(project_id), None)
-        .await
+    match chat_with_usage(
+        &**client,
+        pool,
+        messages,
+        "background:briefing",
+        Some(project_id),
+        None,
+    )
+    .await
     {
         Ok(content) => {
             let summary = content.trim().to_string();

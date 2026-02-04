@@ -1,8 +1,8 @@
 // crates/mira-server/src/tools/core/experts/agentic.rs
 // Shared agentic tool-calling loop for expert consultation
 
-use super::strategy::ReasoningStrategy;
 use super::ToolContext;
+use super::strategy::ReasoningStrategy;
 use crate::llm::{ChatResult, Message, Tool, ToolCall, record_llm_usage};
 use async_trait::async_trait;
 use std::time::Duration;

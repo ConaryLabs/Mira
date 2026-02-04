@@ -185,7 +185,11 @@ mod tests {
             .map_err(Into::into)
         });
 
-        let pending = db!(pool, |conn| get_pending_tasks_sync(conn, Some(project_id), 10));
+        let pending = db!(pool, |conn| get_pending_tasks_sync(
+            conn,
+            Some(project_id),
+            10
+        ));
         assert_eq!(pending.len(), 3);
         assert!(pending.iter().all(|t| t.status != "completed"));
     }
@@ -210,7 +214,11 @@ mod tests {
             });
         }
 
-        let pending = db!(pool, |conn| get_pending_tasks_sync(conn, Some(project_id), 3));
+        let pending = db!(pool, |conn| get_pending_tasks_sync(
+            conn,
+            Some(project_id),
+            3
+        ));
         assert_eq!(pending.len(), 3);
     }
 
@@ -621,8 +629,7 @@ mod tests {
         let pool = setup_test_pool().await;
 
         let id = db!(pool, |conn| {
-            create_goal_sync(conn, None, "Global goal", None, None, None, None)
-                .map_err(Into::into)
+            create_goal_sync(conn, None, "Global goal", None, None, None, None).map_err(Into::into)
         });
 
         let goal = db!(pool, |conn| get_goal_by_id_sync(conn, id)).unwrap();
@@ -725,7 +732,11 @@ mod tests {
             .map_err(Into::into)
         });
 
-        let active = db!(pool, |conn| get_active_goals_sync(conn, Some(project_id), 10));
+        let active = db!(pool, |conn| get_active_goals_sync(
+            conn,
+            Some(project_id),
+            10
+        ));
         assert_eq!(active.len(), 2);
         assert!(
             active
@@ -754,7 +765,11 @@ mod tests {
             });
         }
 
-        let active = db!(pool, |conn| get_active_goals_sync(conn, Some(project_id), 3));
+        let active = db!(pool, |conn| get_active_goals_sync(
+            conn,
+            Some(project_id),
+            3
+        ));
         assert_eq!(active.len(), 3);
     }
 
@@ -1220,8 +1235,7 @@ mod tests {
 
         // Empty title should still work
         let id = db!(pool, |conn| {
-            create_task_sync(conn, Some(project_id), None, "", None, None, None)
-                .map_err(Into::into)
+            create_task_sync(conn, Some(project_id), None, "", None, None, None).map_err(Into::into)
         });
 
         assert!(id > 0);
@@ -1233,8 +1247,7 @@ mod tests {
 
         // Empty title should still work
         let id = db!(pool, |conn| {
-            create_goal_sync(conn, Some(project_id), "", None, None, None, None)
-                .map_err(Into::into)
+            create_goal_sync(conn, Some(project_id), "", None, None, None, None).map_err(Into::into)
         });
 
         assert!(id > 0);

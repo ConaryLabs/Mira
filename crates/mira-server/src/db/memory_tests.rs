@@ -9,9 +9,8 @@ use super::{
     StoreMemoryParams, clear_project_persona_sync, count_facts_without_embeddings_sync,
     delete_memory_sync, find_facts_without_embeddings_sync, get_base_persona_sync,
     get_global_memories_sync, get_health_alerts_memory_sync, get_memory_stats_sync,
-    get_preferences_memory_sync, get_project_persona_sync,
-    mark_fact_has_embedding_sync, record_memory_access_sync, search_memories_sync,
-    store_fact_embedding_sync, store_memory_sync,
+    get_preferences_memory_sync, get_project_persona_sync, mark_fact_has_embedding_sync,
+    record_memory_access_sync, search_memories_sync, store_fact_embedding_sync, store_memory_sync,
 };
 use crate::search::embedding_to_bytes;
 
@@ -265,8 +264,12 @@ mod tests {
         ));
 
         // Record access from new session
-        db!(pool, |conn| record_memory_access_sync(conn, id, "session-new")
-            .map_err(Into::into));
+        db!(pool, |conn| record_memory_access_sync(
+            conn,
+            id,
+            "session-new"
+        )
+        .map_err(Into::into));
 
         let results = db!(pool, |conn| search_memories_sync(
             conn,
@@ -296,8 +299,12 @@ mod tests {
         ));
 
         // Same session - should not increment
-        db!(pool, |conn| record_memory_access_sync(conn, id, "session-1")
-            .map_err(Into::into));
+        db!(pool, |conn| record_memory_access_sync(
+            conn,
+            id,
+            "session-1"
+        )
+        .map_err(Into::into));
 
         let results = db!(pool, |conn| search_memories_sync(
             conn,
@@ -319,7 +326,8 @@ mod tests {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
         let (candidates, confirmed) =
-            db!(pool, |conn| get_memory_stats_sync(conn, Some(project_id)).map_err(Into::into));
+            db!(pool, |conn| get_memory_stats_sync(conn, Some(project_id))
+                .map_err(Into::into));
         assert_eq!(candidates, 0);
         assert_eq!(confirmed, 0);
     }
@@ -344,7 +352,8 @@ mod tests {
         }
 
         let (candidates, confirmed) =
-            db!(pool, |conn| get_memory_stats_sync(conn, Some(project_id)).map_err(Into::into));
+            db!(pool, |conn| get_memory_stats_sync(conn, Some(project_id))
+                .map_err(Into::into));
         assert_eq!(candidates, 3);
         assert_eq!(confirmed, 0);
     }
@@ -363,8 +372,8 @@ mod tests {
             1.0,
         ));
 
-        let (candidates, _confirmed) =
-            db!(pool, |conn| get_memory_stats_sync(conn, None).map_err(Into::into));
+        let (candidates, _confirmed) = db!(pool, |conn| get_memory_stats_sync(conn, None)
+            .map_err(Into::into));
         assert_eq!(candidates, 1);
     }
 
@@ -502,8 +511,11 @@ mod tests {
             0.5,
         ));
 
-        let prefs = db!(pool, |conn| get_preferences_memory_sync(conn, Some(project_id))
-            .map_err(Into::into));
+        let prefs = db!(pool, |conn| get_preferences_memory_sync(
+            conn,
+            Some(project_id)
+        )
+        .map_err(Into::into));
         assert_eq!(prefs.len(), 2);
         assert!(prefs.iter().all(|p| p.fact_type == "preference"));
     }
@@ -526,7 +538,8 @@ mod tests {
             0.5,
         ));
 
-        let deleted = db!(pool, |conn| delete_memory_sync(conn, id).map_err(Into::into));
+        let deleted = db!(pool, |conn| delete_memory_sync(conn, id)
+            .map_err(Into::into));
         assert!(deleted);
 
         let results = db!(pool, |conn| search_memories_sync(
@@ -544,7 +557,8 @@ mod tests {
     async fn test_delete_memory_nonexistent() {
         let pool = setup_test_pool().await;
 
-        let deleted = db!(pool, |conn| delete_memory_sync(conn, 99999).map_err(Into::into));
+        let deleted = db!(pool, |conn| delete_memory_sync(conn, 99999)
+            .map_err(Into::into));
         assert!(!deleted);
     }
 
@@ -621,8 +635,8 @@ mod tests {
 
         assert!(id > 0);
 
-        let results =
-            db!(pool, |conn| get_global_memories_sync(conn, None, 10).map_err(Into::into));
+        let results = db!(pool, |conn| get_global_memories_sync(conn, None, 10)
+            .map_err(Into::into));
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].fact_type, "personal");
     }
@@ -750,8 +764,7 @@ mod tests {
         )
         .map_err(Into::into));
 
-        let persona = db!(pool, |conn| get_base_persona_sync(conn).map_err(Into::into))
-            .unwrap();
+        let persona = db!(pool, |conn| get_base_persona_sync(conn).map_err(Into::into)).unwrap();
         assert_eq!(persona, "You are a helpful assistant");
     }
 
@@ -759,8 +772,8 @@ mod tests {
     async fn test_project_persona() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        let persona =
-            db!(pool, |conn| get_project_persona_sync(conn, project_id).map_err(Into::into));
+        let persona = db!(pool, |conn| get_project_persona_sync(conn, project_id)
+            .map_err(Into::into));
         assert!(persona.is_none());
 
         db!(pool, |conn| store_memory_sync(
@@ -780,9 +793,9 @@ mod tests {
         )
         .map_err(Into::into));
 
-        let persona =
-            db!(pool, |conn| get_project_persona_sync(conn, project_id).map_err(Into::into))
-                .unwrap();
+        let persona = db!(pool, |conn| get_project_persona_sync(conn, project_id)
+            .map_err(Into::into))
+        .unwrap();
         assert_eq!(persona, "Project-specific persona");
     }
 
@@ -807,16 +820,16 @@ mod tests {
         )
         .map_err(Into::into));
 
-        let persona =
-            db!(pool, |conn| get_project_persona_sync(conn, project_id).map_err(Into::into));
+        let persona = db!(pool, |conn| get_project_persona_sync(conn, project_id)
+            .map_err(Into::into));
         assert!(persona.is_some());
 
-        let cleared =
-            db!(pool, |conn| clear_project_persona_sync(conn, project_id).map_err(Into::into));
+        let cleared = db!(pool, |conn| clear_project_persona_sync(conn, project_id)
+            .map_err(Into::into));
         assert!(cleared);
 
-        let persona =
-            db!(pool, |conn| get_project_persona_sync(conn, project_id).map_err(Into::into));
+        let persona = db!(pool, |conn| get_project_persona_sync(conn, project_id)
+            .map_err(Into::into));
         assert!(persona.is_none());
     }
 
@@ -844,16 +857,17 @@ mod tests {
         }
 
         // All should be without embeddings
-        let facts =
-            db!(pool, |conn| find_facts_without_embeddings_sync(conn, 10).map_err(Into::into));
+        let facts = db!(pool, |conn| find_facts_without_embeddings_sync(conn, 10)
+            .map_err(Into::into));
         assert_eq!(facts.len(), 3);
 
         // Mark one as having embedding
         let fact_id = facts[0].id;
-        db!(pool, |conn| mark_fact_has_embedding_sync(conn, fact_id).map_err(Into::into));
+        db!(pool, |conn| mark_fact_has_embedding_sync(conn, fact_id)
+            .map_err(Into::into));
 
-        let remaining =
-            db!(pool, |conn| find_facts_without_embeddings_sync(conn, 10).map_err(Into::into));
+        let remaining = db!(pool, |conn| find_facts_without_embeddings_sync(conn, 10)
+            .map_err(Into::into));
         assert_eq!(remaining.len(), 2);
     }
 
@@ -874,20 +888,21 @@ mod tests {
             ));
         }
 
-        let count =
-            db!(pool, |conn| count_facts_without_embeddings_sync(conn).map_err(Into::into));
+        let count = db!(pool, |conn| count_facts_without_embeddings_sync(conn)
+            .map_err(Into::into));
         assert_eq!(count, 5);
 
         // Mark some
-        let facts =
-            db!(pool, |conn| find_facts_without_embeddings_sync(conn, 3).map_err(Into::into));
+        let facts = db!(pool, |conn| find_facts_without_embeddings_sync(conn, 3)
+            .map_err(Into::into));
         for fact in &facts {
             let fact_id = fact.id;
-            db!(pool, |conn| mark_fact_has_embedding_sync(conn, fact_id).map_err(Into::into));
+            db!(pool, |conn| mark_fact_has_embedding_sync(conn, fact_id)
+                .map_err(Into::into));
         }
 
-        let count =
-            db!(pool, |conn| count_facts_without_embeddings_sync(conn).map_err(Into::into));
+        let count = db!(pool, |conn| count_facts_without_embeddings_sync(conn)
+            .map_err(Into::into));
         assert_eq!(count, 2);
     }
 
@@ -917,8 +932,8 @@ mod tests {
         .map_err(Into::into));
 
         // Should no longer be in facts without embeddings
-        let facts =
-            db!(pool, |conn| find_facts_without_embeddings_sync(conn, 10).map_err(Into::into));
+        let facts = db!(pool, |conn| find_facts_without_embeddings_sync(conn, 10)
+            .map_err(Into::into));
         assert!(!facts.iter().any(|f| f.id == id));
 
         // Memory should be marked
@@ -1008,8 +1023,11 @@ mod tests {
     async fn test_empty_preferences() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        let prefs = db!(pool, |conn| get_preferences_memory_sync(conn, Some(project_id))
-            .map_err(Into::into));
+        let prefs = db!(pool, |conn| get_preferences_memory_sync(
+            conn,
+            Some(project_id)
+        )
+        .map_err(Into::into));
         assert_eq!(prefs.len(), 0);
     }
 
@@ -1030,8 +1048,8 @@ mod tests {
     async fn test_empty_global_memories() {
         let pool = setup_test_pool().await;
 
-        let memories =
-            db!(pool, |conn| get_global_memories_sync(conn, None, 10).map_err(Into::into));
+        let memories = db!(pool, |conn| get_global_memories_sync(conn, None, 10)
+            .map_err(Into::into));
         assert_eq!(memories.len(), 0);
     }
 }

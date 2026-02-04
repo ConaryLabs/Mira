@@ -361,8 +361,7 @@ fn test_historical_risk_module_hotspot_match() {
     });
     seed_pattern(&conn, 1, "module_hotspot:src", &data.to_string(), 0.7, 10);
 
-    let result =
-        compute_historical_risk(&conn, 1, &["src/lib.rs".into(), "src/main.rs".into()], 2);
+    let result = compute_historical_risk(&conn, 1, &["src/lib.rs".into(), "src/main.rs".into()], 2);
     assert!(result.is_some());
     let hr = result.unwrap();
     assert_eq!(hr.risk_delta, "elevated");
@@ -382,14 +381,7 @@ fn test_historical_risk_module_hotspot_no_match() {
         "outcome_stats": { "total": 10, "clean": 3, "reverted": 5, "follow_up_fix": 2 },
         "sample_commits": []
     });
-    seed_pattern(
-        &conn,
-        1,
-        "module_hotspot:tests",
-        &data.to_string(),
-        0.8,
-        10,
-    );
+    seed_pattern(&conn, 1, "module_hotspot:tests", &data.to_string(), 0.8, 10);
 
     // Files are in "src", not "tests"
     let result = compute_historical_risk(&conn, 1, &["src/main.rs".into()], 1);

@@ -92,7 +92,13 @@ impl DatabasePool {
 
     /// Open a pooled in-memory database for the code index (for tests).
     pub async fn open_code_db_in_memory() -> Result<Self> {
-        Self::open_internal(DbStorage::InMemory { label: "memdb_code" }, DbKind::Code).await
+        Self::open_internal(
+            DbStorage::InMemory {
+                label: "memdb_code",
+            },
+            DbKind::Code,
+        )
+        .await
     }
 
     /// Open a pooled in-memory database.
@@ -120,7 +126,11 @@ impl DatabasePool {
                 (s, Some(p), None, hook)
             }
             DbStorage::InMemory { label } => {
-                let uri = format!("file:{}_{:?}?mode=memory&cache=shared", label, uuid::Uuid::new_v4());
+                let uri = format!(
+                    "file:{}_{:?}?mode=memory&cache=shared",
+                    label,
+                    uuid::Uuid::new_v4()
+                );
                 let hook = make_memory_post_create_hook();
                 (uri.clone(), None, Some(uri), hook)
             }
@@ -359,7 +369,6 @@ impl DatabasePool {
             waiting: status.waiting,
         }
     }
-
 }
 
 /// Pool status for monitoring.
@@ -399,10 +408,7 @@ fn make_file_post_create_hook(path: PathBuf) -> Hook {
                     let mut perms = metadata.permissions();
                     perms.set_mode(0o600); // rw-------
                     if let Err(e) = std::fs::set_permissions(&path_for_perms, perms) {
-                        tracing::warn!(
-                            "Failed to set database file permissions to 0600: {}",
-                            e
-                        );
+                        tracing::warn!("Failed to set database file permissions to 0600: {}", e);
                     }
                 }
 
@@ -413,9 +419,7 @@ fn make_file_post_create_hook(path: PathBuf) -> Hook {
                 deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
             })?
             .map_err(|e| {
-                deadpool_sqlite::HookError::Message(
-                    format!("connection setup failed: {e}").into(),
-                )
+                deadpool_sqlite::HookError::Message(format!("connection setup failed: {e}").into())
             })
         })
     })
@@ -439,9 +443,7 @@ fn make_memory_post_create_hook() -> Hook {
                 deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
             })?
             .map_err(|e| {
-                deadpool_sqlite::HookError::Message(
-                    format!("connection setup failed: {e}").into(),
-                )
+                deadpool_sqlite::HookError::Message(format!("connection setup failed: {e}").into())
             })
         })
     })

@@ -5,9 +5,9 @@ use crate::llm::Tool;
 use crate::tools::core::McpToolInfo;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo};
 use rmcp::service::{Peer, RunningService};
+use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
-use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, serve_client};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -135,7 +135,11 @@ impl McpClientManager {
 
         // Global configs (lower precedence, deduped by seen_names)
         if let Some(home) = dirs::home_dir() {
-            Self::try_load_mcp_json(&home.join(".claude/mcp.json"), &mut configs, &mut seen_names);
+            Self::try_load_mcp_json(
+                &home.join(".claude/mcp.json"),
+                &mut configs,
+                &mut seen_names,
+            );
             Self::try_load_codex_toml(
                 &home.join(".codex/config.toml"),
                 &mut configs,
@@ -204,9 +208,13 @@ impl McpClientManager {
     }
 
     /// Resolve the bearer token from an env var name, if configured.
-    fn resolve_bearer_token(server_name: &str, bearer_token_env_var: &Option<String>) -> Option<String> {
-        bearer_token_env_var.as_ref().and_then(|env_var| {
-            match std::env::var(env_var) {
+    fn resolve_bearer_token(
+        server_name: &str,
+        bearer_token_env_var: &Option<String>,
+    ) -> Option<String> {
+        bearer_token_env_var
+            .as_ref()
+            .and_then(|env_var| match std::env::var(env_var) {
                 Ok(token) => Some(token),
                 Err(_) => {
                     warn!(
@@ -216,8 +224,7 @@ impl McpClientManager {
                     );
                     None
                 }
-            }
-        })
+            })
     }
 
     /// Ensure a server is connected, lazily connecting if needed
@@ -536,10 +543,7 @@ mod tests {
         assert_eq!(configs[0].name, "context7");
         match &configs[0].transport {
             McpTransport::Stdio {
-                command,
-                args,
-                env,
-                ..
+                command, args, env, ..
             } => {
                 assert_eq!(command, "npx");
                 assert_eq!(args, &["-y", "@context7/mcp"]);

@@ -1,8 +1,8 @@
 // background/proactive/llm.rs
 // LLM-enhanced suggestion generation
 
-use super::storage::store_suggestions;
 use super::PreGeneratedSuggestion;
+use super::storage::store_suggestions;
 use crate::db::get_projects_needing_suggestions_sync;
 use crate::db::pool::DatabasePool;
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};

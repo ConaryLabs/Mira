@@ -9,8 +9,8 @@ use rmcp::{
     model::{
         CallToolRequestParams, CallToolResult, CancelTaskParams, CreateTaskResult,
         GetTaskInfoParams, GetTaskInfoResult, GetTaskResultParams, ListTasksResult,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
-        Task, TaskResult as ModelTaskResult, TaskStatus, TasksCapability,
+        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Task,
+        TaskResult as ModelTaskResult, TaskStatus, TasksCapability,
     },
     service::{RequestContext, RoleServer},
     task_manager::{self, OperationDescriptor, OperationMessage, ToolCallTaskResult},
