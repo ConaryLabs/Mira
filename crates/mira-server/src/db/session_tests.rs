@@ -1,11 +1,11 @@
 // crates/mira-server/src/db/session_tests.rs
 // Tests for session and tool history operations
 
-use super::test_support::{setup_test_pool, setup_test_pool_with_project};
+use super::test_support::{setup_second_project, setup_test_pool, setup_test_pool_with_project};
 use super::{
     build_session_recap_sync, create_goal_sync, create_session_sync, create_task_sync,
-    get_history_after_sync, get_or_create_project_sync, get_recent_sessions_sync,
-    get_session_history_sync, get_session_stats_sync, log_tool_call_sync, touch_session_sync,
+    get_history_after_sync, get_recent_sessions_sync, get_session_history_sync,
+    get_session_stats_sync, log_tool_call_sync, touch_session_sync,
 };
 
 #[cfg(test)]
@@ -20,37 +20,25 @@ mod tests {
     async fn test_create_session_basic() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        let result = pool
-            .interact(|conn| {
-                create_session_sync(conn, "test-session-123", None).map_err(Into::into)
-            })
-            .await;
-        assert!(result.is_ok(), "create_session failed: {:?}", result.err());
+        let result = db!(pool, |conn| create_session_sync(conn, "test-session-123", None)
+            .map_err(Into::into));
+        assert_eq!(result, ());
     }
 
     #[tokio::test]
     async fn test_create_session_with_project() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        let result = pool
-            .interact(move |conn| {
-                create_session_sync(conn, "session-with-project", Some(project_id))
-                    .map_err(Into::into)
-            })
-            .await;
-        assert!(
-            result.is_ok(),
-            "create_session with project failed: {:?}",
-            result.err()
-        );
+        db!(pool, |conn| create_session_sync(
+            conn,
+            "session-with-project",
+            Some(project_id)
+        )
+        .map_err(Into::into));
 
         // Verify session exists
-        let sessions = pool
-            .interact(move |conn| {
-                get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into));
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "session-with-project");
         assert_eq!(sessions[0].project_id, Some(project_id));
@@ -62,34 +50,22 @@ mod tests {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create session first time
-        pool.interact(move |conn| {
-            create_session_sync(conn, "upsert-session", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "upsert-session", Some(project_id))
+            .map_err(Into::into));
 
         // Get initial created_at
-        let sessions = pool
-            .interact(move |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into))
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into));
         let initial_started = sessions[0].started_at.clone();
 
         // Wait a bit and upsert
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        pool.interact(move |conn| {
-            create_session_sync(conn, "upsert-session", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "upsert-session", Some(project_id))
+            .map_err(Into::into));
 
         // Should still be one session
-        let sessions = pool
-            .interact(move |conn| {
-                get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into));
         assert_eq!(sessions.len(), 1);
         // started_at should be unchanged (created once)
         assert_eq!(sessions[0].started_at, initial_started);
@@ -104,30 +80,21 @@ mod tests {
     async fn test_touch_session_existing() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(move |conn| {
-            create_session_sync(conn, "touch-test", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "touch-test", Some(project_id))
+            .map_err(Into::into));
 
         // Get initial last_activity
-        let sessions = pool
-            .interact(move |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into))
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into));
         let initial_activity = sessions[0].last_activity.clone();
 
         // Wait 1 second to ensure timestamp changes (SQLite has second precision)
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        pool.interact(|conn| touch_session_sync(conn, "touch-test").map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| touch_session_sync(conn, "touch-test").map_err(Into::into));
 
         // Verify last_activity updated
-        let sessions = pool
-            .interact(move |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into))
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into));
         assert_ne!(sessions[0].last_activity, initial_activity);
     }
 
@@ -136,13 +103,7 @@ mod tests {
         let pool = setup_test_pool().await;
 
         // Touching non-existent session should not error
-        let result = pool
-            .interact(|conn| touch_session_sync(conn, "nonexistent").map_err(Into::into))
-            .await;
-        assert!(
-            result.is_ok(),
-            "touch_session should succeed even for nonexistent session"
-        );
+        db!(pool, |conn| touch_session_sync(conn, "nonexistent").map_err(Into::into));
     }
 
     // ═══════════════════════════════════════
@@ -154,33 +115,24 @@ mod tests {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
         // Create session first (required by foreign key constraint)
-        pool.interact(|conn| create_session_sync(conn, "session-1", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "session-1", None).map_err(Into::into));
 
-        let id = pool
-            .interact(|conn| {
-                log_tool_call_sync(
-                    conn,
-                    "session-1",
-                    "remember",
-                    r#"{"content": "test"}"#,
-                    "Stored memory ID: 1",
-                    None,
-                    true,
-                )
-                .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let id = db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "session-1",
+            "remember",
+            r#"{"content": "test"}"#,
+            "Stored memory ID: 1",
+            None,
+            true,
+        )
+        .map_err(Into::into));
 
         assert!(id > 0);
 
         // Verify entry
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "session-1", 10).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "session-1", 10).map_err(Into::into));
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].tool_name, "remember");
         assert_eq!(
@@ -198,30 +150,22 @@ mod tests {
     async fn test_log_tool_call_with_full_result() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "session-2", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "session-2", None).map_err(Into::into));
 
         let full_result = r#"{"detailed": "output", "with": "lots of data"}"#;
-        pool.interact(|conn| {
-            log_tool_call_sync(
-                conn,
-                "session-2",
-                "search_code",
-                "query",
-                "Found 5 results",
-                Some(full_result),
-                true,
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "session-2",
+            "search_code",
+            "query",
+            "Found 5 results",
+            Some(full_result),
+            true,
+        )
+        .map_err(Into::into));
 
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "session-2", 10).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "session-2", 10).map_err(Into::into));
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].tool_name, "search_code");
     }
@@ -230,29 +174,21 @@ mod tests {
     async fn test_log_tool_call_failure() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "session-3", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "session-3", None).map_err(Into::into));
 
-        pool.interact(|conn| {
-            log_tool_call_sync(
-                conn,
-                "session-3",
-                "broken_tool",
-                "{}",
-                "Error: something failed",
-                None,
-                false,
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "session-3",
+            "broken_tool",
+            "{}",
+            "Error: something failed",
+            None,
+            false,
+        )
+        .map_err(Into::into));
 
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "session-3", 10).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "session-3", 10).map_err(Into::into));
         assert_eq!(history.len(), 1);
         assert!(!history[0].success);
     }
@@ -261,27 +197,29 @@ mod tests {
     async fn test_log_multiple_tool_calls() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "session-multi", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "session-multi", None).map_err(Into::into));
 
         for i in 0..5 {
             let tool_name = format!("tool_{}", i);
             let result = format!("Result {}", i);
-            pool.interact(move |conn| {
-                log_tool_call_sync(conn, "session-multi", &tool_name, "{}", &result, None, true)
-                    .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "session-multi",
+                &tool_name,
+                "{}",
+                &result,
+                None,
+                true
+            )
+            .map_err(Into::into));
         }
 
-        let history = pool
-            .interact(|conn| {
-                get_session_history_sync(conn, "session-multi", 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let history = db!(pool, |conn| get_session_history_sync(
+            conn,
+            "session-multi",
+            10
+        )
+        .map_err(Into::into));
         assert_eq!(history.len(), 5);
         // Should be ordered by created_at DESC
         assert_eq!(history[0].tool_name, "tool_4");
@@ -296,10 +234,8 @@ mod tests {
     async fn test_get_session_history_empty() {
         let pool = setup_test_pool().await;
 
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "nonexistent", 10).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "nonexistent", 10).map_err(Into::into));
         assert_eq!(history.len(), 0);
     }
 
@@ -307,26 +243,26 @@ mod tests {
     async fn test_get_session_history_limit() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "limit-test", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "limit-test", None).map_err(Into::into));
 
         // Add 10 entries
         for i in 0..10 {
             let result = i.to_string();
-            pool.interact(move |conn| {
-                log_tool_call_sync(conn, "limit-test", "tool", "{}", &result, None, true)
-                    .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "limit-test",
+                "tool",
+                "{}",
+                &result,
+                None,
+                true
+            )
+            .map_err(Into::into));
         }
 
         // Request only 5
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "limit-test", 5).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "limit-test", 5).map_err(Into::into));
         assert_eq!(history.len(), 5);
     }
 
@@ -334,27 +270,27 @@ mod tests {
     async fn test_get_session_history_ordering() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "order-test", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "order-test", None).map_err(Into::into));
 
         // Add entries with delays to ensure different timestamps
         for i in 0..3 {
             let tool_name = format!("tool_{}", i);
             let result = format!("result_{}", i);
-            pool.interact(move |conn| {
-                log_tool_call_sync(conn, "order-test", &tool_name, "{}", &result, None, true)
-                    .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "order-test",
+                &tool_name,
+                "{}",
+                &result,
+                None,
+                true
+            )
+            .map_err(Into::into));
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
 
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "order-test", 10).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "order-test", 10).map_err(Into::into));
         assert_eq!(history.len(), 3);
         // Most recent first
         assert_eq!(history[0].tool_name, "tool_2");
@@ -370,32 +306,31 @@ mod tests {
     async fn test_get_history_after_basic() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "after-test", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "after-test", None).map_err(Into::into));
 
         let mut ids: Vec<i64> = Vec::new();
         for i in 0..5 {
             let tool_name = format!("tool_{}", i);
             let result = format!("result_{}", i);
-            let id = pool
-                .interact(move |conn| {
-                    log_tool_call_sync(conn, "after-test", &tool_name, "{}", &result, None, true)
-                        .map_err(Into::into)
-                })
-                .await
-                .unwrap();
+            let id = db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "after-test",
+                &tool_name,
+                "{}",
+                &result,
+                None,
+                true
+            )
+            .map_err(Into::into));
             ids.push(id);
         }
 
         // Get entries after ID 2
         let after_id = ids[1];
-        let history = pool
-            .interact(move |conn| {
-                get_history_after_sync(conn, "after-test", after_id, 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let history = db!(pool, |conn| get_history_after_sync(
+            conn, "after-test", after_id, 10
+        )
+        .map_err(Into::into));
         // Should return IDs 3, 4, 5 (everything > ids[1])
         assert!(history.len() >= 3);
         // Should be ordered ASC by ID
@@ -406,37 +341,30 @@ mod tests {
     async fn test_get_history_after_limit() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| {
-            create_session_sync(conn, "after-limit-test", None).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "after-limit-test", None).map_err(Into::into));
 
         for i in 0..10 {
             let tool_name = format!("tool_{}", i);
-            pool.interact(move |conn| {
-                log_tool_call_sync(
-                    conn,
-                    "after-limit-test",
-                    &tool_name,
-                    "{}",
-                    "result",
-                    None,
-                    true,
-                )
-                .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "after-limit-test",
+                &tool_name,
+                "{}",
+                "result",
+                None,
+                true,
+            )
+            .map_err(Into::into));
         }
 
         // Get after first entry, limit to 3
-        let history = pool
-            .interact(|conn| {
-                get_history_after_sync(conn, "after-limit-test", 0, 3).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let history = db!(pool, |conn| get_history_after_sync(
+            conn,
+            "after-limit-test",
+            0,
+            3
+        )
+        .map_err(Into::into));
         assert_eq!(history.len(), 3);
     }
 
@@ -444,10 +372,13 @@ mod tests {
     async fn test_get_history_after_empty() {
         let pool = setup_test_pool().await;
 
-        let history = pool
-            .interact(|conn| get_history_after_sync(conn, "nonexistent", 0, 10).map_err(Into::into))
-            .await
-            .unwrap();
+        let history = db!(pool, |conn| get_history_after_sync(
+            conn,
+            "nonexistent",
+            0,
+            10
+        )
+        .map_err(Into::into));
         assert_eq!(history.len(), 0);
     }
 
@@ -459,23 +390,13 @@ mod tests {
     async fn test_get_recent_sessions_basic() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(move |conn| {
-            create_session_sync(conn, "session-1", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
-        pool.interact(move |conn| {
-            create_session_sync(conn, "session-2", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "session-1", Some(project_id))
+            .map_err(Into::into));
+        db!(pool, |conn| create_session_sync(conn, "session-2", Some(project_id))
+            .map_err(Into::into));
 
-        let sessions = pool
-            .interact(move |conn| {
-                get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into));
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().all(|s| s.project_id == Some(project_id)));
     }
@@ -486,17 +407,12 @@ mod tests {
 
         for i in 0..5 {
             let session_id = format!("session-{}", i);
-            pool.interact(move |conn| {
-                create_session_sync(conn, &session_id, Some(project_id)).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| create_session_sync(conn, &session_id, Some(project_id))
+                .map_err(Into::into));
         }
 
-        let sessions = pool
-            .interact(move |conn| get_recent_sessions_sync(conn, project_id, 3).map_err(Into::into))
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 3).map_err(Into::into));
         assert_eq!(sessions.len(), 3);
     }
 
@@ -504,24 +420,14 @@ mod tests {
     async fn test_get_recent_sessions_ordering() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(move |conn| {
-            create_session_sync(conn, "old-session", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "old-session", Some(project_id))
+            .map_err(Into::into));
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        pool.interact(move |conn| {
-            create_session_sync(conn, "new-session", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "new-session", Some(project_id))
+            .map_err(Into::into));
 
-        let sessions = pool
-            .interact(move |conn| {
-                get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into));
         assert_eq!(sessions.len(), 2);
         // Most recent activity first
         assert_eq!(sessions[0].id, "new-session");
@@ -531,33 +437,17 @@ mod tests {
     #[tokio::test]
     async fn test_get_recent_sessions_project_isolation() {
         let (pool, project1) = setup_test_pool_with_project().await;
-        let project2 = pool
-            .interact(|conn| {
-                get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
-            })
-            .await
-            .unwrap()
-            .0;
+        let project2 = setup_second_project(&pool).await;
 
-        pool.interact(move |conn| {
-            create_session_sync(conn, "proj1-session", Some(project1)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
-        pool.interact(move |conn| {
-            create_session_sync(conn, "proj2-session", Some(project2)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "proj1-session", Some(project1))
+            .map_err(Into::into));
+        db!(pool, |conn| create_session_sync(conn, "proj2-session", Some(project2))
+            .map_err(Into::into));
 
-        let sessions1 = pool
-            .interact(move |conn| get_recent_sessions_sync(conn, project1, 10).map_err(Into::into))
-            .await
-            .unwrap();
-        let sessions2 = pool
-            .interact(move |conn| get_recent_sessions_sync(conn, project2, 10).map_err(Into::into))
-            .await
-            .unwrap();
+        let sessions1 =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project1, 10).map_err(Into::into));
+        let sessions2 =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project2, 10).map_err(Into::into));
 
         assert_eq!(sessions1.len(), 1);
         assert_eq!(sessions2.len(), 1);
@@ -573,10 +463,8 @@ mod tests {
     async fn test_get_session_stats_empty() {
         let pool = setup_test_pool().await;
 
-        let (count, tools) = pool
-            .interact(|conn| get_session_stats_sync(conn, "empty-session").map_err(Into::into))
-            .await
-            .unwrap();
+        let (count, tools) =
+            db!(pool, |conn| get_session_stats_sync(conn, "empty-session").map_err(Into::into));
         assert_eq!(count, 0);
         assert_eq!(tools.len(), 0);
     }
@@ -585,38 +473,46 @@ mod tests {
     async fn test_get_session_stats_with_calls() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "stats-session", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "stats-session", None).map_err(Into::into));
 
         // Add various tool calls
         for _i in 0..3 {
-            pool.interact(|conn| {
-                log_tool_call_sync(conn, "stats-session", "remember", "{}", "ok", None, true)
-                    .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "stats-session",
+                "remember",
+                "{}",
+                "ok",
+                None,
+                true
+            )
+            .map_err(Into::into));
         }
         for _i in 0..2 {
-            pool.interact(|conn| {
-                log_tool_call_sync(conn, "stats-session", "recall", "{}", "ok", None, true)
-                    .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "stats-session",
+                "recall",
+                "{}",
+                "ok",
+                None,
+                true
+            )
+            .map_err(Into::into));
         }
-        pool.interact(|conn| {
-            log_tool_call_sync(conn, "stats-session", "forget", "{}", "ok", None, true)
-                .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "stats-session",
+            "forget",
+            "{}",
+            "ok",
+            None,
+            true
+        )
+        .map_err(Into::into));
 
-        let (count, tools) = pool
-            .interact(|conn| get_session_stats_sync(conn, "stats-session").map_err(Into::into))
-            .await
-            .unwrap();
+        let (count, tools) =
+            db!(pool, |conn| get_session_stats_sync(conn, "stats-session").map_err(Into::into));
         assert_eq!(count, 6);
         assert_eq!(tools.len(), 3);
         // remember should be first (most used)
@@ -629,27 +525,28 @@ mod tests {
     async fn test_get_session_stats_top_five() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| {
-            create_session_sync(conn, "top-five-session", None).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "top-five-session", None).map_err(Into::into));
 
         // Add 10 different tools
         for i in 0..10 {
             let tool_name = format!("tool_{}", i);
-            pool.interact(move |conn| {
-                log_tool_call_sync(conn, "top-five-session", &tool_name, "{}", "ok", None, true)
-                    .map_err(Into::into)
-            })
-            .await
-            .unwrap();
+            db!(pool, |conn| log_tool_call_sync(
+                conn,
+                "top-five-session",
+                &tool_name,
+                "{}",
+                "ok",
+                None,
+                true
+            )
+            .map_err(Into::into));
         }
 
-        let (_count, tools) = pool
-            .interact(|conn| get_session_stats_sync(conn, "top-five-session").map_err(Into::into))
-            .await
-            .unwrap();
+        let (_count, tools) = db!(pool, |conn| get_session_stats_sync(
+            conn,
+            "top-five-session"
+        )
+        .map_err(Into::into));
         // Should only return top 5
         assert_eq!(tools.len(), 5);
     }
@@ -662,10 +559,8 @@ mod tests {
     async fn test_build_session_recap_empty() {
         let pool = setup_test_pool().await;
 
-        let recap = pool
-            .interact(|conn| Ok::<_, anyhow::Error>(build_session_recap_sync(conn, None)))
-            .await
-            .unwrap();
+        let recap =
+            db!(pool, |conn| Ok::<_, anyhow::Error>(build_session_recap_sync(conn, None)));
         // Should have welcome banner at minimum
         assert!(recap.contains("Welcome back"), "Recap was: {}", recap);
     }
@@ -674,12 +569,10 @@ mod tests {
     async fn test_build_session_recap_with_project() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        let recap = pool
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(build_session_recap_sync(conn, Some(project_id)))
-            })
-            .await
-            .unwrap();
+        let recap = db!(pool, |conn| Ok::<_, anyhow::Error>(build_session_recap_sync(
+            conn,
+            Some(project_id)
+        )));
         assert!(recap.contains("test project"));
         assert!(recap.contains("Welcome back to"));
     }
@@ -689,27 +582,21 @@ mod tests {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create a pending task
-        pool.interact(move |conn| {
-            create_task_sync(
-                conn,
-                Some(project_id),
-                None, // goal_id
-                "Test task",
-                Some("Test description"),
-                Some("pending"),
-                Some("high"),
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_task_sync(
+            conn,
+            Some(project_id),
+            None, // goal_id
+            "Test task",
+            Some("Test description"),
+            Some("pending"),
+            Some("high"),
+        )
+        .map_err(Into::into));
 
-        let recap = pool
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(build_session_recap_sync(conn, Some(project_id)))
-            })
-            .await
-            .unwrap();
+        let recap = db!(pool, |conn| Ok::<_, anyhow::Error>(build_session_recap_sync(
+            conn,
+            Some(project_id)
+        )));
         assert!(recap.contains("Pending tasks"));
         assert!(recap.contains("Test task"));
     }
@@ -719,27 +606,21 @@ mod tests {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create an active goal
-        pool.interact(move |conn| {
-            create_goal_sync(
-                conn,
-                Some(project_id),
-                "Test goal",
-                Some("Test description"),
-                Some("in_progress"),
-                Some("medium"),
-                Some(50),
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_goal_sync(
+            conn,
+            Some(project_id),
+            "Test goal",
+            Some("Test description"),
+            Some("in_progress"),
+            Some("medium"),
+            Some(50),
+        )
+        .map_err(Into::into));
 
-        let recap = pool
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(build_session_recap_sync(conn, Some(project_id)))
-            })
-            .await
-            .unwrap();
+        let recap = db!(pool, |conn| Ok::<_, anyhow::Error>(build_session_recap_sync(
+            conn,
+            Some(project_id)
+        )));
         assert!(recap.contains("Active goals"));
         assert!(recap.contains("Test goal"));
     }
@@ -749,35 +630,25 @@ mod tests {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create an old session (not active)
-        pool.interact(move |conn| {
-            create_session_sync(conn, "old-session", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "old-session", Some(project_id))
+            .map_err(Into::into));
         // Update it to not be active
-        pool.interact(|conn| {
+        db!(pool, |conn| {
             conn.execute(
                 "UPDATE sessions SET status = 'completed' WHERE id = ?",
                 ["old-session"],
             )?;
             Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .unwrap();
+        });
 
         // Create current active session
-        pool.interact(move |conn| {
-            create_session_sync(conn, "current-active", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "current-active", Some(project_id))
+            .map_err(Into::into));
 
-        let recap = pool
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(build_session_recap_sync(conn, Some(project_id)))
-            })
-            .await
-            .unwrap();
+        let recap = db!(pool, |conn| Ok::<_, anyhow::Error>(build_session_recap_sync(
+            conn,
+            Some(project_id)
+        )));
         // Should show recent sessions (excluding active)
         assert!(recap.contains("Recent sessions") || recap.contains("Welcome back"));
     }
@@ -792,80 +663,59 @@ mod tests {
 
         // Create session
         let session_id = "lifecycle-test";
-        pool.interact(move |conn| {
-            create_session_sync(conn, session_id, Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, session_id, Some(project_id))
+            .map_err(Into::into));
 
         // Log some tool calls
-        pool.interact(|conn| {
-            log_tool_call_sync(
-                conn,
-                "lifecycle-test",
-                "remember",
-                "{}",
-                "Stored memory",
-                None,
-                true,
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
-        pool.interact(|conn| {
-            log_tool_call_sync(
-                conn,
-                "lifecycle-test",
-                "recall",
-                "{}",
-                "Found memories",
-                None,
-                true,
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "lifecycle-test",
+            "remember",
+            "{}",
+            "Stored memory",
+            None,
+            true,
+        )
+        .map_err(Into::into));
+        db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "lifecycle-test",
+            "recall",
+            "{}",
+            "Found memories",
+            None,
+            true,
+        )
+        .map_err(Into::into));
 
         // Check stats
-        let (count, tools) = pool
-            .interact(|conn| get_session_stats_sync(conn, "lifecycle-test").map_err(Into::into))
-            .await
-            .unwrap();
+        let (count, tools) =
+            db!(pool, |conn| get_session_stats_sync(conn, "lifecycle-test").map_err(Into::into));
         assert_eq!(count, 2);
         assert_eq!(tools.len(), 2);
 
         // Check history
-        let history = pool
-            .interact(|conn| {
-                get_session_history_sync(conn, "lifecycle-test", 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let history = db!(pool, |conn| get_session_history_sync(
+            conn,
+            "lifecycle-test",
+            10
+        )
+        .map_err(Into::into));
         assert_eq!(history.len(), 2);
 
         // Check session is in recent sessions
-        let sessions = pool
-            .interact(move |conn| {
-                get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into)
-            })
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 10).map_err(Into::into));
         assert!(sessions.iter().any(|s| s.id == session_id));
 
         // Touch session
-        pool.interact(|conn| touch_session_sync(conn, "lifecycle-test").map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| touch_session_sync(conn, "lifecycle-test").map_err(Into::into));
 
         // Build recap
-        let recap = pool
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(build_session_recap_sync(conn, Some(project_id)))
-            })
-            .await
-            .unwrap();
+        let recap = db!(pool, |conn| Ok::<_, anyhow::Error>(build_session_recap_sync(
+            conn,
+            Some(project_id)
+        )));
         assert!(recap.contains("test project"));
     }
 
@@ -873,29 +723,21 @@ mod tests {
     async fn test_tool_history_entry_fields() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "fields-test", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "fields-test", None).map_err(Into::into));
 
-        pool.interact(|conn| {
-            log_tool_call_sync(
-                conn,
-                "fields-test",
-                "test_tool",
-                r#"{"arg1": "value1", "arg2": "value2"}"#,
-                "Success summary",
-                Some("Full detailed result"),
-                true,
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "fields-test",
+            "test_tool",
+            r#"{"arg1": "value1", "arg2": "value2"}"#,
+            "Success summary",
+            Some("Full detailed result"),
+            true,
+        )
+        .map_err(Into::into));
 
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "fields-test", 1).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "fields-test", 1).map_err(Into::into));
         let entry = &history[0];
 
         assert_eq!(entry.session_id, "fields-test");
@@ -913,16 +755,11 @@ mod tests {
     async fn test_session_info_fields() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(move |conn| {
-            create_session_sync(conn, "info-test", Some(project_id)).map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "info-test", Some(project_id))
+            .map_err(Into::into));
 
-        let sessions = pool
-            .interact(move |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into))
-            .await
-            .unwrap();
+        let sessions =
+            db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 1).map_err(Into::into));
         let info = &sessions[0];
 
         assert_eq!(info.id, "info-test");
@@ -942,10 +779,7 @@ mod tests {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
         // Empty session_id should still work
-        let result = pool
-            .interact(|conn| create_session_sync(conn, "", None).map_err(Into::into))
-            .await;
-        assert!(result.is_ok());
+        db!(pool, |conn| create_session_sync(conn, "", None).map_err(Into::into));
     }
 
     #[tokio::test]
@@ -954,40 +788,33 @@ mod tests {
 
         let long_id = "a".repeat(1000);
         let long_id_clone = long_id.clone();
-        let result = pool
-            .interact(move |conn| {
-                create_session_sync(conn, &long_id_clone, None).map_err(Into::into)
-            })
-            .await;
-        assert!(result.is_ok());
+        db!(pool, |conn| create_session_sync(conn, &long_id_clone, None).map_err(Into::into));
 
         // Should be able to retrieve
-        pool.interact(move |conn| touch_session_sync(conn, &long_id).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| touch_session_sync(conn, &long_id).map_err(Into::into));
     }
 
     #[tokio::test]
     async fn test_special_characters_in_arguments() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        pool.interact(|conn| create_session_sync(conn, "special-test", None).map_err(Into::into))
-            .await
-            .unwrap();
+        db!(pool, |conn| create_session_sync(conn, "special-test", None).map_err(Into::into));
 
         let special_args =
             r#"{"text": "Hello \"world\"", "emoji": "🎉", "newline": "line1\nline2"}"#;
-        pool.interact(|conn| {
-            log_tool_call_sync(conn, "special-test", "tool", special_args, "ok", None, true)
-                .map_err(Into::into)
-        })
-        .await
-        .unwrap();
+        db!(pool, |conn| log_tool_call_sync(
+            conn,
+            "special-test",
+            "tool",
+            special_args,
+            "ok",
+            None,
+            true
+        )
+        .map_err(Into::into));
 
-        let history = pool
-            .interact(|conn| get_session_history_sync(conn, "special-test", 1).map_err(Into::into))
-            .await
-            .unwrap();
+        let history =
+            db!(pool, |conn| get_session_history_sync(conn, "special-test", 1).map_err(Into::into));
         assert_eq!(history[0].arguments, Some(special_args.to_string()));
     }
 }

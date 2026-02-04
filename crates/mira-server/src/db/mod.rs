@@ -14,26 +14,27 @@ pub mod entities;
 mod index;
 mod insights;
 mod memory;
-#[cfg(test)]
-mod memory_tests;
 mod migration_helpers;
 mod milestones;
 mod expert_config;
 pub mod pool;
 mod project;
-#[cfg(test)]
-mod project_tests;
 mod reviews;
 mod schema;
 mod search;
 mod session;
-#[cfg(test)]
-mod session_tests;
 mod tasks;
 #[cfg(test)]
-mod tasks_tests;
-#[cfg(test)]
+#[macro_use]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod memory_tests;
+#[cfg(test)]
+mod project_tests;
+#[cfg(test)]
+mod session_tests;
+#[cfg(test)]
+mod tasks_tests;
 mod teams;
 pub mod tech_debt;
 mod types;
