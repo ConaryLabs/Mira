@@ -9,6 +9,7 @@ use crate::db::{StoreMemoryParams, store_fact_embedding_sync, store_memory_sync}
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::embedding_to_bytes;
+use crate::utils::json::parse_json_hardened;
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
@@ -119,8 +120,8 @@ async fn extract_and_store(
         .content
         .ok_or_else(|| anyhow::anyhow!("No content in extraction response"))?;
 
-    // Parse JSON array
-    let outcomes: Vec<ExtractedOutcome> = match serde_json::from_str(&content) {
+    // Parse JSON array (hardened: handles markdown fences, surrounding text, etc.)
+    let outcomes: Vec<ExtractedOutcome> = match parse_json_hardened(&content) {
         Ok(o) => o,
         Err(e) => {
             debug!(

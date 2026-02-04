@@ -21,7 +21,7 @@ pub use deepseek::DeepSeekClient;
 pub use factory::ProviderFactory;
 pub use gemini::GeminiClient;
 pub use http_client::LlmHttpClient;
-pub use pricing::{ModelPricing, get_pricing, record_llm_usage};
+pub use pricing::{ModelPricing, chat_with_usage, get_pricing, record_llm_usage};
 pub use prompt::{EXPERT_CODE_TOOLS, EXPERT_WEB_TOOLS, PromptBuilder};
 pub use provider::{LlmClient, NormalizedUsage, Provider};
 pub use types::{ChatResult, FunctionCall, FunctionDef, Message, Tool, ToolCall, Usage};

@@ -4,7 +4,7 @@
 use super::{HEURISTIC_PREFIX, is_fallback_content};
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
-use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::ResultExt;
 use std::path::Path;
 use std::process::Command;
@@ -258,20 +258,11 @@ Summary:"#,
 
     let messages = PromptBuilder::for_briefings().build_messages(prompt);
 
-    match client.chat(messages, None).await {
-        Ok(result) => {
-            record_llm_usage(
-                pool,
-                client.provider_type(),
-                &client.model_name(),
-                "background:briefing",
-                &result,
-                Some(project_id),
-                None,
-            )
-            .await;
-
-            let summary = result.content.as_deref().unwrap_or("").trim().to_string();
+    match chat_with_usage(&**client, pool, messages, "background:briefing", Some(project_id), None)
+        .await
+    {
+        Ok(content) => {
+            let summary = content.trim().to_string();
             if summary.is_empty() {
                 None
             } else {

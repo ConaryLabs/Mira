@@ -7,7 +7,7 @@ use crate::db::{
     close_session_sync, get_session_tool_summary_sync, get_sessions_needing_summary_sync,
     get_stale_sessions_sync, update_session_summary_sync,
 };
-use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::ResultExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -199,20 +199,11 @@ Summary:"#,
 
     let messages = PromptBuilder::for_briefings().build_messages(prompt);
 
-    match client.chat(messages, None).await {
-        Ok(result) => {
-            record_llm_usage(
-                pool,
-                client.provider_type(),
-                &client.model_name(),
-                "background:session_summary",
-                &result,
-                project_id,
-                None,
-            )
-            .await;
-
-            let summary = result.content.as_deref().unwrap_or("").trim().to_string();
+    match chat_with_usage(&**client, pool, messages, "background:session_summary", project_id, None)
+        .await
+    {
+        Ok(content) => {
+            let summary = content.trim().to_string();
             if summary.is_empty() || summary.len() < 10 {
                 None
             } else {

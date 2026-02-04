@@ -7,6 +7,8 @@
 // - Gemini: https://ai.google.dev/gemini-api/docs/pricing
 // - Z.AI (GLM): https://docs.z.ai/guides/overview/pricing
 
+use super::provider::LlmClient;
+use super::types::Message;
 use super::{ChatResult, Provider};
 use crate::db::pool::DatabasePool;
 use crate::db::{LlmUsageRecord, insert_llm_usage_sync};
@@ -139,6 +141,39 @@ pub async fn record_llm_usage(
             tracing::warn!(error = %e, "Failed to record LLM usage");
         }
     });
+}
+
+/// Chat with an LLM client and record usage in one step.
+///
+/// Wraps the common pattern of: `client.chat(...)` → `record_llm_usage(...)` → extract content.
+/// Returns the content string on success, or an error string on failure.
+pub async fn chat_with_usage(
+    client: &dyn LlmClient,
+    pool: &Arc<DatabasePool>,
+    messages: Vec<Message>,
+    operation_tag: &str,
+    project_id: Option<i64>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    let result = client
+        .chat(messages, None)
+        .await
+        .map_err(|e| format!("{}", e))?;
+
+    record_llm_usage(
+        pool,
+        client.provider_type(),
+        &client.model_name(),
+        operation_tag,
+        &result,
+        project_id,
+        session_id,
+    )
+    .await;
+
+    result
+        .content
+        .ok_or_else(|| "No content in LLM response".to_string())
 }
 
 #[cfg(test)]

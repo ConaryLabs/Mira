@@ -8,7 +8,7 @@ use crate::db::{
     get_modules_needing_summaries_sync, get_project_ids_needing_summaries_sync,
     get_project_paths_by_ids_sync, update_module_purposes_sync,
 };
-use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::ResultExt;
 use std::collections::HashMap;
 use std::path::Path;
@@ -96,40 +96,36 @@ pub async fn process_queue(
                 // LLM path
                 let prompt = cartographer::build_summary_prompt(&modules);
                 let messages = PromptBuilder::for_summaries().build_messages(prompt);
-                match client.chat(messages, None).await {
-                    Ok(result) => {
-                        record_llm_usage(
-                            main_pool,
-                            client.provider_type(),
-                            &client.model_name(),
-                            "background:summaries",
-                            &result,
-                            Some(project_id),
-                            None,
-                        )
-                        .await;
-
-                        if let Some(content) = result.content {
-                            let summaries = cartographer::parse_summary_response(&content);
-                            if !summaries.is_empty() {
-                                match code_pool
-                                    .interact(move |conn| {
-                                        update_module_purposes_sync(conn, project_id, &summaries)
-                                            .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
-                                    })
-                                    .await
-                                {
-                                    Ok(count) => {
-                                        tracing::info!(
-                                            "Updated {} module summaries for project {}",
-                                            count,
-                                            project_id
-                                        );
-                                        total_processed += count;
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("Failed to update summaries: {}", e);
-                                    }
+                match chat_with_usage(
+                    &**client,
+                    main_pool,
+                    messages,
+                    "background:summaries",
+                    Some(project_id),
+                    None,
+                )
+                .await
+                {
+                    Ok(content) => {
+                        let summaries = cartographer::parse_summary_response(&content);
+                        if !summaries.is_empty() {
+                            match code_pool
+                                .interact(move |conn| {
+                                    update_module_purposes_sync(conn, project_id, &summaries)
+                                        .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
+                                })
+                                .await
+                            {
+                                Ok(count) => {
+                                    tracing::info!(
+                                        "Updated {} module summaries for project {}",
+                                        count,
+                                        project_id
+                                    );
+                                    total_processed += count;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to update summaries: {}", e);
                                 }
                             }
                         }

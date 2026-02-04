@@ -381,3 +381,61 @@ pub fn clear_active_project_sync(conn: &Connection) -> rusqlite::Result<()> {
     delete_server_state_sync(conn, "active_project")?;
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Recent activity helpers (used by background workers)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Project IDs with recent session activity (within `hours`)
+pub fn get_active_project_ids_sync(conn: &Connection, hours: i64) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT DISTINCT p.id
+        FROM projects p
+        JOIN sessions s ON s.project_id = p.id
+        WHERE s.last_activity > datetime('now', '-' || ? || ' hours')
+        "#,
+    )?;
+    let rows = stmt.query_map(params![hours], |row| row.get::<_, i64>(0))?;
+    rows.collect()
+}
+
+/// Project info (id, name, path) with recent session activity
+pub fn get_active_projects_sync(
+    conn: &Connection,
+    hours: i64,
+) -> rusqlite::Result<Vec<(i64, Option<String>, String)>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT DISTINCT p.id, p.name, p.path
+        FROM projects p
+        JOIN sessions s ON s.project_id = p.id
+        WHERE s.last_activity > datetime('now', '-' || ? || ' hours')
+        "#,
+    )?;
+    let rows = stmt.query_map(params![hours], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    rows.collect()
+}
+
+/// Project IDs with high-confidence patterns needing suggestions (limit 5)
+pub fn get_projects_needing_suggestions_sync(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT DISTINCT bp.project_id
+        FROM behavior_patterns bp
+        WHERE bp.confidence >= 0.7
+          AND bp.pattern_type IN ('file_sequence', 'tool_chain')
+          AND bp.occurrence_count >= 3
+          AND NOT EXISTS (
+              SELECT 1 FROM proactive_suggestions ps
+              WHERE ps.project_id = bp.project_id
+                AND ps.created_at > datetime('now', '-1 day')
+          )
+        LIMIT 5
+        "#,
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    rows.collect()
+}

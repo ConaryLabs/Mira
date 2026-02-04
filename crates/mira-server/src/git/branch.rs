@@ -1,9 +1,8 @@
-// crates/mira-server/src/git.rs
-// Git operations using git2 crate
+// crates/mira-server/src/git/branch.rs
+// Git branch operations using git2 crate
 
 use git2::Repository;
 use std::path::Path;
-use std::process::Command;
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -94,34 +93,10 @@ pub fn is_git_repo(project_path: &str) -> bool {
     Repository::discover(path).is_ok()
 }
 
-/// Get the current git HEAD commit hash by shelling out to `git rev-parse HEAD`.
-pub fn get_git_head(project_path: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(project_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Check if a commit is an ancestor of HEAD (handles rebases, force pushes).
-pub fn is_ancestor(project_path: &str, commit: &str) -> bool {
-    Command::new("git")
-        .args(["merge-base", "--is-ancestor", commit, "HEAD"])
-        .current_dir(project_path)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use tempfile::TempDir;
 
     fn init_git_repo(dir: &Path) {

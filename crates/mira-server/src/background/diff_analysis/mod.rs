@@ -2,7 +2,6 @@
 // Core logic for semantic diff analysis, split into focused sub-modules.
 
 mod format;
-mod git;
 mod heuristic;
 mod impact;
 mod llm;
@@ -12,9 +11,11 @@ mod types;
 
 // Re-export public API (preserves all existing import paths)
 pub use format::format_diff_analysis;
-pub use git::{
+// Git operations re-exported from centralized crate::git module
+pub use crate::git::{
     derive_stats_from_unified_diff, get_head_commit, get_staged_diff, get_unified_diff,
-    get_working_diff, parse_diff_stats, parse_numstat_output, resolve_ref,
+    get_working_diff, parse_diff_stats, parse_numstat_output, parse_staged_stats,
+    parse_working_stats, resolve_ref,
 };
 pub use heuristic::{analyze_diff_heuristic, calculate_risk_level};
 pub use impact::{build_impact_graph, compute_historical_risk, map_to_symbols};

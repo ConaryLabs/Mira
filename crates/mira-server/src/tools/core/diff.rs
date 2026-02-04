@@ -4,9 +4,12 @@
 use std::path::Path;
 
 use crate::background::diff_analysis::{
-    DiffAnalysisResult, DiffStats, HistoricalRisk, RiskAssessment, analyze_diff,
-    build_impact_graph, compute_historical_risk, format_diff_analysis, get_head_commit,
-    get_staged_diff, get_working_diff, map_to_symbols, parse_numstat_output, resolve_ref,
+    DiffAnalysisResult, HistoricalRisk, RiskAssessment, analyze_diff, build_impact_graph,
+    compute_historical_risk, format_diff_analysis, map_to_symbols,
+};
+use crate::git::{
+    get_head_commit, get_staged_diff, get_working_diff, parse_staged_stats, parse_working_stats,
+    resolve_ref,
 };
 use crate::db::get_recent_diff_analyses_sync;
 use crate::mcp::responses::Json;
@@ -278,32 +281,6 @@ fn to_historical_risk_data(hr: HistoricalRisk) -> HistoricalRiskData {
     }
 }
 
-/// Parse stats for staged changes
-fn parse_staged_stats(path: &Path) -> Result<DiffStats, String> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["diff", "--cached", "--numstat"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff --cached: {}", e))?;
-
-    Ok(parse_numstat_output(&String::from_utf8_lossy(&output.stdout)))
-}
-
-/// Parse stats for working directory changes
-fn parse_working_stats(path: &Path) -> Result<DiffStats, String> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["diff", "--numstat"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff: {}", e))?;
-
-    Ok(parse_numstat_output(&String::from_utf8_lossy(&output.stdout)))
-}
-
 /// List recent diff analyses for the project
 pub async fn list_diff_analyses<C: ToolContext>(
     ctx: &C,
@@ -359,7 +336,7 @@ pub async fn list_diff_analyses<C: ToolContext>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::git::parse_numstat_output;
 
     #[test]
     fn test_parse_numstat_output_empty() {

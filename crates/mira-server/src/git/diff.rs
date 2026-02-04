@@ -1,10 +1,10 @@
-// background/diff_analysis/git.rs
-// Git operations for diff analysis
+// crates/mira-server/src/git/diff.rs
+// Git diff operations using CLI
 
-use super::types::DiffStats;
+use super::git_cmd;
+use crate::background::diff_analysis::DiffStats;
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::Command;
 
 /// Get unified diff between two refs
 pub fn get_unified_diff(
@@ -12,40 +12,17 @@ pub fn get_unified_diff(
     from_ref: &str,
     to_ref: &str,
 ) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["diff", "--unified=3", from_ref, to_ref])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git diff failed: {}", stderr));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    git_cmd(project_path, &["diff", "--unified=3", from_ref, to_ref])
 }
 
 /// Get diff for staged changes
 pub fn get_staged_diff(project_path: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["diff", "--unified=3", "--cached"])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff: {}", e))?;
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    git_cmd(project_path, &["diff", "--unified=3", "--cached"])
 }
 
 /// Get diff for working directory changes
 pub fn get_working_diff(project_path: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["diff", "--unified=3"])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff: {}", e))?;
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    git_cmd(project_path, &["diff", "--unified=3"])
 }
 
 /// Parse git numstat output into DiffStats
@@ -79,19 +56,11 @@ pub fn parse_diff_stats(
     from_ref: &str,
     to_ref: &str,
 ) -> Result<DiffStats, String> {
-    let output = Command::new("git")
-        .args(["diff", "--numstat", from_ref, to_ref])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff --numstat: {}", e))?;
-
-    if !output.status.success() {
-        return Ok(DiffStats::default());
+    let output = git_cmd(project_path, &["diff", "--numstat", from_ref, to_ref]);
+    match output {
+        Ok(stdout) => Ok(parse_numstat_output(&stdout)),
+        Err(_) => Ok(DiffStats::default()),
     }
-
-    Ok(parse_numstat_output(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
 }
 
 /// Derive diff statistics directly from a unified diff string.
@@ -123,20 +92,22 @@ pub fn derive_stats_from_unified_diff(diff: &str) -> DiffStats {
 
 /// Resolve a git ref to a commit hash
 pub fn resolve_ref(project_path: &Path, ref_name: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--short", ref_name])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to resolve ref: {}", e))?;
-
-    if !output.status.success() {
-        return Err(format!("Invalid ref: {}", ref_name));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    git_cmd(project_path, &["rev-parse", "--short", ref_name])
 }
 
-/// Get current HEAD commit
+/// Get current HEAD commit (short hash)
 pub fn get_head_commit(project_path: &Path) -> Result<String, String> {
     resolve_ref(project_path, "HEAD")
+}
+
+/// Parse stats for staged changes
+pub fn parse_staged_stats(path: &Path) -> Result<DiffStats, String> {
+    let output = git_cmd(path, &["diff", "--cached", "--numstat"])?;
+    Ok(parse_numstat_output(&output))
+}
+
+/// Parse stats for working directory changes
+pub fn parse_working_stats(path: &Path) -> Result<DiffStats, String> {
+    let output = git_cmd(path, &["diff", "--numstat"])?;
+    Ok(parse_numstat_output(&output))
 }

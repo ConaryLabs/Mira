@@ -135,14 +135,15 @@ pub use milestones::{
     parse_milestone_row, update_goal_progress_from_milestones_sync, update_milestone_sync,
 };
 pub use project::{
-    clear_active_project_sync, delete_server_state_sync, get_health_alerts_sync,
-    get_indexed_project_ids_sync, get_indexed_projects_sync, get_last_active_project_sync,
-    get_or_create_project_sync, get_preferences_sync, get_project_briefing_sync,
-    get_project_info_sync, get_project_paths_by_ids_sync, get_projects_for_briefing_check_sync,
-    get_server_state_sync, list_projects_sync, mark_session_for_briefing_sync,
-    save_active_project_sync, search_memories_text_sync, set_server_state_sync,
-    update_project_briefing_sync, update_project_name_sync, upsert_session_sync,
-    upsert_session_with_branch_sync,
+    clear_active_project_sync, delete_server_state_sync, get_active_project_ids_sync,
+    get_active_projects_sync, get_health_alerts_sync, get_indexed_project_ids_sync,
+    get_indexed_projects_sync, get_last_active_project_sync, get_or_create_project_sync,
+    get_preferences_sync, get_project_briefing_sync, get_project_info_sync,
+    get_project_paths_by_ids_sync, get_projects_for_briefing_check_sync,
+    get_projects_needing_suggestions_sync, get_server_state_sync, list_projects_sync,
+    mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
+    set_server_state_sync, update_project_briefing_sync, update_project_name_sync,
+    upsert_session_sync, upsert_session_with_branch_sync,
 };
 pub use reviews::{
     Correction, ReviewFinding, bulk_update_finding_status_sync,

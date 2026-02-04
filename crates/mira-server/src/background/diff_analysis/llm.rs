@@ -3,7 +3,7 @@
 
 use super::types::{LlmDiffResponse, SemanticChange};
 use crate::db::pool::DatabasePool;
-use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
+use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::json::parse_json_hardened;
 use std::sync::Arc;
 
@@ -39,24 +39,15 @@ pub async fn analyze_diff_semantic(
 
     let messages = PromptBuilder::for_diff_analysis().build_messages(user_prompt);
 
-    let result = llm_client
-        .chat(messages, None)
-        .await
-        .map_err(|e| format!("LLM request failed: {}", e))?;
-
-    // Record usage
-    record_llm_usage(
+    let content = chat_with_usage(
+        &**llm_client,
         pool,
-        llm_client.provider_type(),
-        &llm_client.model_name(),
+        messages,
         "background:diff_analysis",
-        &result,
         project_id,
         None,
     )
-    .await;
-
-    let content = result.content.ok_or("No content in LLM response")?;
+    .await?;
 
     // Try to parse JSON from response
     parse_llm_response(&content)

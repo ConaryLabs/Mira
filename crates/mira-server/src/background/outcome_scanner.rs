@@ -9,10 +9,10 @@ use crate::db::diff_outcomes::mark_clean_outcomes_sync;
 use crate::db::diff_outcomes::store_diff_outcome_sync;
 use crate::db::pool::DatabasePool;
 use crate::db::{get_indexed_projects_sync, set_server_state_sync};
+use crate::git::{CommitWithFiles, get_commits_with_files, get_git_head};
 use crate::utils::ResultExt;
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 
 /// Maximum number of unscanned diffs to process per project per cycle
@@ -26,14 +26,6 @@ const FOLLOWUP_WINDOW_HOURS: i64 = 72;
 
 /// Server state key prefix for tracking last scan commit per project
 const STATE_KEY_PREFIX: &str = "last_outcome_scan_";
-
-/// A commit from git log with metadata
-#[derive(Debug)]
-struct GitCommit {
-    hash: String,
-    timestamp: i64,
-    message: String,
-}
 
 /// Scan all indexed projects for diff outcomes
 pub async fn process_outcome_scanning(pool: &Arc<DatabasePool>) -> Result<usize, String> {
@@ -105,11 +97,16 @@ async fn scan_project(
         .map(|(_, hash, _, _)| hash.clone())
         .collect();
 
+    // Batch-fetch recent commits with files (single git call replaces N+1)
+    let recent = get_commits_with_files(project_path, 200);
+    let commit_map: HashMap<&str, &CommitWithFiles> =
+        recent.iter().map(|c| (c.hash.as_str(), c)).collect();
+
     // Detect reverts in recent git history
-    let reverts = detect_reverts(project_path, &commit_hashes);
+    let reverts = detect_reverts(&commit_hashes, &recent, &commit_map);
 
     // Detect follow-up fixes
-    let followup_fixes = detect_followup_fixes(project_path, &unscanned);
+    let followup_fixes = detect_followup_fixes(&unscanned, &commit_map);
 
     // Store detected outcomes
     for (diff_id, to_commit, _from_commit, _files_json) in &unscanned {
@@ -191,10 +188,12 @@ async fn scan_project(
 }
 
 /// Detect reverts in git history that reference any of the given commit hashes.
+/// Uses pre-fetched commit data to avoid per-commit git subprocess calls.
 /// Returns a map of original_commit -> (revert_commit, message, time_delta_seconds).
 fn detect_reverts<'a>(
-    project_path: &str,
     commit_hashes: &'a [String],
+    recent: &[CommitWithFiles],
+    commit_map: &HashMap<&str, &CommitWithFiles>,
 ) -> HashMap<&'a str, (String, String, i64)> {
     let mut result = HashMap::new();
 
@@ -202,10 +201,7 @@ fn detect_reverts<'a>(
         return result;
     }
 
-    // Get recent commits with full hash, timestamp, and subject
-    let commits = get_recent_commits(project_path, 200);
-
-    for commit in &commits {
+    for commit in recent {
         let msg_lower = commit.message.to_lowercase();
 
         // Match "revert" commits
@@ -218,9 +214,9 @@ fn detect_reverts<'a>(
             // Check for full SHA or short SHA (first 7+ chars) in the revert message
             let short_hash = &hash[..std::cmp::min(hash.len(), 8)];
             if commit.message.contains(hash.as_str()) || commit.message.contains(short_hash) {
-                // Get timestamp of original commit
-                if let Some(original_ts) = get_commit_timestamp(project_path, hash) {
-                    let time_delta = commit.timestamp - original_ts;
+                // Look up original commit timestamp from pre-fetched data
+                if let Some(original) = commit_map.get(hash.as_str()) {
+                    let time_delta = commit.timestamp - original.timestamp;
                     result.insert(
                         hash.as_str(),
                         (commit.hash.clone(), commit.message.clone(), time_delta),
@@ -229,17 +225,15 @@ fn detect_reverts<'a>(
                 break;
             }
 
-            // Also check for "Revert \"<message>\"" pattern — match the original commit's message
-            if let Some(original_msg) = get_commit_message(project_path, hash) {
-                let quoted = format!("\"{}\"", original_msg.trim());
+            // Also check for "Revert \"<message>\"" pattern
+            if let Some(original) = commit_map.get(hash.as_str()) {
+                let quoted = format!("\"{}\"", original.message.trim());
                 if commit.message.contains(&quoted) {
-                    if let Some(original_ts) = get_commit_timestamp(project_path, hash) {
-                        let time_delta = commit.timestamp - original_ts;
-                        result.insert(
-                            hash.as_str(),
-                            (commit.hash.clone(), commit.message.clone(), time_delta),
-                        );
-                    }
+                    let time_delta = commit.timestamp - original.timestamp;
+                    result.insert(
+                        hash.as_str(),
+                        (commit.hash.clone(), commit.message.clone(), time_delta),
+                    );
                     break;
                 }
             }
@@ -251,10 +245,11 @@ fn detect_reverts<'a>(
 
 /// Detect follow-up fixes: commits within FOLLOWUP_WINDOW_HOURS that touch the same files
 /// and have fix-like messages.
+/// Uses pre-fetched commit data for in-memory lookups instead of per-commit git calls.
 /// Returns a map of original_commit -> vec of (fix_commit, message, time_delta_seconds).
 fn detect_followup_fixes<'a>(
-    project_path: &str,
     diffs: &'a [(i64, String, String, Option<String>)],
+    commit_map: &HashMap<&str, &CommitWithFiles>,
 ) -> HashMap<&'a str, Vec<(String, String, i64)>> {
     let mut result: HashMap<&str, Vec<(String, String, i64)>> = HashMap::new();
 
@@ -269,24 +264,29 @@ fn detect_followup_fixes<'a>(
             continue;
         }
 
-        // Get the timestamp of the analyzed commit
-        let commit_ts = match get_commit_timestamp(project_path, to_commit) {
-            Some(ts) => ts,
+        // Look up original commit timestamp from pre-fetched data
+        let commit_ts = match commit_map.get(to_commit.as_str()) {
+            Some(c) => c.timestamp,
             None => continue,
         };
 
-        // Find commits after this one within the window
         let window_end = commit_ts + (FOLLOWUP_WINDOW_HOURS * 3600);
-        let candidates = get_commits_in_range(project_path, to_commit, window_end);
 
-        for candidate in candidates {
+        // Scan all pre-fetched commits for follow-up fixes
+        for candidate in commit_map.values() {
+            // Must be after the original commit and within the time window
+            if candidate.timestamp <= commit_ts || candidate.timestamp > window_end {
+                continue;
+            }
+            if candidate.hash == *to_commit {
+                continue;
+            }
             if !is_fix_message(&candidate.message) {
                 continue;
             }
 
-            // Check if the fix touches any of the same files
-            let fix_files = get_files_for_commit(project_path, &candidate.hash);
-            let has_overlap = fix_files.iter().any(|f| diff_files.contains(f));
+            // Check if the fix touches any of the same files (using pre-fetched file list)
+            let has_overlap = candidate.files.iter().any(|f| diff_files.contains(f));
 
             if has_overlap {
                 let time_delta = candidate.timestamp - commit_ts;
@@ -320,192 +320,12 @@ fn is_fix_message(message: &str) -> bool {
 }
 
 // ============================================================================
-// Git helpers
-// ============================================================================
-
-/// Get recent commits with hash, unix timestamp, and subject
-fn get_recent_commits(project_path: &str, limit: usize) -> Vec<GitCommit> {
-    let output = Command::new("git")
-        .args(["log", &format!("-{}", limit), "--format=%H %ct %s"])
-        .current_dir(project_path)
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            parse_commit_lines(&String::from_utf8_lossy(&out.stdout))
-        }
-        _ => vec![],
-    }
-}
-
-/// Get commits after a given commit up to a timestamp
-fn get_commits_in_range(
-    project_path: &str,
-    after_commit: &str,
-    before_timestamp: i64,
-) -> Vec<GitCommit> {
-    // Get commits after the given commit, up to the time window
-    let output = Command::new("git")
-        .args([
-            "log",
-            "--format=%H %ct %s",
-            &format!("--before={}", before_timestamp),
-            &format!("{}..HEAD", after_commit),
-        ])
-        .current_dir(project_path)
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            parse_commit_lines(&String::from_utf8_lossy(&out.stdout))
-        }
-        _ => vec![],
-    }
-}
-
-/// Parse "HASH TIMESTAMP SUBJECT" lines into GitCommit structs
-fn parse_commit_lines(output: &str) -> Vec<GitCommit> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() {
-                return None;
-            }
-            // Format: "HASH TIMESTAMP SUBJECT..."
-            let mut parts = line.splitn(3, ' ');
-            let hash = parts.next()?.to_string();
-            let timestamp: i64 = parts.next()?.parse().ok()?;
-            let message = parts.next().unwrap_or("").to_string();
-
-            // Validate hash is 40 hex chars
-            if hash.len() != 40 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-                return None;
-            }
-
-            Some(GitCommit {
-                hash,
-                timestamp,
-                message,
-            })
-        })
-        .collect()
-}
-
-/// Get the unix timestamp for a specific commit
-fn get_commit_timestamp(project_path: &str, commit_hash: &str) -> Option<i64> {
-    let output = Command::new("git")
-        .args(["log", "-1", "--format=%ct", commit_hash])
-        .current_dir(project_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
-}
-
-/// Get the commit message (subject line) for a specific commit
-fn get_commit_message(project_path: &str, commit_hash: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["log", "-1", "--format=%s", commit_hash])
-        .current_dir(project_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let msg = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if msg.is_empty() { None } else { Some(msg) }
-}
-
-/// Get the list of files changed in a specific commit
-fn get_files_for_commit(project_path: &str, commit_hash: &str) -> Vec<String> {
-    let output = Command::new("git")
-        .args([
-            "diff-tree",
-            "--no-commit-id",
-            "-r",
-            "--name-only",
-            commit_hash,
-        ])
-        .current_dir(project_path)
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| l.trim().to_string())
-            .collect(),
-        _ => vec![],
-    }
-}
-
-/// Get git HEAD full SHA
-fn get_git_head(project_path: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(project_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if hash.len() == 40 { Some(hash) } else { None }
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_commit_lines_valid() {
-        let hash1 = "a".repeat(40);
-        let hash2 = "b".repeat(40);
-        let input = format!(
-            "{} 1706000000 feat: add feature\n{} 1706003600 fix: broken thing\n",
-            hash1, hash2
-        );
-        let commits = parse_commit_lines(&input);
-        assert_eq!(commits.len(), 2);
-        assert_eq!(commits[0].hash, hash1);
-        assert_eq!(commits[0].timestamp, 1706000000);
-        assert_eq!(commits[0].message, "feat: add feature");
-        assert_eq!(commits[1].hash, hash2);
-        assert_eq!(commits[1].message, "fix: broken thing");
-    }
-
-    #[test]
-    fn test_parse_commit_lines_empty() {
-        assert!(parse_commit_lines("").is_empty());
-        assert!(parse_commit_lines("   \n  \n").is_empty());
-    }
-
-    #[test]
-    fn test_parse_commit_lines_invalid_hash() {
-        // Short hash should be rejected
-        let input = "abc123 1706000000 some commit\n";
-        assert!(parse_commit_lines(input).is_empty());
-    }
-
-    #[test]
-    fn test_parse_commit_lines_invalid_timestamp() {
-        let hash = "a".repeat(40);
-        let input = format!("{} notanumber some commit\n", hash);
-        assert!(parse_commit_lines(&input).is_empty());
-    }
 
     #[test]
     fn test_is_fix_message() {
