@@ -9,12 +9,12 @@ use crate::background::diff_analysis::{
     get_staged_diff, get_working_diff, map_to_symbols, resolve_ref,
 };
 use crate::db::get_recent_diff_analyses_sync;
+use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     DiffAnalysisData, DiffData, DiffOutput, HistoricalRiskData, PatternMatchInfo,
 };
 use crate::search::format_project_header;
 use crate::tools::core::ToolContext;
-use crate::mcp::responses::Json;
 
 /// Analyze git diff semantically
 ///

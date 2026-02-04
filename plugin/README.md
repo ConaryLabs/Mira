@@ -30,6 +30,8 @@ DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
 GEMINI_API_KEY=your-key-here    # https://aistudio.google.com/app/apikey
 ```
 
+> **No API keys?** Expert consultation works without keys via MCP Sampling (uses the host client). All other tools work with heuristic fallbacks.
+
 ### Alternative: Standalone Install
 
 If you prefer to install the binary system-wide (adds `mira` to your PATH):
@@ -63,33 +65,23 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with these tools:
+The plugin bundles the Mira MCP server with 11 action-based tools:
 
-### Memory
-- `remember` - Store facts for future recall
-- `recall` - Search memories semantically
-- `forget` - Delete a memory
+| Tool | Actions | Purpose |
+|------|---------|---------|
+| `memory` | remember, recall, forget | Persistent semantic memory |
+| `code` | search, symbols, callers, callees, dependencies, patterns, tech_debt | Code intelligence |
+| `project` | start, set, get | Project/session management |
+| `session` | history, recap, usage, insights | Session history and analytics |
+| `expert` | consult, configure | Expert consultation (architect, security, code_reviewer, plan_reviewer, scope_analyst) |
+| `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
+| `finding` | list, get, review, stats, patterns, extract | Code review findings |
+| `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
+| `index` | project, file, status, compact, summarize, health | Code indexing and health |
+| `analyze_diff` | — | Semantic git diff analysis |
+| `tasks` | list, get, cancel | Async background operations |
 
-### Code Intelligence
-- `search_code` - Semantic code search
-- `get_symbols` - Extract symbols from a file
-- `find_callers` - Find functions that call a given function
-- `find_callees` - Find functions called by a given function
-
-### Expert Consultation
-- `consult_experts` - Get advice from specialized experts:
-  - `architect` - System design advice
-  - `code_reviewer` - Code quality review
-  - `security` - Security analysis
-  - `plan_reviewer` - Validate implementation plans
-  - `scope_analyst` - Find missing requirements
-
-### Goals
-- `goal` - Create, list, update goals and milestones
-
-### Session
-- `session_start` - Initialize session with project context
-- `get_session_recap` - Get preferences, context, goals
+All tools return structured JSON via MCP outputSchema.
 
 ## Hooks
 

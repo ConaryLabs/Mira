@@ -94,10 +94,7 @@ pub fn get_circular_dependencies_sync(
 }
 
 /// Clear stale dependencies before recomputing
-pub fn clear_module_dependencies_sync(
-    conn: &Connection,
-    project_id: i64,
-) -> rusqlite::Result<()> {
+pub fn clear_module_dependencies_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
     conn.execute(
         "DELETE FROM module_dependencies WHERE project_id = ?",
         params![project_id],

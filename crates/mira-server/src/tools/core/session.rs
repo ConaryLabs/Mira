@@ -6,13 +6,13 @@ use crate::db::{
     get_unified_insights_sync,
 };
 use crate::mcp::requests::SessionHistoryAction;
+use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     HistoryEntry, InsightItem, InsightsData, ReplyOutput, SessionCurrentData, SessionData,
     SessionHistoryData, SessionListData, SessionOutput, SessionSummary,
 };
 use crate::tools::core::ToolContext;
 use mira_types::{AgentRole, WsEvent};
-use crate::mcp::responses::Json;
 use uuid::Uuid;
 
 /// Unified session tool dispatcher
@@ -71,7 +71,14 @@ async fn query_insights<C: ToolContext>(
     let insights = ctx
         .pool()
         .run(move |conn| {
-            get_unified_insights_sync(conn, project_id, filter_source.as_deref(), min_conf, 30, lim)
+            get_unified_insights_sync(
+                conn,
+                project_id,
+                filter_source.as_deref(),
+                min_conf,
+                30,
+                lim,
+            )
         })
         .await?;
 
@@ -141,9 +148,7 @@ pub async fn session_history<C: ToolContext>(
                 Some(id) => Ok(Json(SessionOutput {
                     action: "current".into(),
                     message: format!("Current session: {}", id),
-                    data: Some(SessionData::Current(SessionCurrentData {
-                        session_id: id,
-                    })),
+                    data: Some(SessionData::Current(SessionCurrentData { session_id: id })),
                 })),
                 None => Ok(Json(SessionOutput {
                     action: "current".into(),
@@ -323,7 +328,10 @@ pub async fn reply_to_mira<C: ToolContext>(
         // CLI mode or no collaboration active - just acknowledge
         return Ok(Json(ReplyOutput {
             action: "reply".into(),
-            message: format!("(Reply not sent - no frontend connected) Content: {}", content),
+            message: format!(
+                "(Reply not sent - no frontend connected) Content: {}",
+                content
+            ),
         }));
     };
 

@@ -167,8 +167,7 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
 
     // Insights digest (pondering + proactive + doc gaps)
     if let Some(pid) = project_id {
-        if let Ok(insights) =
-            super::insights::get_unified_insights_sync(conn, pid, None, 0.3, 7, 5)
+        if let Ok(insights) = super::insights::get_unified_insights_sync(conn, pid, None, 0.3, 7, 5)
         {
             if !insights.is_empty() {
                 let insight_lines: Vec<String> = insights

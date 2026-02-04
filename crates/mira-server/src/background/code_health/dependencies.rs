@@ -1,7 +1,9 @@
 // background/code_health/dependencies.rs
 // Module dependency analysis + circular dependency detection using Tarjan's SCC
 
-use crate::db::dependencies::{ModuleDependency, clear_module_dependencies_sync, upsert_module_dependency_sync};
+use crate::db::dependencies::{
+    ModuleDependency, clear_module_dependencies_sync, upsert_module_dependency_sync,
+};
 use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::utils::ResultExt;
 use rusqlite::Connection;
@@ -44,7 +46,8 @@ pub fn analyze_module_dependencies(
     let sccs = tarjan_scc(&adj);
 
     // Build set of circular edges for O(1) lookup
-    let mut circular_edges: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut circular_edges: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     for scc in &sccs {
         // For all pairs in the SCC that have edges, mark them circular
         for a in scc {
@@ -78,8 +81,7 @@ pub fn analyze_module_dependencies(
             is_circular,
         };
 
-        upsert_module_dependency_sync(code_conn, project_id, &dep)
-            .str_err()?;
+        upsert_module_dependency_sync(code_conn, project_id, &dep).str_err()?;
         stored += 1;
     }
 
@@ -135,9 +137,7 @@ struct ModuleInfo {
 /// Get module id -> path mappings from codebase_modules
 fn get_module_paths(conn: &Connection, project_id: i64) -> Result<Vec<ModuleInfo>, String> {
     let mut stmt = conn
-        .prepare(
-            "SELECT module_id, path FROM codebase_modules WHERE project_id = ?",
-        )
+        .prepare("SELECT module_id, path FROM codebase_modules WHERE project_id = ?")
         .str_err()?;
 
     let modules = stmt
@@ -244,9 +244,7 @@ fn count_call_dependencies(
 }
 
 /// Build adjacency list from merged dependency edges
-fn build_adjacency(
-    merged: &HashMap<(String, String), (i64, i64)>,
-) -> HashMap<String, Vec<String>> {
+fn build_adjacency(merged: &HashMap<(String, String), (i64, i64)>) -> HashMap<String, Vec<String>> {
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for (src, tgt) in merged.keys() {
         adj.entry(src.clone()).or_default().push(tgt.clone());
@@ -297,7 +295,10 @@ pub fn tarjan_scc(adj: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
         if state.lowlink[v] == state.index[v] {
             let mut scc = Vec::new();
             loop {
-                let w = state.stack.pop().unwrap();
+                // Safety: Tarjan's algorithm guarantees stack is non-empty here
+                let Some(w) = state.stack.pop() else {
+                    break;
+                };
                 state.on_stack.remove(&w);
                 scc.push(w.clone());
                 if w == v {
@@ -398,7 +399,10 @@ mod tests {
         adj.insert("a".to_string(), vec!["a".to_string()]);
 
         let sccs = tarjan_scc(&adj);
-        assert!(sccs.is_empty(), "Self-loops should not be reported as circular deps");
+        assert!(
+            sccs.is_empty(),
+            "Self-loops should not be reported as circular deps"
+        );
     }
 
     #[test]
@@ -418,7 +422,10 @@ mod tests {
             },
         ];
 
-        assert_eq!(file_to_module("src/db/pool/mod.rs", &modules), Some("db_pool"));
+        assert_eq!(
+            file_to_module("src/db/pool/mod.rs", &modules),
+            Some("db_pool")
+        );
         assert_eq!(file_to_module("src/db/memory.rs", &modules), Some("db"));
         assert_eq!(file_to_module("src/main.rs", &modules), Some("root"));
         assert_eq!(file_to_module("tests/foo.rs", &modules), None);

@@ -12,9 +12,9 @@ use crate::search::embedding_to_bytes;
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
-    "task",  // Task completions and updates
-    "goal",  // Goal progress and milestones
-    "code",  // Code discoveries and call graph insights
+    "task", // Task completions and updates
+    "goal", // Goal progress and milestones
+    "code", // Code discoveries and call graph insights
 ];
 
 /// Spawn background extraction for a tool call

@@ -20,21 +20,19 @@ use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
 use crate::llm::ProviderFactory;
-use mira_types::ProjectContext;
 use crate::mcp::responses::{HasMessage, Json};
+use mira_types::ProjectContext;
 use rmcp::{
     ErrorData, ServerHandler,
     handler::server::{
-        router::tool::ToolRouter,
-        tool::ToolCallContext,
-        tool::IntoCallToolResult,
+        router::tool::ToolRouter, tool::IntoCallToolResult, tool::ToolCallContext,
         wrapper::Parameters,
     },
     model::{
         CallToolRequestParams, CallToolResult, CancelTaskParams, Content, CreateTaskResult,
-        GetTaskInfoParams, GetTaskInfoResult, GetTaskResultParams, ListToolsResult,
-        ListTasksResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
-        Task, TaskResult as ModelTaskResult, TaskStatus, TasksCapability,
+        GetTaskInfoParams, GetTaskInfoResult, GetTaskResultParams, ListTasksResult,
+        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Task,
+        TaskResult as ModelTaskResult, TaskStatus, TasksCapability,
     },
     service::{RequestContext, RoleServer},
     task_manager::{
@@ -268,12 +266,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<IndexRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::index(
-            self,
-            req.action,
-            req.path,
-            req.skip_embed.unwrap_or(false),
-        ).await)
+        tool_result(tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await)
     }
 
     #[tool(
@@ -297,13 +290,15 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<ReplyToMiraRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::reply_to_mira(
-            self,
-            req.in_reply_to,
-            req.content,
-            req.complete.unwrap_or(true),
+        tool_result(
+            tools::reply_to_mira(
+                self,
+                req.in_reply_to,
+                req.content,
+                req.complete.unwrap_or(true),
+            )
+            .await,
         )
-        .await)
     }
 
     #[tool(
@@ -327,16 +322,18 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<DocumentationRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::documentation(
-            self,
-            req.action,
-            req.task_id,
-            req.reason,
-            req.doc_type,
-            req.priority,
-            req.status,
+        tool_result(
+            tools::documentation(
+                self,
+                req.action,
+                req.task_id,
+                req.reason,
+                req.doc_type,
+                req.priority,
+                req.status,
+            )
+            .await,
         )
-        .await)
     }
 
     #[tool(
@@ -348,19 +345,21 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<FindingRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::finding(
-            self,
-            req.action,
-            req.finding_id,
-            req.finding_ids,
-            req.status,
-            req.feedback,
-            req.file_path,
-            req.expert_role,
-            req.correction_type,
-            req.limit,
+        tool_result(
+            tools::finding(
+                self,
+                req.action,
+                req.finding_id,
+                req.finding_ids,
+                req.status,
+                req.feedback,
+                req.file_path,
+                req.expert_role,
+                req.correction_type,
+                req.limit,
+            )
+            .await,
         )
-        .await)
     }
 
     // Semantic diff analysis tool
@@ -734,13 +733,12 @@ impl ServerHandler for MiraServer {
             let future: task_manager::OperationFuture = Box::pin(async move {
                 let result = server.run_tool_call(clean_request, ctx).await;
                 let transport = ToolCallTaskResult::new(tid, result);
-                Ok(Box::new(transport)
-                    as Box<dyn task_manager::OperationResultTransport>)
+                Ok(Box::new(transport) as Box<dyn task_manager::OperationResultTransport>)
             });
 
             // Build descriptor and submit
-            let descriptor = OperationDescriptor::new(task_id.clone(), tool_name.clone())
-                .with_ttl(ttl);
+            let descriptor =
+                OperationDescriptor::new(task_id.clone(), tool_name.clone()).with_ttl(ttl);
             let message = OperationMessage::new(descriptor, future);
 
             let mut proc = self.processor.lock().await;
@@ -868,9 +866,7 @@ impl ServerHandler for MiraServer {
             }
 
             // Not found
-            Ok(GetTaskInfoResult {
-                task: None,
-            })
+            Ok(GetTaskInfoResult { task: None })
         }
     }
 
@@ -897,17 +893,13 @@ impl ServerHandler for MiraServer {
                                 Err(e) => serde_json::json!({ "error": e.message }),
                             };
                             let summary = match &tcr.result {
-                                Ok(r) => r
-                                    .content
-                                    .first()
-                                    .and_then(|c| c.as_text())
-                                    .map(|t| {
-                                        if t.text.len() > 200 {
-                                            format!("{}...", &t.text[..200])
-                                        } else {
-                                            t.text.to_string()
-                                        }
-                                    }),
+                                Ok(r) => r.content.first().and_then(|c| c.as_text()).map(|t| {
+                                    if t.text.len() > 200 {
+                                        format!("{}...", &t.text[..200])
+                                    } else {
+                                        t.text.to_string()
+                                    }
+                                }),
                                 Err(e) => Some(e.message.to_string()),
                             };
                             Ok(ModelTaskResult {

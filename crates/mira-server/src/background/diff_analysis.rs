@@ -176,8 +176,7 @@ pub fn compute_historical_risk(
                         let file_a = &files[0];
                         let file_b = &files[1];
                         // Flag if file_a is in diff but file_b is NOT
-                        if file_set.contains(file_a.as_str())
-                            && !file_set.contains(file_b.as_str())
+                        if file_set.contains(file_a.as_str()) && !file_set.contains(file_b.as_str())
                         {
                             matches.push(MatchedPattern {
                                 pattern_subtype: pattern_subtype.clone(),
@@ -192,8 +191,7 @@ pub fn compute_historical_risk(
                             });
                         }
                         // Also check the reverse: file_b without file_a
-                        if file_set.contains(file_b.as_str())
-                            && !file_set.contains(file_a.as_str())
+                        if file_set.contains(file_b.as_str()) && !file_set.contains(file_a.as_str())
                         {
                             matches.push(MatchedPattern {
                                 pattern_subtype: pattern_subtype.clone(),
@@ -211,10 +209,8 @@ pub fn compute_historical_risk(
                 }
                 "size_risk" => {
                     // Extract bucket from pattern_key: "size_risk:small"
-                    let pattern_bucket = pattern
-                        .pattern_key
-                        .strip_prefix("size_risk:")
-                        .unwrap_or("");
+                    let pattern_bucket =
+                        pattern.pattern_key.strip_prefix("size_risk:").unwrap_or("");
                     if pattern_bucket == size_bucket {
                         matches.push(MatchedPattern {
                             pattern_subtype: pattern_subtype.clone(),
@@ -489,7 +485,7 @@ pub fn analyze_diff_heuristic(
             continue;
         }
 
-        let content = if is_added { &line[1..] } else { &line[1..] };
+        let content = &line[1..];
         let file_path = current_file.clone().unwrap_or_default();
 
         // Detect function definitions in changed lines
@@ -962,7 +958,10 @@ pub fn format_diff_analysis(
             hr.overall_confidence * 100.0
         ));
         for mp in &hr.matching_patterns {
-            output.push_str(&format!("- **{}**: {}\n", mp.pattern_subtype, mp.description));
+            output.push_str(&format!(
+                "- **{}**: {}\n",
+                mp.pattern_subtype, mp.description
+            ));
         }
     }
 
@@ -1384,7 +1383,14 @@ Some trailing text"#;
         conn
     }
 
-    fn seed_pattern(conn: &rusqlite::Connection, project_id: i64, key: &str, data: &str, confidence: f64, count: i64) {
+    fn seed_pattern(
+        conn: &rusqlite::Connection,
+        project_id: i64,
+        key: &str,
+        data: &str,
+        confidence: f64,
+        count: i64,
+    ) {
         conn.execute(
             "INSERT INTO behavior_patterns (project_id, pattern_type, pattern_key, pattern_data, confidence, occurrence_count)
              VALUES (?, 'change_pattern', ?, ?, ?, ?)",
@@ -1397,7 +1403,10 @@ Some trailing text"#;
     fn test_historical_risk_no_patterns() {
         let conn = setup_patterns_db();
         let result = compute_historical_risk(&conn, 1, &["src/main.rs".into()], 1);
-        assert!(result.is_none(), "Should return None when no patterns exist");
+        assert!(
+            result.is_none(),
+            "Should return None when no patterns exist"
+        );
     }
 
     #[test]
@@ -1413,9 +1422,8 @@ Some trailing text"#;
         });
         seed_pattern(&conn, 1, "module_hotspot:src", &data.to_string(), 0.7, 10);
 
-        let result = compute_historical_risk(
-            &conn, 1, &["src/lib.rs".into(), "src/main.rs".into()], 2,
-        );
+        let result =
+            compute_historical_risk(&conn, 1, &["src/lib.rs".into(), "src/main.rs".into()], 2);
         assert!(result.is_some());
         let hr = result.unwrap();
         assert_eq!(hr.risk_delta, "elevated");
@@ -1453,18 +1461,28 @@ Some trailing text"#;
             "outcome_stats": { "total": 5, "clean": 1, "reverted": 2, "follow_up_fix": 2 },
             "sample_commits": []
         });
-        seed_pattern(&conn, 1, "co_change_gap:src/schema.rs|src/migrations.rs", &data.to_string(), 0.65, 5);
+        seed_pattern(
+            &conn,
+            1,
+            "co_change_gap:src/schema.rs|src/migrations.rs",
+            &data.to_string(),
+            0.65,
+            5,
+        );
 
         // schema.rs changed WITHOUT migrations.rs
-        let result = compute_historical_risk(
-            &conn, 1, &["src/schema.rs".into(), "src/lib.rs".into()], 2,
-        );
+        let result =
+            compute_historical_risk(&conn, 1, &["src/schema.rs".into(), "src/lib.rs".into()], 2);
         assert!(result.is_some());
         let hr = result.unwrap();
         assert_eq!(hr.matching_patterns.len(), 1);
         assert_eq!(hr.matching_patterns[0].pattern_subtype, "co_change_gap");
         assert!(hr.matching_patterns[0].description.contains("schema.rs"));
-        assert!(hr.matching_patterns[0].description.contains("migrations.rs"));
+        assert!(
+            hr.matching_patterns[0]
+                .description
+                .contains("migrations.rs")
+        );
     }
 
     #[test]
@@ -1478,11 +1496,21 @@ Some trailing text"#;
             "outcome_stats": { "total": 5, "clean": 1, "reverted": 2, "follow_up_fix": 2 },
             "sample_commits": []
         });
-        seed_pattern(&conn, 1, "co_change_gap:src/schema.rs|src/migrations.rs", &data.to_string(), 0.65, 5);
+        seed_pattern(
+            &conn,
+            1,
+            "co_change_gap:src/schema.rs|src/migrations.rs",
+            &data.to_string(),
+            0.65,
+            5,
+        );
 
         // Both files present — no gap, no match
         let result = compute_historical_risk(
-            &conn, 1, &["src/schema.rs".into(), "src/migrations.rs".into()], 2,
+            &conn,
+            1,
+            &["src/schema.rs".into(), "src/migrations.rs".into()],
+            2,
         );
         assert!(result.is_none());
     }
@@ -1524,9 +1552,7 @@ Some trailing text"#;
         seed_pattern(&conn, 1, "size_risk:large", &data.to_string(), 0.6, 8);
 
         // 2 files = "small" bucket, pattern is for "large"
-        let result = compute_historical_risk(
-            &conn, 1, &["src/a.rs".into(), "src/b.rs".into()], 2,
-        );
+        let result = compute_historical_risk(&conn, 1, &["src/a.rs".into(), "src/b.rs".into()], 2);
         assert!(result.is_none());
     }
 
@@ -1543,7 +1569,14 @@ Some trailing text"#;
             "outcome_stats": { "total": 10, "clean": 5, "reverted": 3, "follow_up_fix": 2 },
             "sample_commits": []
         });
-        seed_pattern(&conn, 1, "module_hotspot:src", &hotspot.to_string(), 0.7, 10);
+        seed_pattern(
+            &conn,
+            1,
+            "module_hotspot:src",
+            &hotspot.to_string(),
+            0.7,
+            10,
+        );
 
         // Size risk for medium
         let size = serde_json::json!({
@@ -1609,14 +1642,12 @@ Some trailing text"#;
     fn test_historical_risk_serialization_roundtrip() {
         let hr = HistoricalRisk {
             risk_delta: "elevated".to_string(),
-            matching_patterns: vec![
-                MatchedPattern {
-                    pattern_subtype: "module_hotspot".to_string(),
-                    description: "Module 'src' has 50% bad outcome rate".to_string(),
-                    confidence: 0.7,
-                    bad_rate: 0.5,
-                },
-            ],
+            matching_patterns: vec![MatchedPattern {
+                pattern_subtype: "module_hotspot".to_string(),
+                description: "Module 'src' has 50% bad outcome rate".to_string(),
+                confidence: 0.7,
+                bad_rate: 0.5,
+            }],
             overall_confidence: 0.7,
         };
 
@@ -1647,14 +1678,12 @@ Some trailing text"#;
 
         let hr = HistoricalRisk {
             risk_delta: "elevated".to_string(),
-            matching_patterns: vec![
-                MatchedPattern {
-                    pattern_subtype: "module_hotspot".to_string(),
-                    description: "Module 'src' has 50% bad outcome rate".to_string(),
-                    confidence: 0.7,
-                    bad_rate: 0.5,
-                },
-            ],
+            matching_patterns: vec![MatchedPattern {
+                pattern_subtype: "module_hotspot".to_string(),
+                description: "Module 'src' has 50% bad outcome rate".to_string(),
+                confidence: 0.7,
+                bad_rate: 0.5,
+            }],
             overall_confidence: 0.7,
         };
 

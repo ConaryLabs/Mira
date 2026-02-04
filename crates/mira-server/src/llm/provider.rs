@@ -37,7 +37,7 @@ impl Provider {
             Self::DeepSeek => "DEEPSEEK_API_KEY",
             Self::Gemini => "GEMINI_API_KEY",
             Self::Ollama => "OLLAMA_HOST", // Ollama uses host, not API key
-            Self::Sampling => "N/A",        // No API key — uses MCP sampling
+            Self::Sampling => "N/A",       // No API key — uses MCP sampling
         }
     }
 

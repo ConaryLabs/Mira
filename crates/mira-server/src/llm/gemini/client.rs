@@ -207,8 +207,7 @@ impl LlmClient for GeminiClient {
             );
             for tc in tcs {
                 let args: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments)
-                        .unwrap_or(serde_json::Value::Null);
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
                 debug!(
                     request_id = %request_id,
                     tool = %tc.function.name,

@@ -4,11 +4,11 @@
 //! Using `Json<T>` return types, rmcp auto-infers `outputSchema` for each tool.
 //! The root type is always an object (MCP requirement).
 
-use schemars::JsonSchema;
-use serde::Serialize;
+use rmcp::ErrorData;
 use rmcp::handler::server::tool::IntoCallToolResult;
 use rmcp::model::{CallToolResult, Content};
-use rmcp::ErrorData;
+use schemars::JsonSchema;
+use serde::Serialize;
 use std::borrow::Cow;
 
 /// Trait for outputs that expose a human-readable message.
@@ -627,7 +627,7 @@ pub struct FindingOutput {
 #[serde(untagged)]
 pub enum FindingData {
     List(FindingListData),
-    Get(FindingGetData),
+    Get(Box<FindingGetData>),
     Stats(FindingStatsData),
     Patterns(FindingPatternsData),
 }

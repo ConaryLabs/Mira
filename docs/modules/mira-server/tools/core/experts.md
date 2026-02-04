@@ -1,6 +1,6 @@
 # tools/core/experts
 
-Agentic expert sub-agents with tool access and LLM-powered reasoning. Implements the `consult_experts` and `configure_expert` tools.
+Agentic expert sub-agents with tool access and LLM-powered reasoning. Implements the unified `expert` tool (`action="consult"` and `action="configure"`).
 
 ## Constants
 

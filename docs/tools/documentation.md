@@ -118,4 +118,4 @@ Confirmation that the scan was triggered. Results appear in subsequent `list` ca
 
 - **project**: Initialize project context (required before using documentation)
 - **index**: Index project code, which feeds into documentation scanning
-- **get_symbols**: Inspect file structure when writing module documentation
+- [**code**](./code.md): Inspect file structure via `code(action="symbols")` when writing docs

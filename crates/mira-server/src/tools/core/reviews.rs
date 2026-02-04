@@ -7,12 +7,12 @@ use crate::db::{
     get_finding_sync, get_findings_sync, get_relevant_corrections_sync, update_finding_status_sync,
 };
 use crate::mcp::requests::FindingAction;
+use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     FindingData, FindingGetData, FindingItem, FindingListData, FindingOutput, FindingPatternsData,
     FindingStatsData, LearnedPattern,
 };
 use crate::utils::truncate;
-use crate::mcp::responses::Json;
 
 /// List review findings with optional filters
 pub async fn list_findings<C: ToolContext>(
@@ -327,7 +327,7 @@ pub async fn get_finding<C: ToolContext>(
     Ok(Json(FindingOutput {
         action: "get".into(),
         message: output,
-        data: Some(FindingData::Get(FindingGetData {
+        data: Some(FindingData::Get(Box::new(FindingGetData {
             id: finding.id,
             finding_type: finding.finding_type.clone(),
             severity: finding.severity.clone(),
@@ -343,7 +343,7 @@ pub async fn get_finding<C: ToolContext>(
             reviewed_at: finding.reviewed_at.clone(),
             created_at: finding.created_at.clone(),
             session_id: finding.session_id.clone(),
-        })),
+        }))),
     }))
 }
 
@@ -425,10 +425,7 @@ pub async fn extract_patterns<C: ToolContext>(ctx: &C) -> Result<Json<FindingOut
     let message = if created == 0 {
         "No new patterns extracted. Need more accepted findings with suggestions.".to_string()
     } else {
-        format!(
-            "Extracted {} new patterns from accepted findings",
-            created
-        )
+        format!("Extracted {} new patterns from accepted findings", created)
     };
 
     Ok(Json(FindingOutput {

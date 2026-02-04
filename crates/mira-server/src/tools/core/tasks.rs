@@ -4,14 +4,17 @@
 // This handler takes &MiraServer directly (not &impl ToolContext) because
 // it needs access to the OperationProcessor which is MCP-specific.
 
+use crate::mcp::MiraServer;
 use crate::mcp::requests::{TasksAction, TasksRequest};
 use crate::mcp::responses::{
     Json, TaskSummary, TasksData, TasksListData, TasksOutput, TasksStatusData,
 };
-use crate::mcp::MiraServer;
 use rmcp::task_manager::ToolCallTaskResult;
 
-pub async fn handle_tasks(server: &MiraServer, req: TasksRequest) -> Result<Json<TasksOutput>, String> {
+pub async fn handle_tasks(
+    server: &MiraServer,
+    req: TasksRequest,
+) -> Result<Json<TasksOutput>, String> {
     match req.action {
         TasksAction::List => handle_list(server).await,
         TasksAction::Get => {
@@ -26,7 +29,9 @@ pub async fn handle_tasks(server: &MiraServer, req: TasksRequest) -> Result<Json
 }
 
 /// Status string from a task_manager::TaskResult
-fn result_status(result: &Result<Box<dyn rmcp::task_manager::OperationResultTransport>, rmcp::RmcpError>) -> &'static str {
+fn result_status(
+    result: &Result<Box<dyn rmcp::task_manager::OperationResultTransport>, rmcp::RmcpError>,
+) -> &'static str {
     match result {
         Ok(_) => "completed",
         Err(e) if e.to_string().contains("cancelled") => "cancelled",
@@ -68,13 +73,19 @@ async fn handle_list(server: &MiraServer) -> Result<Json<TasksOutput>, String> {
     } else {
         let running = summaries.iter().filter(|s| s.status == "working").count();
         let completed_count = total - running;
-        format!("{} task(s): {} running, {} completed/failed", total, running, completed_count)
+        format!(
+            "{} task(s): {} running, {} completed/failed",
+            total, running, completed_count
+        )
     };
 
     Ok(Json(TasksOutput {
         action: "list".to_string(),
         message,
-        data: Some(TasksData::List(TasksListData { tasks: summaries, total })),
+        data: Some(TasksData::List(TasksListData {
+            tasks: summaries,
+            total,
+        })),
     }))
 }
 
@@ -124,14 +135,14 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
                                 let structured = call_result.structured_content.clone();
                                 ("completed".to_string(), text, structured)
                             }
-                            Err(e) => (
-                                "failed".to_string(),
-                                Some(e.message.to_string()),
-                                None,
-                            ),
+                            Err(e) => ("failed".to_string(), Some(e.message.to_string()), None),
                         }
                     } else {
-                        ("completed".to_string(), Some("(result type unknown)".to_string()), None)
+                        (
+                            "completed".to_string(),
+                            Some("(result type unknown)".to_string()),
+                            None,
+                        )
                     }
                 }
                 Err(e) => {
@@ -145,7 +156,9 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
             };
 
             let message = match &result_text {
-                Some(t) if t.len() > 100 => format!("Task {}: {} — {}...", task_id, status, &t[..100]),
+                Some(t) if t.len() > 100 => {
+                    format!("Task {}: {} — {}...", task_id, status, &t[..100])
+                }
                 Some(t) => format!("Task {}: {} — {}", task_id, status, t),
                 None => format!("Task {}: {}", task_id, status),
             };

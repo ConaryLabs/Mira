@@ -419,7 +419,11 @@ pub fn run_pattern_mining(conn: &Connection, project_id: i64) -> Result<usize> {
             patterns_stored += count;
         }
         Err(e) => {
-            tracing::warn!("Change pattern mining failed for project {}: {}", project_id, e);
+            tracing::warn!(
+                "Change pattern mining failed for project {}: {}",
+                project_id,
+                e
+            );
         }
     }
 

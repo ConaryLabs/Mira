@@ -6,7 +6,7 @@ Legacy expert orchestration module. Contains complexity assessment and collabora
 
 - `ExpertRole` — Role enum: Architect, CodeReviewer, Security, PlanReviewer, ScopeAnalyst
 - `ComplexityAssessment` — Analyzes problem complexity to determine approach
-- `CollaborationMode` — Parallel, Sequential, Hierarchical, or Single expert mode (not actively used by `consult_experts`)
+- `CollaborationMode` — Parallel, Sequential, Hierarchical, or Single expert mode (not actively used by `expert(action="consult")`)
 
 ## Sub-modules
 

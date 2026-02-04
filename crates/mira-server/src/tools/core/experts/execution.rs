@@ -80,7 +80,15 @@ pub async fn consult_expert<C: ToolContext>(
 
     // Sampling fallback: single-shot via MCP host (no tools, no agentic loop)
     if provider == Provider::Sampling {
-        return consult_expert_via_sampling(ctx, expert, &expert_key, system_prompt, user_prompt, &chat_client).await;
+        return consult_expert_via_sampling(
+            ctx,
+            expert,
+            &expert_key,
+            system_prompt,
+            user_prompt,
+            &chat_client,
+        )
+        .await;
     }
 
     // Build dynamic tool list: built-in + web + MCP tools
@@ -311,13 +319,15 @@ async fn consult_expert_via_sampling<C: ToolContext>(
     let messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
     // Single LLM call — no tools, no iteration
-    let result = timeout(
-        LLM_CALL_TIMEOUT,
-        chat_client.chat(messages, None),
-    )
-    .await
-    .map_err(|_| format!("MCP sampling timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
-    .map_err(|e| format!("MCP sampling failed: {}", e))?;
+    let result = timeout(LLM_CALL_TIMEOUT, chat_client.chat(messages, None))
+        .await
+        .map_err(|_| {
+            format!(
+                "MCP sampling timed out after {}s",
+                LLM_CALL_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|e| format!("MCP sampling failed: {}", e))?;
 
     // Record usage
     let role_for_usage = format!("expert:{}", expert_key);
@@ -499,7 +509,10 @@ async fn try_elicit_api_key<C: ToolContext>(ctx: &C) -> Option<Arc<dyn LlmClient
 
     let client: Arc<dyn LlmClient> = match provider {
         // Use deepseek-chat (tool-capable) rather than deepseek-reasoner for one-shot
-        Provider::DeepSeek => Arc::new(DeepSeekClient::with_model(key.clone(), "deepseek-chat".into())),
+        Provider::DeepSeek => Arc::new(DeepSeekClient::with_model(
+            key.clone(),
+            "deepseek-chat".into(),
+        )),
         Provider::Gemini => Arc::new(GeminiClient::new(key.clone())),
         _ => return None,
     };
@@ -557,13 +570,15 @@ async fn consult_expert_one_shot<C: ToolContext>(
         tools.push(web_search_tool());
     }
 
-    let result = timeout(
-        LLM_CALL_TIMEOUT,
-        chat_client.chat(messages, Some(tools)),
-    )
-    .await
-    .map_err(|_| format!("One-shot expert timed out after {}s", LLM_CALL_TIMEOUT.as_secs()))?
-    .map_err(|e| format!("One-shot expert consultation failed: {}", e))?;
+    let result = timeout(LLM_CALL_TIMEOUT, chat_client.chat(messages, Some(tools)))
+        .await
+        .map_err(|_| {
+            format!(
+                "One-shot expert timed out after {}s",
+                LLM_CALL_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|e| format!("One-shot expert consultation failed: {}", e))?;
 
     // Record usage
     let role_for_usage = format!("expert:{}", expert_key);

@@ -130,7 +130,10 @@ fn needs_health_scan(conn: &rusqlite::Connection, project_id: i64) -> Result<boo
 }
 
 /// Mark project as health-scanned and clear the "needs scan" flag
-pub(crate) fn mark_health_scanned(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
+pub(crate) fn mark_health_scanned(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+) -> Result<(), String> {
     mark_health_scanned_sync(conn, project_id).str_err()
 }
 
@@ -277,18 +280,22 @@ pub(crate) async fn scan_project_health(
     }
 
     // 9. Module dependency analysis + circular dependency detection
-    let dep_count =
-        scan_dependencies_sharded(main_pool, code_pool, project_id).await?;
+    let dep_count = scan_dependencies_sharded(main_pool, code_pool, project_id).await?;
     if dep_count > 0 {
-        tracing::info!("Code health: computed {} module dependency edges", dep_count);
+        tracing::info!(
+            "Code health: computed {} module dependency edges",
+            dep_count
+        );
     }
     total += dep_count;
 
     // 10. Architectural pattern detection
-    let pattern_count =
-        scan_patterns_sharded(main_pool, code_pool, project_id).await?;
+    let pattern_count = scan_patterns_sharded(main_pool, code_pool, project_id).await?;
     if pattern_count > 0 {
-        tracing::info!("Code health: detected {} architectural patterns", pattern_count);
+        tracing::info!(
+            "Code health: detected {} architectural patterns",
+            pattern_count
+        );
     }
     total += pattern_count;
 
@@ -296,7 +303,10 @@ pub(crate) async fn scan_project_health(
     match scoring::compute_tech_debt_scores(main_pool, code_pool, project_id).await {
         Ok(scored) => {
             if scored > 0 {
-                tracing::info!("Code health: computed tech debt scores for {} modules", scored);
+                tracing::info!(
+                    "Code health: computed tech debt scores for {} modules",
+                    scored
+                );
             }
         }
         Err(e) => {
@@ -347,7 +357,9 @@ async fn scan_dependencies_sharded(
     let dep_data_for_code = dep_data.clone();
     code_pool
         .run(move |conn| {
-            use crate::db::dependencies::{clear_module_dependencies_sync, upsert_module_dependency_sync, ModuleDependency};
+            use crate::db::dependencies::{
+                ModuleDependency, clear_module_dependencies_sync, upsert_module_dependency_sync,
+            };
             clear_module_dependencies_sync(conn, project_id).str_err()?;
             for d in &dep_data_for_code {
                 let dep = ModuleDependency {
@@ -441,7 +453,9 @@ fn collect_dependency_data(
     let file_to_mod = |file_path: &str| -> Option<String> {
         modules
             .iter()
-            .filter(|(_, path)| file_path.starts_with(path.as_str()) || file_path.contains(path.as_str()))
+            .filter(|(_, path)| {
+                file_path.starts_with(path.as_str()) || file_path.contains(path.as_str())
+            })
             .max_by_key(|(_, path)| path.len())
             .map(|(id, _)| id.clone())
     };
@@ -453,7 +467,9 @@ fn collect_dependency_data(
             .prepare("SELECT file_path, import_path FROM imports WHERE project_id = ? AND is_external = 0")
             .str_err()?;
         let rows = stmt
-            .query_map([project_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .str_err()?;
         for row in rows {
             let (fp, ip) = row.str_err()?;
@@ -479,7 +495,11 @@ fn collect_dependency_data(
             .str_err()?;
         let rows = stmt
             .query_map([project_id, project_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
             })
             .str_err()?;
         for row in rows {
@@ -512,7 +532,8 @@ fn collect_dependency_data(
         adj.entry(tgt.clone()).or_default();
     }
     let sccs = tarjan_scc(&adj);
-    let mut circular_edges: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut circular_edges: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     for scc in &sccs {
         for a in scc {
             for b in scc {
@@ -611,7 +632,10 @@ async fn scan_conventions_sharded(
     let count = convention_data.len();
 
     // Collect module paths for marking as extracted
-    let module_paths: Vec<String> = convention_data.iter().map(|d| d.module_path.clone()).collect();
+    let module_paths: Vec<String> = convention_data
+        .iter()
+        .map(|d| d.module_path.clone())
+        .collect();
 
     // Store convention data in main DB
     main_pool

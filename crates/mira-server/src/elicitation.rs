@@ -5,8 +5,8 @@
 // degrade to existing behavior when the client doesn't support elicitation.
 
 use rmcp::model::{
-    CreateElicitationRequestParams, ElicitationAction, ElicitationSchema,
-    EnumSchemaBuilder, PrimitiveSchema,
+    CreateElicitationRequestParams, ElicitationAction, ElicitationSchema, EnumSchemaBuilder,
+    PrimitiveSchema,
 };
 use rmcp::service::{Peer, RoleServer};
 use std::sync::Arc;
@@ -119,17 +119,11 @@ impl ElicitationClient {
 /// - `api_key`: required string, min 10 chars
 /// - `persist`: optional bool (default false) — save to ~/.mira/.env
 pub fn api_key_schema() -> ElicitationSchema {
-    let provider_enum = EnumSchemaBuilder::new(vec![
-        "deepseek".to_string(),
-        "gemini".to_string(),
-    ])
-    .enum_titles(vec![
-        "DeepSeek".to_string(),
-        "Google Gemini".to_string(),
-    ])
-    .expect("enum titles count matches values")
-    .description("Which LLM provider is this key for?")
-    .build();
+    let provider_enum = EnumSchemaBuilder::new(vec!["deepseek".to_string(), "gemini".to_string()])
+        .enum_titles(vec!["DeepSeek".to_string(), "Google Gemini".to_string()])
+        .expect("enum titles count matches values")
+        .description("Which LLM provider is this key for?")
+        .build();
 
     ElicitationSchema::builder()
         .title("API Key Setup")
@@ -162,9 +156,7 @@ pub fn context_schema(question: &str) -> ElicitationSchema {
 /// Request an API key from the user via elicitation.
 ///
 /// Returns `Some((provider, key, persist))` on success, `None` otherwise.
-pub async fn request_api_key(
-    client: &ElicitationClient,
-) -> Option<(Provider, String, bool)> {
+pub async fn request_api_key(client: &ElicitationClient) -> Option<(Provider, String, bool)> {
     let schema = api_key_schema();
     let outcome = client
         .request(
@@ -195,10 +187,7 @@ pub async fn request_api_key(
 /// Request free-form context from the user via elicitation.
 ///
 /// Returns `Some(response_text)` on success, `None` otherwise.
-pub async fn request_context(
-    client: &ElicitationClient,
-    question: &str,
-) -> Option<String> {
+pub async fn request_context(client: &ElicitationClient, question: &str) -> Option<String> {
     let schema = context_schema(question);
     let outcome = client.request(question, schema).await;
     let data = outcome.into_value()?;
@@ -240,11 +229,7 @@ pub fn persist_api_key(env_var_name: &str, key: &str) {
             if let Err(e) = file.write_all(line.as_bytes()) {
                 tracing::warn!("[elicitation] Failed to write key to {:?}: {}", env_path, e);
             } else {
-                tracing::info!(
-                    "[elicitation] Persisted {} to {:?}",
-                    env_var_name,
-                    env_path
-                );
+                tracing::info!("[elicitation] Persisted {} to {:?}", env_var_name, env_path);
             }
         }
         Err(e) => {
@@ -264,7 +249,10 @@ mod tests {
     #[test]
     fn test_api_key_schema_has_required_fields() {
         let schema = api_key_schema();
-        let required = schema.required.as_ref().expect("should have required fields");
+        let required = schema
+            .required
+            .as_ref()
+            .expect("should have required fields");
         assert!(required.contains(&"provider".to_string()));
         assert!(required.contains(&"api_key".to_string()));
         assert!(!required.contains(&"persist".to_string()));
@@ -274,7 +262,10 @@ mod tests {
     #[test]
     fn test_context_schema_has_response_field() {
         let schema = context_schema("What additional context?");
-        let required = schema.required.as_ref().expect("should have required fields");
+        let required = schema
+            .required
+            .as_ref()
+            .expect("should have required fields");
         assert!(required.contains(&"response".to_string()));
         assert_eq!(schema.properties.len(), 1);
     }
@@ -306,10 +297,7 @@ mod tests {
         assert_eq!(ElicitationOutcome::Declined.into_value(), None);
         assert_eq!(ElicitationOutcome::Cancelled.into_value(), None);
         assert_eq!(ElicitationOutcome::NotSupported.into_value(), None);
-        assert_eq!(
-            ElicitationOutcome::Failed("err".into()).into_value(),
-            None
-        );
+        assert_eq!(ElicitationOutcome::Failed("err".into()).into_value(), None);
     }
 
     #[tokio::test]

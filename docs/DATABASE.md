@@ -92,7 +92,7 @@ Indexed code symbols from tree-sitter parsing.
 
 ### call_graph
 
-Function call relationships for find_callers/find_callees.
+Function call relationships for `code(action="callers")` / `code(action="callees")`.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -318,7 +318,7 @@ Semantic analysis of git diffs and commits.
 | status | TEXT | `complete` or `partial` |
 | created_at | TEXT | Timestamp |
 
-Used by `analyze_diff` tool to cache semantic analysis of git changes.
+Used by the `analyze_diff` tool to cache semantic analysis of git changes.
 
 ---
 

@@ -12,7 +12,11 @@ use std::path::Path;
 
 /// Count lines by walking files with `FileWalker` for a given language.
 /// If `module_path` is a single file, counts its lines directly.
-pub(crate) fn count_lines_with_walker(project_path: &Path, module_path: &str, language: &'static str) -> u32 {
+pub(crate) fn count_lines_with_walker(
+    project_path: &Path,
+    module_path: &str,
+    language: &'static str,
+) -> u32 {
     let full_path = project_path.join(module_path);
 
     // Single-file modules

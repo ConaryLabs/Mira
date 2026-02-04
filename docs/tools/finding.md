@@ -145,6 +145,6 @@ Reports how many new patterns were extracted from accepted findings with suggest
 
 ## See Also
 
-- **consult_experts**: Expert consultations that generate findings
+- [**expert**](./expert.md): Expert consultations that generate findings
 - **analyze_diff**: Diff analysis that can trigger code review
 - **documentation**: Similar action-based tool for managing documentation tasks

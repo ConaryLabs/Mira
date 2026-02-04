@@ -117,38 +117,72 @@ impl SlowLaneWorker {
 
         let client = client.as_ref();
 
-        processed += Self::run_task("stale sessions",
-            session_summaries::process_stale_sessions(&self.pool, client)).await?;
+        processed += Self::run_task(
+            "stale sessions",
+            session_summaries::process_stale_sessions(&self.pool, client),
+        )
+        .await?;
 
-        processed += Self::run_task("summaries",
-            summaries::process_queue(&self.code_pool, &self.pool, client)).await?;
+        processed += Self::run_task(
+            "summaries",
+            summaries::process_queue(&self.code_pool, &self.pool, client),
+        )
+        .await?;
 
-        processed += Self::run_task("briefings",
-            briefings::process_briefings(&self.pool, client)).await?;
+        processed += Self::run_task(
+            "briefings",
+            briefings::process_briefings(&self.pool, client),
+        )
+        .await?;
 
-        if self.cycle_count.is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL) {
-            processed += Self::run_task("documentation tasks",
-                documentation::process_documentation(&self.pool, &self.code_pool, &self.llm_factory)).await?;
+        if self
+            .cycle_count
+            .is_multiple_of(DOCUMENTATION_CYCLE_INTERVAL)
+        {
+            processed += Self::run_task(
+                "documentation tasks",
+                documentation::process_documentation(
+                    &self.pool,
+                    &self.code_pool,
+                    &self.llm_factory,
+                ),
+            )
+            .await?;
         }
 
-        processed += Self::run_task("health issues",
-            code_health::process_code_health(&self.pool, &self.code_pool, client)).await?;
+        processed += Self::run_task(
+            "health issues",
+            code_health::process_code_health(&self.pool, &self.code_pool, client),
+        )
+        .await?;
 
         if self.cycle_count.is_multiple_of(PONDERING_CYCLE_INTERVAL) {
-            processed += Self::run_task("pondering insights",
-                pondering::process_pondering(&self.pool, client)).await?;
+            processed += Self::run_task(
+                "pondering insights",
+                pondering::process_pondering(&self.pool, client),
+            )
+            .await?;
         }
 
         if self.cycle_count.is_multiple_of(OUTCOME_SCAN_CYCLE_INTERVAL) {
-            processed += Self::run_task("diff outcomes",
-                outcome_scanner::process_outcome_scanning(&self.pool)).await?;
+            processed += Self::run_task(
+                "diff outcomes",
+                outcome_scanner::process_outcome_scanning(&self.pool),
+            )
+            .await?;
         }
 
-        processed += Self::run_task("proactive items",
-            proactive::process_proactive(&self.pool, client, self.cycle_count)).await?;
+        processed += Self::run_task(
+            "proactive items",
+            proactive::process_proactive(&self.pool, client, self.cycle_count),
+        )
+        .await?;
 
-        processed += Self::run_task("entity backfills",
-            entity_extraction::process_entity_backfill(&self.pool)).await?;
+        processed += Self::run_task(
+            "entity backfills",
+            entity_extraction::process_entity_backfill(&self.pool),
+        )
+        .await?;
 
         Ok(processed)
     }

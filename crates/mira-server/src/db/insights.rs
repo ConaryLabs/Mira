@@ -175,7 +175,14 @@ fn fetch_doc_gap_insights(
         let priority: String = row.get::<_, Option<String>>(3)?.unwrap_or("medium".into());
         let reason: Option<String> = row.get(4)?;
         let timestamp: String = row.get::<_, Option<String>>(5)?.unwrap_or_default();
-        Ok((doc_type, doc_category, target_doc_path, priority, reason, timestamp))
+        Ok((
+            doc_type,
+            doc_category,
+            target_doc_path,
+            priority,
+            reason,
+            timestamp,
+        ))
     })?;
 
     let mut insights = Vec::new();

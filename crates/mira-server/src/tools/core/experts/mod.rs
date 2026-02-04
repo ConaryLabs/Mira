@@ -3,12 +3,12 @@
 
 use std::time::Duration;
 
+use crate::db::{ExpertConfig, get_expert_config_sync, list_custom_prompts_sync};
+use crate::mcp::requests::ExpertConfigAction;
+use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     ConfigureData, ConsultData, ExpertConfigEntry, ExpertData, ExpertOpinion, ExpertOutput,
 };
-use crate::mcp::responses::Json;
-use crate::mcp::requests::ExpertConfigAction;
-use crate::db::{ExpertConfig, get_expert_config_sync, list_custom_prompts_sync};
 
 mod config;
 mod context;
@@ -71,9 +71,15 @@ pub async fn handle_expert<C: ToolContext + Clone + 'static>(
                 .config_action
                 .ok_or("config_action is required for action 'configure'")?;
             let role = req.role.clone();
-            let message =
-                configure_expert(ctx, config_action, req.role, req.prompt, req.provider, req.model)
-                    .await?;
+            let message = configure_expert(
+                ctx,
+                config_action,
+                req.role,
+                req.prompt,
+                req.provider,
+                req.model,
+            )
+            .await?;
             let data = build_config_data(ctx, config_action, role).await?;
             Ok(Json(ExpertOutput {
                 action: "configure".into(),
@@ -116,14 +122,18 @@ async fn build_config_data<C: ToolContext>(
             let configs = ctx.pool().run(list_custom_prompts_sync).await?;
             let entries = configs
                 .into_iter()
-                .map(|(role_key, prompt_text, provider_str, model_opt)| ExpertConfigEntry {
-                    role: role_key,
-                    provider: Some(provider_str),
-                    model: model_opt,
-                    has_custom_prompt: Some(!prompt_text.is_empty()),
-                })
+                .map(
+                    |(role_key, prompt_text, provider_str, model_opt)| ExpertConfigEntry {
+                        role: role_key,
+                        provider: Some(provider_str),
+                        model: model_opt,
+                        has_custom_prompt: Some(!prompt_text.is_empty()),
+                    },
+                )
                 .collect();
-            Ok(Some(ExpertData::Configure(ConfigureData { configs: entries })))
+            Ok(Some(ExpertData::Configure(ConfigureData {
+                configs: entries,
+            })))
         }
         ExpertConfigAction::Get | ExpertConfigAction::Set | ExpertConfigAction::Delete => {
             let role_key = role.ok_or("role is required for config output")?;

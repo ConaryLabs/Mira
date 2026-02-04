@@ -82,7 +82,10 @@ pub async fn compute_tech_debt_scores(
         let empty = ModuleFindings::default();
         let f = findings.get(&module.path).unwrap_or(&empty);
         let doc_gap_count = doc_gaps.get(&module.path).copied().unwrap_or(0) as f64;
-        let pattern_score = pattern_scores.get(&module.module_id).copied().unwrap_or(0.0);
+        let pattern_score = pattern_scores
+            .get(&module.module_id)
+            .copied()
+            .unwrap_or(0.0);
 
         // Normalize each factor to 0-100 based on finding density per 1K lines
         let complexity_score = normalize(f.complexity as f64 * per_1k, 2.0);
@@ -146,7 +149,7 @@ pub async fn compute_tech_debt_scores(
 /// Normalize a density value to 0-100 score.
 /// `threshold` is the density at which score reaches 100.
 fn normalize(density: f64, threshold: f64) -> f64 {
-    ((density / threshold) * 100.0).min(100.0).max(0.0)
+    ((density / threshold) * 100.0).clamp(0.0, 100.0)
 }
 
 fn round2(v: f64) -> f64 {
@@ -181,9 +184,7 @@ fn get_module_line_counts(
     project_id: i64,
 ) -> Result<Vec<ModuleLineCount>, String> {
     let mut stmt = conn
-        .prepare(
-            "SELECT module_id, path, line_count FROM codebase_modules WHERE project_id = ?",
-        )
+        .prepare("SELECT module_id, path, line_count FROM codebase_modules WHERE project_id = ?")
         .str_err()?;
 
     let modules = stmt
@@ -241,7 +242,9 @@ fn gather_findings(
                 .iter()
                 .find(|p| {
                     // Check if any part of the content matches
-                    content.split_whitespace().any(|word| word.starts_with(p.as_str()))
+                    content
+                        .split_whitespace()
+                        .any(|word| word.starts_with(p.as_str()))
                 })
                 .cloned()
         });
@@ -283,7 +286,10 @@ fn gather_doc_gaps(
 
     for row in rows {
         let file_path = row.str_err()?;
-        if let Some(module_path) = module_paths.iter().find(|p| file_path.starts_with(p.as_str())) {
+        if let Some(module_path) = module_paths
+            .iter()
+            .find(|p| file_path.starts_with(p.as_str()))
+        {
             *result.entry(module_path.clone()).or_default() += 1;
         }
     }
@@ -360,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_round2() {
-        assert_eq!(round2(3.14159), 3.14);
+        assert_eq!(round2(1.23456), 1.23);
         assert_eq!(round2(0.0), 0.0);
         assert_eq!(round2(100.0), 100.0);
     }
@@ -389,7 +395,17 @@ mod tests {
 
     #[test]
     fn test_weights_sum_to_one() {
-        let sum = W_COMPLEXITY + W_ERROR_HANDLING + W_UNWRAP + W_TODO + W_DOC_GAPS + W_UNUSED + W_PATTERN_VIOLATIONS;
-        assert!((sum - 1.0).abs() < 0.001, "Weights must sum to 1.0, got {}", sum);
+        let sum = W_COMPLEXITY
+            + W_ERROR_HANDLING
+            + W_UNWRAP
+            + W_TODO
+            + W_DOC_GAPS
+            + W_UNUSED
+            + W_PATTERN_VIOLATIONS;
+        assert!(
+            (sum - 1.0).abs() < 0.001,
+            "Weights must sum to 1.0, got {}",
+            sum
+        );
     }
 }

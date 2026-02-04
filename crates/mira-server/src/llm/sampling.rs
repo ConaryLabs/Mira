@@ -122,11 +122,7 @@ impl LlmClient for SamplingClient {
         let duration_ms = start.elapsed().as_millis() as u64;
 
         // Extract text from response
-        let content = result
-            .message
-            .content
-            .as_text()
-            .map(|t| t.text.clone());
+        let content = result.message.content.as_text().map(|t| t.text.clone());
 
         Ok(ChatResult {
             request_id: String::new(),

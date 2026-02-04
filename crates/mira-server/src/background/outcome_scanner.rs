@@ -4,9 +4,9 @@
 // Scans git history to determine whether previously-analyzed diffs caused problems.
 // This data feeds into change pattern mining (Milestone 2) and predictive risk scoring (Milestone 3).
 
-use crate::db::diff_outcomes::store_diff_outcome_sync;
 use crate::db::diff_outcomes::get_unscanned_diffs_sync;
 use crate::db::diff_outcomes::mark_clean_outcomes_sync;
+use crate::db::diff_outcomes::store_diff_outcome_sync;
 use crate::db::pool::DatabasePool;
 use crate::db::{get_indexed_projects_sync, set_server_state_sync};
 use crate::utils::ResultExt;
@@ -36,9 +36,7 @@ struct GitCommit {
 }
 
 /// Scan all indexed projects for diff outcomes
-pub async fn process_outcome_scanning(
-    pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
+pub async fn process_outcome_scanning(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     let projects = pool
         .interact(|conn| {
             get_indexed_projects_sync(conn)
@@ -102,7 +100,10 @@ async fn scan_project(
     }
 
     // Collect all commit hashes we need to check
-    let commit_hashes: Vec<String> = unscanned.iter().map(|(_, hash, _, _)| hash.clone()).collect();
+    let commit_hashes: Vec<String> = unscanned
+        .iter()
+        .map(|(_, hash, _, _)| hash.clone())
+        .collect();
 
     // Detect reverts in recent git history
     let reverts = detect_reverts(project_path, &commit_hashes);
@@ -122,8 +123,14 @@ async fn scan_project(
             let pid = project_id;
             pool.interact(move |conn| {
                 store_diff_outcome_sync(
-                    conn, diff_id, Some(pid), "reverted",
-                    Some(&ev_commit), Some(&ev_msg), Some(td), "git_scan",
+                    conn,
+                    diff_id,
+                    Some(pid),
+                    "reverted",
+                    Some(&ev_commit),
+                    Some(&ev_msg),
+                    Some(td),
+                    "git_scan",
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))
             })
@@ -141,8 +148,14 @@ async fn scan_project(
                 let pid = project_id;
                 pool.interact(move |conn| {
                     store_diff_outcome_sync(
-                        conn, diff_id, Some(pid), "follow_up_fix",
-                        Some(&ev_commit), Some(&ev_msg), Some(td), "git_scan",
+                        conn,
+                        diff_id,
+                        Some(pid),
+                        "follow_up_fix",
+                        Some(&ev_commit),
+                        Some(&ev_msg),
+                        Some(td),
+                        "git_scan",
                     )
                     .map_err(|e| anyhow::anyhow!("{}", e))
                 })
@@ -168,8 +181,7 @@ async fn scan_project(
     if let Some(latest_commit) = get_git_head(project_path) {
         let key = format!("{}{}", STATE_KEY_PREFIX, project_id);
         pool.interact(move |conn| {
-            set_server_state_sync(conn, &key, &latest_commit)
-                .map_err(|e| anyhow::anyhow!("{}", e))
+            set_server_state_sync(conn, &key, &latest_commit).map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
         .str_err()?;
@@ -278,10 +290,11 @@ fn detect_followup_fixes<'a>(
 
             if has_overlap {
                 let time_delta = candidate.timestamp - commit_ts;
-                result
-                    .entry(to_commit.as_str())
-                    .or_default()
-                    .push((candidate.hash.clone(), candidate.message.clone(), time_delta));
+                result.entry(to_commit.as_str()).or_default().push((
+                    candidate.hash.clone(),
+                    candidate.message.clone(),
+                    time_delta,
+                ));
             }
         }
     }
@@ -370,7 +383,11 @@ fn parse_commit_lines(output: &str) -> Vec<GitCommit> {
                 return None;
             }
 
-            Some(GitCommit { hash, timestamp, message })
+            Some(GitCommit {
+                hash,
+                timestamp,
+                message,
+            })
         })
         .collect()
 }
@@ -387,10 +404,7 @@ fn get_commit_timestamp(project_path: &str, commit_hash: &str) -> Option<i64> {
         return None;
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .ok()
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
 /// Get the commit message (subject line) for a specific commit
@@ -412,18 +426,22 @@ fn get_commit_message(project_path: &str, commit_hash: &str) -> Option<String> {
 /// Get the list of files changed in a specific commit
 fn get_files_for_commit(project_path: &str, commit_hash: &str) -> Vec<String> {
     let output = Command::new("git")
-        .args(["diff-tree", "--no-commit-id", "-r", "--name-only", commit_hash])
+        .args([
+            "diff-tree",
+            "--no-commit-id",
+            "-r",
+            "--name-only",
+            commit_hash,
+        ])
         .current_dir(project_path)
         .output();
 
     match output {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .map(|l| l.trim().to_string())
-                .collect()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.trim().to_string())
+            .collect(),
         _ => vec![],
     }
 }

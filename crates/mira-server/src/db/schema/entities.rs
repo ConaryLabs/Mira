@@ -46,12 +46,7 @@ pub fn migrate_entity_tables(conn: &Connection) -> Result<()> {
 
     // Column: has_entities on memory_facts (1 = extraction has been run)
     if table_exists(conn, "memory_facts") {
-        add_column_if_missing(
-            conn,
-            "memory_facts",
-            "has_entities",
-            "INTEGER DEFAULT 0",
-        )?;
+        add_column_if_missing(conn, "memory_facts", "has_entities", "INTEGER DEFAULT 0")?;
     }
 
     Ok(())

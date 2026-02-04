@@ -12,11 +12,15 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.4.1
+## What's New in v0.5.0
 
-- **Graceful Degradation**: All major tools now work without LLM API keys via heuristic fallbacks — diff analysis, module summaries, and background insights all produce useful output without any provider configured
-- **Nucleo Fuzzy Search**: New fuzzy search engine for memory and code recall when embeddings are unavailable, with typo-tolerant matching
-- **Embedding-Free Code Search**: Code indexing and keyword/fuzzy search work independently of the embedding pipeline
+- **Zero-Key Expert Consultation** — MCP Sampling lets experts consult via the host client, no API keys required
+- **Interactive Setup** — MCP Elicitation guides you through API key configuration on first run
+- **Async Operations** — Long-running tools (indexing, health scans) now run in the background via MCP Tasks
+- **Structured Responses** — All 11 tools return typed JSON via MCP outputSchema
+- **Change Intelligence** — Outcome tracking, pattern mining, and predictive risk for your commits
+- **Entity Layer** — Lightweight entity extraction boosts memory recall relevance
+- **Tool Consolidation** — Streamlined from ~20 tools to 11 unified action-based interfaces
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
@@ -145,7 +149,7 @@ Get your keys from:
 - DeepSeek: https://platform.deepseek.com/api_keys
 - Gemini: https://aistudio.google.com/app/apikey
 
-> **No API keys?** Mira works without them using heuristic fallbacks — diff analysis uses pattern-based parsing, module summaries use metadata extraction, and code search falls back to fuzzy/keyword matching. Expert consultation is the only feature that requires an LLM provider.
+> **No API keys?** Mira works without them using heuristic fallbacks — diff analysis uses pattern-based parsing, module summaries use metadata extraction, and code search falls back to fuzzy/keyword matching. Expert consultation works without keys via MCP Sampling (uses the host client), or with your own keys for dedicated providers.
 
 ### Add Mira Instructions to Your Project
 
@@ -209,9 +213,12 @@ Memories are evidence-based: new facts start as candidates, gain confidence thro
 
 | Capability | What it does |
 |------------|--------------|
-| `search_code` | Find code by meaning, not just text |
-| `find_callers` / `find_callees` | Trace call relationships |
-| `get_symbols` | Extract functions, structs, classes |
+| `code(action="search")` | Find code by meaning, not just text |
+| `code(action="callers")` / `callees` | Trace call relationships |
+| `code(action="symbols")` | Extract functions, structs, classes |
+| `code(action="dependencies")` | Module dependency graphs |
+| `code(action="patterns")` | Architectural pattern detection |
+| `code(action="tech_debt")` | Per-module tech debt scoring |
 
 Supports Rust, Python, TypeScript, JavaScript, and Go via tree-sitter parsing.
 
@@ -231,8 +238,8 @@ DeepSeek Reasoner runs continuously in the background, building understanding of
 **Expert Consultation (on-demand):**
 
 ```
-consult_experts(roles=["architect"], context="...", question="...")
-consult_experts(roles=["code_reviewer", "security"], context="...")
+expert(action="consult", roles=["architect"], context="...", question="...")
+expert(action="consult", roles=["code_reviewer", "security"], context="...")
 ```
 
 | Expert | Use case |

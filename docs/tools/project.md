@@ -125,7 +125,6 @@ The `start` and `set` actions auto-detect project metadata:
 
 ## See Also
 
-- **get_session_recap**: Get session recap with preferences, context, and goals
-- **session_history**: View past session activity
+- [**session**](./session.md): Session recap (`action="recap"`) and history (`action="history"`)
 - **index**: Index project code for semantic search and symbols
 - **documentation**: Manage documentation tasks for the project

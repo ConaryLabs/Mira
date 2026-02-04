@@ -17,5 +17,5 @@ Unified search functionality shared between MCP tools and chat. Provides semanti
 
 - `hybrid_search()` - Combined semantic + keyword search
 - `semantic_search()` - Pure embedding-based similarity search
-- `find_callers()` / `find_callees()` - Call graph traversal
+- `find_callers()` / `find_callees()` — Call graph traversal (exposed as `code(action="callers")` / `code(action="callees")`)
 - `format_crossref_results()` - Format cross-reference results for display

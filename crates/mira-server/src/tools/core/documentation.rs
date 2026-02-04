@@ -7,11 +7,11 @@ use crate::db::documentation::{
     mark_doc_task_skipped,
 };
 use crate::mcp::requests::DocumentationAction;
+use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    DocOutput, DocData, DocListData, DocTaskItem, DocGetData, DocInventoryData, DocInventoryItem,
+    DocData, DocGetData, DocInventoryData, DocInventoryItem, DocListData, DocOutput, DocTaskItem,
 };
 use crate::tools::core::ToolContext;
-use crate::mcp::responses::Json;
 
 /// List documentation that needs to be written or updated
 pub async fn list_doc_tasks(
@@ -42,7 +42,10 @@ pub async fn list_doc_tasks(
         return Ok(Json(DocOutput {
             action: "list".into(),
             message: "No documentation tasks found for this project.".into(),
-            data: Some(DocData::List(DocListData { tasks: vec![], total: 0 })),
+            data: Some(DocData::List(DocListData {
+                tasks: vec![],
+                total: 0,
+            })),
         }));
     }
 
@@ -83,21 +86,27 @@ pub async fn list_doc_tasks(
         output.push('\n');
     }
 
-    let items: Vec<DocTaskItem> = tasks.iter().map(|task| DocTaskItem {
-        id: task.id,
-        doc_category: task.doc_category.clone(),
-        target_doc_path: task.target_doc_path.clone(),
-        priority: task.priority.clone(),
-        status: task.status.clone(),
-        source_file_path: task.source_file_path.clone(),
-        reason: task.reason.clone(),
-    }).collect();
+    let items: Vec<DocTaskItem> = tasks
+        .iter()
+        .map(|task| DocTaskItem {
+            id: task.id,
+            doc_category: task.doc_category.clone(),
+            target_doc_path: task.target_doc_path.clone(),
+            priority: task.priority.clone(),
+            status: task.status.clone(),
+            source_file_path: task.source_file_path.clone(),
+            reason: task.reason.clone(),
+        })
+        .collect();
     let total = items.len();
 
     Ok(Json(DocOutput {
         action: "list".into(),
         message: output,
-        data: Some(DocData::List(DocListData { tasks: items, total })),
+        data: Some(DocData::List(DocListData {
+            tasks: items,
+            total,
+        })),
     }))
 }
 
@@ -248,7 +257,10 @@ pub async fn get_doc_task_details(
             doc_category: task.doc_category.clone(),
             priority: task.priority.clone(),
             source_file_path: task.source_file_path.clone(),
-            full_source_path: task.source_file_path.as_ref().map(|s| format!("{}/{}", project_path, s)),
+            full_source_path: task
+                .source_file_path
+                .as_ref()
+                .map(|s| format!("{}/{}", project_path, s)),
             reason: task.reason.clone(),
             guidelines: guidelines.to_string(),
         })),
@@ -292,7 +304,10 @@ pub async fn complete_doc_task(
 
     Ok(Json(DocOutput {
         action: "complete".into(),
-        message: format!("Task {} marked complete. Documentation written to `{}`.", task_id, task.target_doc_path),
+        message: format!(
+            "Task {} marked complete. Documentation written to `{}`.",
+            task_id, task.target_doc_path
+        ),
         data: None,
     }))
 }
@@ -335,7 +350,9 @@ pub async fn skip_doc_task(
 }
 
 /// Show documentation inventory with staleness indicators
-pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Json<DocOutput>, String> {
+pub async fn show_doc_inventory(
+    ctx: &(impl ToolContext + ?Sized),
+) -> Result<Json<DocOutput>, String> {
     let project_id_opt = ctx.project_id().await;
     let project_id = project_id_opt.ok_or("No active project")?;
 
@@ -348,7 +365,11 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Jso
         return Ok(Json(DocOutput {
             action: "inventory".into(),
             message: "No documentation inventory found. Run scan to build inventory.".into(),
-            data: Some(DocData::Inventory(DocInventoryData { docs: vec![], total: 0, stale_count: 0 })),
+            data: Some(DocData::Inventory(DocInventoryData {
+                docs: vec![],
+                total: 0,
+                stale_count: 0,
+            })),
         }));
     }
 
@@ -388,24 +409,33 @@ pub async fn show_doc_inventory(ctx: &(impl ToolContext + ?Sized)) -> Result<Jso
         output.push('\n');
     }
 
-    let items: Vec<DocInventoryItem> = inventory.iter().map(|item| DocInventoryItem {
-        doc_path: item.doc_path.clone(),
-        doc_type: item.doc_type.clone(),
-        is_stale: item.is_stale,
-        title: item.title.clone(),
-        staleness_reason: item.staleness_reason.clone(),
-    }).collect();
+    let items: Vec<DocInventoryItem> = inventory
+        .iter()
+        .map(|item| DocInventoryItem {
+            doc_path: item.doc_path.clone(),
+            doc_type: item.doc_type.clone(),
+            is_stale: item.is_stale,
+            title: item.title.clone(),
+            staleness_reason: item.staleness_reason.clone(),
+        })
+        .collect();
     let total = items.len();
 
     Ok(Json(DocOutput {
         action: "inventory".into(),
         message: output,
-        data: Some(DocData::Inventory(DocInventoryData { docs: items, total, stale_count })),
+        data: Some(DocData::Inventory(DocInventoryData {
+            docs: items,
+            total,
+            stale_count,
+        })),
     }))
 }
 
 /// Trigger manual documentation scan
-pub async fn scan_documentation(ctx: &(impl ToolContext + ?Sized)) -> Result<Json<DocOutput>, String> {
+pub async fn scan_documentation(
+    ctx: &(impl ToolContext + ?Sized),
+) -> Result<Json<DocOutput>, String> {
     let project_id_opt = ctx.project_id().await;
     let project_id = project_id_opt.ok_or("No active project")?;
 

@@ -8,9 +8,10 @@ use crate::cartographer;
 use crate::indexer;
 use crate::llm::{LlmClient, Message, record_llm_usage};
 use crate::mcp::requests::IndexAction;
+use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    CallGraphData, CallGraphEntry, CodeData, CodeOutput, CodeSearchResult, DependenciesData,
-    DependencyEdge, DebtFactor, IndexCompactData, IndexData, IndexHealthData, IndexOutput,
+    CallGraphData, CallGraphEntry, CodeData, CodeOutput, CodeSearchResult, DebtFactor,
+    DependenciesData, DependencyEdge, IndexCompactData, IndexData, IndexHealthData, IndexOutput,
     IndexProjectData, IndexStatusData, IndexSummarizeData, ModulePatterns, PatternEntry,
     PatternsData, SearchResultsData, SymbolInfo, SymbolsData, TechDebtData, TechDebtModule,
     TechDebtTier,
@@ -21,7 +22,6 @@ use crate::search::{
 };
 use crate::tools::core::ToolContext;
 use crate::utils::ResultExt;
-use crate::mcp::responses::Json;
 
 /// Unified code tool dispatcher
 pub async fn handle_code<C: ToolContext>(
@@ -253,7 +253,10 @@ pub async fn find_function_callers<C: ToolContext>(
     if results.is_empty() {
         return Ok(Json(CodeOutput {
             action: "callers".into(),
-            message: format!("{}No callers found for `{}`.", context_header, function_name),
+            message: format!(
+                "{}No callers found for `{}`.",
+                context_header, function_name
+            ),
             data: Some(CodeData::CallGraph(CallGraphData {
                 target: function_name,
                 direction: "callers".into(),
@@ -311,7 +314,10 @@ pub async fn find_function_callees<C: ToolContext>(
     if results.is_empty() {
         return Ok(Json(CodeOutput {
             action: "callees".into(),
-            message: format!("{}No callees found for `{}`.", context_header, function_name),
+            message: format!(
+                "{}No callees found for `{}`.",
+                context_header, function_name
+            ),
             data: Some(CodeData::CallGraph(CallGraphData {
                 target: function_name,
                 direction: "callees".into(),
@@ -494,11 +500,7 @@ pub async fn index<C: ToolContext>(
             }))
         }
         IndexAction::Compact => {
-            let stats = ctx
-                .code_pool()
-                .compact_code_db()
-                .await
-                .str_err()?;
+            let stats = ctx.code_pool().compact_code_db().await.str_err()?;
 
             let message = format!(
                 "Compacted vec_code: {} rows preserved, ~{:.1} MB estimated savings.\n\
@@ -785,16 +787,14 @@ async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
 
     let deps = ctx
         .code_pool()
-        .run(move |conn| {
-            crate::db::dependencies::get_module_deps_sync(conn, project_id)
-                .str_err()
-        })
+        .run(move |conn| crate::db::dependencies::get_module_deps_sync(conn, project_id).str_err())
         .await?;
 
     if deps.is_empty() {
         return Ok(Json(CodeOutput {
             action: "dependencies".into(),
-            message: "No module dependencies found. Run a health scan or index the project first.".to_string(),
+            message: "No module dependencies found. Run a health scan or index the project first."
+                .to_string(),
             data: Some(CodeData::Dependencies(DependenciesData {
                 edges: vec![],
                 circular_count: 0,
@@ -810,7 +810,10 @@ async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
 
     // Show circular warnings first
     if !circular.is_empty() {
-        response.push_str(&format!("⚠ {} circular dependencies detected:\n", circular.len()));
+        response.push_str(&format!(
+            "⚠ {} circular dependencies detected:\n",
+            circular.len()
+        ));
         for dep in &circular {
             response.push_str(&format!(
                 "  {} <-> {} ({} calls, {} imports)\n",
@@ -901,14 +904,11 @@ async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, Strin
             for p in &parsed {
                 let pattern = p.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
                 let confidence = p.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let evidence_list = p
-                    .get("evidence")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect::<Vec<_>>()
-                    });
+                let evidence_list = p.get("evidence").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                });
                 let evidence_str = evidence_list
                     .as_ref()
                     .map(|v| v.join(", "))
@@ -959,10 +959,7 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, Stri
 
     let scores = ctx
         .pool()
-        .run(move |conn| {
-            crate::db::tech_debt::get_debt_scores_sync(conn, project_id)
-                .str_err()
-        })
+        .run(move |conn| crate::db::tech_debt::get_debt_scores_sync(conn, project_id).str_err())
         .await?;
 
     if scores.is_empty() {
@@ -980,10 +977,7 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, Stri
     // Summary
     let summary = ctx
         .pool()
-        .run(move |conn| {
-            crate::db::tech_debt::get_debt_summary_sync(conn, project_id)
-                .str_err()
-        })
+        .run(move |conn| crate::db::tech_debt::get_debt_summary_sync(conn, project_id).str_err())
         .await?;
 
     let mut response = format!("Tech Debt Report ({} modules):\n\n", scores.len());
@@ -991,7 +985,12 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, Stri
     // Tier summary
     response.push_str("Summary by tier:\n");
     for (tier, count) in &summary {
-        response.push_str(&format!("  {} ({}): {} modules\n", tier, tier_label(tier), count));
+        response.push_str(&format!(
+            "  {} ({}): {} modules\n",
+            tier,
+            tier_label(tier),
+            count
+        ));
     }
     response.push('\n');
 
@@ -1034,7 +1033,8 @@ async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, Stri
                         }
                     }
                 }
-                factor_list.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                factor_list
+                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 for (name, s) in factor_list.iter().take(3) {
                     response.push_str(&format!("    ↳ {}: {:.0}\n", name, s));
                 }

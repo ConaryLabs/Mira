@@ -80,6 +80,28 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-03
+
+### Added
+- **MCP Sampling** — Zero-key expert consultation via host client. Experts now use the MCP sampling protocol to consult through the host LLM, eliminating the need for `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` for expert consultations.
+- **MCP Elicitation** — Interactive API key setup flow. On first run, Mira walks users through configuring API keys via the MCP elicitation protocol instead of requiring manual `.env` file editing.
+- **MCP Tasks** — Async long-running operations (SEP-1686). Tools like `index(action="project")` and `index(action="health")` now run in the background with progress tracking via `tasks(action="list|get|cancel")`.
+- **MCP outputSchema** — Structured JSON responses for all 11 tools. Every tool now returns typed, parseable JSON instead of free-form text, enabling programmatic consumption of results.
+- **Change Intelligence (Goal 103)** — Outcome tracking for commits, pattern mining across change history, and predictive risk scoring. Tracks whether changes led to follow-up fixes and surfaces risky patterns.
+- **Entity Layer (Goal 104)** — Lightweight entity extraction from memory facts. Automatically identifies projects, technologies, people, and concepts to boost recall relevance.
+- **Context-aware convention injection (Goal 102)** — Automatically injects project conventions (naming, patterns, architecture) into relevant tool responses.
+- **Enhanced code intelligence** — Dependency graph analysis (`code(action="dependencies")`), architectural pattern detection (`code(action="patterns")`), and per-module tech debt scoring (`code(action="tech_debt")`).
+- **Unified insights digest** — `session(action="insights")` merges pondering, proactive suggestions, and documentation gaps into a single queryable surface.
+- **Auto-enqueue long-running tools** — Health scans and full project indexing automatically enqueue as background tasks. Manual `index(action="health")` triggers a full code health scan.
+
+### Changed
+- **Tool consolidation** — Reduced from ~20 tools to 11 action-based unified interfaces. `memory` (remember/recall/forget), `code` (search/symbols/callers/callees/dependencies/patterns/tech_debt), `session` (history/recap/usage/insights), `expert` (consult/configure), `finding` (list/get/review/stats/patterns/extract), and `index` (project/file/status/compact/summarize/health). Breaking change for anyone scripting against old tool names.
+- **Spring cleaning** — Deduplicated LLM, database, and tool layers. Removed 356 lines of boilerplate across shared request/response handling.
+
+### Fixed
+- **Structured output content split** — Tools now correctly return both `content` (text for display) and `structuredContent` (typed JSON via outputSchema) in MCP responses.
+- **Compact sqlite-vec storage** — `index(action="compact")` now VACUUMs vec tables to reclaim space from deleted embeddings.
+
 ## [0.4.1] - 2026-01-31
 
 ### Added

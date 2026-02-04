@@ -365,7 +365,9 @@ pub struct SessionRequest {
     pub group_by: Option<String>,
     #[schemars(description = "Filter to last N days (default: 30)")]
     pub since_days: Option<u32>,
-    #[schemars(description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)")]
+    #[schemars(
+        description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)"
+    )]
     pub insight_source: Option<String>,
     #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.3)")]
     pub min_confidence: Option<f64>,
@@ -518,4 +520,3 @@ pub struct TasksRequest {
     #[schemars(description = "Task ID (required for get and cancel)")]
     pub task_id: Option<String>,
 }
-

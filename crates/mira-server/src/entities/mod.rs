@@ -55,14 +55,14 @@ static CAMEL_CASE_RE: LazyLock<Regex> =
 
 /// snake_case identifiers: 2+ segments, min 5 chars total
 #[allow(clippy::expect_used)]
-static SNAKE_CASE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b").expect("valid regex")
-});
+static SNAKE_CASE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b").expect("valid regex"));
 
 /// Crate/module names: after `crate`/`use`/`mod` keywords
 #[allow(clippy::expect_used)]
 static CRATE_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b(?:crate|use|mod)\s+([a-z][a-z0-9_]*(?:::[a-z][a-z0-9_]*)*)").expect("valid regex")
+    Regex::new(r"\b(?:crate|use|mod)\s+([a-z][a-z0-9_]*(?:::[a-z][a-z0-9_]*)*)")
+        .expect("valid regex")
 });
 
 /// Trailing `()` or `:line_number` on backtick refs
@@ -286,12 +286,16 @@ mod tests {
             .filter(|e| e.entity_type == EntityType::CodeIdent)
             .collect();
         // DatabasePool and store_memory_sync (trailing () trimmed)
-        assert!(code_idents
-            .iter()
-            .any(|e| e.canonical_name == "database_pool"));
-        assert!(code_idents
-            .iter()
-            .any(|e| e.canonical_name == "store_memory_sync"));
+        assert!(
+            code_idents
+                .iter()
+                .any(|e| e.canonical_name == "database_pool")
+        );
+        assert!(
+            code_idents
+                .iter()
+                .any(|e| e.canonical_name == "store_memory_sync")
+        );
     }
 
     #[test]
@@ -302,9 +306,7 @@ mod tests {
             .iter()
             .filter(|e| e.entity_type == EntityType::CodeIdent)
             .collect();
-        assert!(code_idents
-            .iter()
-            .any(|e| e.name == "memory.rs"));
+        assert!(code_idents.iter().any(|e| e.name == "memory.rs"));
     }
 
     #[test]
@@ -335,12 +337,8 @@ mod tests {
             .iter()
             .filter(|e| e.entity_type == EntityType::CrateName)
             .collect();
-        assert!(crates
-            .iter()
-            .any(|e| e.canonical_name == "deadpool_sqlite"));
-        assert!(crates
-            .iter()
-            .any(|e| e.canonical_name == "mira_server"));
+        assert!(crates.iter().any(|e| e.canonical_name == "deadpool_sqlite"));
+        assert!(crates.iter().any(|e| e.canonical_name == "mira_server"));
     }
 
     #[test]
@@ -350,7 +348,9 @@ mod tests {
         let entities = extract_entities_heuristic(content);
         let pool_idents: Vec<_> = entities
             .iter()
-            .filter(|e| e.canonical_name == "database_pool" && e.entity_type == EntityType::CodeIdent)
+            .filter(|e| {
+                e.canonical_name == "database_pool" && e.entity_type == EntityType::CodeIdent
+            })
             .collect();
         assert_eq!(pool_idents.len(), 1);
     }

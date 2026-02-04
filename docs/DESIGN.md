@@ -88,12 +88,17 @@ Key components:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| MCP Server | `mcp/mod.rs` | Tool router, stdio transport |
+| MCP Server | `mcp/mod.rs` | Tool router, stdio transport, outputSchema |
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
 | LLM Factory | `llm/factory.rs` | DeepSeek, Gemini providers |
 | Embeddings | `embeddings/mod.rs` | Embedding queue and Google client (gemini-embedding-001) |
+| MCP Sampling | `llm/sampling.rs` | Zero-key expert consultation via host client |
+| Elicitation | `elicitation.rs` | Interactive API key setup flow |
+| Async Tasks | `tools/core/tasks.rs` | Background task management |
+| Change Intelligence | `background/change_patterns.rs` | Outcome tracking, pattern mining, predictive risk |
+| Entity Layer | `entities/mod.rs` | Lightweight entity extraction for recall boost |
 
 ---
 
@@ -220,8 +225,8 @@ paired for expert consultations.
 
 Via tool:
 ```
-configure_expert(action="set", role="architect", provider="gemini")
-configure_expert(action="providers")  # List available providers
+expert(action="configure", config_action="set", role="architect", provider="gemini")
+expert(action="configure", config_action="providers")  # List available providers
 ```
 
 Via config file (`~/.mira/config.toml`):
@@ -239,7 +244,7 @@ rather than failing:
 - **Diff analysis** falls back to heuristic parsing (regex-based function detection, security keyword scanning)
 - **Module summaries** fall back to metadata extraction (file counts, language distribution, symbol names)
 - **Pondering/insights** fall back to tool history analysis (usage distribution, friction detection)
-- **Expert consultation** is the only feature that hard-requires an LLM — it returns a clear error message with setup instructions
+- **Expert consultation** can use MCP Sampling (host client) when no API keys are configured, or falls back to a clear error message with setup instructions
 
 Heuristic results are prefixed with `[heuristic]` and cached separately, so LLM re-analysis
 can upgrade them when a provider becomes available.
@@ -377,9 +382,13 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira's public API is its MCP tools. Tools are defined via `#[tool]` macros
-and routed by the tool router. This architecture encourages:
-- A stable "capabilities surface"
+Mira exposes 11 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
+Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
+The server supports MCP Sampling (zero-key expert consultation), MCP Elicitation (interactive
+setup), and MCP Tasks (async long-running operations).
+
+This architecture encourages:
+- A stable "capabilities surface" with fewer, more capable tools
 - Decoupled internal implementation that can evolve
 
 ### Database Schema
@@ -528,6 +537,18 @@ The following were previously planned and are now complete:
 - ✓ Memory evidence with session tracking
 - ✓ Expert consultation history and outcome tracking
 
+### Recently Implemented (v0.5.0) ✓
+
+- ✓ MCP Sampling for zero-key expert consultation
+- ✓ MCP Elicitation for interactive API key setup
+- ✓ MCP Tasks for async long-running operations
+- ✓ Structured JSON responses via outputSchema
+- ✓ Tool consolidation from ~20 to 11 action-based tools
+- ✓ Change Intelligence (outcome tracking, pattern mining, predictive risk)
+- ✓ Entity layer for memory recall boost
+- ✓ Dependency graphs, architectural pattern detection, tech debt scoring
+- ✓ Context-aware convention injection
+
 ### Near-Term: Polish and Reliability
 
 - Improve watcher/indexer reliability for large codebases
@@ -536,7 +557,6 @@ The following were previously planned and are now complete:
 
 ### Medium-Term: Deeper Intelligence
 
-- Richer code capability graph with dependency analysis
 - More sophisticated behavior prediction models
 - Team collaboration features beyond pattern sharing
 

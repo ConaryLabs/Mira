@@ -92,6 +92,12 @@ pub struct FuzzyCache {
     memory_refresh: Mutex<()>,
 }
 
+impl Default for FuzzyCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FuzzyCache {
     pub fn new() -> Self {
         Self {

@@ -11,7 +11,7 @@ Search the codebase using Mira's semantic search to find code by meaning, not ju
 
 ## Instructions
 
-1. Use the `mcp__mira__search_code` tool with the query provided above
+1. Use the `mcp__mira__code` tool with `action="search"` and the query provided above
 2. Set an appropriate limit (default: 10 results)
 3. Present results clearly with:
    - File path and line numbers

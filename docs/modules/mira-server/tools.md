@@ -6,26 +6,25 @@ MCP tool implementations. Contains the business logic for all user-facing tools 
 
 Two-layer organization:
 - `tools/core/` - Tool implementations (business logic)
-- `tools/mod.rs` - Re-exports via `pub use core::*`
+- `tools/mcp.rs` - MCP protocol layer (request routing, schema, outputSchema)
 
-The MCP layer (`mcp/mod.rs`) calls into these functions after deserializing request parameters.
+The MCP layer calls into these functions after deserializing request parameters.
 
 ## Core Modules
 
-| Module | Tools |
-|--------|-------|
-| `memory.rs` | `remember`, `recall`, `forget` |
-| `code.rs` | `search_code`, `get_symbols`, `find_callers`, `find_callees`, `index`, `summarize_codebase` |
-| `project.rs` | `project` (start/set/get) |
-| `goals.rs` | `goal` (create/list/update/milestones) |
-| `documentation.rs` | `documentation` (list/get/complete/skip/inventory/scan) |
-| `reviews.rs` | `finding` (list/get/review/stats/patterns/extract) |
-| `diff.rs` | `analyze_diff` |
-| `experts/` | `consult_experts`, `configure_expert` |
-| `session.rs` | `session_history`, `reply_to_mira` |
-| `session_notes.rs` | Claude Code session note integration |
-| `teams.rs` | `team` (create/invite/remove/list/members) |
-| `cross_project.rs` | `cross_project` (sharing/syncing patterns) |
-| `usage.rs` | `usage` (summary/stats/list) |
-| `claude_local.rs` | `export_claude_local` |
-| `dev.rs` | `get_session_recap` |
+| Module | Tool | Actions |
+|--------|------|---------|
+| `memory.rs` | `memory` | `remember`, `recall`, `forget` |
+| `code.rs` | `code` | `search`, `symbols`, `callers`, `callees`, `dependencies`, `patterns`, `tech_debt` |
+| `code.rs` | `index` | `project`, `file`, `status`, `compact`, `summarize`, `health` |
+| `project.rs` | `project` | `start`, `set`, `get` |
+| `goals.rs` | `goal` | `create`, `bulk_create`, `list`, `get`, `update`, `delete`, `add_milestone`, `complete_milestone`, `delete_milestone`, `progress` |
+| `documentation.rs` | `documentation` | `list`, `get`, `complete`, `skip`, `inventory`, `scan`, `export_claude_local` |
+| `reviews.rs` | `finding` | `list`, `get`, `review`, `stats`, `patterns`, `extract` |
+| `diff.rs` | `analyze_diff` | (standalone) |
+| `experts/` | `expert` | `consult`, `configure` |
+| `session.rs` | `session` | `history`, `recap`, `usage`, `insights` |
+| `session.rs` | `reply_to_mira` | (standalone) |
+| `tasks.rs` | `tasks` | `list`, `get`, `cancel` |
+| `teams.rs` | `team` | `create`, `invite`, `remove`, `list`, `members` |
+| `cross_project.rs` | `cross_project` | `get_preferences`, `enable_sharing`, `disable_sharing`, `reset_budget`, `get_stats`, `extract_patterns`, `sync` |

@@ -100,7 +100,12 @@ fn mine_module_hotspots(conn: &Connection, project_id: i64) -> Result<usize> {
 
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(
-        rusqlite::params![project_id, project_id, MIN_OBSERVATIONS, MAX_PATTERNS_PER_STRATEGY as i64],
+        rusqlite::params![
+            project_id,
+            project_id,
+            MIN_OBSERVATIONS,
+            MAX_PATTERNS_PER_STRATEGY as i64
+        ],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -140,7 +145,12 @@ fn mine_module_hotspots(conn: &Connection, project_id: i64) -> Result<usize> {
                 files: vec![],
                 module: Some(module),
                 pattern_subtype: "module_hotspot".to_string(),
-                outcome_stats: OutcomeStats { total, clean, reverted, follow_up_fix: fixed },
+                outcome_stats: OutcomeStats {
+                    total,
+                    clean,
+                    reverted,
+                    follow_up_fix: fixed,
+                },
                 sample_commits,
             },
             confidence,
@@ -279,18 +289,14 @@ fn query_gap_stats(
     file_a: &str,
     file_b: &str,
 ) -> Result<Option<OutcomeStats>> {
-    let result = conn.query_row(
-        sql,
-        rusqlite::params![project_id, file_a, file_b],
-        |row| {
-            Ok(OutcomeStats {
-                total: row.get(0)?,
-                clean: row.get(1)?,
-                reverted: row.get(2)?,
-                follow_up_fix: row.get(3)?,
-            })
-        },
-    );
+    let result = conn.query_row(sql, rusqlite::params![project_id, file_a, file_b], |row| {
+        Ok(OutcomeStats {
+            total: row.get(0)?,
+            clean: row.get(1)?,
+            reverted: row.get(2)?,
+            follow_up_fix: row.get(3)?,
+        })
+    });
 
     match result {
         Ok(stats) if stats.total > 0 => Ok(Some(stats)),
@@ -381,7 +387,12 @@ fn mine_size_risk(conn: &Connection, project_id: i64) -> Result<usize> {
                 files: vec![],
                 module: None,
                 pattern_subtype: "size_risk".to_string(),
-                outcome_stats: OutcomeStats { total, clean, reverted, follow_up_fix: fixed },
+                outcome_stats: OutcomeStats {
+                    total,
+                    clean,
+                    reverted,
+                    follow_up_fix: fixed,
+                },
                 sample_commits,
             },
             confidence,
@@ -438,6 +449,11 @@ mod tests {
     fn test_compute_confidence_high_bad_rate() {
         let low_rate = compute_confidence(10, 0.3);
         let high_rate = compute_confidence(10, 0.9);
-        assert!(high_rate > low_rate, "high_rate={} should be > low_rate={}", high_rate, low_rate);
+        assert!(
+            high_rate > low_rate,
+            "high_rate={} should be > low_rate={}",
+            high_rate,
+            low_rate
+        );
     }
 }

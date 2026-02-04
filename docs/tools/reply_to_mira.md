@@ -60,5 +60,4 @@ Send a response back to Mira during agent collaboration. Used when Mira's fronte
 
 ## See Also
 
-- **session_history**: View session activity including collaboration messages
-- **get_session_recap**: Get session context and recent activity
+- [**session**](./session.md): View session history and recap

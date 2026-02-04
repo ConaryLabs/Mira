@@ -208,9 +208,15 @@ mod tests {
     }
 
     impl Locatable for TestResult {
-        fn file_path(&self) -> &str { &self.path }
-        fn start_line(&self) -> i64 { self.line }
-        fn score(&self) -> f32 { self.s }
+        fn file_path(&self) -> &str {
+            &self.path
+        }
+        fn start_line(&self) -> i64 {
+            self.line
+        }
+        fn score(&self) -> f32 {
+            self.s
+        }
     }
 
     #[test]
@@ -222,8 +228,16 @@ mod tests {
     #[test]
     fn test_dedup_no_duplicates() {
         let results = vec![
-            TestResult { path: "a.rs".into(), line: 1, s: 0.9 },
-            TestResult { path: "b.rs".into(), line: 2, s: 0.8 },
+            TestResult {
+                path: "a.rs".into(),
+                line: 1,
+                s: 0.9,
+            },
+            TestResult {
+                path: "b.rs".into(),
+                line: 2,
+                s: 0.8,
+            },
         ];
         let deduped = deduplicate_by_location(results);
         assert_eq!(deduped.len(), 2);
@@ -233,8 +247,16 @@ mod tests {
     #[test]
     fn test_dedup_keeps_higher_score() {
         let results = vec![
-            TestResult { path: "a.rs".into(), line: 1, s: 0.5 },
-            TestResult { path: "a.rs".into(), line: 1, s: 0.9 },
+            TestResult {
+                path: "a.rs".into(),
+                line: 1,
+                s: 0.5,
+            },
+            TestResult {
+                path: "a.rs".into(),
+                line: 1,
+                s: 0.9,
+            },
         ];
         let deduped = deduplicate_by_location(results);
         assert_eq!(deduped.len(), 1);
@@ -244,9 +266,21 @@ mod tests {
     #[test]
     fn test_dedup_sorted_by_score_desc() {
         let results = vec![
-            TestResult { path: "a.rs".into(), line: 1, s: 0.3 },
-            TestResult { path: "b.rs".into(), line: 1, s: 0.9 },
-            TestResult { path: "c.rs".into(), line: 1, s: 0.6 },
+            TestResult {
+                path: "a.rs".into(),
+                line: 1,
+                s: 0.3,
+            },
+            TestResult {
+                path: "b.rs".into(),
+                line: 1,
+                s: 0.9,
+            },
+            TestResult {
+                path: "c.rs".into(),
+                line: 1,
+                s: 0.6,
+            },
         ];
         let deduped = deduplicate_by_location(results);
         assert_eq!(deduped.len(), 3);

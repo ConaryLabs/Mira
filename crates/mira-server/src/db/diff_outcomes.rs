@@ -114,10 +114,7 @@ pub fn get_outcomes_by_project_sync(
                        ORDER BY created_at DESC
                        LIMIT ?";
             let mut stmt = conn.prepare(sql)?;
-            let rows = stmt.query_map(
-                params![project_id, limit as i64],
-                parse_diff_outcome_row,
-            )?;
+            let rows = stmt.query_map(params![project_id, limit as i64], parse_diff_outcome_row)?;
             rows.collect()
         }
     }
@@ -180,8 +177,6 @@ pub fn get_outcome_stats_sync(
                GROUP BY outcome_type
                ORDER BY cnt DESC";
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![project_id], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })?;
+    let rows = stmt.query_map(params![project_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
     rows.collect()
 }

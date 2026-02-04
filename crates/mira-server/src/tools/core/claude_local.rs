@@ -127,8 +127,7 @@ fn import_claude_local_md_sync(
     }
 
     // Get existing memories to check for duplicates
-    let existing =
-        search_memories_sync(conn, Some(project_id), "", None, 1000).str_err()?;
+    let existing = search_memories_sync(conn, Some(project_id), "", None, 1000).str_err()?;
     let existing_content: HashSet<_> = existing.iter().map(|m| m.content.as_str()).collect();
 
     let mut imported = 0;

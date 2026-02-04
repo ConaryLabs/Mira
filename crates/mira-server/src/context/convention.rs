@@ -86,8 +86,7 @@ impl ConventionInjector {
         {
             let cache = self.cache.lock().await;
             if let Some(cached) = cache.as_ref() {
-                if cached.key == cache_key
-                    && cached.created_at.elapsed().as_secs() < CACHE_TTL_SECS
+                if cached.key == cache_key && cached.created_at.elapsed().as_secs() < CACHE_TTL_SECS
                 {
                     return cached.context.clone();
                 }
@@ -99,9 +98,7 @@ impl ConventionInjector {
         let pool = self.pool.clone();
 
         let conventions = match pool
-            .interact(move |conn| {
-                query_conventions(conn, project_id, &module_paths)
-            })
+            .interact(move |conn| query_conventions(conn, project_id, &module_paths))
             .await
         {
             Ok(convs) => convs,
@@ -155,7 +152,9 @@ fn query_conventions(
     }
 
     // Build parameterized IN clause
-    let placeholders: Vec<String> = (0..module_paths.len()).map(|i| format!("?{}", i + 2)).collect();
+    let placeholders: Vec<String> = (0..module_paths.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect();
     let sql = format!(
         "SELECT module_path, module_id, error_handling, test_pattern,
                 key_imports, naming, detected_patterns
@@ -243,7 +242,10 @@ fn format_conventions(modules: &[WorkingModule], conventions: &[ConventionRow]) 
         if output.len() >= MAX_CONVENTION_CHARS {
             break;
         }
-        if let Some(conv) = conventions.iter().find(|c| c.module_path == module.module_path) {
+        if let Some(conv) = conventions
+            .iter()
+            .find(|c| c.module_path == module.module_path)
+        {
             let summary = make_one_liner(conv);
             if !summary.is_empty() {
                 let line = format!("\n{}: {}", conv.module_id, summary);
@@ -376,8 +378,7 @@ mod tests {
 
     #[test]
     fn test_extract_pattern_names() {
-        let json =
-            r#"[{"pattern":"repository","confidence":0.85,"evidence":[]},{"pattern":"builder","confidence":0.90,"evidence":[]}]"#;
+        let json = r#"[{"pattern":"repository","confidence":0.85,"evidence":[]},{"pattern":"builder","confidence":0.90,"evidence":[]}]"#;
         let result = extract_pattern_names(json);
         assert!(result.is_some());
         let names = result.unwrap();

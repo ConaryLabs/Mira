@@ -17,7 +17,7 @@ For full session context, call `session(action="recap")`. Use `memory(action="re
 | Store secrets in memories | Keep secrets in `.env` only |
 | Guess at MCP tool parameters | Check tool schema or existing usage first |
 | Add dependencies without checking | Run `memory(action="recall", query="dependencies")` first |
-| Modify `proxy.rs` handler signatures | Coordinate changes across all tool handlers |
+| Change tool handler signatures in `tools/mcp.rs` | Coordinate changes across all tool modules in `tools/core/` |
 
 ## Tool Selection
 
@@ -64,9 +64,11 @@ mira debug-carto     # Debug cartographer module detection
 
 ## Environment
 
-API keys are in `~/.mira/.env`:
+API keys are in `~/.mira/.env` (optional with MCP Sampling):
 - `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)
 - `GEMINI_API_KEY` - Embeddings (Google gemini-embedding-001)
+
+If no keys are configured, experts use MCP Sampling to route through the host client.
 
 ## Claude Code Config Locations
 

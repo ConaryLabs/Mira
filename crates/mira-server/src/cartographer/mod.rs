@@ -71,7 +71,10 @@ pub fn format_compact(map: &CodebaseMap) -> String {
                 })
                 .unwrap_or_default();
 
-            output.push_str(&format!("  {} - {}{}{}\n", module.name, purpose, pattern_tags, deps));
+            output.push_str(&format!(
+                "  {} - {}{}{}\n",
+                module.name, purpose, pattern_tags, deps
+            ));
         }
     }
 

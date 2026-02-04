@@ -596,7 +596,11 @@ mod tests {
         let result = detect_test_patterns(&chunks);
         assert!(result.is_some());
         let r = result.unwrap();
-        assert!(r.contains("tokio::test"), "Expected 'tokio::test' in: {}", r);
+        assert!(
+            r.contains("tokio::test"),
+            "Expected 'tokio::test' in: {}",
+            r
+        );
         assert!(r.contains("inline #[cfg(test)]"));
     }
 

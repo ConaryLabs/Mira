@@ -120,7 +120,9 @@ fn semantic_recall_sql() -> String {
          WHERE {}
          ORDER BY distance
          LIMIT ?3",
-        scope_filter_sql("f.").replace("?{pid}", "?2").replace("?{uid}", "?4")
+        scope_filter_sql("f.")
+            .replace("?{pid}", "?2")
+            .replace("?{uid}", "?4")
     )
 }
 
@@ -458,7 +460,9 @@ pub fn search_memories_sync(
            AND content LIKE ?2 ESCAPE '\\'
          ORDER BY updated_at DESC
          LIMIT ?3",
-        scope_filter_sql("").replace("?{pid}", "?1").replace("?{uid}", "?4")
+        scope_filter_sql("")
+            .replace("?{pid}", "?1")
+            .replace("?{uid}", "?4")
     );
     let mut stmt = conn.prepare(&sql)?;
 

@@ -9,8 +9,8 @@ pub mod dependencies;
 mod diff_analysis;
 pub mod diff_outcomes;
 pub mod documentation;
-pub mod entities;
 mod embeddings;
+pub mod entities;
 mod index;
 mod insights;
 mod memory;
@@ -31,8 +31,8 @@ mod session_tests;
 mod tasks;
 #[cfg(test)]
 mod tasks_tests;
-pub mod tech_debt;
 mod teams;
+pub mod tech_debt;
 mod types;
 mod usage;
 
@@ -97,6 +97,7 @@ pub use index::{
     insert_symbol_sync,
     queue_pending_embedding_sync,
 };
+pub use insights::get_unified_insights_sync;
 pub use memory::{
     RankedMemory,
     StoreMemoryParams,
@@ -150,7 +151,6 @@ pub use search::{
     chunk_like_search_sync, find_callees_sync, find_callers_sync, fts_search_sync,
     get_symbol_bounds_sync, semantic_code_search_sync, symbol_like_search_sync,
 };
-pub use insights::get_unified_insights_sync;
 pub use session::{
     build_session_recap_sync, close_session_sync, create_session_sync, get_history_after_sync,
     get_recent_sessions_sync, get_session_history_sync, get_session_stats_sync,

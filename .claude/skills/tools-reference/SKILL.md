@@ -1,8 +1,8 @@
 # Mira Consolidated Tools Reference
 
-Mira uses action-based tools to reduce cognitive load. Reference for tool signatures and workflows.
+Mira uses 11 action-based tools. Reference for tool signatures and workflows.
 
-## `project` - Project/Session Management
+## `project` — Project/Session Management
 
 ```
 project(action="start", project_path="...", name="...")  # Initialize session
@@ -10,40 +10,125 @@ project(action="set", project_path="...", name="...")    # Change active project
 project(action="get")                                     # Show current project
 ```
 
-## `finding` - Code Review Findings
+## `memory` — Persistent Memory
 
 ```
-finding(action="list", status="pending")                  # List findings
-finding(action="get", finding_id=123)                     # Get finding details
-finding(action="review", finding_id=123, status="accepted", feedback="...")  # Review single
-finding(action="review", finding_ids=[1,2,3], status="rejected")  # Bulk review
-finding(action="stats")                                   # Get statistics
-finding(action="patterns")                                # Get learned patterns
-finding(action="extract")                                 # Extract patterns from accepted findings
+memory(action="remember", content="...", fact_type="decision", category="...")
+memory(action="recall", query="...", limit=10, category="...", fact_type="...")
+memory(action="forget", id="42")
 ```
 
-## `documentation` - Documentation Tasks
-
-Claude Code writes documentation directly (no expert system).
+## `code` — Code Intelligence
 
 ```
-documentation(action="list", status="pending")            # List doc tasks
-documentation(action="get", task_id=123)                  # Get task details + guidelines
-documentation(action="complete", task_id=123)             # Mark done after writing
-documentation(action="skip", task_id=123, reason="...")   # Skip a task
-documentation(action="inventory")                         # Show doc inventory
-documentation(action="scan")                              # Trigger doc scan
+code(action="search", query="authentication middleware", limit=10)
+code(action="symbols", file_path="src/main.rs", symbol_type="function")
+code(action="callers", function_name="handle_login", limit=20)
+code(action="callees", function_name="process_request", limit=20)
+code(action="dependencies")                 # Module dependency graph
+code(action="patterns")                     # Architectural pattern detection
+code(action="tech_debt")                    # Per-module tech debt scores
 ```
 
-**Workflow:**
-1. `documentation(action="list")` - See what needs docs
-2. `documentation(action="get", task_id=N)` - Get source path, target path, guidelines
-3. Read the source file, write the documentation
-4. `documentation(action="complete", task_id=N)` - Mark done
-
-## `consult_experts` - Expert Consultation
+## `session` — Session Management & Analytics
 
 ```
-consult_experts(roles=["architect"], context="...", question="...")
-consult_experts(roles=["code_reviewer", "security"], context="...")  # Multiple
+session(action="history", history_action="current")
+session(action="history", history_action="list_sessions", limit=5)
+session(action="history", history_action="get_history", session_id="...")
+session(action="recap")                     # Quick overview: goals, sessions, insights
+session(action="usage", usage_action="summary", since_days=7)
+session(action="usage", usage_action="stats", group_by="provider_model")
+session(action="usage", usage_action="list", limit=50)
+session(action="insights", insight_source="pondering", min_confidence=0.5)
+```
+
+## `expert` — Expert Consultation & Configuration
+
+```
+expert(action="consult", roles=["architect"], context="...", question="...")
+expert(action="consult", roles=["code_reviewer", "security"], context="...")
+expert(action="configure", config_action="list")
+expert(action="configure", config_action="set", role="architect", provider="gemini")
+expert(action="configure", config_action="get", role="architect")
+expert(action="configure", config_action="delete", role="architect")
+expert(action="configure", config_action="providers")
+```
+
+Roles: `architect`, `plan_reviewer`, `scope_analyst`, `code_reviewer`, `security`
+
+## `goal` — Cross-Session Goal Tracking
+
+```
+goal(action="create", title="...", description="...", priority="high")
+goal(action="bulk_create", goals='[{"title": "...", "priority": "medium"}]')
+goal(action="list", include_finished=false, limit=10)
+goal(action="get", goal_id="1")
+goal(action="update", goal_id="1", status="in_progress")
+goal(action="delete", goal_id="1")
+goal(action="add_milestone", goal_id="1", milestone_title="...", weight=2)
+goal(action="complete_milestone", milestone_id="1")
+goal(action="delete_milestone", milestone_id="1")
+goal(action="progress", goal_id="1")
+```
+
+## `finding` — Code Review Findings
+
+```
+finding(action="list", status="pending", expert_role="security", file_path="...")
+finding(action="get", finding_id=123)
+finding(action="review", finding_id=123, status="accepted", feedback="...")
+finding(action="review", finding_ids=[1,2,3], status="rejected")  # Bulk
+finding(action="stats")
+finding(action="patterns", correction_type="bug")
+finding(action="extract")                   # Extract patterns from accepted findings
+```
+
+## `documentation` — Documentation Management
+
+```
+documentation(action="list", status="pending", priority="high")
+documentation(action="get", task_id=123)    # Get task details + writing guidelines
+documentation(action="complete", task_id=123)
+documentation(action="skip", task_id=123, reason="...")
+documentation(action="inventory")           # Show all existing docs
+documentation(action="scan")               # Trigger documentation scan
+```
+
+**Workflow:** list → get → (write docs) → complete
+
+## `index` — Code Indexing & Health
+
+```
+index(action="project")                     # Full project index (auto-enqueues as background task)
+index(action="project", skip_embed=true)    # Fast re-index without embeddings
+index(action="file", path="src/main.rs")
+index(action="status")                      # Show index statistics
+index(action="compact")                     # VACUUM vec tables
+index(action="summarize")                   # Generate module summaries
+index(action="health")                      # Full code health scan (background task)
+```
+
+## `analyze_diff` — Semantic Diff Analysis
+
+```
+analyze_diff()                              # Auto-detects staged/working/last commit
+analyze_diff(from_ref="main", to_ref="feature/x")
+analyze_diff(from_ref="v1.0", to_ref="v1.1", include_impact=true)
+```
+
+## `tasks` — Async Background Operations
+
+```
+tasks(action="list")                        # Show running/completed tasks
+tasks(action="get", task_id="abc123")       # Get task status and result
+tasks(action="cancel", task_id="abc123")    # Cancel a running task
+```
+
+## Other Tools
+
+```
+reply_to_mira(in_reply_to="msg_id", content="...", complete=true)
+team(action="create|invite|remove|list|members", ...)
+cross_project(action="enable_sharing|disable_sharing|get_preferences|get_stats|extract_patterns|sync", ...)
 ```

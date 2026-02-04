@@ -1,15 +1,12 @@
 //! Unified memory tools (recall, remember, forget)
 
-use crate::db::{
-    StoreMemoryParams, store_embedding_sync,
-    store_memory_sync,
-};
+use crate::db::{StoreMemoryParams, store_embedding_sync, store_memory_sync};
+use crate::mcp::responses::Json;
 use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
 use mira_types::MemoryFact;
 use regex::Regex;
-use crate::mcp::responses::Json;
 use std::sync::LazyLock;
 
 /// Patterns that look like secrets/credentials.
@@ -63,7 +60,11 @@ fn detect_secret(content: &str) -> Option<&'static str> {
 
 /// Fire-and-forget recording of memory access for evidence-based tracking.
 /// Spawns a background task that records each memory ID as accessed in the given session.
-fn spawn_record_access(pool: std::sync::Arc<crate::db::pool::DatabasePool>, ids: Vec<i64>, session_id: String) {
+fn spawn_record_access(
+    pool: std::sync::Arc<crate::db::pool::DatabasePool>,
+    ids: Vec<i64>,
+    session_id: String,
+) {
     use crate::db::record_memory_access_sync;
     tokio::spawn(async move {
         if let Err(e) = pool
@@ -90,8 +91,19 @@ pub async fn handle_memory<C: ToolContext>(
     use crate::mcp::requests::MemoryAction;
     match req.action {
         MemoryAction::Remember => {
-            let content = req.content.ok_or("content is required for action 'remember'")?;
-            remember(ctx, content, req.key, req.fact_type, req.category, req.confidence, req.scope).await
+            let content = req
+                .content
+                .ok_or("content is required for action 'remember'")?;
+            remember(
+                ctx,
+                content,
+                req.key,
+                req.fact_type,
+                req.category,
+                req.confidence,
+                req.scope,
+            )
+            .await
         }
         MemoryAction::Recall => {
             let query = req.query.ok_or("query is required for action 'recall'")?;
@@ -326,8 +338,10 @@ pub async fn recall<C: ToolContext>(
                     } else {
                         content.clone()
                     };
-                    let branch_tag =
-                        branch.as_ref().map(|b| format!(" [{}]", b)).unwrap_or_default();
+                    let branch_tag = branch
+                        .as_ref()
+                        .map(|b| format!(" [{}]", b))
+                        .unwrap_or_default();
                     response.push_str(&format!(
                         "  [{}] (score: {:.2}){} {}\n",
                         id, score, branch_tag, preview
@@ -369,8 +383,7 @@ pub async fn recall<C: ToolContext>(
                     })
                     .collect();
                 let total = items.len();
-                let mut response =
-                    format!("{}Found {} memories (fuzzy):\n", context_header, total);
+                let mut response = format!("{}Found {} memories (fuzzy):\n", context_header, total);
                 for mem in &results {
                     let preview = if mem.content.len() > 100 {
                         format!("{}...", &mem.content[..100])

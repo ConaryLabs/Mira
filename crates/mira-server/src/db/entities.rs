@@ -170,7 +170,14 @@ mod tests {
         let conn = setup_db();
         let pid = insert_project(&conn);
 
-        let eid = upsert_entity_sync(&conn, Some(pid), "database_pool", "code_ident", "DatabasePool").unwrap();
+        let eid = upsert_entity_sync(
+            &conn,
+            Some(pid),
+            "database_pool",
+            "code_ident",
+            "DatabasePool",
+        )
+        .unwrap();
         assert!(eid > 0);
 
         // Verify occurrence_count starts at 0 (incremented on link, not on upsert)
@@ -189,8 +196,22 @@ mod tests {
         let conn = setup_db();
         let pid = insert_project(&conn);
 
-        let eid1 = upsert_entity_sync(&conn, Some(pid), "database_pool", "code_ident", "DatabasePool").unwrap();
-        let eid2 = upsert_entity_sync(&conn, Some(pid), "database_pool", "code_ident", "DatabasePool").unwrap();
+        let eid1 = upsert_entity_sync(
+            &conn,
+            Some(pid),
+            "database_pool",
+            "code_ident",
+            "DatabasePool",
+        )
+        .unwrap();
+        let eid2 = upsert_entity_sync(
+            &conn,
+            Some(pid),
+            "database_pool",
+            "code_ident",
+            "DatabasePool",
+        )
+        .unwrap();
         assert_eq!(eid1, eid2);
     }
 
@@ -199,7 +220,14 @@ mod tests {
         let conn = setup_db();
         let pid = insert_project(&conn);
         let fid = insert_fact(&conn, pid, "test content");
-        let eid = upsert_entity_sync(&conn, Some(pid), "database_pool", "code_ident", "DatabasePool").unwrap();
+        let eid = upsert_entity_sync(
+            &conn,
+            Some(pid),
+            "database_pool",
+            "code_ident",
+            "DatabasePool",
+        )
+        .unwrap();
 
         // First link should succeed
         let created = link_entity_to_fact_sync(&conn, fid, eid).unwrap();
@@ -226,7 +254,14 @@ mod tests {
         let pid = insert_project(&conn);
         let fid1 = insert_fact(&conn, pid, "content 1");
         let fid2 = insert_fact(&conn, pid, "content 2");
-        let eid = upsert_entity_sync(&conn, Some(pid), "database_pool", "code_ident", "DatabasePool").unwrap();
+        let eid = upsert_entity_sync(
+            &conn,
+            Some(pid),
+            "database_pool",
+            "code_ident",
+            "DatabasePool",
+        )
+        .unwrap();
 
         link_entity_to_fact_sync(&conn, fid1, eid).unwrap();
         link_entity_to_fact_sync(&conn, fid2, eid).unwrap();
@@ -278,8 +313,22 @@ mod tests {
         let fid2 = insert_fact(&conn, pid, "content about store_memory_sync");
         let fid3 = insert_fact(&conn, pid, "content about both");
 
-        let eid_pool = upsert_entity_sync(&conn, Some(pid), "database_pool", "code_ident", "DatabasePool").unwrap();
-        let eid_store = upsert_entity_sync(&conn, Some(pid), "store_memory_sync", "code_ident", "store_memory_sync").unwrap();
+        let eid_pool = upsert_entity_sync(
+            &conn,
+            Some(pid),
+            "database_pool",
+            "code_ident",
+            "DatabasePool",
+        )
+        .unwrap();
+        let eid_store = upsert_entity_sync(
+            &conn,
+            Some(pid),
+            "store_memory_sync",
+            "code_ident",
+            "store_memory_sync",
+        )
+        .unwrap();
 
         link_entity_to_fact_sync(&conn, fid1, eid_pool).unwrap();
         link_entity_to_fact_sync(&conn, fid2, eid_store).unwrap();
@@ -320,7 +369,8 @@ mod tests {
         let conn = setup_db();
         let pid = insert_project(&conn);
         let fid = insert_fact(&conn, pid, "will be deleted");
-        let eid = upsert_entity_sync(&conn, Some(pid), "test_entity", "code_ident", "test_entity").unwrap();
+        let eid = upsert_entity_sync(&conn, Some(pid), "test_entity", "code_ident", "test_entity")
+            .unwrap();
         link_entity_to_fact_sync(&conn, fid, eid).unwrap();
 
         // Delete the fact

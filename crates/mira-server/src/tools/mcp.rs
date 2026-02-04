@@ -177,6 +177,8 @@ impl ToolContext for MiraServer {
     }
 
     fn elicitation_client(&self) -> Option<crate::elicitation::ElicitationClient> {
-        Some(crate::elicitation::ElicitationClient::new(self.peer.clone()))
+        Some(crate::elicitation::ElicitationClient::new(
+            self.peer.clone(),
+        ))
     }
 }

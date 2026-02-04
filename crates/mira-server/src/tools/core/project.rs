@@ -15,12 +15,14 @@ use crate::db::{
     upsert_session_with_branch_sync,
 };
 use crate::git::get_git_branch;
-use crate::mcp::responses::{ProjectData, ProjectGetData, ProjectOutput, ProjectSetData, ProjectStartData};
+use crate::mcp::responses::Json;
+use crate::mcp::responses::{
+    ProjectData, ProjectGetData, ProjectOutput, ProjectSetData, ProjectStartData,
+};
 use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
 use crate::tools::core::claude_local;
 use crate::utils::ResultExt;
-use crate::mcp::responses::Json;
 
 // Helper functions moved to db/project.rs:
 // - search_memories_text_sync

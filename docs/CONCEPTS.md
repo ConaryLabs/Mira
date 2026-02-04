@@ -99,8 +99,8 @@ Mira builds a relational graph of function calls:
 
 | Query | What it answers |
 |-------|-----------------|
-| `find_callers("foo")` | Who calls function `foo`? |
-| `find_callees("foo")` | What does function `foo` call? |
+| `code(action="callers", function_name="foo")` | Who calls function `foo`? |
+| `code(action="callees", function_name="foo")` | What does function `foo` call? |
 
 This allows tracing execution paths and understanding dependencies without reading every file.
 
@@ -126,7 +126,7 @@ Three strategies run in parallel:
 
 ### Hybrid Search
 
-The `search_code` tool runs semantic and keyword searches in parallel, merges and deduplicates results, then applies intent-based reranking (documentation, implementation, example, or general queries get different boost profiles).
+The `code(action="search")` tool runs semantic and keyword searches in parallel, merges and deduplicates results, then applies intent-based reranking (documentation, implementation, example, or general queries get different boost profiles).
 
 ---
 
@@ -177,9 +177,10 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 
 ### Provider Configuration
 
-Experts can be backed by different LLM providers via `configure_expert` or `~/.mira/config.toml`:
-- **DeepSeek** (default) - Optimized for extended reasoning
-- **Gemini** - Google's models, cost-effective for simpler tasks
+Experts can be backed by different LLM providers via `expert(action="configure")` or `~/.mira/config.toml`:
+- **MCP Sampling** (zero-key) — Uses the host client, no API keys needed
+- **DeepSeek** (default with key) — Optimized for extended reasoning
+- **Gemini** — Google's models, cost-effective for simpler tasks
 
 Each expert role can use a different provider based on the task requirements.
 
@@ -191,7 +192,7 @@ A single expert runs in a multi-turn **agentic loop**:
 
 ```
 1. Reason  → Analyze the request, decide what info is needed
-2. Act     → Call tools (search_code, read_file, find_callers...)
+2. Act     → Call tools (code search, read_file, callers...)
 3. Observe → Tool output feeds back into context
 4. Iterate → Continue until task complete (max 100 iterations)
 ```
@@ -223,11 +224,11 @@ Expert consultations use a `ReasoningStrategy` to manage LLM clients:
 
 Experts can use these tools to explore the codebase:
 
-- `search_code` — Semantic code search
+- `code(action="search")` — Semantic code search
 - `read_file` — Read file contents
-- `get_symbols` — Get functions/classes in a file
-- `find_callers` / `find_callees` — Trace call relationships
-- `recall` — Search memories
+- `code(action="symbols")` — Get functions/classes in a file
+- `code(action="callers")` / `code(action="callees")` — Trace call relationships
+- `memory(action="recall")` — Search memories
 - `web_fetch` / `web_search` — Web access (if API keys configured)
 - **MCP tools** — Tools from external MCP servers in the host environment
 
@@ -258,7 +259,7 @@ A **Session** represents a continuous period of work with Claude Code.
 
 ### Session Recap
 
-When you return to a project, `get_session_recap` provides:
+When you return to a project, `session(action="recap")` provides:
 
 - Recent context from past sessions
 - Pending tasks and active goals

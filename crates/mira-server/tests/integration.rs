@@ -5,8 +5,9 @@
 
 mod test_utils;
 
-use std::sync::Arc;
-use mira::mcp::requests::{ExpertConfigAction, GoalAction, GoalRequest, IndexAction, SessionHistoryAction};
+use mira::mcp::requests::{
+    ExpertConfigAction, GoalAction, GoalRequest, IndexAction, SessionHistoryAction,
+};
 use mira::mcp::responses::*;
 #[allow(unused_imports)]
 use mira::tools::core::{
@@ -14,6 +15,7 @@ use mira::tools::core::{
     forget, get_project, get_session_recap, get_symbols, goal, index, recall, remember,
     reply_to_mira, search_code, session_history, session_start, set_project, summarize_codebase,
 };
+use std::sync::Arc;
 use test_utils::TestContext;
 
 /// Extract message text from Json<T> output for test assertions
@@ -47,7 +49,10 @@ async fn test_session_start_basic() {
         msg!(output).contains("Test Project"),
         "Output should contain project name"
     );
-    assert!(msg!(output).contains("Ready."), "Output should end with Ready.");
+    assert!(
+        msg!(output).contains("Ready."),
+        "Output should end with Ready."
+    );
 
     // Verify project was set in context
     let project = ctx.get_project().await;
@@ -195,8 +200,15 @@ async fn test_remember_basic() {
 
     assert!(result.is_ok(), "remember failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(msg!(output).contains("Stored memory"), "Output: {}", msg!(output));
-    assert!(msg!(output).contains("id:"), "Output should contain memory ID");
+    assert!(
+        msg!(output).contains("Stored memory"),
+        "Output: {}",
+        msg!(output)
+    );
+    assert!(
+        msg!(output).contains("id:"),
+        "Output should contain memory ID"
+    );
 
     // Extract memory ID from output (optional)
     // We'll just verify that recall can find it
@@ -209,7 +221,9 @@ async fn test_remember_basic() {
     let recall_output = recall_result.unwrap();
     // Since embeddings are disabled, fallback to keyword search may find the memory
     // We'll just ensure no error
-    assert!(msg!(recall_output).contains("memories") || msg!(recall_output).contains("No memories"));
+    assert!(
+        msg!(recall_output).contains("memories") || msg!(recall_output).contains("No memories")
+    );
 }
 
 #[tokio::test]
@@ -242,9 +256,19 @@ async fn test_remember_with_key() {
 
     assert!(result.is_ok(), "remember failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(msg!(output).contains("Stored memory"), "Output: {}", msg!(output));
-    assert!(msg!(output).contains("with key"), "Output should indicate key");
-    assert!(msg!(output).contains("id:"), "Output should contain memory ID");
+    assert!(
+        msg!(output).contains("Stored memory"),
+        "Output: {}",
+        msg!(output)
+    );
+    assert!(
+        msg!(output).contains("with key"),
+        "Output should indicate key"
+    );
+    assert!(
+        msg!(output).contains("id:"),
+        "Output should contain memory ID"
+    );
 
     // Extract memory ID from structured data
     let memory_id = match &output.0.data {
@@ -325,7 +349,11 @@ async fn test_find_function_callers_empty() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(msg!(output).contains("No callers found"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("No callers found"),
+        "Output: {}",
+        msg!(output)
+    );
 }
 
 #[tokio::test]
@@ -349,7 +377,11 @@ async fn test_find_function_callees_empty() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(msg!(output).contains("No callees found"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("No callees found"),
+        "Output: {}",
+        msg!(output)
+    );
 }
 
 #[tokio::test]
@@ -369,7 +401,11 @@ async fn test_index_status() {
     let result = index(&ctx, IndexAction::Status, None, false).await;
     assert!(result.is_ok(), "index status failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(msg!(output).contains("Index status"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("Index status"),
+        "Output: {}",
+        msg!(output)
+    );
     assert!(
         msg!(output).contains("symbols") && msg!(output).contains("embedded chunks"),
         "Output: {}",
@@ -443,7 +479,8 @@ async fn test_summarize_codebase_no_deepseek() {
     );
     let output = result.unwrap();
     assert!(
-        msg!(output).contains("Summarized") || msg!(output).contains("All modules already have summaries"),
+        msg!(output).contains("Summarized")
+            || msg!(output).contains("All modules already have summaries"),
         "Output: {}",
         msg!(output)
     );
@@ -480,7 +517,11 @@ async fn test_session_history_current() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(msg!(output).contains("No active session"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("No active session"),
+        "Output: {}",
+        msg!(output)
+    );
 
     // Create a session via session_start
     let project_path = "/tmp/test_session_history".to_string();
@@ -500,7 +541,11 @@ async fn test_session_history_current() {
         result.err()
     );
     let output = result.unwrap();
-    assert!(msg!(output).contains("Current session:"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("Current session:"),
+        "Output: {}",
+        msg!(output)
+    );
 }
 
 #[tokio::test]
@@ -570,7 +615,11 @@ async fn test_goal_create_and_list() {
     .await;
     assert!(result.is_ok(), "goal create failed: {:?}", result.err());
     let output = result.unwrap();
-    assert!(msg!(output).contains("Created goal"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("Created goal"),
+        "Output: {}",
+        msg!(output)
+    );
     assert!(
         msg!(output).contains("Implement new feature"),
         "Output: {}",
@@ -930,10 +979,7 @@ async fn test_pool_error_handling() {
     let result = forget(&ctx, "invalid".to_string()).await;
     assert!(result.is_err(), "forget should fail with invalid ID");
     let err = result.err().expect("should be Err");
-    assert!(
-        err.contains("Invalid"),
-        "Error should mention invalid ID"
-    );
+    assert!(err.contains("Invalid"), "Error should mention invalid ID");
 
     // Try forget with non-existent ID
     let result = forget(&ctx, "999999".to_string()).await;
@@ -2054,8 +2100,8 @@ async fn test_documentation_list_filter_by_status() {
 // Tasks fallback tool tests
 // ============================================================================
 
-use mira::mcp::requests::{TasksAction, TasksRequest};
 use mira::mcp::MiraServer;
+use mira::mcp::requests::{TasksAction, TasksRequest};
 use rmcp::task_manager::{OperationDescriptor, OperationMessage, ToolCallTaskResult};
 
 /// Helper to create a MiraServer with in-memory DBs for task tests
@@ -2082,7 +2128,6 @@ async fn test_tasks_list_empty() {
     };
     let output = mira::tools::tasks::handle_tasks(&server, req)
         .await
-        .ok()
         .expect("tasks list should succeed");
     assert!(
         msg!(output).contains("No tasks"),
@@ -2164,7 +2209,8 @@ async fn test_tasks_lifecycle() {
 
     {
         let mut proc = server.processor.lock().await;
-        proc.submit_operation(message).expect("submit should succeed");
+        proc.submit_operation(message)
+            .expect("submit should succeed");
     }
 
     // List — should show one working task
@@ -2174,7 +2220,6 @@ async fn test_tasks_lifecycle() {
     };
     let output = mira::tools::tasks::handle_tasks(&server, req)
         .await
-        .ok()
         .expect("tasks list should succeed");
     assert!(
         msg!(output).contains("1 task(s)"),
@@ -2192,7 +2237,6 @@ async fn test_tasks_lifecycle() {
     };
     let output = mira::tools::tasks::handle_tasks(&server, req)
         .await
-        .ok()
         .expect("tasks get should succeed");
     assert!(
         msg!(output).contains("completed"),
@@ -2231,7 +2275,8 @@ async fn test_tasks_cancel_running() {
 
     {
         let mut proc = server.processor.lock().await;
-        proc.submit_operation(message).expect("submit should succeed");
+        proc.submit_operation(message)
+            .expect("submit should succeed");
     }
 
     // Cancel
@@ -2241,7 +2286,6 @@ async fn test_tasks_cancel_running() {
     };
     let output = mira::tools::tasks::handle_tasks(&server, req)
         .await
-        .ok()
         .expect("cancel should succeed");
     assert!(
         msg!(output).contains("cancelled"),
@@ -2256,7 +2300,6 @@ async fn test_tasks_cancel_running() {
     };
     let output = mira::tools::tasks::handle_tasks(&server, req)
         .await
-        .ok()
         .expect("get after cancel should succeed");
     assert!(
         msg!(output).contains("cancelled"),

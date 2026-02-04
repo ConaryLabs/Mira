@@ -147,4 +147,4 @@ Serialized with `"phase"` as the discriminator inside a `"type": "council"` wrap
 
 - [AgentRole](AgentRole.md) - Agent identity enum used in `AgentResponse`
 - [reply_to_mira](../tools/reply_to_mira.md) - Tool that sends `AgentResponse` events
-- [consult_experts](../tools/consult_experts.md) - Tool that triggers council consultations
+- [expert](../tools/expert.md) - Tool that triggers council consultations

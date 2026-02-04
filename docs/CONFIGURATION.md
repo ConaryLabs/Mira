@@ -19,7 +19,7 @@ Mira uses environment variables for API keys and configuration. These can be set
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_USER_ID` | Optional | User identity override (defaults to git config user.email) |
 
-*At least one provider key (DeepSeek or Gemini) is recommended for full intelligence features. DeepSeek is the default. Mira runs without any keys using heuristic fallbacks — diff analysis uses pattern-based parsing, module summaries use metadata extraction, and background insights use tool history analysis. Expert consultation is the only feature that requires an LLM provider. Semantic search requires `GEMINI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it.*
+*API keys are optional. Mira runs without any keys using heuristic fallbacks — diff analysis uses pattern-based parsing, module summaries use metadata extraction, and background insights use tool history analysis. Expert consultation works without keys via MCP Sampling (uses the host client). Semantic search requires `GEMINI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it. At least one provider key is recommended for full LLM-powered intelligence features.*
 
 ### Embeddings Configuration
 
@@ -190,17 +190,18 @@ Mira's experts can be customized per role with different providers, models, and 
 | `code_reviewer` | deepseek | Code quality and bugs |
 | `security` | deepseek | Vulnerability assessment |
 
-### Using `configure_expert`
+### Using `expert(action="configure")`
 
 **List current configurations:**
 ```
-configure_expert(action="list")
+expert(action="configure", config_action="list")
 ```
 
 **Set provider and model for an expert:**
 ```
-configure_expert(
-  action="set",
+expert(
+  action="configure",
+  config_action="set",
   role="architect",
   provider="gemini",
   model="gemini-2.5-pro"
@@ -209,8 +210,9 @@ configure_expert(
 
 **Customize an expert's system prompt:**
 ```
-configure_expert(
-  action="set",
+expert(
+  action="configure",
+  config_action="set",
   role="code_reviewer",
   prompt="Focus on Rust memory safety and ownership patterns."
 )
@@ -218,12 +220,12 @@ configure_expert(
 
 **List available providers:**
 ```
-configure_expert(action="providers")
+expert(action="configure", config_action="providers")
 ```
 
 **Revert to defaults:**
 ```
-configure_expert(action="delete", role="architect")
+expert(action="configure", config_action="delete", role="architect")
 ```
 
 ### Provider Options
@@ -233,7 +235,7 @@ configure_expert(action="delete", role="architect")
 | `deepseek` | `deepseek-reasoner` | Extended reasoning, multi-step analysis |
 | `gemini` | `gemini-3-pro-preview` | Cost-effective, good reasoning |
 
-Use `configure_expert(action="providers")` to see available providers and their configured models.
+Use `expert(action="configure", config_action="providers")` to see available providers and their configured models.
 
 ---
 
@@ -260,7 +262,7 @@ Configure default LLM providers in `~/.mira/config.toml`:
 
 ```toml
 [llm]
-# Provider for expert tools (consult_architect, consult_code_reviewer, etc.)
+# Provider for expert tools (expert(action="consult", roles=["architect"]), etc.)
 expert_provider = "deepseek"
 
 # Provider for background intelligence (summaries, briefings, capabilities, code health)

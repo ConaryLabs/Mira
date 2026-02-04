@@ -13,7 +13,8 @@ pub struct PatternMatch {
 
 impl PatternMatch {
     fn to_json(&self) -> String {
-        let evidence_json: Vec<String> = self.evidence.iter().map(|e| format!("\"{}\"", e)).collect();
+        let evidence_json: Vec<String> =
+            self.evidence.iter().map(|e| format!("\"{}\"", e)).collect();
         format!(
             "{{\"pattern\":\"{}\",\"confidence\":{:.2},\"evidence\":[{}]}}",
             self.pattern,
@@ -29,7 +30,9 @@ impl PatternMatch {
 
 /// Repository pattern: get_*, find_*, create_*, update_*, delete_* methods
 fn detect_repository(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
-    let crud_prefixes = ["get_", "find_", "create_", "update_", "delete_", "list_", "store_", "fetch_"];
+    let crud_prefixes = [
+        "get_", "find_", "create_", "update_", "delete_", "list_", "store_", "fetch_",
+    ];
     let mut evidence = Vec::new();
 
     for sym in symbols {
@@ -51,7 +54,7 @@ fn detect_repository(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
             .collect();
 
         if prefixes_used.len() >= 2 {
-            let confidence = (evidence.len() as f64 / 8.0).min(1.0).max(0.5);
+            let confidence = (evidence.len() as f64 / 8.0).clamp(0.5, 1.0);
             evidence.truncate(6);
             return Some(PatternMatch {
                 pattern: "repository".to_string(),
@@ -107,7 +110,9 @@ fn detect_factory(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
 
     for sym in symbols {
         if sym.symbol_type == "function" {
-            if sym.name.starts_with("create_") || (sym.name.starts_with("new_") && sym.name != "new") {
+            if sym.name.starts_with("create_")
+                || (sym.name.starts_with("new_") && sym.name != "new")
+            {
                 factory_fns.push(sym.name.clone());
             }
         }
@@ -115,7 +120,7 @@ fn detect_factory(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
 
     if factory_fns.len() >= 2 {
         factory_fns.truncate(6);
-        let confidence = (factory_fns.len() as f64 / 5.0).min(0.9).max(0.5);
+        let confidence = (factory_fns.len() as f64 / 5.0).clamp(0.5, 0.9);
         return Some(PatternMatch {
             pattern: "factory".to_string(),
             confidence,
@@ -128,8 +133,12 @@ fn detect_factory(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
 
 /// Singleton pattern: lazy_static/OnceLock + instance()
 fn detect_singleton(symbols: &[SymbolInfo], imports: &[String]) -> Option<PatternMatch> {
-    let has_lazy = imports.iter().any(|i| i.contains("lazy_static") || i.contains("OnceLock") || i.contains("once_cell"));
-    let has_instance = symbols.iter().any(|s| s.name == "instance" || s.name == "global" || s.name == "get_instance");
+    let has_lazy = imports
+        .iter()
+        .any(|i| i.contains("lazy_static") || i.contains("OnceLock") || i.contains("once_cell"));
+    let has_instance = symbols
+        .iter()
+        .any(|s| s.name == "instance" || s.name == "global" || s.name == "get_instance");
 
     if has_lazy && has_instance {
         let mut evidence = Vec::new();
@@ -151,7 +160,13 @@ fn detect_singleton(symbols: &[SymbolInfo], imports: &[String]) -> Option<Patter
 
 /// Observer pattern: subscribe/on_*/register_* + notify/emit/broadcast
 fn detect_observer(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
-    let subscribe_names = ["subscribe", "on_", "register_", "add_listener", "add_handler"];
+    let subscribe_names = [
+        "subscribe",
+        "on_",
+        "register_",
+        "add_listener",
+        "add_handler",
+    ];
     let notify_names = ["notify", "emit", "broadcast", "publish", "dispatch"];
 
     let mut has_subscribe = Vec::new();
@@ -200,7 +215,7 @@ fn detect_middleware(symbols: &[SymbolInfo], module_name: &str) -> Option<Patter
     let middleware_fns: Vec<String> = symbols
         .iter()
         .filter(|s| {
-            s.signature.as_deref().map_or(false, |sig| {
+            s.signature.as_deref().is_some_and(|sig| {
                 (sig.contains("Request") && sig.contains("Next"))
                     || (sig.contains("request") && sig.contains("next"))
             })
@@ -225,7 +240,9 @@ fn detect_handler(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
         .iter()
         .filter(|s| {
             (s.symbol_type == "function" || s.symbol_type == "method")
-                && (s.name.starts_with("handle_") || s.name.starts_with("dispatch_") || s.name.starts_with("process_"))
+                && (s.name.starts_with("handle_")
+                    || s.name.starts_with("dispatch_")
+                    || s.name.starts_with("process_"))
         })
         .map(|s| s.name.clone())
         .collect();
@@ -233,7 +250,7 @@ fn detect_handler(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
     if handlers.len() >= 3 {
         let mut evidence = handlers;
         evidence.truncate(6);
-        let confidence = (evidence.len() as f64 / 6.0).min(0.9).max(0.6);
+        let confidence = (evidence.len() as f64 / 6.0).clamp(0.6, 0.9);
         return Some(PatternMatch {
             pattern: "handler".to_string(),
             confidence,
@@ -268,7 +285,7 @@ fn detect_strategy(
         if impl_count >= 2 {
             return Some(PatternMatch {
                 pattern: "strategy".to_string(),
-                confidence: (impl_count as f64 / 4.0).min(0.9).max(0.6),
+                confidence: (impl_count as f64 / 4.0).clamp(0.6, 0.9),
                 evidence: vec![
                     format!("trait: {}", trait_sym.name),
                     format!("{} implementations", impl_count),
@@ -458,14 +475,30 @@ pub fn collect_pattern_data(
 
         let mut patterns = Vec::new();
 
-        if let Some(p) = detect_repository(&symbols) { patterns.push(p); }
-        if let Some(p) = detect_builder(&symbols) { patterns.push(p); }
-        if let Some(p) = detect_factory(&symbols) { patterns.push(p); }
-        if let Some(p) = detect_singleton(&symbols, &imports) { patterns.push(p); }
-        if let Some(p) = detect_observer(&symbols) { patterns.push(p); }
-        if let Some(p) = detect_middleware(&symbols, &module.name) { patterns.push(p); }
-        if let Some(p) = detect_handler(&symbols) { patterns.push(p); }
-        if let Some(p) = detect_strategy(conn, project_id, &module.path, &symbols) { patterns.push(p); }
+        if let Some(p) = detect_repository(&symbols) {
+            patterns.push(p);
+        }
+        if let Some(p) = detect_builder(&symbols) {
+            patterns.push(p);
+        }
+        if let Some(p) = detect_factory(&symbols) {
+            patterns.push(p);
+        }
+        if let Some(p) = detect_singleton(&symbols, &imports) {
+            patterns.push(p);
+        }
+        if let Some(p) = detect_observer(&symbols) {
+            patterns.push(p);
+        }
+        if let Some(p) = detect_middleware(&symbols, &module.name) {
+            patterns.push(p);
+        }
+        if let Some(p) = detect_handler(&symbols) {
+            patterns.push(p);
+        }
+        if let Some(p) = detect_strategy(conn, project_id, &module.path, &symbols) {
+            patterns.push(p);
+        }
 
         if patterns.is_empty() {
             continue;
@@ -474,7 +507,11 @@ pub fn collect_pattern_data(
         // Store patterns JSON in codebase_modules
         let patterns_json = format!(
             "[{}]",
-            patterns.iter().map(|p| p.to_json()).collect::<Vec<_>>().join(",")
+            patterns
+                .iter()
+                .map(|p| p.to_json())
+                .collect::<Vec<_>>()
+                .join(",")
         );
         update_module_patterns(conn, project_id, &module.module_id, &patterns_json)?;
 

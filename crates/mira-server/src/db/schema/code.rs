@@ -156,12 +156,7 @@ pub fn run_code_migrations(conn: &Connection) -> Result<()> {
 
 /// Add conventions_extracted_at column to codebase_modules for incremental convention extraction
 fn migrate_conventions_extracted_at(conn: &Connection) -> Result<()> {
-    add_column_if_missing(
-        conn,
-        "codebase_modules",
-        "conventions_extracted_at",
-        "TEXT",
-    )
+    add_column_if_missing(conn, "codebase_modules", "conventions_extracted_at", "TEXT")
 }
 
 /// Add module_dependencies table for cross-module dependency analysis

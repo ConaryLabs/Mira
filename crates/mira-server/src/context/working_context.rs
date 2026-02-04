@@ -113,14 +113,9 @@ fn get_recent_file_paths(
 }
 
 /// Get all module (module_id, module_path) pairs from module_conventions
-fn get_module_paths(
-    conn: &Connection,
-    project_id: i64,
-) -> Result<Vec<(String, String)>, String> {
+fn get_module_paths(conn: &Connection, project_id: i64) -> Result<Vec<(String, String)>, String> {
     let mut stmt = conn
-        .prepare(
-            "SELECT module_path, module_id FROM module_conventions WHERE project_id = ?",
-        )
+        .prepare("SELECT module_path, module_id FROM module_conventions WHERE project_id = ?")
         .str_err()?;
 
     let modules = stmt
@@ -153,7 +148,10 @@ mod tests {
     #[test]
     fn test_find_module_for_file() {
         let modules = vec![
-            ("crates/mira-server/src".to_string(), "mira-server".to_string()),
+            (
+                "crates/mira-server/src".to_string(),
+                "mira-server".to_string(),
+            ),
             (
                 "crates/mira-server/src/context".to_string(),
                 "context".to_string(),
@@ -165,8 +163,7 @@ mod tests {
         ];
 
         // Should match most specific module
-        let result =
-            find_module_for_file("crates/mira-server/src/context/convention.rs", &modules);
+        let result = find_module_for_file("crates/mira-server/src/context/convention.rs", &modules);
         assert!(result.is_some());
         let (path, id) = result.unwrap();
         assert_eq!(id, "context");
