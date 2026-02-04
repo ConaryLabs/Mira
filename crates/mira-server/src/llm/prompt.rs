@@ -24,6 +24,23 @@ Safety guidelines:
 - Follow best practices for secure coding
 "#;
 
+/// Canonical list of expert tool names (code exploration).
+/// Referenced by TOOL_GUIDANCE and available for validation elsewhere.
+pub const EXPERT_CODE_TOOLS: &[(&str, &str)] = &[
+    ("search_code", "Find code by meaning (e.g., \"authentication\", \"error handling\")"),
+    ("get_symbols", "See file structure (functions, structs)"),
+    ("read_file", "Read file contents"),
+    ("find_callers", "See what calls a function"),
+    ("find_callees", "See what a function calls"),
+    ("recall", "Retrieve past decisions and context"),
+];
+
+/// Canonical list of expert tool names (web access).
+pub const EXPERT_WEB_TOOLS: &[(&str, &str)] = &[
+    ("web_fetch", "Fetch and read a web page (pass a URL to retrieve documentation, articles, references)"),
+    ("web_search", "Search the web for current information (queries return titles, URLs, and snippets)"),
+];
+
 /// Tool usage guidance (appended when tools are available)
 const TOOL_GUIDANCE: &str = r#"Use tools to explore codebase before analysis. Don't ask for context - use tools:
 
@@ -407,16 +424,21 @@ mod tests {
 
     #[test]
     fn test_tool_guidance_content() {
-        // Verify TOOL_GUIDANCE contains expected tools
-        assert!(TOOL_GUIDANCE.contains("search_code"));
-        assert!(TOOL_GUIDANCE.contains("get_symbols"));
-        assert!(TOOL_GUIDANCE.contains("read_file"));
-        assert!(TOOL_GUIDANCE.contains("find_callers"));
-        assert!(TOOL_GUIDANCE.contains("find_callees"));
-        assert!(TOOL_GUIDANCE.contains("recall"));
-        // Web tools
-        assert!(TOOL_GUIDANCE.contains("web_fetch"));
-        assert!(TOOL_GUIDANCE.contains("web_search"));
+        // Verify TOOL_GUIDANCE contains all tools from the canonical constants
+        for (name, _desc) in EXPERT_CODE_TOOLS {
+            assert!(
+                TOOL_GUIDANCE.contains(name),
+                "TOOL_GUIDANCE missing code tool: {}",
+                name
+            );
+        }
+        for (name, _desc) in EXPERT_WEB_TOOLS {
+            assert!(
+                TOOL_GUIDANCE.contains(name),
+                "TOOL_GUIDANCE missing web tool: {}",
+                name
+            );
+        }
         // MCP tools guidance
         assert!(TOOL_GUIDANCE.contains("MCP tools"));
     }

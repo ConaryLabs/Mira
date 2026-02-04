@@ -5,8 +5,9 @@ use super::ToolContext;
 use crate::db::{recall_semantic_sync, search_memories_sync};
 use crate::indexer;
 use crate::llm::{Tool, ToolCall};
-use crate::search::{embedding_to_bytes, find_callees, find_callers, hybrid_search};
-use serde_json::{Value, json};
+use crate::search::embedding_to_bytes;
+use crate::tools::core::code::{query_callers, query_callees, query_search_code};
+use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::debug;
@@ -211,6 +212,38 @@ pub fn web_search_tool() -> Tool {
     )
 }
 
+/// Build the full expert toolset: base tools + optionally store_finding + web tools + MCP tools.
+///
+/// Use `include_store_finding: true` for council mode (experts record findings).
+pub async fn build_expert_toolset<C: ToolContext>(
+    ctx: &C,
+    include_store_finding: bool,
+) -> Vec<Tool> {
+    let mut tools = get_expert_tools();
+
+    if include_store_finding {
+        tools.push(store_finding_tool());
+    }
+
+    tools.push(web_fetch_tool());
+
+    if has_brave_search() {
+        tools.push(web_search_tool());
+    }
+
+    let mcp_tools = ctx.mcp_expert_tools().await;
+    if !mcp_tools.is_empty() {
+        debug!(
+            mcp_tool_count = mcp_tools.len(),
+            "Adding MCP tools to expert tool set"
+        );
+        tools.extend(mcp_tools);
+    }
+
+    debug!(total_tools = tools.len(), "Expert tool set built");
+    tools
+}
+
 /// Execute a tool call during council mode, with access to the FindingsStore.
 /// Falls through to `execute_tool` for all tools except `store_finding`.
 pub async fn execute_tool_with_findings<C: ToolContext>(
@@ -324,28 +357,13 @@ pub async fn execute_tool<C: ToolContext>(ctx: &C, tool_call: &ToolCall) -> Stri
 }
 
 async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> String {
-    let project_id = ctx.project_id().await;
-    let project = ctx.get_project().await;
-    let project_path = project.as_ref().map(|p| p.path.clone());
-
-    match hybrid_search(
-        ctx.code_pool(),
-        ctx.embeddings(),
-        ctx.fuzzy_cache(),
-        query,
-        project_id,
-        project_path.as_deref(),
-        limit,
-    )
-    .await
-    {
+    match query_search_code(ctx, query, limit).await {
         Ok(result) => {
             if result.results.is_empty() {
                 "No code matches found.".to_string()
             } else {
                 let mut output = format!("Found {} results:\n\n", result.results.len());
                 for r in result.results {
-                    // Truncate content if too long
                     let content_preview = if r.content.len() > 2000 {
                         format!("{}\n... (truncated)", &r.content[..2000])
                     } else {
@@ -470,14 +488,7 @@ async fn execute_find_callers<C: ToolContext>(
     function_name: &str,
     limit: usize,
 ) -> String {
-    let project_id = ctx.project_id().await;
-    let fn_name = function_name.to_string();
-
-    let callers = ctx
-        .pool()
-        .run(move |conn| Ok::<_, String>(find_callers(conn, project_id, &fn_name, limit)))
-        .await
-        .unwrap_or_default();
+    let callers = query_callers(ctx, function_name, limit).await;
 
     if callers.is_empty() {
         format!("No callers found for `{}`", function_name)
@@ -498,14 +509,7 @@ async fn execute_find_callees<C: ToolContext>(
     function_name: &str,
     limit: usize,
 ) -> String {
-    let project_id = ctx.project_id().await;
-    let fn_name = function_name.to_string();
-
-    let callees = ctx
-        .pool()
-        .run(move |conn| Ok::<_, String>(find_callees(conn, project_id, &fn_name, limit)))
-        .await
-        .unwrap_or_default();
+    let callees = query_callees(ctx, function_name, limit).await;
 
     if callees.is_empty() {
         format!("No callees found for `{}`", function_name)
@@ -690,6 +694,14 @@ fn clean_extracted_text(text: &str) -> String {
     }
 
     result.trim().to_string()
+}
+
+/// Check if Brave Search API key is configured
+pub fn has_brave_search() -> bool {
+    std::env::var("BRAVE_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .is_some()
 }
 
 /// Search the web using Brave Search API
@@ -998,11 +1010,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_web_search_no_api_key() {
         // Only run this test if BRAVE_API_KEY is not set (to avoid unsafe env manipulation)
-        if std::env::var("BRAVE_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .is_some()
-        {
+        if has_brave_search() {
             // Skip test when key is present - we don't want to manipulate env unsafely
             return;
         }

@@ -188,43 +188,20 @@ impl LlmClient for GeminiClient {
 
         // Log usage stats
         if let Some(ref u) = usage {
-            info!(
-                request_id = %request_id,
-                prompt_tokens = u.prompt_tokens,
-                completion_tokens = u.completion_tokens,
-                total_tokens = u.total_tokens,
-                "Gemini usage stats"
-            );
+            crate::llm::logging::log_usage(&request_id, "Gemini", u);
         }
 
-        // Log tool calls if any
         if let Some(ref tcs) = tool_calls {
-            info!(
-                request_id = %request_id,
-                tool_count = tcs.len(),
-                tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
-                "Gemini requested tool calls"
-            );
-            for tc in tcs {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
-                debug!(
-                    request_id = %request_id,
-                    tool = %tc.function.name,
-                    call_id = %tc.id,
-                    args = %args,
-                    "Tool call"
-                );
-            }
+            crate::llm::logging::log_tool_calls(&request_id, "Gemini", tcs);
         }
 
-        info!(
-            request_id = %request_id,
-            duration_ms = duration_ms,
-            content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
-            reasoning_len = reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
-            tool_calls = tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-            "Gemini 3 chat complete"
+        crate::llm::logging::log_completion(
+            &request_id,
+            "Gemini 3",
+            duration_ms,
+            content.as_ref().map(|c| c.len()).unwrap_or(0),
+            reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+            tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
         );
 
         Ok(ChatResult {

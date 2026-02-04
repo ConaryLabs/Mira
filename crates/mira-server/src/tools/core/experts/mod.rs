@@ -10,6 +10,7 @@ use crate::mcp::responses::{
     ConfigureData, ConsultData, ExpertConfigEntry, ExpertData, ExpertOpinion, ExpertOutput,
 };
 
+pub(crate) mod agentic;
 mod config;
 mod context;
 mod council;

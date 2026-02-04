@@ -1,25 +1,57 @@
 // crates/mira-server/src/tools/core/experts/council.rs
 // Council loop: coordinator-driven multi-expert consultation
 
-use super::context::{build_user_prompt, get_patterns_context};
+use super::agentic::{AgenticLoopConfig, ToolHandler, run_agentic_loop};
+use super::context::build_user_prompt;
+use super::execution::enrich_context_for_role;
 use super::findings::{CouncilFinding, FindingsStore};
 use super::plan::{ResearchPlan, ResearchTask, ReviewResult, parse_json_with_retry};
 use super::prompts::*;
 use super::role::ExpertRole;
-use super::tools::{
-    execute_tool_with_findings, get_expert_tools, store_finding_tool, web_fetch_tool,
-    web_search_tool,
-};
+use super::tools::{build_expert_toolset, execute_tool_with_findings};
 use super::{
     EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS, ToolContext,
 };
-use crate::llm::{Message, Tool, record_llm_usage};
+use async_trait::async_trait;
+use crate::llm::{Message, ToolCall, record_llm_usage};
 use crate::utils::ResultExt;
 use mira_types::{CouncilEvent, WsEvent};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
+
+/// Tool handler for council mode (sequential execution, findings store, broadcasting).
+struct CouncilToolHandler<'a, C: ToolContext> {
+    ctx: &'a C,
+    findings_store: &'a Arc<FindingsStore>,
+    role_key: &'a str,
+}
+
+#[async_trait]
+impl<C: ToolContext> ToolHandler for CouncilToolHandler<'_, C> {
+    async fn handle_tool_call(&self, tool_call: &ToolCall) -> String {
+        execute_tool_with_findings(self.ctx, tool_call, self.findings_store, self.role_key).await
+    }
+
+    async fn on_tool_executed(&self, tool_call: &ToolCall, _result: &str) {
+        if tool_call.function.name == "store_finding" {
+            self.ctx.broadcast(WsEvent::Council(CouncilEvent::FindingAdded {
+                role: self.role_key.to_string(),
+                topic: serde_json::from_str::<serde_json::Value>(
+                    &tool_call.function.arguments,
+                )
+                .ok()
+                .and_then(|v| v["topic"].as_str().map(String::from))
+                .unwrap_or_default(),
+            }));
+        }
+    }
+
+    fn parallel_execution(&self) -> bool {
+        false
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -310,8 +342,6 @@ async fn run_expert_task<C: ToolContext>(
         .await
         .str_err()?;
 
-    let chat_client = strategy.actor().clone();
-
     // Build system prompt: base role prompt + council task scoping
     let base_prompt = expert.system_prompt(ctx).await;
     let focus_str = if focus_areas.is_empty() {
@@ -325,178 +355,42 @@ async fn run_expert_task<C: ToolContext>(
     let system_prompt = format!("{}\n\n{}", base_prompt, task_prompt);
 
     // Inject learned patterns for code reviewer and security experts
-    let patterns_context = if matches!(expert, ExpertRole::CodeReviewer | ExpertRole::Security) {
-        get_patterns_context(ctx, role_key).await
-    } else {
-        String::new()
-    };
-
-    let enriched_context = if patterns_context.is_empty() {
-        original_context.to_string()
-    } else {
-        format!("{}\n{}", original_context, patterns_context)
-    };
+    let enriched_context = enrich_context_for_role(ctx, &expert, role_key, original_context).await;
 
     let user_prompt = build_user_prompt(&enriched_context, question);
 
     // Build tool list: standard tools + store_finding + web + MCP
-    let mut tools = get_expert_tools();
-    tools.push(store_finding_tool());
-    tools.push(web_fetch_tool());
-    if std::env::var("BRAVE_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-        .is_some()
-    {
-        tools.push(web_search_tool());
-    }
-    let mcp_tools = ctx.mcp_expert_tools().await;
-    if !mcp_tools.is_empty() {
-        tools.extend(mcp_tools);
-    }
+    let tools = build_expert_toolset(ctx, true).await;
 
     let mut messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
-    let mut total_tool_calls = 0;
-    let mut iterations = 0;
-    let mut previous_response_id: Option<String> = None;
+    let handler = CouncilToolHandler {
+        ctx,
+        findings_store,
+        role_key,
+    };
+    let config = AgenticLoopConfig {
+        max_turns: MAX_ITERATIONS,
+        timeout: EXPERT_TIMEOUT,
+        llm_call_timeout: LLM_CALL_TIMEOUT,
+        usage_role: format!("council:expert:{}", role_key),
+    };
 
-    // Agentic loop
-    timeout(EXPERT_TIMEOUT, async {
-        loop {
-            iterations += 1;
-            if iterations > MAX_ITERATIONS {
-                return Err(format!("Expert {} exceeded maximum iterations", role_key));
-            }
+    let loop_result =
+        run_agentic_loop(ctx, &strategy, &mut messages, tools, &config, &handler).await?;
 
-            let messages_to_send =
-                if previous_response_id.is_some() && chat_client.supports_stateful() {
-                    messages
-                        .iter()
-                        .rev()
-                        .take_while(|m| m.role == "tool")
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect()
-                } else {
-                    messages.clone()
-                };
+    // Parse findings from the final response as fallback
+    if let Some(ref content) = loop_result.result.content {
+        parse_response_as_findings(content, role_key, findings_store);
+    }
 
-            let result = timeout(
-                LLM_CALL_TIMEOUT,
-                chat_client.chat_stateful(
-                    messages_to_send,
-                    Some(tools.clone()),
-                    previous_response_id.as_deref(),
-                ),
-            )
-            .await
-            .map_err(|_| format!("LLM call timed out for {}", role_key))?
-            .map_err(|e| format!("Expert {} LLM call failed: {}", role_key, e))?;
-
-            // Record usage
-            let usage_role = format!("council:expert:{}", role_key);
-            record_llm_usage(
-                ctx.pool(),
-                chat_client.provider_type(),
-                &chat_client.model_name(),
-                &usage_role,
-                &result,
-                ctx.project_id().await,
-                ctx.get_session_id().await,
-            )
-            .await;
-
-            previous_response_id = Some(result.request_id.clone());
-
-            if let Some(ref tool_calls) = result.tool_calls {
-                if !tool_calls.is_empty() {
-                    let mut assistant_msg = Message::assistant(result.content.clone(), None);
-                    assistant_msg.tool_calls = Some(tool_calls.clone());
-                    messages.push(assistant_msg);
-
-                    for tc in tool_calls {
-                        total_tool_calls += 1;
-
-                        // Use council-aware executor that handles store_finding
-                        let tool_result =
-                            execute_tool_with_findings(ctx, tc, findings_store, role_key).await;
-
-                        if tc.function.name == "store_finding" {
-                            ctx.broadcast(WsEvent::Council(CouncilEvent::FindingAdded {
-                                role: role_key.to_string(),
-                                topic: serde_json::from_str::<serde_json::Value>(
-                                    &tc.function.arguments,
-                                )
-                                .ok()
-                                .and_then(|v| v["topic"].as_str().map(String::from))
-                                .unwrap_or_default(),
-                            }));
-                        }
-
-                        messages.push(Message::tool_result(&tc.id, tool_result));
-                    }
-
-                    continue;
-                }
-            }
-
-            // No tool calls — expert is done
-            // If decoupled strategy, run thinker for synthesis
-            if strategy.is_decoupled() {
-                let thinker = strategy.thinker();
-                let assistant_msg =
-                    Message::assistant(result.content.clone(), result.reasoning_content.clone());
-                messages.push(assistant_msg);
-                messages.push(Message::user(
-                    "Based on the tool results above, provide your final expert analysis. \
-                     Synthesize the findings into a clear, actionable response."
-                        .to_string(),
-                ));
-
-                let final_result = thinker
-                    .chat_stateful(messages, None::<Vec<Tool>>, None::<&str>)
-                    .await
-                    .map_err(|e| format!("Thinker synthesis failed for {}: {}", role_key, e))?;
-
-                let usage_role = format!("council:expert:{}:reasoner", role_key);
-                record_llm_usage(
-                    ctx.pool(),
-                    thinker.provider_type(),
-                    &thinker.model_name(),
-                    &usage_role,
-                    &final_result,
-                    ctx.project_id().await,
-                    ctx.get_session_id().await,
-                )
-                .await;
-
-                // Parse any remaining findings from the final response
-                if let Some(ref content) = final_result.content {
-                    parse_response_as_findings(content, role_key, findings_store);
-                }
-            } else {
-                // Parse findings from the response text as fallback
-                if let Some(ref content) = result.content {
-                    parse_response_as_findings(content, role_key, findings_store);
-                }
-            }
-
-            debug!(
-                role = %role_key,
-                iterations,
-                tool_calls = total_tool_calls,
-                findings = findings_store.by_role(role_key).len(),
-                "Expert task complete"
-            );
-
-            return Ok(());
-        }
-    })
-    .await
-    .map_err(|_| format!("{} task timed out", role_key))??;
+    debug!(
+        role = %role_key,
+        iterations = loop_result.iterations,
+        tool_calls = loop_result.total_tool_calls,
+        findings = findings_store.by_role(role_key).len(),
+        "Expert task complete"
+    );
 
     Ok(())
 }

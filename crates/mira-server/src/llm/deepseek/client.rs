@@ -114,50 +114,35 @@ impl DeepSeekClient {
 
         // Log usage stats with DeepSeek-specific cache metrics
         if let Some(ref u) = result.usage {
+            crate::llm::logging::log_usage(&request_id, "DeepSeek", u);
+
+            // DeepSeek-specific: cache hit/miss stats
             let cache_hit_ratio = Self::calculate_cache_hit_ratio(
                 u.prompt_cache_hit_tokens,
                 u.prompt_cache_miss_tokens,
             );
-
-            info!(
-                request_id = %request_id,
-                prompt_tokens = u.prompt_tokens,
-                completion_tokens = u.completion_tokens,
-                cache_hit = ?u.prompt_cache_hit_tokens,
-                cache_miss = ?u.prompt_cache_miss_tokens,
-                cache_hit_ratio = ?cache_hit_ratio.map(|r| format!("{:.1}%", r * 100.0)),
-                "DeepSeek usage stats"
-            );
-        }
-
-        // Log tool calls if any
-        if let Some(ref tcs) = result.tool_calls {
-            info!(
-                request_id = %request_id,
-                tool_count = tcs.len(),
-                tools = ?tcs.iter().map(|tc| &tc.function.name).collect::<Vec<_>>(),
-                "DeepSeek requested tool calls"
-            );
-            for tc in tcs {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::Value::Null);
-                debug!(
+            if cache_hit_ratio.is_some() {
+                info!(
                     request_id = %request_id,
-                    tool = %tc.function.name,
-                    call_id = %tc.id,
-                    args = %args,
-                    "Tool call"
+                    cache_hit = ?u.prompt_cache_hit_tokens,
+                    cache_miss = ?u.prompt_cache_miss_tokens,
+                    cache_hit_ratio = ?cache_hit_ratio.map(|r| format!("{:.1}%", r * 100.0)),
+                    "DeepSeek cache stats"
                 );
             }
         }
 
-        info!(
-            request_id = %request_id,
-            duration_ms = duration_ms,
-            content_len = result.content.as_ref().map(|c| c.len()).unwrap_or(0),
-            reasoning_len = result.reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
-            tool_calls = result.tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-            "DeepSeek chat complete"
+        if let Some(ref tcs) = result.tool_calls {
+            crate::llm::logging::log_tool_calls(&request_id, "DeepSeek", tcs);
+        }
+
+        crate::llm::logging::log_completion(
+            &request_id,
+            "DeepSeek",
+            duration_ms,
+            result.content.as_ref().map(|c| c.len()).unwrap_or(0),
+            result.reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+            result.tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
         );
 
         Ok(result)
