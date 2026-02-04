@@ -287,8 +287,8 @@ pub async fn recall<C: ToolContext>(
 
     // Try semantic search first if embeddings available (with branch-aware + entity boosting)
     // Uses RETRIEVAL_QUERY task type for optimal search results
-    if let Some(embeddings) = ctx.embeddings() {
-        if let Ok(query_embedding) = embeddings.embed_for_query(&query).await {
+    if let Some(embeddings) = ctx.embeddings()
+        && let Ok(query_embedding) = embeddings.embed_for_query(&query).await {
             let embedding_bytes = embedding_to_bytes(&query_embedding);
             let user_id_for_query = user_id.clone();
             let branch_for_query = current_branch.clone();
@@ -355,15 +355,13 @@ pub async fn recall<C: ToolContext>(
                 }));
             }
         }
-    }
 
     // Fall back to fuzzy search if enabled
-    if let Some(cache) = ctx.fuzzy_cache() {
-        if let Ok(results) = cache
+    if let Some(cache) = ctx.fuzzy_cache()
+        && let Ok(results) = cache
             .search_memories(ctx.pool(), project_id, user_id.as_deref(), &query, limit)
             .await
-        {
-            if !results.is_empty() {
+            && !results.is_empty() {
                 // Record memory access for evidence-based tracking
                 if let Some(ref sid) = session_id {
                     let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
@@ -399,8 +397,6 @@ pub async fn recall<C: ToolContext>(
                     })),
                 }));
             }
-        }
-    }
 
     // Fall back to SQL search via connection pool
     let query_clone = query.clone();

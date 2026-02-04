@@ -248,8 +248,8 @@ fn generate_session_summary_fallback(tool_summary: &str) -> Option<String> {
 
         // Extract file paths from known path patterns in arguments
         // Look for file_path arguments (safe — no raw secrets)
-        if let Some(args_start) = line.find('(') {
-            if let Some(args_end) = line.rfind(')') {
+        if let Some(args_start) = line.find('(')
+            && let Some(args_end) = line.rfind(')') {
                 let args = &line[args_start + 1..args_end];
                 // Extract paths that look like file paths
                 for segment in args.split(',') {
@@ -260,7 +260,6 @@ fn generate_session_summary_fallback(tool_summary: &str) -> Option<String> {
                     }
                 }
             }
-        }
     }
 
     if total_calls == 0 {

@@ -113,6 +113,9 @@ struct ConnectedServer {
 pub struct McpClientManager {
     configs: Vec<McpServerConfig>,
     clients: Arc<RwLock<HashMap<String, ConnectedServer>>>,
+    /// Per-server connection guards to prevent double-connect races.
+    /// If a server name is in this set, a connection attempt is in progress.
+    connecting: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl McpClientManager {
@@ -160,6 +163,7 @@ impl McpClientManager {
         Self {
             configs,
             clients: Arc::new(RwLock::new(HashMap::new())),
+            connecting: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -169,11 +173,10 @@ impl McpClientManager {
         configs: &mut Vec<McpServerConfig>,
         seen: &mut std::collections::HashSet<String>,
     ) {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(root) = serde_json::from_str::<McpJsonRoot>(&content) {
+        if let Ok(content) = std::fs::read_to_string(path)
+            && let Ok(root) = serde_json::from_str::<McpJsonRoot>(&content) {
                 Self::add_servers(root.mcp_servers, configs, seen);
             }
-        }
     }
 
     /// Try to load MCP servers from a Codex config.toml file.
@@ -182,11 +185,10 @@ impl McpClientManager {
         configs: &mut Vec<McpServerConfig>,
         seen: &mut std::collections::HashSet<String>,
     ) {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(root) = toml::from_str::<CodexTomlRoot>(&content) {
+        if let Ok(content) = std::fs::read_to_string(path)
+            && let Ok(root) = toml::from_str::<CodexTomlRoot>(&content) {
                 Self::add_servers(root.mcp_servers, configs, seen);
             }
-        }
     }
 
     /// Convert parsed server entries into configs, deduplicating by name.
@@ -227,7 +229,8 @@ impl McpClientManager {
             })
     }
 
-    /// Ensure a server is connected, lazily connecting if needed
+    /// Ensure a server is connected, lazily connecting if needed.
+    /// Uses a per-server guard to prevent double-connect races.
     async fn ensure_connected(&self, server_name: &str) -> Result<(), String> {
         // Fast path: already connected
         {
@@ -237,6 +240,46 @@ impl McpClientManager {
             }
         }
 
+        // Acquire the connecting guard to prevent concurrent connection attempts
+        {
+            let mut connecting = self.connecting.lock().await;
+            if connecting.contains(server_name) {
+                // Another task is already connecting — wait for it by polling
+                drop(connecting);
+                for _ in 0..100 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    let clients = self.clients.read().await;
+                    if clients.contains_key(server_name) {
+                        return Ok(());
+                    }
+                }
+                return Err(format!(
+                    "Timed out waiting for concurrent connection to '{}'",
+                    server_name
+                ));
+            }
+            connecting.insert(server_name.to_string());
+        }
+
+        // Re-check after acquiring guard (another task may have completed between our check and guard)
+        {
+            let clients = self.clients.read().await;
+            if clients.contains_key(server_name) {
+                let mut connecting = self.connecting.lock().await;
+                connecting.remove(server_name);
+                return Ok(());
+            }
+        }
+
+        // Actually connect — cleanup guard on both success and failure
+        let result = self.do_connect(server_name).await;
+        let mut connecting = self.connecting.lock().await;
+        connecting.remove(server_name);
+        result
+    }
+
+    /// Perform the actual connection to an MCP server.
+    async fn do_connect(&self, server_name: &str) -> Result<(), String> {
         // Find the config
         let config = self
             .configs
@@ -367,10 +410,13 @@ impl McpClientManager {
         Ok(())
     }
 
-    /// List tools from all configured MCP servers
-    /// Returns Vec of (server_name, tools) pairs
-    pub async fn list_tools(&self) -> Vec<(String, Vec<McpToolInfo>)> {
-        let mut result = Vec::new();
+    /// Connect to all configured servers and call a closure for each connected server.
+    /// Handles connection errors by logging and skipping.
+    async fn for_each_connected_server<F, T>(&self, mut f: F) -> Vec<T>
+    where
+        F: FnMut(&str, &ConnectedServer) -> Vec<T>,
+    {
+        let mut results = Vec::new();
 
         for config in &self.configs {
             if let Err(e) = self.ensure_connected(&config.name).await {
@@ -380,39 +426,44 @@ impl McpClientManager {
 
             let clients = self.clients.read().await;
             if let Some(server) = clients.get(&config.name) {
-                let tools: Vec<McpToolInfo> = server
-                    .tools
-                    .iter()
-                    .map(|t| McpToolInfo {
-                        name: t.name.to_string(),
-                        description: t.description.as_deref().unwrap_or("").to_string(),
-                    })
-                    .collect();
-
-                if !tools.is_empty() {
-                    result.push((config.name.clone(), tools));
-                }
+                results.extend(f(&config.name, server));
             }
         }
 
-        result
+        results
+    }
+
+    /// List tools from all configured MCP servers
+    /// Returns Vec of (server_name, tools) pairs
+    pub async fn list_tools(&self) -> Vec<(String, Vec<McpToolInfo>)> {
+        self.for_each_connected_server(|name, server| {
+            let tools: Vec<McpToolInfo> = server
+                .tools
+                .iter()
+                .map(|t| McpToolInfo {
+                    name: t.name.to_string(),
+                    description: t.description.as_deref().unwrap_or("").to_string(),
+                })
+                .collect();
+
+            if tools.is_empty() {
+                vec![]
+            } else {
+                vec![(name.to_string(), tools)]
+            }
+        })
+        .await
     }
 
     /// Get tools formatted for LLM consumption (as expert Tool definitions)
     /// Tool names are prefixed with mcp__{server}__{tool_name}
     pub async fn get_expert_tools(&self) -> Vec<Tool> {
-        let mut tools = Vec::new();
-
-        for config in &self.configs {
-            if let Err(e) = self.ensure_connected(&config.name).await {
-                warn!(server = %config.name, error = %e, "Failed to connect to MCP server for tools");
-                continue;
-            }
-
-            let clients = self.clients.read().await;
-            if let Some(server) = clients.get(&config.name) {
-                for mcp_tool in &server.tools {
-                    let prefixed_name = format!("mcp__{}__{}", config.name, mcp_tool.name);
+        self.for_each_connected_server(|name, server| {
+            server
+                .tools
+                .iter()
+                .map(|mcp_tool| {
+                    let prefixed_name = format!("mcp__{}__{}", name, mcp_tool.name);
                     let description = mcp_tool
                         .description
                         .as_deref()
@@ -427,12 +478,11 @@ impl McpClientManager {
                         obj.remove("$schema");
                     }
 
-                    tools.push(Tool::function(prefixed_name, description, parameters));
-                }
-            }
-        }
-
-        tools
+                    Tool::function(prefixed_name, description, parameters)
+                })
+                .collect()
+        })
+        .await
     }
 
     /// Call a tool on a specific MCP server
@@ -701,6 +751,7 @@ mod tests {
         let manager = McpClientManager {
             configs: vec![],
             clients: Arc::new(RwLock::new(HashMap::new())),
+            connecting: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         };
         assert!(!manager.has_servers());
 
@@ -715,6 +766,7 @@ mod tests {
                 },
             }],
             clients: Arc::new(RwLock::new(HashMap::new())),
+            connecting: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         };
         assert!(manager.has_servers());
     }

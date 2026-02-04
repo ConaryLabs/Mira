@@ -10,6 +10,9 @@ use tree_sitter::Parser;
 
 pub use parsers::{FunctionCall, Import, LanguageParser, Symbol};
 
+/// Extracted data from a single file: (symbols, imports, function_calls, file_content)
+pub type ExtractedFileData = (Vec<Symbol>, Vec<Import>, Vec<FunctionCall>, String);
+
 /// Extract symbols from a single file
 pub fn extract_symbols(path: &Path) -> Result<Vec<Symbol>> {
     let (symbols, _, _, _) = extract_all(path)?;
@@ -17,7 +20,7 @@ pub fn extract_symbols(path: &Path) -> Result<Vec<Symbol>> {
 }
 
 /// Extract symbols, imports, calls, and file content from a single file
-pub fn extract_all(path: &Path) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>, String)> {
+pub fn extract_all(path: &Path) -> Result<ExtractedFileData> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
 

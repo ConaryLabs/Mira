@@ -242,18 +242,20 @@ pub fn reset_orphaned_doc_tasks(
     Ok(reset_count)
 }
 
+/// Parameters for upserting documentation inventory
+pub struct DocInventoryParams<'a> {
+    pub project_id: i64,
+    pub doc_path: &'a str,
+    pub doc_type: &'a str,
+    pub doc_category: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub source_signature_hash: Option<&'a str>,
+    pub source_symbols: Option<&'a str>,
+    pub git_commit: Option<&'a str>,
+}
+
 /// Add or update documentation inventory entry
-pub fn upsert_doc_inventory(
-    conn: &rusqlite::Connection,
-    project_id: i64,
-    doc_path: &str,
-    doc_type: &str,
-    doc_category: Option<&str>,
-    title: Option<&str>,
-    source_signature_hash: Option<&str>,
-    source_symbols: Option<&str>,
-    git_commit: Option<&str>,
-) -> Result<i64, String> {
+pub fn upsert_doc_inventory(conn: &rusqlite::Connection, p: &DocInventoryParams) -> Result<i64, String> {
     conn.execute(
         "INSERT INTO documentation_inventory (
             project_id, doc_path, doc_type, doc_category, title,
@@ -270,14 +272,14 @@ pub fn upsert_doc_inventory(
             staleness_reason = NULL,
             verified_at = CURRENT_TIMESTAMP",
         params![
-            project_id,
-            doc_path,
-            doc_type,
-            doc_category,
-            title,
-            source_signature_hash,
-            source_symbols,
-            git_commit,
+            p.project_id,
+            p.doc_path,
+            p.doc_type,
+            p.doc_category,
+            p.title,
+            p.source_signature_hash,
+            p.source_symbols,
+            p.git_commit,
         ],
     )
     .map(|_| conn.last_insert_rowid())

@@ -7,21 +7,25 @@ use rusqlite::{Connection, params};
 // Sync functions for pool.interact() usage
 // ============================================================================
 
+/// Parameters for storing a review finding (owns data to avoid clone-heavy call sites)
+pub struct ReviewFindingParams {
+    pub project_id: Option<i64>,
+    pub expert_role: String,
+    pub file_path: Option<String>,
+    pub finding_type: String,
+    pub severity: String,
+    pub content: String,
+    pub code_snippet: Option<String>,
+    pub suggestion: Option<String>,
+    pub confidence: f64,
+    pub user_id: Option<String>,
+    pub session_id: Option<String>,
+}
+
 /// Store a new review finding (sync version for pool.interact)
-#[allow(clippy::too_many_arguments)]
 pub fn store_review_finding_sync(
     conn: &Connection,
-    project_id: Option<i64>,
-    expert_role: &str,
-    file_path: Option<&str>,
-    finding_type: &str,
-    severity: &str,
-    content: &str,
-    code_snippet: Option<&str>,
-    suggestion: Option<&str>,
-    confidence: f64,
-    user_id: Option<&str>,
-    session_id: Option<&str>,
+    p: &ReviewFindingParams,
 ) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO review_findings (
@@ -29,17 +33,17 @@ pub fn store_review_finding_sync(
             content, code_snippet, suggestion, confidence, user_id, session_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
-            project_id,
-            expert_role,
-            file_path,
-            finding_type,
-            severity,
-            content,
-            code_snippet,
-            suggestion,
-            confidence,
-            user_id,
-            session_id
+            p.project_id,
+            p.expert_role,
+            p.file_path,
+            p.finding_type,
+            p.severity,
+            p.content,
+            p.code_snippet,
+            p.suggestion,
+            p.confidence,
+            p.user_id,
+            p.session_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())

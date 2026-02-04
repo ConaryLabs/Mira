@@ -45,12 +45,11 @@ pub(super) async fn store_suggestions(
                     )
                     .ok();
 
-                if let Some(ref text) = existing {
-                    if !text.is_empty() && !is_fallback_content(text) {
+                if let Some(ref text) = existing
+                    && !text.is_empty() && !is_fallback_content(text) {
                         // Existing is LLM-generated — don't overwrite
                         continue;
                     }
-                }
             }
 
             let result = conn.execute(

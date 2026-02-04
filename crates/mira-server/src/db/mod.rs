@@ -77,8 +77,8 @@ pub use config::{
     set_expert_config_sync,
 };
 pub use diff_analysis::{
-    DiffAnalysis, get_cached_diff_analysis_sync, get_recent_diff_analyses_sync,
-    store_diff_analysis_sync,
+    DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync,
+    get_recent_diff_analyses_sync, store_diff_analysis_sync,
 };
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
@@ -148,7 +148,8 @@ pub use project::{
 pub use reviews::{
     Correction, ReviewFinding, bulk_update_finding_status_sync,
     extract_patterns_from_findings_sync, get_finding_stats_sync, get_finding_sync,
-    get_findings_sync, get_relevant_corrections_sync, store_review_finding_sync,
+    ReviewFindingParams, get_findings_sync, get_relevant_corrections_sync,
+    store_review_finding_sync,
     update_finding_status_sync,
 };
 pub use search::{

@@ -85,12 +85,11 @@ impl ConventionInjector {
         let cache_key = make_cache_key(&modules);
         {
             let cache = self.cache.lock().await;
-            if let Some(cached) = cache.as_ref() {
-                if cached.key == cache_key && cached.created_at.elapsed().as_secs() < CACHE_TTL_SECS
+            if let Some(cached) = cache.as_ref()
+                && cached.key == cache_key && cached.created_at.elapsed().as_secs() < CACHE_TTL_SECS
                 {
                     return cached.context.clone();
                 }
-            }
         }
 
         // Query conventions for working modules
@@ -301,11 +300,10 @@ fn make_one_liner(conv: &ConventionRow) -> String {
             parts.push(eh.clone());
         }
     }
-    if let Some(ref dp) = conv.detected_patterns {
-        if let Some(patterns) = extract_pattern_names(dp) {
+    if let Some(ref dp) = conv.detected_patterns
+        && let Some(patterns) = extract_pattern_names(dp) {
             parts.push(patterns);
         }
-    }
     parts.join(", ")
 }
 

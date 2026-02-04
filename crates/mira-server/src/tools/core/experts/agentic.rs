@@ -118,8 +118,8 @@ pub async fn run_agentic_loop<C: ToolContext>(
             previous_response_id = Some(result.request_id.clone());
 
             // Process tool calls if any
-            if let Some(ref tool_calls) = result.tool_calls {
-                if !tool_calls.is_empty() {
+            if let Some(ref tool_calls) = result.tool_calls
+                && !tool_calls.is_empty() {
                     // Add assistant message (drop reasoning to avoid unbounded growth)
                     let mut assistant_msg = Message::assistant(result.content.clone(), None);
                     assistant_msg.tool_calls = Some(tool_calls.clone());
@@ -150,7 +150,6 @@ pub async fn run_agentic_loop<C: ToolContext>(
 
                     continue;
                 }
-            }
 
             // No tool calls — handle decoupled strategy (actor + thinker)
             if strategy.is_decoupled() {

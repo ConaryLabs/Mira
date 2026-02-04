@@ -2,13 +2,11 @@
 //! MCP adapter for unified tool core
 
 use crate::mcp::MiraServer;
-use crate::tools::core::ToolContext;
-use crate::tools::core::ensure_session;
+use crate::tools::core::{ToolContext, ensure_session};
+use crate::tools::PendingResponseMap;
 use async_trait::async_trait;
 use mira_types::WsEvent;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, oneshot};
 use uuid::Uuid;
 
 #[async_trait]
@@ -100,18 +98,17 @@ impl ToolContext for MiraServer {
     }
 
     fn broadcast(&self, event: WsEvent) {
-        if let Some(tx) = &self.ws_tx {
-            if let Err(e) = tx.send(event) {
+        if let Some(tx) = &self.ws_tx
+            && let Err(e) = tx.send(event) {
                 tracing::debug!("WebSocket channel closed, ignoring broadcast: {}", e);
             }
-        }
     }
 
     fn is_collaborative(&self) -> bool {
         self.ws_tx.is_some()
     }
 
-    fn pending_responses(&self) -> Option<&Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>> {
+    fn pending_responses(&self) -> Option<&PendingResponseMap> {
         Some(&self.pending_responses)
     }
 

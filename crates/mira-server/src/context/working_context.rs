@@ -68,8 +68,8 @@ pub fn detect_working_modules(
         };
 
         // Longest-prefix match against module paths
-        if let Some((module_path, module_id)) = find_module_for_file(relative, &module_map) {
-            if seen.insert(module_path.clone()) {
+        if let Some((module_path, module_id)) = find_module_for_file(relative, &module_map)
+            && seen.insert(module_path.clone()) {
                 result.push(WorkingModule {
                     module_path,
                     _module_id: module_id,
@@ -78,7 +78,6 @@ pub fn detect_working_modules(
                     break;
                 }
             }
-        }
     }
 
     result

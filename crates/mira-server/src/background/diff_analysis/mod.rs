@@ -26,7 +26,9 @@ pub use types::{
 };
 
 use crate::db::pool::DatabasePool;
-use crate::db::{DiffAnalysis, get_cached_diff_analysis_sync, store_diff_analysis_sync};
+use crate::db::{
+    DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync, store_diff_analysis_sync,
+};
 use crate::llm::LlmClient;
 use crate::utils::ResultExt;
 use std::sync::Arc;
@@ -93,18 +95,20 @@ async fn cache_result(
         .interact(move |conn| {
             store_diff_analysis_sync(
                 conn,
-                project_id,
-                &from,
-                &to,
-                &analysis_type,
-                changes_json.as_deref(),
-                impact_json.as_deref(),
-                risk_json.as_deref(),
-                Some(&summary),
-                Some(files_changed),
-                Some(lines_added),
-                Some(lines_removed),
-                files_json.as_deref(),
+                &StoreDiffAnalysisParams {
+                    project_id,
+                    from_commit: &from,
+                    to_commit: &to,
+                    analysis_type: &analysis_type,
+                    changes_json: changes_json.as_deref(),
+                    impact_json: impact_json.as_deref(),
+                    risk_json: risk_json.as_deref(),
+                    summary: Some(&summary),
+                    files_changed: Some(files_changed),
+                    lines_added: Some(lines_added),
+                    lines_removed: Some(lines_removed),
+                    files_json: files_json.as_deref(),
+                },
             )
             .map_err(|e| anyhow::anyhow!("{}", e))
         })

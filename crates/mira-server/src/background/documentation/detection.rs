@@ -230,14 +230,13 @@ async fn detect_mcp_tool_gaps(
             // Look for the next async fn line to get the tool name
             continue;
         }
-        if trimmed.starts_with("async fn ") {
-            if let Some(fn_name) = trimmed.strip_prefix("async fn ") {
+        if trimmed.starts_with("async fn ")
+            && let Some(fn_name) = trimmed.strip_prefix("async fn ") {
                 let fn_name = fn_name.split('(').next().unwrap_or("").trim().to_string();
                 if !fn_name.is_empty() {
                     tool_names.insert(fn_name);
                 }
             }
-        }
     }
 
     // Check which tools have documentation (main DB)
@@ -392,8 +391,8 @@ async fn detect_stale_docs_for_project(
         let mut reason = String::new();
 
         // Check 1: Git commit changed (with ancestor check for rebases)
-        if let (Some(stored_commit), Some(current)) = (&item.last_seen_commit, &current_commit) {
-            if stored_commit != current {
+        if let (Some(stored_commit), Some(current)) = (&item.last_seen_commit, &current_commit)
+            && stored_commit != current {
                 // Verify it's a real change, not just a rebase
                 if !is_ancestor(project_str, stored_commit) {
                     is_stale = true;
@@ -404,7 +403,6 @@ async fn detect_stale_docs_for_project(
                     );
                 }
             }
-        }
 
         // Check 2: Source signature hash changed (code DB for symbols)
         if let Some(source_file) = item.source_symbols.as_ref().and_then(|s| {
@@ -413,18 +411,15 @@ async fn detect_stale_docs_for_project(
             } else {
                 None
             }
-        }) {
-            if let Some(new_hash) =
+        })
+            && let Some(new_hash) =
                 check_source_signature_changed(code_pool, project_id, &source_file).await?
-            {
-                if item.source_signature_hash.as_ref() != Some(&new_hash) {
+                && item.source_signature_hash.as_ref() != Some(&new_hash) {
                     is_stale = true;
                     if reason.is_empty() {
                         reason = "Source signatures changed".to_string();
                     }
                 }
-            }
-        }
 
         if is_stale {
             // Mark as stale (main DB)

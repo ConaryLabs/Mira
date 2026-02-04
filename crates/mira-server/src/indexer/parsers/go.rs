@@ -71,11 +71,10 @@ pub fn walk(
             }
         }
         "call_expression" => {
-            if let Some(caller) = current_function {
-                if let Some(call) = extract_call(node, ctx.source, caller) {
+            if let Some(caller) = current_function
+                && let Some(call) = extract_call(node, ctx.source, caller) {
                     ctx.calls.push(call);
                 }
-            }
         }
         "const_declaration" | "var_declaration" => {
             // Could extract top-level constants/vars as symbols
@@ -214,8 +213,8 @@ fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
             }
         } else if child.kind() == "import_spec_list" {
             for spec in child.children(&mut child.walk()) {
-                if spec.kind() == "import_spec" {
-                    if let Some(path_node) = spec.child_by_field_name("path") {
+                if spec.kind() == "import_spec"
+                    && let Some(path_node) = spec.child_by_field_name("path") {
                         let path = node_text(path_node, source);
                         let path = path.trim_matches('"').to_string();
 
@@ -227,7 +226,6 @@ fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
                             is_external,
                         });
                     }
-                }
             }
         } else if child.kind() == "interpreted_string_literal" {
             // Single import without spec

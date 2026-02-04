@@ -3,6 +3,9 @@
 
 use rusqlite::{Connection, params};
 
+/// (id, to_commit, from_commit, files_json)
+type UnscannedDiffRow = (i64, String, String, Option<String>);
+
 /// A stored diff outcome
 #[derive(Debug, Clone)]
 pub struct DiffOutcome {
@@ -36,16 +39,18 @@ fn parse_diff_outcome_row(row: &rusqlite::Row) -> rusqlite::Result<DiffOutcome> 
 // ============================================================================
 
 /// Store a new diff outcome (UPSERT — ignores duplicates)
-pub fn store_diff_outcome_sync(
-    conn: &Connection,
-    diff_analysis_id: i64,
-    project_id: Option<i64>,
-    outcome_type: &str,
-    evidence_commit: Option<&str>,
-    evidence_message: Option<&str>,
-    time_to_outcome_seconds: Option<i64>,
-    detected_by: &str,
-) -> rusqlite::Result<i64> {
+/// Parameters for storing a diff outcome
+pub struct StoreDiffOutcomeParams<'a> {
+    pub diff_analysis_id: i64,
+    pub project_id: Option<i64>,
+    pub outcome_type: &'a str,
+    pub evidence_commit: Option<&'a str>,
+    pub evidence_message: Option<&'a str>,
+    pub time_to_outcome_seconds: Option<i64>,
+    pub detected_by: &'a str,
+}
+
+pub fn store_diff_outcome_sync(conn: &Connection, p: &StoreDiffOutcomeParams) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO diff_outcomes (
             diff_analysis_id, project_id, outcome_type,
@@ -54,13 +59,13 @@ pub fn store_diff_outcome_sync(
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(diff_analysis_id, outcome_type, evidence_commit) DO NOTHING",
         params![
-            diff_analysis_id,
-            project_id,
-            outcome_type,
-            evidence_commit,
-            evidence_message,
-            time_to_outcome_seconds,
-            detected_by,
+            p.diff_analysis_id,
+            p.project_id,
+            p.outcome_type,
+            p.evidence_commit,
+            p.evidence_message,
+            p.time_to_outcome_seconds,
+            p.detected_by,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -147,7 +152,7 @@ pub fn get_unscanned_diffs_sync(
     conn: &Connection,
     project_id: i64,
     limit: usize,
-) -> rusqlite::Result<Vec<(i64, String, String, Option<String>)>> {
+) -> rusqlite::Result<Vec<UnscannedDiffRow>> {
     let sql = "SELECT da.id, da.to_commit, da.from_commit, da.files_json
                FROM diff_analyses da
                WHERE da.project_id = ?

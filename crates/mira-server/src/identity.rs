@@ -121,8 +121,8 @@ impl UserIdentity {
 
 /// Parse identity string in "Name <email>" format
 fn parse_identity_string(s: &str) -> (Option<String>, Option<String>) {
-    if let Some(bracket_start) = s.find('<') {
-        if let Some(bracket_end) = s.find('>') {
+    if let Some(bracket_start) = s.find('<')
+        && let Some(bracket_end) = s.find('>') {
             let name = s[..bracket_start].trim();
             let email = s[bracket_start + 1..bracket_end].trim();
             return (
@@ -138,7 +138,6 @@ fn parse_identity_string(s: &str) -> (Option<String>, Option<String>) {
                 },
             );
         }
-    }
     // No email format, treat whole string as name
     (Some(s.to_string()), None)
 }

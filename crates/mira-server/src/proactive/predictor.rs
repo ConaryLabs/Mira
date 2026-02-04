@@ -105,8 +105,8 @@ pub fn predict_next_tool(
             continue;
         }
 
-        if let PatternData::ToolChain { tools, .. } = &pattern.pattern_data {
-            if tools.len() >= 2 && tools[0] == current_tool {
+        if let PatternData::ToolChain { tools, .. } = &pattern.pattern_data
+            && tools.len() >= 2 && tools[0] == current_tool {
                 predictions.push(Prediction {
                     prediction_type: PredictionType::NextTool,
                     content: tools[1].clone(),
@@ -115,7 +115,6 @@ pub fn predict_next_tool(
                     context: Some(format!("Common sequence: {} -> {}", tools[0], tools[1])),
                 });
             }
-        }
     }
 
     predictions.sort_by(|a, b| {

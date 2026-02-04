@@ -1,7 +1,7 @@
 // crates/mira-server/src/background/documentation/inventory.rs
 // Documentation inventory scanning and tracking
 
-use crate::db::documentation::upsert_doc_inventory;
+use crate::db::documentation::{DocInventoryParams, upsert_doc_inventory};
 use crate::db::get_symbols_for_file_sync;
 use crate::db::pool::DatabasePool;
 use crate::utils::ResultExt;
@@ -132,14 +132,16 @@ async fn inventory_file(
     pool.interact(move |conn| {
         upsert_doc_inventory(
             conn,
-            project_id,
-            &doc_path,
-            &doc_type,
-            doc_category.as_deref(),
-            title.as_deref(),
-            source_signature_hash.as_deref(),
-            source_symbols.as_deref(),
-            git_commit_owned.as_deref(),
+            &DocInventoryParams {
+                project_id,
+                doc_path: &doc_path,
+                doc_type: &doc_type,
+                doc_category: doc_category.as_deref(),
+                title: title.as_deref(),
+                source_signature_hash: source_signature_hash.as_deref(),
+                source_symbols: source_symbols.as_deref(),
+                git_commit: git_commit_owned.as_deref(),
+            },
         )
         .map_err(|e| anyhow::anyhow!("{}", e))
     })

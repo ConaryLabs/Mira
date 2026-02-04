@@ -14,6 +14,9 @@ use crate::utils::ResultExt;
 use anyhow::Result;
 use std::sync::Arc;
 
+/// (name, start_line, end_line, db_id) for each stored symbol
+type SymbolRange = (String, u32, u32, i64);
+
 /// Maximum symbols to accumulate before flushing to database
 pub const SYMBOL_FLUSH_THRESHOLD: usize = 1000;
 /// Maximum files to accumulate before flushing to database
@@ -210,7 +213,7 @@ pub fn store_symbols_and_capture_ids(
     project_id: Option<i64>,
     file_path: &str,
     symbols: &[Symbol],
-) -> rusqlite::Result<(Vec<(String, u32, u32, i64)>, usize)> {
+) -> rusqlite::Result<(Vec<SymbolRange>, usize)> {
     let mut symbol_ranges = Vec::new();
     let mut errors = 0usize;
 

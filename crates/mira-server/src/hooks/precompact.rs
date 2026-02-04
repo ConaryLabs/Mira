@@ -126,11 +126,10 @@ async fn save_pre_compaction_state(
     };
 
     // If we have transcript, extract key information
-    if let Some(transcript) = transcript {
-        if let Err(e) = extract_and_save_context(&pool, project_id, session_id, transcript).await {
+    if let Some(transcript) = transcript
+        && let Err(e) = extract_and_save_context(&pool, project_id, session_id, transcript).await {
             eprintln!("[mira] Context extraction failed: {}", e);
         }
-    }
 
     eprintln!("[mira] Pre-compaction state saved");
     Ok(())

@@ -2,26 +2,14 @@
 // Heuristic detection of architectural patterns from symbol/import/naming data
 
 use rusqlite::Connection;
+use serde::Serialize;
 
 /// A detected architectural pattern
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PatternMatch {
     pub pattern: String,
     pub confidence: f64,
     pub evidence: Vec<String>,
-}
-
-impl PatternMatch {
-    fn to_json(&self) -> String {
-        let evidence_json: Vec<String> =
-            self.evidence.iter().map(|e| format!("\"{}\"", e)).collect();
-        format!(
-            "{{\"pattern\":\"{}\",\"confidence\":{:.2},\"evidence\":[{}]}}",
-            self.pattern,
-            self.confidence,
-            evidence_json.join(",")
-        )
-    }
 }
 
 // ============================================================================
@@ -109,13 +97,12 @@ fn detect_factory(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
     let mut factory_fns = Vec::new();
 
     for sym in symbols {
-        if sym.symbol_type == "function" {
-            if sym.name.starts_with("create_")
-                || (sym.name.starts_with("new_") && sym.name != "new")
+        if sym.symbol_type == "function"
+            && (sym.name.starts_with("create_")
+                || (sym.name.starts_with("new_") && sym.name != "new"))
             {
                 factory_fns.push(sym.name.clone());
             }
-        }
     }
 
     if factory_fns.len() >= 2 {
@@ -505,14 +492,7 @@ pub fn collect_pattern_data(
         }
 
         // Store patterns JSON in codebase_modules
-        let patterns_json = format!(
-            "[{}]",
-            patterns
-                .iter()
-                .map(|p| p.to_json())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+        let patterns_json = serde_json::to_string(&patterns).unwrap_or_else(|_| "[]".to_string());
         update_module_patterns(conn, project_id, &module.module_id, &patterns_json)?;
 
         // Collect findings for main DB
@@ -722,14 +702,14 @@ mod tests {
     }
 
     #[test]
-    fn test_pattern_to_json() {
+    fn test_pattern_serialize() {
         let p = PatternMatch {
             pattern: "repository".to_string(),
             confidence: 0.85,
             evidence: vec!["get_user".to_string(), "create_user".to_string()],
         };
 
-        let json = p.to_json();
+        let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("repository"));
         assert!(json.contains("0.85"));
         assert!(json.contains("get_user"));

@@ -4,6 +4,9 @@
 use crate::llm::Provider;
 use rusqlite::{Connection, params};
 
+/// (role, prompt, provider, model)
+type PromptConfigRow = (String, String, String, Option<String>);
+
 // ============================================================================
 // Sync functions for pool.interact() usage
 // ============================================================================
@@ -98,7 +101,7 @@ pub fn delete_custom_prompt_sync(conn: &Connection, role: &str) -> rusqlite::Res
 /// List all custom prompts with provider info (sync version for pool.interact)
 pub fn list_custom_prompts_sync(
     conn: &Connection,
-) -> rusqlite::Result<Vec<(String, String, String, Option<String>)>> {
+) -> rusqlite::Result<Vec<PromptConfigRow>> {
     let mut stmt = conn.prepare(
         "SELECT role, prompt, COALESCE(provider, 'deepseek'), model FROM system_prompts ORDER BY role",
     )?;

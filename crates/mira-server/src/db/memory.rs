@@ -5,6 +5,9 @@ use mira_types::MemoryFact;
 use rusqlite::OptionalExtension;
 use std::sync::LazyLock;
 
+/// (fact_id, content, distance, branch)
+type RecallRow = (i64, String, f32, Option<String>);
+
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
 #[derive(Debug, Clone)]
 pub struct RankedMemory {
@@ -311,16 +314,16 @@ pub fn recall_semantic_with_entity_boost_sync(
     current_branch: Option<&str>,
     query_entity_names: &[String],
     limit: usize,
-) -> rusqlite::Result<Vec<(i64, String, f32, Option<String>)>> {
+) -> rusqlite::Result<Vec<RecallRow>> {
     use super::entities::get_entity_match_counts_sync;
 
     // Fetch more results than needed to allow for re-ranking after boosting
     let fetch_limit = (limit * 2).min(100);
 
     let sql = semantic_recall_sql();
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare(sql)?;
 
-    let results: Vec<(i64, String, f32, Option<String>)> = stmt
+    let results: Vec<RecallRow> = stmt
         .query_map(
             rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -370,7 +373,7 @@ pub fn recall_semantic_with_branch_sync(
     let fetch_limit = (limit * 2).min(100);
 
     let sql = semantic_recall_sql();
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare(sql)?;
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
         .query_map(
@@ -408,14 +411,14 @@ pub fn recall_semantic_with_branch_info_sync(
     user_id: Option<&str>,
     current_branch: Option<&str>,
     limit: usize,
-) -> rusqlite::Result<Vec<(i64, String, f32, Option<String>)>> {
+) -> rusqlite::Result<Vec<RecallRow>> {
     // Fetch more results than needed to allow for re-ranking after boosting
     let fetch_limit = (limit * 2).min(100);
 
     let sql = semantic_recall_sql();
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare(sql)?;
 
-    let results: Vec<(i64, String, f32, Option<String>)> = stmt
+    let results: Vec<RecallRow> = stmt
         .query_map(
             rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -424,7 +427,7 @@ pub fn recall_semantic_with_branch_info_sync(
         .collect();
 
     // Apply branch boosting and re-sort
-    let mut boosted: Vec<(i64, String, f32, Option<String>)> = results
+    let mut boosted: Vec<RecallRow> = results
         .into_iter()
         .map(|(id, content, distance, branch)| {
             let boosted_distance = apply_branch_boost(distance, branch.as_deref(), current_branch);

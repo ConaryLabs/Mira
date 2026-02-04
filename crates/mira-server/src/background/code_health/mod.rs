@@ -186,62 +186,76 @@ pub(crate) async fn scan_project_health(
 
     let mut total = 0;
 
-    // Run file-based detection operations using main_pool (they only write to memory_facts)
-    // Cargo check runs separately; all pattern detectors run in a single pass over each file.
+    // Run file-based scans OUTSIDE pool threads (they do heavy I/O and process spawning),
+    // then batch-write results inside a single pool.interact() call.
     let project_path_owned = project_path.to_string();
-    let detection_results = main_pool
-        .interact(
-            move |conn| -> Result<(usize, usize, usize, usize, usize), anyhow::Error> {
-                // 1. Cargo check warnings (most important, runs cargo externally)
-                tracing::debug!(
-                    "Code health: running cargo check for {}",
-                    project_path_owned
-                );
-                let warnings = cargo::scan_cargo_warnings(conn, project_id, &project_path_owned)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-                if warnings > 0 {
-                    tracing::info!("Code health: found {} cargo warnings", warnings);
-                }
 
-                // 2-5. Single-pass pattern detection (TODOs, unimplemented, unwrap, error handling)
-                let det = detection::scan_all(conn, project_id, &project_path_owned)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-                if det.todos > 0 {
-                    tracing::info!("Code health: found {} TODOs", det.todos);
-                }
-                if det.unimplemented > 0 {
-                    tracing::info!(
-                        "Code health: found {} unimplemented! macros",
-                        det.unimplemented
-                    );
-                }
-                if det.unwraps > 0 {
-                    tracing::info!(
-                        "Code health: found {} unwrap/expect calls in non-test code",
-                        det.unwraps
-                    );
-                }
-                if det.error_handling > 0 {
-                    tracing::info!(
-                        "Code health: found {} error handling issues",
-                        det.error_handling
-                    );
-                }
+    // 1. Cargo check warnings (spawns external cargo process)
+    let cargo_path = project_path_owned.clone();
+    let cargo_findings = tokio::task::spawn_blocking(move || {
+        tracing::debug!("Code health: running cargo check for {}", cargo_path);
+        cargo::collect_cargo_warnings(&cargo_path)
+    })
+    .await
+    .map_err(|e| format!("cargo scan join error: {}", e))?
+    .unwrap_or_else(|e| {
+        tracing::warn!("Code health: cargo check failed: {}", e);
+        Vec::new()
+    });
 
-                Ok((
-                    warnings,
-                    det.todos,
-                    det.unimplemented,
-                    det.unwraps,
-                    det.error_handling,
-                ))
+    if !cargo_findings.is_empty() {
+        tracing::info!("Code health: found {} cargo warnings", cargo_findings.len());
+    }
+
+    // 2-5. Single-pass pattern detection (walks filesystem, reads Rust files)
+    let det_path = project_path_owned.clone();
+    let det_output = tokio::task::spawn_blocking(move || {
+        detection::collect_detections(&det_path)
+    })
+    .await
+    .map_err(|e| format!("detection scan join error: {}", e))?
+    .unwrap_or_else(|e| {
+        tracing::warn!("Code health: detection scan failed: {}", e);
+        detection::DetectionOutput {
+            results: detection::DetectionResults {
+                todos: 0,
+                unimplemented: 0,
+                unwraps: 0,
+                error_handling: 0,
             },
-        )
+            findings: Vec::new(),
+        }
+    });
+
+    let det = &det_output.results;
+    if det.todos > 0 {
+        tracing::info!("Code health: found {} TODOs", det.todos);
+    }
+    if det.unimplemented > 0 {
+        tracing::info!("Code health: found {} unimplemented! macros", det.unimplemented);
+    }
+    if det.unwraps > 0 {
+        tracing::info!("Code health: found {} unwrap/expect calls in non-test code", det.unwraps);
+    }
+    if det.error_handling > 0 {
+        tracing::info!("Code health: found {} error handling issues", det.error_handling);
+    }
+
+    // Batch-write all findings in a single pool.interact() call
+    let warnings_count = cargo_findings.len();
+    let det_count = det_output.findings.len();
+    main_pool
+        .interact(move |conn| -> Result<(), anyhow::Error> {
+            cargo::store_cargo_findings(conn, project_id, &cargo_findings)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            detection::store_detection_findings(conn, project_id, &det_output.findings)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok(())
+        })
         .await
         .str_err()?;
 
-    let (warnings, todos, unimpl, unwraps, error_handling) = detection_results;
-    total += warnings + todos + unimpl + unwraps + error_handling;
+    total += warnings_count + det_count;
 
     // 6. Unused functions - reads from code DB (code_symbols/call_graph),
     //    writes findings to main DB (memory_facts)
@@ -470,11 +484,10 @@ fn collect_dependency_data(
             .str_err()?;
         for row in rows {
             let (fp, ip) = row.str_err()?;
-            if let (Some(src), Some(tgt)) = (file_to_mod(&fp), file_to_mod(&ip)) {
-                if src != tgt {
+            if let (Some(src), Some(tgt)) = (file_to_mod(&fp), file_to_mod(&ip))
+                && src != tgt {
                     *import_deps.entry((src, tgt)).or_default() += 1;
                 }
-            }
         }
     }
 
@@ -501,11 +514,10 @@ fn collect_dependency_data(
             .str_err()?;
         for row in rows {
             let (f1, f2, cnt) = row.str_err()?;
-            if let (Some(src), Some(tgt)) = (file_to_mod(&f1), file_to_mod(&f2)) {
-                if src != tgt {
+            if let (Some(src), Some(tgt)) = (file_to_mod(&f1), file_to_mod(&f2))
+                && src != tgt {
                     *call_deps.entry((src, tgt)).or_default() += cnt;
                 }
-            }
         }
     }
 

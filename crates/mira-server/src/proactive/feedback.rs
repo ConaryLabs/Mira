@@ -8,17 +8,19 @@ use serde::{Deserialize, Serialize};
 use super::patterns::update_pattern_confidence;
 use super::{InterventionType, UserResponse};
 
+/// Parameters for recording an intervention
+pub struct InterventionParams<'a> {
+    pub project_id: i64,
+    pub session_id: &'a str,
+    pub intervention_type: InterventionType,
+    pub trigger_pattern_id: Option<i64>,
+    pub trigger_context: &'a str,
+    pub suggestion_content: &'a str,
+    pub confidence: f64,
+}
+
 /// Record an intervention that was shown to the user
-pub fn record_intervention(
-    conn: &Connection,
-    project_id: i64,
-    session_id: &str,
-    intervention_type: InterventionType,
-    trigger_pattern_id: Option<i64>,
-    trigger_context: &str,
-    suggestion_content: &str,
-    confidence: f64,
-) -> Result<i64> {
+pub fn record_intervention(conn: &Connection, p: &InterventionParams) -> Result<i64> {
     let sql = r#"
         INSERT INTO proactive_interventions
         (project_id, session_id, intervention_type, trigger_pattern_id, trigger_context, suggestion_content, confidence)
@@ -28,13 +30,13 @@ pub fn record_intervention(
     conn.execute(
         sql,
         rusqlite::params![
-            project_id,
-            session_id,
-            intervention_type.as_str(),
-            trigger_pattern_id,
-            trigger_context,
-            suggestion_content,
-            confidence,
+            p.project_id,
+            p.session_id,
+            p.intervention_type.as_str(),
+            p.trigger_pattern_id,
+            p.trigger_context,
+            p.suggestion_content,
+            p.confidence,
         ],
     )?;
 

@@ -6,7 +6,7 @@
 
 use crate::db::diff_outcomes::get_unscanned_diffs_sync;
 use crate::db::diff_outcomes::mark_clean_outcomes_sync;
-use crate::db::diff_outcomes::store_diff_outcome_sync;
+use crate::db::diff_outcomes::{StoreDiffOutcomeParams, store_diff_outcome_sync};
 use crate::db::pool::DatabasePool;
 use crate::db::{get_indexed_projects_sync, set_server_state_sync};
 use crate::git::{CommitWithFiles, get_commits_with_files, get_git_head};
@@ -121,13 +121,15 @@ async fn scan_project(
             pool.interact(move |conn| {
                 store_diff_outcome_sync(
                     conn,
-                    diff_id,
-                    Some(pid),
-                    "reverted",
-                    Some(&ev_commit),
-                    Some(&ev_msg),
-                    Some(td),
-                    "git_scan",
+                    &StoreDiffOutcomeParams {
+                        diff_analysis_id: diff_id,
+                        project_id: Some(pid),
+                        outcome_type: "reverted",
+                        evidence_commit: Some(&ev_commit),
+                        evidence_message: Some(&ev_msg),
+                        time_to_outcome_seconds: Some(td),
+                        detected_by: "git_scan",
+                    },
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))
             })
@@ -146,13 +148,15 @@ async fn scan_project(
                 pool.interact(move |conn| {
                     store_diff_outcome_sync(
                         conn,
-                        diff_id,
-                        Some(pid),
-                        "follow_up_fix",
-                        Some(&ev_commit),
-                        Some(&ev_msg),
-                        Some(td),
-                        "git_scan",
+                        &StoreDiffOutcomeParams {
+                            diff_analysis_id: diff_id,
+                            project_id: Some(pid),
+                            outcome_type: "follow_up_fix",
+                            evidence_commit: Some(&ev_commit),
+                            evidence_message: Some(&ev_msg),
+                            time_to_outcome_seconds: Some(td),
+                            detected_by: "git_scan",
+                        },
                     )
                     .map_err(|e| anyhow::anyhow!("{}", e))
                 })

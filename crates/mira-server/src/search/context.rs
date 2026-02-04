@@ -70,9 +70,9 @@ pub fn expand_context_with_conn(
     };
 
     // Try to expand using symbol bounds from DB
-    if let (Some(conn), Some(proj_path)) = (conn, project_path) {
-        if let Some((kind, name)) = parse_symbol_header(chunk_content) {
-            if let Some((start_line, end_line)) =
+    if let (Some(conn), Some(proj_path)) = (conn, project_path)
+        && let Some((kind, name)) = parse_symbol_header(chunk_content)
+            && let Some((start_line, end_line)) =
                 lookup_symbol_bounds_sync(conn, project_id, file_path, &name)
             {
                 let full_path = Path::new(proj_path).join(file_path);
@@ -91,8 +91,6 @@ pub fn expand_context_with_conn(
                     }
                 }
             }
-        }
-    }
 
     // Fallback: use original +-5 line approach
     if let Some(proj_path) = project_path {

@@ -16,6 +16,9 @@ use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::llm::ProviderFactory;
 
+/// Map of pending collaboration responses keyed by message ID.
+pub type PendingResponseMap = Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>;
+
 /// Information about an MCP tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolInfo {
@@ -100,7 +103,7 @@ pub trait ToolContext: Send + Sync {
     }
 
     /// Pending responses for agent collaboration
-    fn pending_responses(&self) -> Option<&Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>> {
+    fn pending_responses(&self) -> Option<&PendingResponseMap> {
         None
     }
 

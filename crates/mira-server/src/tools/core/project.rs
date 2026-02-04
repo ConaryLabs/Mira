@@ -24,6 +24,18 @@ use crate::tools::core::ToolContext;
 use crate::tools::core::claude_local;
 use crate::utils::ResultExt;
 
+/// Session info tuple: (session_id, last_activity, summary, tool_count, tool_names)
+type SessionInfo = (String, String, Option<String>, usize, Vec<String>);
+
+/// Recap data: (preferences, memories, health_alerts, doc_task_counts, pending_interventions)
+type RecapData = (
+    Vec<MemoryFact>,
+    Vec<MemoryFact>,
+    Vec<MemoryFact>,
+    Vec<(String, i64)>,
+    Vec<interventions::PendingIntervention>,
+);
+
 // Helper functions moved to db/project.rs:
 // - search_memories_text_sync
 // - get_preferences_sync
@@ -45,8 +57,8 @@ fn detect_project_name(path: &str) -> Option<String> {
 
     // Try Cargo.toml for Rust projects
     let cargo_toml = path.join("Cargo.toml");
-    if cargo_toml.exists() {
-        if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+    if cargo_toml.exists()
+        && let Ok(content) = std::fs::read_to_string(&cargo_toml) {
             if content.contains("[workspace]") {
                 return dir_name();
             }
@@ -56,35 +68,31 @@ fn detect_project_name(path: &str) -> Option<String> {
                 let line = line.trim();
                 if line.starts_with('[') {
                     in_package = line == "[package]";
-                } else if in_package && line.starts_with("name") {
-                    if let Some(name) = line.split('=').nth(1) {
+                } else if in_package && line.starts_with("name")
+                    && let Some(name) = line.split('=').nth(1) {
                         let name = name.trim().trim_matches('"').trim_matches('\'');
                         if !name.is_empty() {
                             return Some(name.to_string());
                         }
                     }
-                }
             }
         }
-    }
 
     // Try package.json for Node projects
     let package_json = path.join("package.json");
-    if package_json.exists() {
-        if let Ok(content) = std::fs::read_to_string(&package_json) {
+    if package_json.exists()
+        && let Ok(content) = std::fs::read_to_string(&package_json) {
             for line in content.lines() {
                 let line = line.trim();
-                if line.starts_with("\"name\"") {
-                    if let Some(name) = line.split(':').nth(1) {
+                if line.starts_with("\"name\"")
+                    && let Some(name) = line.split(':').nth(1) {
                         let name = name.trim().trim_matches(',').trim_matches('"').trim();
                         if !name.is_empty() {
                             return Some(name.to_string());
                         }
                     }
-                }
             }
         }
-    }
 
     // Fall back to directory name
     dir_name()
@@ -195,7 +203,7 @@ pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>,
 
 /// Format recent sessions for display
 fn format_recent_sessions(
-    sessions: &[(String, String, Option<String>, usize, Vec<String>)],
+    sessions: &[SessionInfo],
 ) -> String {
     let mut out = String::from("\nRecent sessions:\n");
     for (sess_id, last_activity, summary, tool_count, tools) in sessions {
@@ -394,7 +402,7 @@ pub async fn session_start<C: ToolContext>(
 
     // Get recent sessions and their stats in one pool call
     let sid_for_filter = sid.clone();
-    let recent_session_data: Vec<(String, String, Option<String>, usize, Vec<String>)> = ctx
+    let recent_session_data: Vec<SessionInfo> = ctx
         .pool()
         .run(move |conn| {
             let sessions = get_recent_sessions_sync(conn, project_id, 4).unwrap_or_default();
@@ -417,13 +425,7 @@ pub async fn session_start<C: ToolContext>(
     }
 
     // Load preferences, memories, health alerts, doc task counts, and interventions in a single pool call
-    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions): (
-        Vec<MemoryFact>,
-        Vec<MemoryFact>,
-        Vec<MemoryFact>,
-        Vec<(String, i64)>,
-        Vec<interventions::PendingIntervention>,
-    ) = ctx
+    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions): RecapData = ctx
         .pool()
         .run(move |conn| {
             // Get preferences
@@ -532,12 +534,11 @@ fn gather_system_context_content() -> Option<String> {
     let mut context_parts = Vec::new();
 
     // OS info
-    if let Ok(output) = Command::new("uname").args(["-s", "-r"]).output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("uname").args(["-s", "-r"]).output()
+        && output.status.success() {
             let os = String::from_utf8_lossy(&output.stdout).trim().to_string();
             context_parts.push(format!("OS: {}", os));
         }
-    }
 
     // Distro (Linux)
     if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
@@ -560,48 +561,45 @@ fn gather_system_context_content() -> Option<String> {
         if !user.is_empty() {
             context_parts.push(format!("User: {}", user));
         }
-    } else if let Ok(output) = Command::new("whoami").output() {
-        if output.status.success() {
+    } else if let Ok(output) = Command::new("whoami").output()
+        && output.status.success() {
             let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
             context_parts.push(format!("User: {}", user));
         }
-    }
 
     // Home directory (try env, fallback to ~)
     if let Ok(home) = std::env::var("HOME") {
         if !home.is_empty() {
             context_parts.push(format!("Home: {}", home));
         }
-    } else if let Ok(output) = Command::new("sh").args(["-c", "echo ~"]).output() {
-        if output.status.success() {
+    } else if let Ok(output) = Command::new("sh").args(["-c", "echo ~"]).output()
+        && output.status.success() {
             let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
             context_parts.push(format!("Home: {}", home));
         }
-    }
 
     // Timezone
-    if let Ok(output) = Command::new("date").arg("+%Z (UTC%:z)").output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("date").arg("+%Z (UTC%:z)").output()
+        && output.status.success() {
             let tz = String::from_utf8_lossy(&output.stdout).trim().to_string();
             context_parts.push(format!("Timezone: {}", tz));
         }
-    }
 
-    // Available tools (check common ones with single command)
-    let tools_to_check = "git cargo rustc npm node python3 docker systemctl curl jq";
-    if let Ok(output) = Command::new("sh")
-        .args([
-            "-c",
-            &format!("which {} 2>/dev/null | xargs -n1 basename", tools_to_check),
-        ])
-        .output()
-    {
-        if output.status.success() {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            let tools: Vec<&str> = output_str.lines().filter(|s| !s.is_empty()).collect();
-            if !tools.is_empty() {
-                context_parts.push(format!("Available tools: {}", tools.join(", ")));
-            }
+    // Available tools (check common ones via PATH scan)
+    let tools_to_check = ["git", "cargo", "rustc", "npm", "node", "python3", "docker", "systemctl", "curl", "jq"];
+    if let Ok(path_var) = std::env::var("PATH") {
+        let path_dirs: Vec<&str> = path_var.split(':').collect();
+        let found: Vec<&str> = tools_to_check
+            .iter()
+            .filter(|tool| {
+                path_dirs.iter().any(|dir| {
+                    std::path::Path::new(dir).join(tool).is_file()
+                })
+            })
+            .copied()
+            .collect();
+        if !found.is_empty() {
+            context_parts.push(format!("Available tools: {}", found.join(", ")));
         }
     }
 

@@ -103,11 +103,10 @@ pub fn parse_session_note(path: &Path) -> Option<SessionNote> {
         // Check for section headers
         if trimmed.starts_with("# ") && !trimmed.starts_with("# Session") {
             // Save previous section
-            if let Some(section) = current_section.take() {
-                if !section_content.trim().is_empty() {
+            if let Some(section) = current_section.take()
+                && !section_content.trim().is_empty() {
                     *section = Some(section_content.trim().to_string());
                 }
-            }
             section_content.clear();
 
             // Determine new section
@@ -146,11 +145,10 @@ pub fn parse_session_note(path: &Path) -> Option<SessionNote> {
     }
 
     // Save last section
-    if let Some(section) = current_section {
-        if !section_content.trim().is_empty() {
+    if let Some(section) = current_section
+        && !section_content.trim().is_empty() {
             *section = Some(section_content.trim().to_string());
         }
-    }
 
     Some(note)
 }

@@ -211,12 +211,11 @@ pub fn persist_api_key(env_var_name: &str, key: &str) {
     let env_path = home.join(".mira").join(".env");
 
     // Ensure directory exists
-    if let Some(parent) = env_path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
+    if let Some(parent) = env_path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent) {
             tracing::warn!("[elicitation] Failed to create .mira directory: {}", e);
             return;
         }
-    }
 
     let line = format!("\n{}={}\n", env_var_name, key);
     match std::fs::OpenOptions::new()

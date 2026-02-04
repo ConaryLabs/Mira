@@ -105,18 +105,16 @@ pub fn walk(
             }
         }
         "call_expression" => {
-            if let Some(caller) = current_function {
-                if let Some(call) = extract_call(node, ctx.source, caller) {
+            if let Some(caller) = current_function
+                && let Some(call) = extract_call(node, ctx.source, caller) {
                     ctx.calls.push(call);
                 }
-            }
         }
         "macro_invocation" => {
-            if let Some(caller) = current_function {
-                if let Some(call) = extract_macro_call(node, ctx.source, caller) {
+            if let Some(caller) = current_function
+                && let Some(call) = extract_macro_call(node, ctx.source, caller) {
                     ctx.calls.push(call);
                 }
-            }
         }
         _ => {}
     }

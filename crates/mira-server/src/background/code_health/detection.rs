@@ -50,6 +50,20 @@ pub struct DetectionResults {
     pub error_handling: usize,
 }
 
+/// A collected detection finding, ready for batch storage
+pub struct DetectionFinding {
+    pub key: String,
+    pub content: String,
+    pub category: &'static str,
+    pub confidence: f64,
+}
+
+/// Collected output from scan: counts + findings to store
+pub struct DetectionOutput {
+    pub results: DetectionResults,
+    pub findings: Vec<DetectionFinding>,
+}
+
 impl DetectionResults {
     fn all_maxed(&self) -> bool {
         self.todos >= MAX_TODO_FINDINGS
@@ -104,20 +118,17 @@ fn walk_rust_files(project_path: &str) -> Result<Vec<String>, String> {
 }
 
 /// Single-pass scan for TODO/FIXME, unimplemented!(), .unwrap(), and error handling patterns.
+/// Returns collected findings without writing to DB.
 ///
 /// Walks all Rust files once, reads each file once, and applies all detectors to each line.
-/// This replaces the previous four separate scan functions that each walked the file tree independently.
-pub fn scan_all(
-    conn: &Connection,
-    project_id: i64,
-    project_path: &str,
-) -> Result<DetectionResults, String> {
+pub fn collect_detections(project_path: &str) -> Result<DetectionOutput, String> {
     let mut r = DetectionResults {
         todos: 0,
         unimplemented: 0,
         unwraps: 0,
         error_handling: 0,
     };
+    let mut findings = Vec::new();
 
     for file in walk_rust_files(project_path)? {
         if r.all_maxed() {
@@ -159,22 +170,12 @@ pub fn scan_all(
             if r.todos < MAX_TODO_FINDINGS && RE_TODO.is_match(line) {
                 let content_str = format!("[todo] {}:{} - {}", file, line_num, trimmed);
                 let key = format!("health:todo:{}:{}", file, line_num);
-                store_memory_sync(
-                    conn,
-                    StoreMemoryParams {
-                        project_id: Some(project_id),
-                        key: Some(&key),
-                        content: &content_str,
-                        fact_type: "health",
-                        category: Some("todo"),
-                        confidence: CONFIDENCE_TODO,
-                        session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
-                    },
-                )
-                .str_err()?;
+                findings.push(DetectionFinding {
+                    key,
+                    content: content_str,
+                    category: "todo",
+                    confidence: CONFIDENCE_TODO,
+                });
                 r.todos += 1;
             }
 
@@ -185,22 +186,12 @@ pub fn scan_all(
             {
                 let content_str = format!("[unimplemented] {}:{} - {}", file, line_num, trimmed);
                 let key = format!("health:unimplemented:{}:{}", file, line_num);
-                store_memory_sync(
-                    conn,
-                    StoreMemoryParams {
-                        project_id: Some(project_id),
-                        key: Some(&key),
-                        content: &content_str,
-                        fact_type: "health",
-                        category: Some("unimplemented"),
-                        confidence: CONFIDENCE_UNIMPLEMENTED,
-                        session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
-                    },
-                )
-                .str_err()?;
+                findings.push(DetectionFinding {
+                    key,
+                    content: content_str,
+                    category: "unimplemented",
+                    confidence: CONFIDENCE_UNIMPLEMENTED,
+                });
                 r.unimplemented += 1;
             }
 
@@ -235,26 +226,16 @@ pub fn scan_all(
                     );
                     let key = format!("health:unwrap:{}:{}", file, line_num);
 
-                    store_memory_sync(
-                        conn,
-                        StoreMemoryParams {
-                            project_id: Some(project_id),
-                            key: Some(&key),
-                            content: &content_str,
-                            fact_type: "health",
-                            category: Some("unwrap"),
-                            confidence: if severity == "high" {
-                                CONFIDENCE_UNWRAP_HIGH
-                            } else {
-                                CONFIDENCE_UNWRAP_MEDIUM
-                            },
-                            session_id: None,
-                            user_id: None,
-                            scope: "project",
-                            branch: None,
+                    findings.push(DetectionFinding {
+                        key,
+                        content: content_str,
+                        category: "unwrap",
+                        confidence: if severity == "high" {
+                            CONFIDENCE_UNWRAP_HIGH
+                        } else {
+                            CONFIDENCE_UNWRAP_MEDIUM
                         },
-                    )
-                    .str_err()?;
+                    });
                     r.unwraps += 1;
                 }
             }
@@ -265,9 +246,8 @@ pub fn scan_all(
                 && !skip_test_file
                 && !in_test_module
                 && !is_comment
-            {
-                if let Some((severity, pattern, description)) = check_error_pattern(trimmed) {
-                    if !is_acceptable_error_swallow(trimmed) {
+                && let Some((severity, pattern, description)) = check_error_pattern(trimmed)
+                    && !is_acceptable_error_swallow(trimmed) {
                         let content_str = format!(
                             "[{}] {} at {}:{} - {}",
                             severity,
@@ -278,34 +258,52 @@ pub fn scan_all(
                         );
                         let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
 
-                        store_memory_sync(
-                            conn,
-                            StoreMemoryParams {
-                                project_id: Some(project_id),
-                                key: Some(&key),
-                                content: &content_str,
-                                fact_type: "health",
-                                category: Some("error_handling"),
-                                confidence: if severity == "high" {
-                                    CONFIDENCE_ERROR_HIGH
-                                } else {
-                                    CONFIDENCE_ERROR_LOW
-                                },
-                                session_id: None,
-                                user_id: None,
-                                scope: "project",
-                                branch: None,
+                        findings.push(DetectionFinding {
+                            key,
+                            content: content_str,
+                            category: "error_handling",
+                            confidence: if severity == "high" {
+                                CONFIDENCE_ERROR_HIGH
+                            } else {
+                                CONFIDENCE_ERROR_LOW
                             },
-                        )
-                        .str_err()?;
+                        });
                         r.error_handling += 1;
                     }
-                }
-            }
         }
     }
 
-    Ok(r)
+    Ok(DetectionOutput {
+        results: r,
+        findings,
+    })
+}
+
+/// Store collected detection findings in the database (batch write).
+pub fn store_detection_findings(
+    conn: &Connection,
+    project_id: i64,
+    findings: &[DetectionFinding],
+) -> Result<usize, String> {
+    for finding in findings {
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id: Some(project_id),
+                key: Some(&finding.key),
+                content: &finding.content,
+                fact_type: "health",
+                category: Some(finding.category),
+                confidence: finding.confidence,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+            },
+        )
+        .str_err()?;
+    }
+    Ok(findings.len())
 }
 
 /// Check if an unwrap is in a known-safe pattern

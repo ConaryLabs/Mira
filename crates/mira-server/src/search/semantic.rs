@@ -155,11 +155,31 @@ fn rerank_results_with_intent(
     project_path: Option<&str>,
     intent: QueryIntent,
 ) {
+    use std::collections::HashMap;
     use std::time::{Duration, SystemTime};
 
     let now = SystemTime::now();
     let one_day = Duration::from_secs(86400);
     let one_week = Duration::from_secs(86400 * 7);
+
+    // Pre-cache file modification times to avoid redundant stat calls
+    let mod_times: HashMap<String, SystemTime> = if let Some(proj_path) = project_path {
+        let mut cache = HashMap::new();
+        for result in results.iter() {
+            if cache.contains_key(&result.file_path) {
+                continue;
+            }
+            let full_path = Path::new(proj_path).join(&result.file_path);
+            if let Ok(metadata) = std::fs::metadata(&full_path) {
+                if let Ok(modified) = metadata.modified() {
+                    cache.insert(result.file_path.clone(), modified);
+                }
+            }
+        }
+        cache
+    } else {
+        HashMap::new()
+    };
 
     for result in results.iter_mut() {
         let mut boost = 1.0f32;
@@ -212,21 +232,16 @@ fn rerank_results_with_intent(
         }
 
         // Boost recent files (up to 20% for files modified in last day)
-        if let Some(proj_path) = project_path {
-            let full_path = Path::new(proj_path).join(&result.file_path);
-            if let Ok(metadata) = std::fs::metadata(&full_path) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(age) = now.duration_since(modified) {
-                        let recency_boost = if age < one_day {
-                            1.20 // Modified today
-                        } else if age < one_week {
-                            1.10 // Modified this week
-                        } else {
-                            1.0 // Older
-                        };
-                        boost *= recency_boost;
-                    }
-                }
+        if let Some(modified) = mod_times.get(&result.file_path) {
+            if let Ok(age) = now.duration_since(*modified) {
+                let recency_boost = if age < one_day {
+                    1.20 // Modified today
+                } else if age < one_week {
+                    1.10 // Modified this week
+                } else {
+                    1.0 // Older
+                };
+                boost *= recency_boost;
             }
         }
 

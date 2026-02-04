@@ -399,11 +399,10 @@ pub async fn show_doc_inventory(
                 output.push_str(&format!("  - {}\n", title));
             }
 
-            if item.is_stale {
-                if let Some(reason) = &item.staleness_reason {
+            if item.is_stale
+                && let Some(reason) = &item.staleness_reason {
                     output.push_str(&format!("  - Reason: {}\n", reason));
                 }
-            }
         }
 
         output.push('\n');

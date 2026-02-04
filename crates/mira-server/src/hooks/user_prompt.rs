@@ -123,9 +123,9 @@ pub async fn run() -> Result<()> {
 
                 // HYBRID APPROACH:
                 // 1. First try pre-generated LLM suggestions (fast O(1) lookup)
-                if let Some(ref file) = current_file {
-                    if let Ok(pre_gen) = get_pre_generated_suggestions(conn, project_id, file) {
-                        if !pre_gen.is_empty() {
+                if let Some(ref file) = current_file
+                    && let Ok(pre_gen) = get_pre_generated_suggestions(conn, project_id, file)
+                        && !pre_gen.is_empty() {
                             let context_lines: Vec<String> = pre_gen
                                 .iter()
                                 .take(2)
@@ -145,8 +145,6 @@ pub async fn run() -> Result<()> {
                                 return Ok(Some(context_lines.join("\n")));
                             }
                         }
-                    }
-                }
 
                 // 2. Fallback: On-the-fly pattern matching (no LLM, simple templates)
                 let current_context = predictor::CurrentContext {

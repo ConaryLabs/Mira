@@ -9,6 +9,9 @@
 use crate::db::schema::code::VEC_CODE_CREATE_SQL;
 use rusqlite::{Connection, params};
 
+/// (embedding, file_path, chunk_content, project_id, start_line)
+type EmbeddingRow = (Vec<u8>, String, String, Option<i64>, i64);
+
 /// Clear all index data for a project (symbols, embeddings, imports, modules, call graph)
 ///
 /// This is used when re-indexing a project from scratch.
@@ -193,7 +196,7 @@ pub fn compact_vec_code_sync(conn: &Connection) -> rusqlite::Result<CompactStats
     let mut stmt = conn.prepare(
         "SELECT embedding, file_path, chunk_content, project_id, start_line FROM vec_code",
     )?;
-    let rows: Vec<(Vec<u8>, String, String, Option<i64>, i64)> = stmt
+    let rows: Vec<EmbeddingRow> = stmt
         .query_map([], |row| {
             Ok((
                 row.get::<_, Vec<u8>>(0)?,

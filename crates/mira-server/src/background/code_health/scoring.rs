@@ -316,8 +316,8 @@ fn gather_pattern_violations(
             .ok()
             .flatten();
 
-        if let Some(json) = patterns_json {
-            if let Ok(patterns) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
+        if let Some(json) = patterns_json
+            && let Ok(patterns) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
                 // Low-confidence patterns contribute to debt score
                 let violation_score: f64 = patterns
                     .iter()
@@ -331,7 +331,6 @@ fn gather_pattern_violations(
                     result.insert(module_id.clone(), violation_score.min(100.0));
                 }
             }
-        }
     }
 
     Ok(result)

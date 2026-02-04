@@ -48,22 +48,24 @@ pub fn parse_diff_analysis_row(row: &rusqlite::Row) -> rusqlite::Result<DiffAnal
 // Sync functions for pool.interact() usage
 // ============================================================================
 
+/// Parameters for storing a diff analysis
+pub struct StoreDiffAnalysisParams<'a> {
+    pub project_id: Option<i64>,
+    pub from_commit: &'a str,
+    pub to_commit: &'a str,
+    pub analysis_type: &'a str,
+    pub changes_json: Option<&'a str>,
+    pub impact_json: Option<&'a str>,
+    pub risk_json: Option<&'a str>,
+    pub summary: Option<&'a str>,
+    pub files_changed: Option<i64>,
+    pub lines_added: Option<i64>,
+    pub lines_removed: Option<i64>,
+    pub files_json: Option<&'a str>,
+}
+
 /// Store a new diff analysis (sync version for pool.interact())
-pub fn store_diff_analysis_sync(
-    conn: &Connection,
-    project_id: Option<i64>,
-    from_commit: &str,
-    to_commit: &str,
-    analysis_type: &str,
-    changes_json: Option<&str>,
-    impact_json: Option<&str>,
-    risk_json: Option<&str>,
-    summary: Option<&str>,
-    files_changed: Option<i64>,
-    lines_added: Option<i64>,
-    lines_removed: Option<i64>,
-    files_json: Option<&str>,
-) -> rusqlite::Result<i64> {
+pub fn store_diff_analysis_sync(conn: &Connection, p: &StoreDiffAnalysisParams) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO diff_analyses (
             project_id, from_commit, to_commit, analysis_type,
@@ -71,18 +73,18 @@ pub fn store_diff_analysis_sync(
             files_changed, lines_added, lines_removed, files_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
-            project_id,
-            from_commit,
-            to_commit,
-            analysis_type,
-            changes_json,
-            impact_json,
-            risk_json,
-            summary,
-            files_changed,
-            lines_added,
-            lines_removed,
-            files_json,
+            p.project_id,
+            p.from_commit,
+            p.to_commit,
+            p.analysis_type,
+            p.changes_json,
+            p.impact_json,
+            p.risk_json,
+            p.summary,
+            p.files_changed,
+            p.lines_added,
+            p.lines_removed,
+            p.files_json,
         ],
     )?;
     Ok(conn.last_insert_rowid())

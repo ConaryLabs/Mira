@@ -243,8 +243,8 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
 
     for (file_a, file_b, _together_count) in &pairs {
         // Check: A without B
-        if let Ok(Some(stats)) = query_gap_stats(conn, gap_sql, project_id, file_a, file_b) {
-            if stats.total >= MIN_OBSERVATIONS {
+        if let Ok(Some(stats)) = query_gap_stats(conn, gap_sql, project_id, file_a, file_b)
+            && stats.total >= MIN_OBSERVATIONS {
                 let bad_rate = (stats.reverted + stats.follow_up_fix) as f64 / stats.total as f64;
                 if bad_rate >= MIN_BAD_RATE {
                     let confidence = compute_confidence(stats.total, bad_rate);
@@ -275,7 +275,6 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
                     }
                 }
             }
-        }
     }
 
     Ok(stored)

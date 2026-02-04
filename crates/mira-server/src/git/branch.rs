@@ -35,13 +35,12 @@ pub fn get_git_branch(project_path: &str) -> Option<String> {
     // Try to get from cache first
     {
         let cache = BRANCH_CACHE.read().ok()?;
-        if let Some(ref cached) = *cache {
-            if cached.project_path == project_path
+        if let Some(ref cached) = *cache
+            && cached.project_path == project_path
                 && cached.cached_at.elapsed() < Duration::from_secs(BRANCH_CACHE_TTL_SECS)
             {
                 return cached.branch.clone();
             }
-        }
     }
 
     // Cache miss or stale - fetch from git

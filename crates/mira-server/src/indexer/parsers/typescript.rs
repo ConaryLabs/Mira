@@ -84,11 +84,10 @@ pub fn walk(
             }
         }
         "call_expression" => {
-            if let Some(caller) = current_function {
-                if let Some(call) = extract_call(node, ctx.source, caller) {
+            if let Some(caller) = current_function
+                && let Some(call) = extract_call(node, ctx.source, caller) {
                     ctx.calls.push(call);
                 }
-            }
         }
         "export_statement" => {
             // Handle exported declarations
@@ -100,10 +99,10 @@ pub fn walk(
         "variable_declaration" => {
             // Check for const function assignments: const foo = () => {}
             for declarator in node.children(&mut node.walk()) {
-                if declarator.kind() == "variable_declarator" {
-                    if let Some(value) = declarator.child_by_field_name("value") {
-                        if value.kind() == "arrow_function" || value.kind() == "function" {
-                            if let Some(name_node) = declarator.child_by_field_name("name") {
+                if declarator.kind() == "variable_declarator"
+                    && let Some(value) = declarator.child_by_field_name("value") {
+                        if (value.kind() == "arrow_function" || value.kind() == "function")
+                            && let Some(name_node) = declarator.child_by_field_name("name") {
                                 let name = node_text(name_node, ctx.source);
                                 if let Some(mut sym) =
                                     extract_function(value, ctx.source, parent_name, ctx.language)
@@ -113,9 +112,7 @@ pub fn walk(
                                     ctx.symbols.push(sym);
                                 }
                             }
-                        }
                     }
-                }
             }
         }
         _ => {}

@@ -132,8 +132,8 @@ pub fn compute_historical_risk(
 
             match pattern_subtype.as_str() {
                 "module_hotspot" => {
-                    if let Some(m) = module {
-                        if file_modules.contains(m.as_str()) {
+                    if let Some(m) = module
+                        && file_modules.contains(m.as_str()) {
                             matches.push(MatchedPattern {
                                 pattern_subtype: pattern_subtype.clone(),
                                 description: format!(
@@ -147,7 +147,6 @@ pub fn compute_historical_risk(
                                 bad_rate,
                             });
                         }
-                    }
                 }
                 "co_change_gap" => {
                     if files.len() >= 2 {

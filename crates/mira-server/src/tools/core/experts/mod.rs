@@ -14,6 +14,7 @@ pub(crate) mod agentic;
 mod config;
 mod context;
 mod council;
+mod definitions;
 mod execution;
 pub(crate) mod findings;
 mod plan;
@@ -21,6 +22,7 @@ mod prompts;
 mod role;
 pub(crate) mod strategy;
 mod tools;
+mod web;
 
 // Re-export ToolContext from parent for use by submodules
 pub(crate) use super::ToolContext;

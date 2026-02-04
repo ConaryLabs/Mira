@@ -3,6 +3,9 @@
 
 use rusqlite::{Connection, params};
 
+/// (id, name, symbol_type, start_line, end_line, signature)
+pub type SymbolRow = (i64, String, String, Option<i32>, Option<i32>, Option<String>);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Common scan time/rate limiting functions
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -170,16 +173,7 @@ pub fn get_symbols_for_file_sync(
     conn: &Connection,
     project_id: i64,
     file_path: &str,
-) -> rusqlite::Result<
-    Vec<(
-        i64,
-        String,
-        String,
-        Option<i32>,
-        Option<i32>,
-        Option<String>,
-    )>,
-> {
+) -> rusqlite::Result<Vec<SymbolRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, symbol_type, start_line, end_line, signature
          FROM code_symbols

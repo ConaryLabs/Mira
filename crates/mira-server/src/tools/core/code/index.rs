@@ -57,8 +57,8 @@ pub async fn index<C: ToolContext>(
 
             // Auto-summarize modules that don't have descriptions yet
             let mut modules_summarized = None;
-            if let Some(pid) = project_id {
-                if let Some(llm_client) = ctx.llm_factory().client_for_background() {
+            if let Some(pid) = project_id
+                && let Some(llm_client) = ctx.llm_factory().client_for_background() {
                     match auto_summarize_modules(
                         ctx.code_pool(),
                         ctx.pool(),
@@ -78,7 +78,6 @@ pub async fn index<C: ToolContext>(
                         }
                     }
                 }
-            }
 
             Ok(Json(IndexOutput {
                 action: "project".into(),

@@ -73,11 +73,10 @@ pub fn walk(
             }
         }
         "call" => {
-            if let Some(caller) = current_function {
-                if let Some(call) = extract_call(node, ctx.source, caller) {
+            if let Some(caller) = current_function
+                && let Some(call) = extract_call(node, ctx.source, caller) {
                     ctx.calls.push(call);
                 }
-            }
         }
         _ => {}
     }

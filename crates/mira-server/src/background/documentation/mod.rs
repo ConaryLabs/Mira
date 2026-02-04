@@ -339,10 +339,10 @@ pub fn needs_documentation_scan(
     let current_commit = get_git_head(project_path);
 
     // Case 2: Git changed AND rate limit passed (> 1 hour since last scan)
-    if let (Some(last), Some(current)) = (&last_commit, &current_commit) {
-        if last != current {
-            if let Some(ref scan_time) = last_scan_time {
-                if is_time_older_than_sync(conn, scan_time, "-1 hour") {
+    if let (Some(last), Some(current)) = (&last_commit, &current_commit)
+        && last != current
+            && let Some(ref scan_time) = last_scan_time
+                && is_time_older_than_sync(conn, scan_time, "-1 hour") {
                     tracing::debug!(
                         "Project {} needs doc scan: git changed ({} -> {}) and rate limit passed",
                         project_id,
@@ -351,17 +351,13 @@ pub fn needs_documentation_scan(
                     );
                     return Ok(true);
                 }
-            }
-        }
-    }
 
     // Case 3: Periodic refresh (> 24 hours since last scan)
-    if let Some(ref scan_time) = last_scan_time {
-        if is_time_older_than_sync(conn, scan_time, "-24 hours") {
+    if let Some(ref scan_time) = last_scan_time
+        && is_time_older_than_sync(conn, scan_time, "-24 hours") {
             tracing::debug!("Project {} needs doc scan: periodic refresh", project_id);
             return Ok(true);
         }
-    }
 
     Ok(false)
 }

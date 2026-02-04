@@ -14,7 +14,6 @@ use crate::tools::core as tools;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::sync::oneshot;
 
 use crate::background::watcher::WatcherHandle;
 use crate::config::ApiKeys;
@@ -48,7 +47,7 @@ pub struct MiraServer {
     /// File watcher handle for registering projects
     pub watcher: Option<WatcherHandle>,
     /// Pending responses for agent collaboration (message_id -> response sender)
-    pub pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>,
+    pub pending_responses: tools::PendingResponseMap,
     /// MCP client manager for connecting to external MCP servers (expert tool access)
     pub mcp_client_manager: Option<Arc<McpClientManager>>,
     /// Fuzzy fallback cache for non-embedding searches

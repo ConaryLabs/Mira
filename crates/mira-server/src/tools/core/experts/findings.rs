@@ -2,6 +2,7 @@
 // ParsedFinding struct, parsing/storage logic, and council findings store
 
 use super::ToolContext;
+use crate::db::ReviewFindingParams;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -85,9 +86,8 @@ pub fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFin
             .map(|c| c.is_ascii_digit())
             .unwrap_or(false)
             && trimmed.contains('.')
-        {
-            if let Some(pos) = trimmed.find('.') {
-                if pos < 3 {
+            && let Some(pos) = trimmed.find('.')
+                && pos < 3 {
                     // Likely a numbered item
                     if in_finding && !current_content.is_empty() {
                         findings.push(ParsedFinding {
@@ -103,8 +103,6 @@ pub fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFin
                     current_severity = "medium";
                     in_finding = true;
                 }
-            }
-        }
 
         // Look for "Suggestion:" or "Fix:" lines
         if in_finding
@@ -141,7 +139,7 @@ pub fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFin
 /// Store parsed findings in the database
 pub async fn store_findings<C: ToolContext>(
     ctx: &C,
-    findings: &[ParsedFinding],
+    findings: Vec<ParsedFinding>,
     expert_role: &str,
 ) -> usize {
     use crate::db::store_review_finding_sync;
@@ -156,34 +154,23 @@ pub async fn store_findings<C: ToolContext>(
             continue; // Skip very short findings
         }
 
-        let expert_role = expert_role.to_string();
-        let file_path = finding.file_path.clone();
-        let finding_type = finding.finding_type.clone();
-        let severity = finding.severity.clone();
-        let content = finding.content.clone();
-        let code_snippet = finding.code_snippet.clone();
-        let suggestion = finding.suggestion.clone();
-        let user_id_clone = user_id.clone();
-        let session_id_clone = session_id.clone();
+        let params = ReviewFindingParams {
+            project_id,
+            expert_role: expert_role.to_string(),
+            file_path: finding.file_path,
+            finding_type: finding.finding_type,
+            severity: finding.severity,
+            content: finding.content,
+            code_snippet: finding.code_snippet,
+            suggestion: finding.suggestion,
+            confidence: 0.7, // Default confidence for parsed findings
+            user_id: user_id.clone(),
+            session_id: Some(session_id.clone()),
+        };
 
         let result = ctx
             .pool()
-            .run(move |conn| {
-                store_review_finding_sync(
-                    conn,
-                    project_id,
-                    &expert_role,
-                    file_path.as_deref(),
-                    &finding_type,
-                    &severity,
-                    &content,
-                    code_snippet.as_deref(),
-                    suggestion.as_deref(),
-                    0.7, // Default confidence for parsed findings
-                    user_id_clone.as_deref(),
-                    Some(&session_id_clone),
-                )
-            })
+            .run(move |conn| store_review_finding_sync(conn, &params))
             .await;
 
         if result.is_ok() {
@@ -270,15 +257,6 @@ impl FindingsStore {
         }
     }
 
-    /// Get all findings.
-    #[allow(dead_code)]
-    pub fn all(&self) -> Vec<CouncilFinding> {
-        self.findings
-            .lock()
-            .expect("findings mutex not poisoned")
-            .clone()
-    }
-
     /// Get findings from a specific role.
     pub fn by_role(&self, role: &str) -> Vec<CouncilFinding> {
         self.findings
@@ -337,8 +315,19 @@ impl FindingsStore {
         output
     }
 
-    /// Rough token estimate for the findings (1 token ≈ 4 chars).
-    #[allow(dead_code)]
+}
+
+#[cfg(test)]
+impl FindingsStore {
+    /// Get all findings (test-only).
+    pub fn all(&self) -> Vec<CouncilFinding> {
+        self.findings
+            .lock()
+            .expect("findings mutex not poisoned")
+            .clone()
+    }
+
+    /// Rough token estimate for the findings (1 token ≈ 4 chars, test-only).
     pub fn estimated_tokens(&self) -> usize {
         let findings = self.findings.lock().expect("findings mutex not poisoned");
         let total_chars: usize = findings

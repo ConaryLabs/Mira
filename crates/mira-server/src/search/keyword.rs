@@ -101,8 +101,8 @@ pub fn keyword_search(
     }
 
     // Strategy 3: LIKE chunk search (supplement when results are sparse)
-    if all_results.len() < fetch_limit {
-        if let Some(pid) = project_id {
+    if all_results.len() < fetch_limit
+        && let Some(pid) = project_id {
             let terms: Vec<&str> = query.split_whitespace().collect();
             if !terms.is_empty() {
                 let like_patterns: Vec<String> = terms
@@ -117,7 +117,6 @@ pub fn keyword_search(
                 }
             }
         }
-    }
 
     // Apply tree scope boost: results in relevant module subtrees get higher scores
     if let Some(ref paths) = scope_paths {

@@ -117,8 +117,8 @@ pub fn format_expert_response(
     }
 
     // Add reasoning summary if available (truncated for readability)
-    if let Some(reasoning) = &result.reasoning_content {
-        if !reasoning.is_empty() {
+    if let Some(reasoning) = &result.reasoning_content
+        && !reasoning.is_empty() {
             let reasoning_preview = if reasoning.len() > 1000 {
                 format!("{}...", &reasoning[..1000])
             } else {
@@ -128,7 +128,6 @@ pub fn format_expert_response(
             output.push_str(&reasoning_preview);
             output.push_str("\n\n</details>\n\n");
         }
-    }
 
     // Add main content
     if let Some(content) = result.content {

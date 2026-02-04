@@ -34,14 +34,13 @@ pub fn get_module_code_preview(project_path: &Path, module_path: &str) -> String
             continue;
         };
 
-        if file_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&file_path) {
+        if file_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&file_path) {
                 // Take first 50 lines
                 let lines: Vec<&str> = content.lines().take(50).collect();
                 preview = lines.join("\n");
                 break;
             }
-        }
     }
 
     // If still empty, try to find any .rs file in the directory

@@ -65,10 +65,11 @@ async fn maybe_store_findings<C: ToolContext>(
     if let Some(ref content) = result.content {
         let findings = parse_expert_findings(content, expert_key);
         if !findings.is_empty() {
-            let stored = store_findings(ctx, &findings, expert_key).await;
+            let parsed = findings.len();
+            let stored = store_findings(ctx, findings, expert_key).await;
             tracing::debug!(
                 expert = %expert_key,
-                parsed = findings.len(),
+                parsed,
                 stored,
                 "Parsed and stored review findings"
             );

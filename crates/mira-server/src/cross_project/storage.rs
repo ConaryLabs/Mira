@@ -346,15 +346,15 @@ pub fn extract_and_store_patterns(
 
     for row in file_rows.flatten() {
         let (data, confidence) = row;
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
-            if let Some(seq) = parsed.get("sequence").and_then(|s| s.as_array()) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data)
+            && let Some(seq) = parsed.get("sequence").and_then(|s| s.as_array()) {
                 let files: Vec<String> = seq
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect();
 
-                if let Ok(anonymized) = anonymizer.anonymize_file_sequence(&files, confidence) {
-                    if store_pattern(
+                if let Ok(anonymized) = anonymizer.anonymize_file_sequence(&files, confidence)
+                    && store_pattern(
                         conn,
                         project_id,
                         &anonymized,
@@ -364,9 +364,7 @@ pub fn extract_and_store_patterns(
                     {
                         stored_count += 1;
                     }
-                }
             }
-        }
     }
 
     // Extract tool chain patterns
@@ -389,15 +387,15 @@ pub fn extract_and_store_patterns(
 
     for row in tool_rows.flatten() {
         let (data, confidence) = row;
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
-            if let Some(tools) = parsed.get("tools").and_then(|t| t.as_array()) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data)
+            && let Some(tools) = parsed.get("tools").and_then(|t| t.as_array()) {
                 let tool_names: Vec<String> = tools
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect();
 
-                if let Ok(anonymized) = anonymizer.anonymize_tool_chain(&tool_names, confidence) {
-                    if store_pattern(
+                if let Ok(anonymized) = anonymizer.anonymize_tool_chain(&tool_names, confidence)
+                    && store_pattern(
                         conn,
                         project_id,
                         &anonymized,
@@ -407,9 +405,7 @@ pub fn extract_and_store_patterns(
                     {
                         stored_count += 1;
                     }
-                }
             }
-        }
     }
 
     // Extract problem patterns from expert system
@@ -449,8 +445,8 @@ pub fn extract_and_store_patterns(
             &approaches,
             &tools,
             success_rate,
-        ) {
-            if store_pattern(
+        )
+            && store_pattern(
                 conn,
                 project_id,
                 &anonymized,
@@ -460,7 +456,6 @@ pub fn extract_and_store_patterns(
             {
                 stored_count += 1;
             }
-        }
     }
 
     Ok(stored_count)

@@ -252,16 +252,15 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
 
         // Show top factors for D/F tier
         let mut top_factors: Option<Vec<DebtFactor>> = None;
-        if score.tier == "D" || score.tier == "F" {
-            if let Ok(factors) = serde_json::from_str::<serde_json::Value>(&score.factor_scores) {
+        if (score.tier == "D" || score.tier == "F")
+            && let Ok(factors) = serde_json::from_str::<serde_json::Value>(&score.factor_scores) {
                 let mut factor_list: Vec<(String, f64)> = Vec::new();
                 if let Some(obj) = factors.as_object() {
                     for (name, val) in obj {
-                        if let Some(s) = val.get("score").and_then(|v| v.as_f64()) {
-                            if s > 20.0 {
+                        if let Some(s) = val.get("score").and_then(|v| v.as_f64())
+                            && s > 20.0 {
                                 factor_list.push((name.clone(), s));
                             }
-                        }
                     }
                 }
                 factor_list
@@ -279,7 +278,6 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
                     );
                 }
             }
-        }
 
         module_items.push(TechDebtModule {
             module_path: score.module_path.clone(),

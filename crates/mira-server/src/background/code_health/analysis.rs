@@ -13,6 +13,9 @@ use std::sync::Arc;
 /// Maximum bytes of function code to include in analysis (approx 5000 tokens)
 const MAX_FUNCTION_CODE_BYTES: usize = 20_000;
 
+/// (name, file_path, start_line, end_line, question_mark_count)
+type ErrorHeavyFunction = (String, String, i64, i64, usize);
+
 /// Truncate function code if it exceeds the limit, preserving line structure
 fn truncate_function_code(code: &str, max_bytes: usize) -> String {
     if code.len() <= max_bytes {
@@ -68,6 +71,15 @@ fn extract_function_code(
     Some(lines[start..end].join("\n"))
 }
 
+/// Shared context for code health analysis passes
+struct AnalysisContext<'a> {
+    code_pool: &'a Arc<DatabasePool>,
+    main_pool: &'a Arc<DatabasePool>,
+    client: &'a Arc<dyn LlmClient>,
+    project_id: i64,
+    project_path: &'a str,
+}
+
 /// Configuration for a code health analysis pass
 struct AnalysisConfig {
     key_prefix: &'static str,
@@ -81,11 +93,7 @@ struct AnalysisConfig {
 /// - `code_pool`: for querying code_symbols (query_fn)
 /// - `main_pool`: for storing findings (memory_facts) and recording LLM usage
 async fn analyze_functions<F, P>(
-    code_pool: &Arc<DatabasePool>,
-    main_pool: &Arc<DatabasePool>,
-    client: &Arc<dyn LlmClient>,
-    project_id: i64,
-    project_path: &str,
+    ctx: &AnalysisContext<'_>,
     query_fn: F,
     prompt_builder: P,
     config: AnalysisConfig,
@@ -103,9 +111,12 @@ where
         category,
         limit,
     } = config;
+    let project_id = ctx.project_id;
+    let project_path = ctx.project_path;
     // Query code database for functions to analyze
     let project_path_owned = project_path.to_string();
-    let functions = code_pool
+    let functions = ctx
+        .code_pool
         .interact(move |conn| {
             query_fn(conn, project_id, &project_path_owned).map_err(|e| anyhow::anyhow!("{}", e))
         })
@@ -153,13 +164,13 @@ where
             PromptBuilder::for_code_health_complexity().build_messages(prompt)
         };
 
-        match client.chat(messages, None).await {
+        match ctx.client.chat(messages, None).await {
             Ok(result) => {
                 // Record usage (main DB)
                 record_llm_usage(
-                    main_pool,
-                    client.provider_type(),
-                    &client.model_name(),
+                    ctx.main_pool,
+                    ctx.client.provider_type(),
+                    &ctx.client.model_name(),
                     &format!("background:code_health:{}", category),
                     &result,
                     Some(project_id),
@@ -183,7 +194,7 @@ where
                     );
                     let key = format!("{}:{}:{}", key_prefix, file_path, name);
 
-                    main_pool
+                    ctx.main_pool
                         .interact(move |conn| {
                             store_memory_sync(
                                 conn,
@@ -234,12 +245,15 @@ pub async fn scan_complexity(
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    analyze_functions(
+    let ctx = AnalysisContext {
         code_pool,
         main_pool,
         client,
         project_id,
         project_path,
+    };
+    analyze_functions(
+        &ctx,
         |conn, pid, _| get_large_functions(conn, pid, 50),
         |name, file_path, _start_line, _end_line, function_code| {
             format!(
@@ -304,12 +318,15 @@ pub async fn scan_error_quality(
         Ok(four_tuple)
     };
 
-    analyze_functions(
+    let ctx = AnalysisContext {
         code_pool,
         main_pool,
         client,
         project_id,
         project_path,
+    };
+    analyze_functions(
+        &ctx,
         query_wrapper,
         |name, file_path, _start_line, _end_line, function_code| {
             // Count ? operators in the function code
@@ -351,7 +368,7 @@ fn get_error_heavy_functions(
     conn: &rusqlite::Connection,
     project_id: i64,
     project_path: &str,
-) -> Result<Vec<(String, String, i64, i64, usize)>, String> {
+) -> Result<Vec<ErrorHeavyFunction>, String> {
     use std::fs;
 
     // Get functions from symbols (uses db function)
