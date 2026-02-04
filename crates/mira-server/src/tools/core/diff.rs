@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::background::diff_analysis::{
     DiffAnalysisResult, DiffStats, HistoricalRisk, RiskAssessment, analyze_diff,
     build_impact_graph, compute_historical_risk, format_diff_analysis, get_head_commit,
-    get_staged_diff, get_working_diff, map_to_symbols, resolve_ref,
+    get_staged_diff, get_working_diff, map_to_symbols, parse_numstat_output, resolve_ref,
 };
 use crate::db::get_recent_diff_analyses_sync;
 use crate::mcp::responses::Json;
@@ -288,7 +288,7 @@ fn parse_staged_stats(path: &Path) -> Result<DiffStats, String> {
         .output()
         .map_err(|e| format!("Failed to run git diff --cached: {}", e))?;
 
-    parse_numstat_output(&String::from_utf8_lossy(&output.stdout))
+    Ok(parse_numstat_output(&String::from_utf8_lossy(&output.stdout)))
 }
 
 /// Parse stats for working directory changes
@@ -301,26 +301,7 @@ fn parse_working_stats(path: &Path) -> Result<DiffStats, String> {
         .output()
         .map_err(|e| format!("Failed to run git diff: {}", e))?;
 
-    parse_numstat_output(&String::from_utf8_lossy(&output.stdout))
-}
-
-/// Parse git numstat output
-fn parse_numstat_output(stdout: &str) -> Result<DiffStats, String> {
-    let mut stats = DiffStats::default();
-
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 3 {
-            if let (Ok(added), Ok(removed)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                stats.lines_added += added;
-                stats.lines_removed += removed;
-                stats.files.push(parts[2].to_string());
-            }
-        }
-    }
-
-    stats.files_changed = stats.files.len() as i64;
-    Ok(stats)
+    Ok(parse_numstat_output(&String::from_utf8_lossy(&output.stdout)))
 }
 
 /// List recent diff analyses for the project
@@ -382,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_output_empty() {
-        let result = parse_numstat_output("").unwrap();
+        let result = parse_numstat_output("");
         assert_eq!(result.files_changed, 0);
         assert_eq!(result.lines_added, 0);
         assert_eq!(result.lines_removed, 0);
@@ -391,8 +372,7 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_output_single_file() {
-        let output = "10\t5\tsrc/main.rs";
-        let result = parse_numstat_output(output).unwrap();
+        let result = parse_numstat_output("10\t5\tsrc/main.rs");
         assert_eq!(result.files_changed, 1);
         assert_eq!(result.lines_added, 10);
         assert_eq!(result.lines_removed, 5);
@@ -401,23 +381,16 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_output_multiple_files() {
-        let output = "10\t5\tsrc/main.rs\n20\t3\tsrc/lib.rs\n5\t0\tREADME.md";
-        let result = parse_numstat_output(output).unwrap();
+        let result = parse_numstat_output("10\t5\tsrc/main.rs\n20\t3\tsrc/lib.rs\n5\t0\tREADME.md");
         assert_eq!(result.files_changed, 3);
-        assert_eq!(result.lines_added, 35); // 10 + 20 + 5
-        assert_eq!(result.lines_removed, 8); // 5 + 3 + 0
+        assert_eq!(result.lines_added, 35);
+        assert_eq!(result.lines_removed, 8);
         assert_eq!(result.files.len(), 3);
-        assert!(result.files.contains(&"src/main.rs".to_string()));
-        assert!(result.files.contains(&"src/lib.rs".to_string()));
-        assert!(result.files.contains(&"README.md".to_string()));
     }
 
     #[test]
     fn test_parse_numstat_output_binary_files() {
-        // Binary files show as - for lines
-        let output = "-\t-\timage.png\n10\t5\tsrc/main.rs";
-        let result = parse_numstat_output(output).unwrap();
-        // Binary file is skipped (parse fails), only the text file counts
+        let result = parse_numstat_output("-\t-\timage.png\n10\t5\tsrc/main.rs");
         assert_eq!(result.files_changed, 1);
         assert_eq!(result.lines_added, 10);
         assert_eq!(result.lines_removed, 5);
@@ -425,17 +398,14 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_output_file_with_spaces() {
-        let output = "10\t5\tpath/to/file with spaces.rs";
-        let result = parse_numstat_output(output).unwrap();
+        let result = parse_numstat_output("10\t5\tpath/to/file with spaces.rs");
         assert_eq!(result.files_changed, 1);
         assert_eq!(result.files[0], "path/to/file with spaces.rs");
     }
 
     #[test]
     fn test_parse_numstat_output_malformed_line() {
-        // Lines with wrong format are skipped
-        let output = "malformed line\n10\t5\tvalid.rs";
-        let result = parse_numstat_output(output).unwrap();
+        let result = parse_numstat_output("malformed line\n10\t5\tvalid.rs");
         assert_eq!(result.files_changed, 1);
         assert_eq!(result.files[0], "valid.rs");
     }

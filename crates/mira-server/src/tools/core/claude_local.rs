@@ -126,21 +126,20 @@ fn import_claude_local_md_sync(
         return Ok(0);
     }
 
-    // Get existing memories to check for duplicates
+    // Get existing memories and pre-normalize for O(1) duplicate checks
     let existing = search_memories_sync(conn, Some(project_id), "", None, 1000).str_err()?;
-    let existing_content: HashSet<_> = existing.iter().map(|m| m.content.as_str()).collect();
+    let existing_normalized: HashSet<String> = existing
+        .iter()
+        .map(|m| m.content.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
 
     let mut imported = 0;
     for (entry_content, category) in entries {
-        // Skip if content already exists (fuzzy match - normalize whitespace)
         let normalized = entry_content
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        if existing_content.iter().any(|e| {
-            let e_normalized = e.split_whitespace().collect::<Vec<_>>().join(" ");
-            e_normalized == normalized
-        }) {
+        if existing_normalized.contains(&normalized) {
             continue;
         }
 

@@ -1,30 +1,12 @@
 // crates/mira-server/src/db/tasks_tests.rs
 // Tests for task and goal database operations
 
-use super::pool::DatabasePool;
+use super::test_support::{setup_test_pool, setup_test_pool_with_project};
 use super::{
     create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync, get_active_goals_sync,
     get_goal_by_id_sync, get_goals_sync, get_or_create_project_sync, get_pending_tasks_sync,
     get_task_by_id_sync, get_tasks_sync, update_goal_sync, update_task_sync,
 };
-use std::sync::Arc;
-
-/// Helper to create a test pool with a project
-async fn setup_test_pool() -> (Arc<DatabasePool>, i64) {
-    let pool = Arc::new(
-        DatabasePool::open_in_memory()
-            .await
-            .expect("Failed to open in-memory pool"),
-    );
-    let project_id = pool
-        .interact(|conn| {
-            get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
-        })
-        .await
-        .expect("Failed to create project")
-        .0;
-    (pool, project_id)
-}
 
 #[cfg(test)]
 mod tests {
@@ -36,7 +18,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_task_basic() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -59,7 +41,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_task_with_defaults() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -92,7 +74,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_task_with_goal() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create a goal first
         let goal_id = pool
@@ -137,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_task_global() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let id = pool
             .interact(|conn| {
@@ -163,7 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_task_by_id_existing() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -193,7 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_task_by_id_nonexistent() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let task = pool
             .interact(|conn| get_task_by_id_sync(conn, 99999))
@@ -208,7 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_tasks_basic() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create pending tasks
         for i in 0..3 {
@@ -255,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_tasks_limit() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         for i in 0..10 {
             let title = format!("Task {}", i);
@@ -284,7 +266,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_tasks_global() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         pool.interact(|conn| {
             create_task_sync(
@@ -315,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_recent_tasks_all_statuses() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_task_sync(
@@ -355,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_recent_tasks_ordering() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         for i in 0..3 {
             let title = format!("Task {}", i);
@@ -383,7 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tasks_no_filter() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_task_sync(
@@ -423,7 +405,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tasks_with_status() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_task_sync(
@@ -466,7 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tasks_with_negation() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_task_sync(
@@ -513,7 +495,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_task_title() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -539,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_task_status() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -573,7 +555,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_task_priority() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -607,7 +589,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_task_multiple_fields() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -650,7 +632,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_task_no_changes() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -679,7 +661,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_task() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -702,7 +684,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_nonexistent_task() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         // Deleting non-existent task should not error
         pool.interact(|conn| delete_task_sync(conn, 99999).map_err(Into::into))
@@ -716,7 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_goal_basic() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -750,7 +732,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_goal_with_defaults() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -781,7 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_goal_global() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let id = pool
             .interact(|conn| {
@@ -805,7 +787,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_goal_by_id_existing() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -834,7 +816,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_goal_by_id_nonexistent() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let goal = pool
             .interact(|conn| get_goal_by_id_sync(conn, 99999))
@@ -849,7 +831,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_active_goals_basic() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create active goals
         pool.interact(move |conn| {
@@ -927,7 +909,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_active_goals_limit() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         for i in 0..5 {
             let title = format!("Goal {}", i);
@@ -960,7 +942,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_goals_no_filter() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_goal_sync(
@@ -1000,7 +982,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_goals_with_status() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_goal_sync(
@@ -1043,7 +1025,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_goals_with_negation() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_goal_sync(
@@ -1090,7 +1072,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_goal_title() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -1116,7 +1098,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_goal_status() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -1150,7 +1132,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_goal_priority() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -1184,7 +1166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_goal_progress() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -1210,7 +1192,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_goal_multiple_fields() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -1259,7 +1241,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_goal() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -1282,7 +1264,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_nonexistent_goal() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         // Deleting non-existent goal should not error
         pool.interact(|conn| delete_goal_sync(conn, 99999).map_err(Into::into))
@@ -1296,7 +1278,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_goal_relationship() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let goal_id = pool
             .interact(move |conn| {
@@ -1363,7 +1345,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_orphan_tasks() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create a task with a goal, then delete the goal
         let goal_id = pool
@@ -1419,7 +1401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_project_isolation() {
-        let (pool, project1) = setup_test_pool().await;
+        let (pool, project1) = setup_test_pool_with_project().await;
         let project2 = pool
             .interact(|conn| {
                 get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
@@ -1474,7 +1456,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_goal_project_isolation() {
-        let (pool, project1) = setup_test_pool().await;
+        let (pool, project1) = setup_test_pool_with_project().await;
         let project2 = pool
             .interact(|conn| {
                 get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
@@ -1533,7 +1515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_title_task() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Empty title should still work
         let id = pool
@@ -1549,7 +1531,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_title_goal() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Empty title should still work
         let id = pool
@@ -1565,7 +1547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_progress_percent() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Should handle values outside 0-100 range
         let id = pool
@@ -1586,7 +1568,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_negative_progress_percent() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {

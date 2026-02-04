@@ -1,7 +1,7 @@
 // crates/mira-server/src/db/memory_tests.rs
 // Tests for memory storage and retrieval operations
 
-use super::pool::DatabasePool;
+use super::test_support::{setup_test_pool, setup_test_pool_with_project};
 use super::{
     StoreMemoryParams, clear_project_persona_sync, count_facts_without_embeddings_sync,
     delete_memory_sync, find_facts_without_embeddings_sync, get_base_persona_sync,
@@ -11,24 +11,6 @@ use super::{
     store_fact_embedding_sync, store_memory_sync,
 };
 use crate::search::embedding_to_bytes;
-use std::sync::Arc;
-
-/// Helper to create a test pool with a project
-async fn setup_test_pool() -> (Arc<DatabasePool>, i64) {
-    let pool = Arc::new(
-        DatabasePool::open_in_memory()
-            .await
-            .expect("Failed to open in-memory pool"),
-    );
-    let project_id = pool
-        .interact(|conn| {
-            get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
-        })
-        .await
-        .expect("Failed to create project")
-        .0;
-    (pool, project_id)
-}
 
 /// Helper to store a memory
 fn store_memory_helper(
@@ -97,7 +79,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_memory_basic() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -131,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_memory_without_key() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(|conn| {
@@ -154,7 +136,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_memory_with_all_fields() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let _id = pool
             .interact(move |conn| {
@@ -190,7 +172,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upsert_by_key_same_session() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Store initial memory
         let id1 = pool
@@ -243,7 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upsert_by_key_different_session() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Store initial memory with session
         let id1 = pool
@@ -295,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upsert_promotes_after_three_sessions() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let key = "promotion-key";
 
@@ -364,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_record_memory_access_new_session() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -401,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_record_memory_access_same_session() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -442,7 +424,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_memory_stats_empty() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let (candidates, confirmed) = pool
             .interact(move |conn| get_memory_stats_sync(conn, Some(project_id)).map_err(Into::into))
@@ -454,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_memory_stats_with_data() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Add some candidates
         for i in 0..3 {
@@ -485,7 +467,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_memory_stats_global() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         pool.interact(|conn| {
             store_memory_helper(
@@ -514,7 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_memories_basic() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             store_memory_helper(
@@ -556,7 +538,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_memories_limit() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         for i in 0..10 {
             let key = format!("key-{}", i);
@@ -586,7 +568,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_memories_sql_injection_escape() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             store_memory_helper(
@@ -618,7 +600,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_preferences() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Add some preferences
         pool.interact(move |conn| {
@@ -680,7 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_memory() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -715,7 +697,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_memory_nonexistent() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let deleted = pool
             .interact(|conn| delete_memory_sync(conn, 99999).map_err(Into::into))
@@ -730,7 +712,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_health_alerts() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Add high-confidence health alert
         pool.interact(move |conn| {
@@ -791,7 +773,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_global_memory() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let id = pool
             .interact(|conn| {
@@ -820,7 +802,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_global_memories_with_category() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         pool.interact(|conn| {
             store_memory_helper(
@@ -881,7 +863,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_user_profile() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         pool.interact(|conn| {
             store_memory_helper(
@@ -943,7 +925,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_base_persona() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let persona = pool
             .interact(|conn| get_base_persona_sync(conn).map_err(Into::into))
@@ -982,7 +964,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_persona() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let persona = pool
             .interact(move |conn| get_project_persona_sync(conn, project_id).map_err(Into::into))
@@ -1021,7 +1003,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_project_persona() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             store_memory_sync(
@@ -1069,7 +1051,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mark_and_find_facts_without_embeddings() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Add some memories
         for i in 0..3 {
@@ -1112,7 +1094,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_facts_without_embeddings() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         for i in 0..5 {
             let key = format!("key-{}", i);
@@ -1160,7 +1142,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_fact_embedding() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let id = pool
             .interact(move |conn| {
@@ -1210,7 +1192,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_isolation() {
-        let (pool, project1) = setup_test_pool().await;
+        let (pool, project1) = setup_test_pool_with_project().await;
         let project2 = pool
             .interact(|conn| {
                 get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
@@ -1272,7 +1254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_search() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let results = pool
             .interact(|conn| {
@@ -1285,7 +1267,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_preferences() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let prefs = pool
             .interact(move |conn| {
@@ -1298,7 +1280,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_health_alerts() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let alerts = pool
             .interact(move |conn| {
@@ -1311,7 +1293,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_global_memories() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let memories = pool
             .interact(|conn| get_global_memories_sync(conn, None, 10).map_err(Into::into))

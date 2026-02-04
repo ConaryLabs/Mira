@@ -1,30 +1,12 @@
 // crates/mira-server/src/db/session_tests.rs
 // Tests for session and tool history operations
 
-use super::pool::DatabasePool;
+use super::test_support::{setup_test_pool, setup_test_pool_with_project};
 use super::{
     build_session_recap_sync, create_goal_sync, create_session_sync, create_task_sync,
     get_history_after_sync, get_or_create_project_sync, get_recent_sessions_sync,
     get_session_history_sync, get_session_stats_sync, log_tool_call_sync, touch_session_sync,
 };
-use std::sync::Arc;
-
-/// Helper to create a test pool with a project
-async fn setup_test_pool() -> (Arc<DatabasePool>, i64) {
-    let pool = Arc::new(
-        DatabasePool::open_in_memory()
-            .await
-            .expect("Failed to open in-memory pool"),
-    );
-    let project_id = pool
-        .interact(|conn| {
-            get_or_create_project_sync(conn, "/test/path", Some("test")).map_err(Into::into)
-        })
-        .await
-        .expect("Failed to create project")
-        .0;
-    (pool, project_id)
-}
 
 #[cfg(test)]
 mod tests {
@@ -36,7 +18,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session_basic() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         let result = pool
             .interact(|conn| {
@@ -48,7 +30,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session_with_project() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let result = pool
             .interact(move |conn| {
@@ -77,7 +59,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session_upsert() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create session first time
         pool.interact(move |conn| {
@@ -120,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_touch_session_existing() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_session_sync(conn, "touch-test", Some(project_id)).map_err(Into::into)
@@ -151,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_touch_session_nonexistent() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         // Touching non-existent session should not error
         let result = pool
@@ -169,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_tool_call_basic() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         // Create session first (required by foreign key constraint)
         pool.interact(|conn| create_session_sync(conn, "session-1", None).map_err(Into::into))
@@ -214,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_tool_call_with_full_result() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "session-2", None).map_err(Into::into))
             .await
@@ -246,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_tool_call_failure() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "session-3", None).map_err(Into::into))
             .await
@@ -277,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_multiple_tool_calls() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "session-multi", None).map_err(Into::into))
             .await
@@ -312,7 +294,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_history_empty() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let history = pool
             .interact(|conn| get_session_history_sync(conn, "nonexistent", 10).map_err(Into::into))
@@ -323,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_history_limit() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "limit-test", None).map_err(Into::into))
             .await
@@ -350,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_history_ordering() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "order-test", None).map_err(Into::into))
             .await
@@ -386,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_history_after_basic() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "after-test", None).map_err(Into::into))
             .await
@@ -422,7 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_history_after_limit() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| {
             create_session_sync(conn, "after-limit-test", None).map_err(Into::into)
@@ -460,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_history_after_empty() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let history = pool
             .interact(|conn| get_history_after_sync(conn, "nonexistent", 0, 10).map_err(Into::into))
@@ -475,7 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_recent_sessions_basic() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_session_sync(conn, "session-1", Some(project_id)).map_err(Into::into)
@@ -500,7 +482,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_recent_sessions_limit() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         for i in 0..5 {
             let session_id = format!("session-{}", i);
@@ -520,7 +502,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_recent_sessions_ordering() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_session_sync(conn, "old-session", Some(project_id)).map_err(Into::into)
@@ -548,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_recent_sessions_project_isolation() {
-        let (pool, project1) = setup_test_pool().await;
+        let (pool, project1) = setup_test_pool_with_project().await;
         let project2 = pool
             .interact(|conn| {
                 get_or_create_project_sync(conn, "/other/path", Some("other")).map_err(Into::into)
@@ -589,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_stats_empty() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let (count, tools) = pool
             .interact(|conn| get_session_stats_sync(conn, "empty-session").map_err(Into::into))
@@ -601,7 +583,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_stats_with_calls() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "stats-session", None).map_err(Into::into))
             .await
@@ -645,7 +627,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_stats_top_five() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| {
             create_session_sync(conn, "top-five-session", None).map_err(Into::into)
@@ -678,7 +660,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_session_recap_empty() {
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let pool = setup_test_pool().await;
 
         let recap = pool
             .interact(|conn| Ok::<_, anyhow::Error>(build_session_recap_sync(conn, None)))
@@ -690,7 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_session_recap_with_project() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         let recap = pool
             .interact(move |conn| {
@@ -704,7 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_session_recap_with_pending_tasks() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create a pending task
         pool.interact(move |conn| {
@@ -734,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_session_recap_with_active_goals() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create an active goal
         pool.interact(move |conn| {
@@ -764,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_session_recap_with_recent_sessions() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create an old session (not active)
         pool.interact(move |conn| {
@@ -806,7 +788,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_session_lifecycle() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         // Create session
         let session_id = "lifecycle-test";
@@ -889,7 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_history_entry_fields() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "fields-test", None).map_err(Into::into))
             .await
@@ -929,7 +911,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_info_fields() {
-        let (pool, project_id) = setup_test_pool().await;
+        let (pool, project_id) = setup_test_pool_with_project().await;
 
         pool.interact(move |conn| {
             create_session_sync(conn, "info-test", Some(project_id)).map_err(Into::into)
@@ -957,7 +939,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_session_id() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         // Empty session_id should still work
         let result = pool
@@ -968,7 +950,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_very_long_session_id() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         let long_id = "a".repeat(1000);
         let long_id_clone = long_id.clone();
@@ -987,7 +969,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_special_characters_in_arguments() {
-        let (pool, _project_id) = setup_test_pool().await;
+        let (pool, _project_id) = setup_test_pool_with_project().await;
 
         pool.interact(|conn| create_session_sync(conn, "special-test", None).map_err(Into::into))
             .await

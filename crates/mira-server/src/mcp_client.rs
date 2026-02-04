@@ -11,6 +11,7 @@ use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, serve_client};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
@@ -64,44 +65,25 @@ impl McpClientManager {
         let mut configs = Vec::new();
         let mut seen_names = std::collections::HashSet::new();
 
-        // Read project-level .mcp.json first (takes precedence)
+        // Project-level configs take precedence
         if let Some(path) = project_path {
-            let project_mcp = format!("{}/.mcp.json", path);
-            if let Ok(content) = std::fs::read_to_string(&project_mcp) {
-                if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                    Self::parse_mcp_servers(&parsed, &mut configs, &mut seen_names);
-                }
-            }
+            let base = Path::new(path);
+            Self::try_load_mcp_json(&base.join(".mcp.json"), &mut configs, &mut seen_names);
+            Self::try_load_codex_toml(
+                &base.join(".codex/config.toml"),
+                &mut configs,
+                &mut seen_names,
+            );
         }
 
-        // Read project-level .codex/config.toml (Codex MCP config)
-        if let Some(path) = project_path {
-            let project_codex = format!("{}/.codex/config.toml", path);
-            if let Ok(content) = std::fs::read_to_string(&project_codex) {
-                if let Ok(parsed) = toml::from_str::<TomlValue>(&content) {
-                    Self::parse_codex_servers(&parsed, &mut configs, &mut seen_names);
-                }
-            }
-        }
-
-        // Read global ~/.claude/mcp.json
+        // Global configs (lower precedence, deduped by seen_names)
         if let Some(home) = dirs::home_dir() {
-            let global_mcp = home.join(".claude/mcp.json");
-            if let Ok(content) = std::fs::read_to_string(&global_mcp) {
-                if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                    Self::parse_mcp_servers(&parsed, &mut configs, &mut seen_names);
-                }
-            }
-        }
-
-        // Read global ~/.codex/config.toml (Codex MCP config)
-        if let Some(home) = dirs::home_dir() {
-            let global_codex = home.join(".codex/config.toml");
-            if let Ok(content) = std::fs::read_to_string(&global_codex) {
-                if let Ok(parsed) = toml::from_str::<TomlValue>(&content) {
-                    Self::parse_codex_servers(&parsed, &mut configs, &mut seen_names);
-                }
-            }
+            Self::try_load_mcp_json(&home.join(".claude/mcp.json"), &mut configs, &mut seen_names);
+            Self::try_load_codex_toml(
+                &home.join(".codex/config.toml"),
+                &mut configs,
+                &mut seen_names,
+            );
         }
 
         if configs.is_empty() {
@@ -117,6 +99,32 @@ impl McpClientManager {
         Self {
             configs,
             clients: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Try to load MCP servers from a .mcp.json file.
+    fn try_load_mcp_json(
+        path: &Path,
+        configs: &mut Vec<McpServerConfig>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
+                Self::parse_mcp_servers(&parsed, configs, seen);
+            }
+        }
+    }
+
+    /// Try to load MCP servers from a Codex config.toml file.
+    fn try_load_codex_toml(
+        path: &Path,
+        configs: &mut Vec<McpServerConfig>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(parsed) = toml::from_str::<TomlValue>(&content) {
+                Self::parse_codex_servers(&parsed, configs, seen);
+            }
         }
     }
 

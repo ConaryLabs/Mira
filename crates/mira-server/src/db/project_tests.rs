@@ -1,7 +1,7 @@
 // crates/mira-server/src/db/project_tests.rs
 // Tests for project and server state operations
 
-use super::pool::DatabasePool;
+use super::test_support::setup_test_pool;
 use super::{
     clear_active_project_sync, delete_server_state_sync, get_last_active_project_sync,
     get_or_create_project_sync, get_project_briefing_sync, get_project_info_sync,
@@ -9,16 +9,6 @@ use super::{
     mark_session_for_briefing_sync, save_active_project_sync, set_server_state_sync,
     update_project_briefing_sync,
 };
-use std::sync::Arc;
-
-/// Helper to create a test pool
-async fn setup_test_pool() -> Arc<DatabasePool> {
-    Arc::new(
-        DatabasePool::open_in_memory()
-            .await
-            .expect("Failed to open in-memory pool"),
-    )
-}
 
 #[cfg(test)]
 mod tests {

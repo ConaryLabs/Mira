@@ -1,0 +1,455 @@
+// crates/mira-server/src/mcp/router.rs
+// MCP tool router — #[tool] annotated methods and tool call lifecycle
+
+use crate::mcp::responses::{HasMessage, Json};
+use crate::tools::core as tools;
+
+use rmcp::{
+    ErrorData,
+    handler::server::{router::tool::ToolRouter, tool::IntoCallToolResult, wrapper::Parameters},
+    model::{CallToolRequestParams, CallToolResult, Content},
+    service::{RequestContext, RoleServer},
+    task_manager::{self, OperationDescriptor, OperationMessage, ToolCallTaskResult},
+    tool, tool_router,
+};
+use schemars::JsonSchema;
+use serde::Serialize;
+
+use super::MiraServer;
+use super::requests::*;
+use super::responses;
+use crate::hooks::session::read_claude_session_id;
+
+fn tool_result<T>(result: Result<Json<T>, String>) -> Result<CallToolResult, ErrorData>
+where
+    T: Serialize + JsonSchema + HasMessage + 'static,
+{
+    match result {
+        Ok(json) => json.into_call_tool_result(),
+        Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+    }
+}
+
+#[tool_router]
+impl MiraServer {
+    #[tool(
+        description = "Manage project context. Actions: start (initialize session with codebase map), set (change project), get (show current).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ProjectOutput>()
+            .expect("ProjectOutput schema")
+    )]
+    async fn project(
+        &self,
+        Parameters(req): Parameters<ProjectRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // For start action, use provided session ID or fall back to Claude's hook-generated ID
+        let session_id = req.session_id.or_else(read_claude_session_id);
+        tool_result(tools::project(self, req.action, req.project_path, req.name, session_id).await)
+    }
+
+    #[tool(
+        description = "Manage memories. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Scope controls visibility: personal, project (default), team.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::MemoryOutput>()
+            .expect("MemoryOutput schema")
+    )]
+    async fn memory(
+        &self,
+        Parameters(req): Parameters<MemoryRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_memory(self, req).await)
+    }
+
+    #[tool(
+        description = "Code intelligence. Actions: search (by meaning), symbols (from file), callers (of function), callees (by function), dependencies (module graph + circular deps), patterns (architectural pattern detection), tech_debt (per-module debt scores).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::CodeOutput>()
+            .expect("CodeOutput schema")
+    )]
+    async fn code(
+        &self,
+        Parameters(req): Parameters<CodeRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_code(self, req).await)
+    }
+
+    #[tool(
+        description = "Manage goals and milestones (create, list, update, delete). Supports bulk operations.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::GoalOutput>()
+            .expect("GoalOutput schema")
+    )]
+    async fn goal(
+        &self,
+        Parameters(req): Parameters<GoalRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::goal(self, req).await)
+    }
+
+    #[tool(
+        description = "Index code and git history. Actions: project/file/status/compact/summarize/health",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
+            .expect("IndexOutput schema")
+    )]
+    async fn index(
+        &self,
+        Parameters(req): Parameters<IndexRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await)
+    }
+
+    #[tool(
+        description = "Session management. Actions: history (list_sessions/get_history/current via history_action), recap (preferences + context + goals), usage (summary/stats/list via usage_action), insights (unified digest of pondering/proactive/doc_gap insights).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
+            .expect("SessionOutput schema")
+    )]
+    async fn session(
+        &self,
+        Parameters(req): Parameters<SessionRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_session(self, req).await)
+    }
+
+    #[tool(
+        description = "Send a response back to Mira during collaboration.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ReplyOutput>()
+            .expect("ReplyOutput schema")
+    )]
+    async fn reply_to_mira(
+        &self,
+        Parameters(req): Parameters<ReplyToMiraRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(
+            tools::reply_to_mira(
+                self,
+                req.in_reply_to,
+                req.content,
+                req.complete.unwrap_or(true),
+            )
+            .await,
+        )
+    }
+
+    #[tool(
+        description = "Consult experts or configure them. Actions: consult (get expert opinions), configure (set/get/delete/list/providers for expert prompts).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ExpertOutput>()
+            .expect("ExpertOutput schema")
+    )]
+    async fn expert(
+        &self,
+        Parameters(req): Parameters<ExpertRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_expert(self, req).await)
+    }
+
+    #[tool(
+        description = "Manage documentation tasks. Actions: list (show needed docs), get (full task details for Claude to write), complete (mark done after writing), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DocOutput>()
+            .expect("DocOutput schema")
+    )]
+    async fn documentation(
+        &self,
+        Parameters(req): Parameters<DocumentationRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(
+            tools::documentation(
+                self,
+                req.action,
+                req.task_id,
+                req.reason,
+                req.doc_type,
+                req.priority,
+                req.status,
+            )
+            .await,
+        )
+    }
+
+    #[tool(
+        description = "Manage code review findings. Actions: list, get, review (single or bulk with finding_ids), stats, patterns, extract.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::FindingOutput>()
+            .expect("FindingOutput schema")
+    )]
+    async fn finding(
+        &self,
+        Parameters(req): Parameters<FindingRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(
+            tools::finding(
+                self,
+                req.action,
+                req.finding_id,
+                req.finding_ids,
+                req.status,
+                req.feedback,
+                req.file_path,
+                req.expert_role,
+                req.correction_type,
+                req.limit,
+            )
+            .await,
+        )
+    }
+
+    // Semantic diff analysis tool
+
+    #[tool(
+        description = "Analyze git diff semantically. Identifies change types, impact, and risks.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DiffOutput>()
+            .expect("DiffOutput schema")
+    )]
+    async fn analyze_diff(
+        &self,
+        Parameters(req): Parameters<AnalyzeDiffRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(
+            tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
+        )
+    }
+
+    #[tool(
+        description = "Manage async tasks. Actions: list, get (by task_id), cancel (by task_id).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::TasksOutput>()
+            .expect("TasksOutput schema")
+    )]
+    async fn tasks(
+        &self,
+        Parameters(req): Parameters<TasksRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::tasks::handle_tasks(self, req).await)
+    }
+}
+
+impl MiraServer {
+    /// Expose the macro-generated tool_router() to the parent module constructor.
+    pub(super) fn create_tool_router() -> ToolRouter<Self> {
+        Self::tool_router()
+    }
+
+    /// Returns a list of all MCP tool names.
+    /// Used for verifying CLI dispatcher has parity with MCP router.
+    pub fn list_tool_names(&self) -> Vec<String> {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect()
+    }
+
+    /// Extract result text and success status from a tool call result
+    pub(crate) fn extract_result_text(result: &Result<CallToolResult, ErrorData>) -> (bool, String) {
+        match result {
+            Ok(r) => {
+                if let Some(structured) = r.structured_content.as_ref() {
+                    if let Some(message) = structured.get("message").and_then(|v| v.as_str()) {
+                        return (true, message.to_string());
+                    }
+                }
+                let text = r
+                    .content
+                    .first()
+                    .and_then(|c| c.as_text())
+                    .map(|t| t.text.to_string())
+                    .unwrap_or_default();
+                (true, text)
+            }
+            Err(e) => (false, e.message.to_string()),
+        }
+    }
+
+    /// Persist a tool call to the database for history tracking
+    pub(crate) async fn log_tool_call(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        args_json: &str,
+        result_text: &str,
+        success: bool,
+    ) {
+        let summary = if result_text.len() > 2000 {
+            format!("{}...", &result_text[..2000])
+        } else {
+            result_text.to_string()
+        };
+        let full_result_str = if result_text.len() > 100 {
+            Some(result_text.to_string())
+        } else {
+            None
+        };
+        let session_id = session_id.to_string();
+        let tool_name = tool_name.to_string();
+        let args_json = args_json.to_string();
+        if let Err(e) = self
+            .pool
+            .interact(move |conn| {
+                crate::db::log_tool_call_sync(
+                    conn,
+                    &session_id,
+                    &tool_name,
+                    &args_json,
+                    &summary,
+                    full_result_str.as_deref(),
+                    success,
+                )
+                .map_err(|e| anyhow::anyhow!(e))
+            })
+            .await
+        {
+            tracing::warn!("[HISTORY] Failed to log tool call: {}", e);
+        }
+    }
+}
+
+impl MiraServer {
+    /// Auto-enqueue a task-eligible tool call via the OperationProcessor.
+    /// Returns a CallToolResult immediately with the task ID so the client can poll.
+    pub(crate) async fn auto_enqueue_task(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+        tool_name: &str,
+        ttl: u64,
+    ) -> Result<CallToolResult, ErrorData> {
+        let task_id = uuid::Uuid::new_v4().to_string();
+        let now = task_manager::current_timestamp();
+
+        // Strip task field to prevent re-enqueue loops
+        let mut clean_request = request;
+        clean_request.task = None;
+
+        // Build the async future that calls run_tool_call
+        let server = self.clone();
+        let ctx = context.clone();
+        let tid = task_id.clone();
+        let future: task_manager::OperationFuture = Box::pin(async move {
+            let result = server.run_tool_call(clean_request, ctx).await;
+            let transport = ToolCallTaskResult::new(tid, result);
+            Ok(Box::new(transport) as Box<dyn task_manager::OperationResultTransport>)
+        });
+
+        // Build descriptor and submit
+        let tn = tool_name.to_string();
+        let descriptor = OperationDescriptor::new(task_id.clone(), tn.clone()).with_ttl(ttl);
+        let message = OperationMessage::new(descriptor, future);
+
+        let mut proc = self.processor.lock().await;
+        proc.submit_operation(message).map_err(|e| {
+            ErrorData::internal_error(format!("Failed to enqueue task: {}", e), None)
+        })?;
+
+        tracing::info!(
+            task_id = %task_id,
+            tool = %tn,
+            ttl_secs = ttl,
+            "Auto-enqueued async task (client used call_tool)"
+        );
+
+        let poll_hint = format!("tasks(action=\"get\", task_id=\"{}\")", task_id);
+        Ok(CallToolResult {
+            content: vec![Content::text(format!(
+                "Task {} started. Check status with: {}",
+                task_id, poll_hint
+            ))],
+            structured_content: Some(serde_json::json!({
+                "task_id": task_id,
+                "status": "working",
+                "message": format!("Running {} asynchronously", tn),
+                "poll_with": poll_hint,
+                "created_at": now,
+            })),
+            is_error: Some(false),
+            meta: None,
+        })
+    }
+
+    /// Execute a tool call with full lifecycle (session init, broadcast, logging, extraction).
+    /// Called from both synchronous `call_tool` and async task futures (`enqueue_task`).
+    pub(crate) async fn run_tool_call(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use crate::tools::core::ToolContext;
+        use rmcp::handler::server::tool::ToolCallContext;
+
+        let tool_name = request.name.to_string();
+        let call_id = uuid::Uuid::new_v4().to_string();
+        let start = std::time::Instant::now();
+
+        // Capture peer on first tool call (for MCP sampling fallback)
+        if self.peer.read().await.is_none() {
+            let peer_clone = context.peer.clone();
+            if let Some(info) = peer_clone.peer_info() {
+                if info.capabilities.sampling.is_some() {
+                    tracing::info!("[mira] Client supports MCP sampling");
+                }
+                if info.capabilities.elicitation.is_some() {
+                    tracing::info!("[mira] Client supports MCP elicitation");
+                }
+            }
+            *self.peer.write().await = Some(peer_clone);
+        }
+
+        // Get or create session for persistence
+        let session_id = self.get_or_create_session().await;
+
+        // Auto-initialize project from Claude's cwd if needed
+        // Skip if the tool being called IS the project tool (avoid recursion)
+        if tool_name != "project" {
+            self.maybe_auto_init_project().await;
+        }
+
+        // Serialize arguments for storage
+        let args_json = request
+            .arguments
+            .as_ref()
+            .map(|a| serde_json::to_string(a).unwrap_or_default())
+            .unwrap_or_default();
+
+        // Broadcast tool start (direct, no HTTP)
+        self.broadcast(mira_types::WsEvent::ToolStart {
+            tool_name: tool_name.clone(),
+            arguments: serde_json::Value::Object(request.arguments.clone().unwrap_or_default()),
+            call_id: call_id.clone(),
+        });
+
+        let ctx = ToolCallContext::new(self, request, context);
+        let result = self.tool_router.call(ctx).await;
+
+        // Extract result and broadcast
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let (success, result_text) = Self::extract_result_text(&result);
+
+        self.broadcast(mira_types::WsEvent::ToolResult {
+            tool_name: tool_name.clone(),
+            result: result_text.clone(),
+            success,
+            call_id,
+            duration_ms,
+        });
+
+        // Persist to tool_history (fire-and-forget, never blocks tool response)
+        {
+            let server = self.clone();
+            let sid = session_id.clone();
+            let tn = tool_name.clone();
+            let aj = args_json.clone();
+            let rt = result_text.clone();
+            tokio::spawn(async move {
+                server.log_tool_call(&sid, &tn, &aj, &rt, success).await;
+            });
+        }
+
+        // Extract meaningful outcomes from tool results (async, non-blocking)
+        if success {
+            let project_id = self.project.read().await.as_ref().map(|p| p.id);
+            super::extraction::spawn_tool_extraction(
+                self.pool.clone(),
+                self.embeddings.clone(),
+                self.llm_factory.client_for_background(),
+                project_id,
+                tool_name,
+                args_json,
+                result_text,
+            );
+        }
+
+        result
+    }
+}

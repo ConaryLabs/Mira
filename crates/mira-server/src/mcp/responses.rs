@@ -25,6 +25,24 @@ macro_rules! impl_has_message {
     };
 }
 
+/// Generic tool output with action, message, and optional typed data.
+///
+/// All MCP tools return this shape. Concrete output types are type aliases:
+/// `pub type MemoryOutput = ToolOutput<MemoryData>;`
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ToolOutput<D> {
+    pub action: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<D>,
+}
+
+impl<D> HasMessage for ToolOutput<D> {
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 /// JSON wrapper that preserves human-readable `message` in MCP content.
 pub struct Json<T>(pub T);
 
@@ -62,13 +80,7 @@ impl<T: Serialize + JsonSchema + HasMessage + 'static> IntoCallToolResult for Js
 // Memory
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct MemoryOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<MemoryData>,
-}
+pub type MemoryOutput = ToolOutput<MemoryData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -104,13 +116,7 @@ pub struct MemoryItem {
 // Project
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ProjectOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<ProjectData>,
-}
+pub type ProjectOutput = ToolOutput<ProjectData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -145,13 +151,7 @@ pub struct ProjectSetData {
 // Code
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct CodeOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<CodeData>,
-}
+pub type CodeOutput = ToolOutput<CodeData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -285,13 +285,7 @@ pub struct TechDebtTier {
 // Goal
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct GoalOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<GoalData>,
-}
+pub type GoalOutput = ToolOutput<GoalData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -368,13 +362,7 @@ pub struct MilestoneProgressData {
 // Index
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct IndexOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<IndexData>,
-}
+pub type IndexOutput = ToolOutput<IndexData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -421,13 +409,7 @@ pub struct IndexHealthData {
 // Session
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct SessionOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<SessionData>,
-}
+pub type SessionOutput = ToolOutput<SessionData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -495,13 +477,7 @@ pub struct InsightItem {
 // Expert
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ExpertOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<ExpertData>,
-}
+pub type ExpertOutput = ToolOutput<ExpertData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -541,13 +517,7 @@ pub struct ExpertConfigEntry {
 // Documentation
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct DocOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<DocData>,
-}
+pub type DocOutput = ToolOutput<DocData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -615,13 +585,7 @@ pub struct DocInventoryItem {
 // Finding
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct FindingOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<FindingData>,
-}
+pub type FindingOutput = ToolOutput<FindingData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -711,13 +675,7 @@ pub struct LearnedPattern {
 // Diff
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct DiffOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<DiffData>,
-}
+pub type DiffOutput = ToolOutput<DiffData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -776,19 +734,7 @@ pub struct ReplyOutput {
 // HasMessage Implementations
 // ============================================================================
 
-impl_has_message!(
-    MemoryOutput,
-    ProjectOutput,
-    CodeOutput,
-    GoalOutput,
-    IndexOutput,
-    SessionOutput,
-    ExpertOutput,
-    DocOutput,
-    FindingOutput,
-    DiffOutput,
-    ReplyOutput,
-);
+impl_has_message!(ReplyOutput);
 
 // ============================================================================
 // Tests
@@ -798,13 +744,7 @@ impl_has_message!(
 // Tasks (fallback for clients without native task support)
 // ============================================================================
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct TasksOutput {
-    pub action: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<TasksData>,
-}
+pub type TasksOutput = ToolOutput<TasksData>;
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
@@ -836,7 +776,8 @@ pub struct TasksStatusData {
     pub result_structured: Option<serde_json::Value>,
 }
 
-impl_has_message!(TasksOutput);
+// HasMessage for ToolOutput<D> aliases is covered by the blanket impl above.
+// Only ReplyOutput (no data field) needs explicit impl.
 
 #[cfg(test)]
 mod tests {

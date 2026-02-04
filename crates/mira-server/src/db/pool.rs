@@ -72,60 +72,15 @@ impl DatabasePool {
     /// 3. Create the pool with post_create hooks for per-connection setup
     /// 4. Run schema migrations on a dedicated connection before returning
     pub async fn open(path: &Path) -> Result<Self> {
-        // Step 1: Register sqlite-vec globally
         ensure_sqlite_vec_registered();
+        ensure_parent_directory(path)?;
 
-        // Step 2: Ensure parent directory exists with secure permissions
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-            #[cfg(unix)]
-            {
-                let mut perms = std::fs::metadata(parent)?.permissions();
-                perms.set_mode(0o700); // rwx------
-                std::fs::set_permissions(parent, perms)?;
-            }
-        }
-
-        let path_buf = path.to_path_buf();
         let path_str = path_to_string(path);
-
-        // Step 3: Create pool with post_create hook
         let cfg = Config::new(&path_str);
         let pool = cfg
             .builder(Runtime::Tokio1)
             .context("Failed to create pool builder")?
-            .post_create(Hook::async_fn(move |conn, _metrics| {
-                let path_for_perms = path_buf.clone();
-                Box::pin(async move {
-                    conn.interact(move |conn| {
-                        setup_connection(conn)?;
-
-                        // Set file permissions on first access
-                        #[cfg(unix)]
-                        if let Ok(metadata) = std::fs::metadata(&path_for_perms) {
-                            let mut perms = metadata.permissions();
-                            perms.set_mode(0o600); // rw-------
-                            if let Err(e) = std::fs::set_permissions(&path_for_perms, perms) {
-                                tracing::warn!(
-                                    "Failed to set database file permissions to 0600: {}",
-                                    e
-                                );
-                            }
-                        }
-
-                        Ok::<_, rusqlite::Error>(())
-                    })
-                    .await
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
-                    })?
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(
-                            format!("connection setup failed: {e}").into(),
-                        )
-                    })
-                })
-            }))
+            .post_create(make_file_post_create_hook(path.to_path_buf()))
             .build()
             .context("Failed to build connection pool")?;
 
@@ -134,10 +89,7 @@ impl DatabasePool {
             path: Some(path.to_path_buf()),
             memory_uri: None,
         };
-
-        // Step 4: Run migrations on a dedicated connection
         db_pool.run_migrations().await?;
-
         Ok(db_pool)
     }
 
@@ -149,66 +101,23 @@ impl DatabasePool {
     /// code_fts, and pending_embeddings.
     pub async fn open_code_db(path: &Path) -> Result<Self> {
         ensure_sqlite_vec_registered();
+        ensure_parent_directory(path)?;
 
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-            #[cfg(unix)]
-            {
-                let mut perms = std::fs::metadata(parent)?.permissions();
-                perms.set_mode(0o700);
-                std::fs::set_permissions(parent, perms)?;
-            }
-        }
-
-        let path_buf = path.to_path_buf();
         let path_str = path_to_string(path);
-
         let cfg = Config::new(&path_str);
         let pool = cfg
             .builder(Runtime::Tokio1)
-            .context("Failed to create pool builder for code DB")?
-            .post_create(Hook::async_fn(move |conn, _metrics| {
-                let path_for_perms = path_buf.clone();
-                Box::pin(async move {
-                    conn.interact(move |conn| {
-                        setup_connection(conn)?;
-
-                        #[cfg(unix)]
-                        if let Ok(metadata) = std::fs::metadata(&path_for_perms) {
-                            let mut perms = metadata.permissions();
-                            perms.set_mode(0o600);
-                            if let Err(e) = std::fs::set_permissions(&path_for_perms, perms) {
-                                tracing::warn!(
-                                    "Failed to set code DB file permissions to 0600: {}",
-                                    e
-                                );
-                            }
-                        }
-
-                        Ok::<_, rusqlite::Error>(())
-                    })
-                    .await
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
-                    })?
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(
-                            format!("connection setup failed: {e}").into(),
-                        )
-                    })
-                })
-            }))
+            .context("Failed to create pool builder")?
+            .post_create(make_file_post_create_hook(path.to_path_buf()))
             .build()
-            .context("Failed to build code DB connection pool")?;
+            .context("Failed to build connection pool")?;
 
         let db_pool = Self {
             pool,
             path: Some(path.to_path_buf()),
             memory_uri: None,
         };
-
         db_pool.run_code_migrations().await?;
-
         Ok(db_pool)
     }
 
@@ -222,26 +131,10 @@ impl DatabasePool {
         let cfg = Config::new(&uri);
         let pool = cfg
             .builder(Runtime::Tokio1)
-            .context("Failed to create pool builder for in-memory code DB")?
-            .post_create(Hook::async_fn(|conn, _metrics| {
-                Box::pin(async move {
-                    conn.interact(|conn| {
-                        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-                        Ok::<_, rusqlite::Error>(())
-                    })
-                    .await
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
-                    })?
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(
-                            format!("connection setup failed: {e}").into(),
-                        )
-                    })
-                })
-            }))
+            .context("Failed to create pool builder")?
+            .post_create(make_memory_post_create_hook())
             .build()
-            .context("Failed to build in-memory code DB pool")?;
+            .context("Failed to build connection pool")?;
 
         let db_pool = Self {
             pool,
@@ -260,35 +153,17 @@ impl DatabasePool {
     pub async fn open_in_memory() -> Result<Self> {
         ensure_sqlite_vec_registered();
 
-        // Use shared cache mode for in-memory DB so all pool connections share state.
-        // The unique ID ensures different test instances don't collide.
+        // Use shared cache mode so all pool connections share the same in-memory DB.
         let unique_id = uuid::Uuid::new_v4();
         let uri = format!("file:memdb_{unique_id}?mode=memory&cache=shared");
 
         let cfg = Config::new(&uri);
         let pool = cfg
             .builder(Runtime::Tokio1)
-            .context("Failed to create pool builder for in-memory DB")?
-            .post_create(Hook::async_fn(|conn, _metrics| {
-                Box::pin(async move {
-                    conn.interact(|conn| {
-                        // WAL mode doesn't work for in-memory, just set foreign keys
-                        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-                        Ok::<_, rusqlite::Error>(())
-                    })
-                    .await
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
-                    })?
-                    .map_err(|e| {
-                        deadpool_sqlite::HookError::Message(
-                            format!("connection setup failed: {e}").into(),
-                        )
-                    })
-                })
-            }))
+            .context("Failed to create pool builder")?
+            .post_create(make_memory_post_create_hook())
             .build()
-            .context("Failed to build in-memory connection pool")?;
+            .context("Failed to build connection pool")?;
 
         let db_pool = Self {
             pool,
@@ -581,6 +456,80 @@ pub struct PoolStatus {
     pub size: usize,
     pub available: usize,
     pub waiting: usize,
+}
+
+/// Ensure parent directory exists with secure permissions (0o700 on Unix).
+fn ensure_parent_directory(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            let mut perms = std::fs::metadata(parent)?.permissions();
+            perms.set_mode(0o700); // rwx------
+            std::fs::set_permissions(parent, perms)?;
+        }
+    }
+    Ok(())
+}
+
+/// Create a post_create hook for file-based databases.
+///
+/// Sets up PRAGMAs via `setup_connection` and restricts file permissions to 0o600.
+fn make_file_post_create_hook(path: PathBuf) -> Hook {
+    Hook::async_fn(move |conn, _metrics| {
+        let path_for_perms = path.clone();
+        Box::pin(async move {
+            conn.interact(move |conn| {
+                setup_connection(conn)?;
+
+                #[cfg(unix)]
+                if let Ok(metadata) = std::fs::metadata(&path_for_perms) {
+                    let mut perms = metadata.permissions();
+                    perms.set_mode(0o600); // rw-------
+                    if let Err(e) = std::fs::set_permissions(&path_for_perms, perms) {
+                        tracing::warn!(
+                            "Failed to set database file permissions to 0600: {}",
+                            e
+                        );
+                    }
+                }
+
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .map_err(|e| {
+                deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
+            })?
+            .map_err(|e| {
+                deadpool_sqlite::HookError::Message(
+                    format!("connection setup failed: {e}").into(),
+                )
+            })
+        })
+    })
+}
+
+/// Create a post_create hook for in-memory databases.
+///
+/// Only enables foreign keys (WAL mode is not applicable to in-memory DBs).
+fn make_memory_post_create_hook() -> Hook {
+    Hook::async_fn(|conn, _metrics| {
+        Box::pin(async move {
+            conn.interact(|conn| {
+                conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .map_err(|e| {
+                deadpool_sqlite::HookError::Message(format!("interact failed: {e}").into())
+            })?
+            .map_err(|e| {
+                deadpool_sqlite::HookError::Message(
+                    format!("connection setup failed: {e}").into(),
+                )
+            })
+        })
+    })
 }
 
 /// Configure a connection after it's created.

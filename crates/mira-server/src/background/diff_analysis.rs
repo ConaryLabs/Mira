@@ -292,23 +292,10 @@ pub fn get_working_diff(project_path: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Parse diff statistics using git diff --stat
-pub fn parse_diff_stats(
-    project_path: &Path,
-    from_ref: &str,
-    to_ref: &str,
-) -> Result<DiffStats, String> {
-    let output = Command::new("git")
-        .args(["diff", "--stat", "--numstat", from_ref, to_ref])
-        .current_dir(project_path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff --stat: {}", e))?;
-
-    if !output.status.success() {
-        return Ok(DiffStats::default());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+/// Parse git numstat output into DiffStats
+///
+/// Shared parser for all git diff --numstat variants (commit ranges, staged, working).
+pub fn parse_numstat_output(stdout: &str) -> DiffStats {
     let mut stats = DiffStats::default();
 
     for line in stdout.lines() {
@@ -324,7 +311,26 @@ pub fn parse_diff_stats(
     }
 
     stats.files_changed = stats.files.len() as i64;
-    Ok(stats)
+    stats
+}
+
+/// Parse diff statistics using git diff --numstat between two refs
+pub fn parse_diff_stats(
+    project_path: &Path,
+    from_ref: &str,
+    to_ref: &str,
+) -> Result<DiffStats, String> {
+    let output = Command::new("git")
+        .args(["diff", "--numstat", from_ref, to_ref])
+        .current_dir(project_path)
+        .output()
+        .map_err(|e| format!("Failed to run git diff --numstat: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(DiffStats::default());
+    }
+
+    Ok(parse_numstat_output(&String::from_utf8_lossy(&output.stdout)))
 }
 
 /// Resolve a git ref to a commit hash
