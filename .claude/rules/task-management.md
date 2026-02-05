@@ -9,6 +9,11 @@ For current session work, use Claude Code's native task system:
 
 These are session-scoped and optimized for real-time workflow tracking.
 
+**Mira integration (automatic):**
+- Pending tasks are injected as context on each prompt (via UserPromptSubmit hook)
+- Tasks are snapshotted to Mira's database when the session ends (via Stop hook)
+- Session resume is tracked (`startup` vs `resume`) in session history
+
 ## Cross-Session Goals (Mira)
 
 For work spanning multiple sessions, use Mira's `goal` tool with milestones:

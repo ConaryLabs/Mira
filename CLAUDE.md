@@ -7,6 +7,8 @@ Mira is a Rust MCP server providing persistent memory and code intelligence for 
 Project context is **auto-initialized** from Claude Code's working directory.
 For full session context, call `session(action="recap")`. Use `memory(action="recall", query="preferences")` before writing code.
 
+**Automatic bridging:** Mira hooks capture session source (`startup` vs `resume`), pending tasks, and working directory. Session history shows `[startup]` or `[resume←previous_id]`.
+
 ## Anti-Patterns
 
 **NEVER** do these in the Mira codebase:
