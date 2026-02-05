@@ -36,9 +36,11 @@ const CONFIDENCE_ERROR_LOW: f64 = 0.6;
 
 // ---- Precompiled regexes ----
 
+#[allow(clippy::unwrap_used)] // Infallible: hardcoded regex pattern
 static RE_TODO: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(TODO|FIXME|HACK|XXX)(\([^)]+\))?:").unwrap());
 
+#[allow(clippy::unwrap_used)] // Infallible: hardcoded regex pattern
 static RE_UNIMPLEMENTED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(unimplemented!|todo!)\s*\(").unwrap());
 

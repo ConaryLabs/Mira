@@ -109,7 +109,11 @@ pub fn get_tasks_sync(
     let base = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
                 FROM tasks WHERE (project_id = ? OR project_id IS NULL)";
     let sql = match sf.value {
-        Some(_) => format!("{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100", base, sf.sql_op()),
+        Some(_) => format!(
+            "{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100",
+            base,
+            sf.sql_op()
+        ),
         None => format!("{} ORDER BY created_at DESC, id DESC LIMIT 100", base),
     };
     let mut stmt = conn.prepare(&sql)?;
@@ -192,10 +196,15 @@ pub fn get_goals_sync(
     status_filter: Option<&str>,
 ) -> rusqlite::Result<Vec<Goal>> {
     let sf = super::StatusFilter::parse(status_filter);
-    let base = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+    let base =
+        "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
                 FROM goals WHERE (project_id = ? OR project_id IS NULL)";
     let sql = match sf.value {
-        Some(_) => format!("{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100", base, sf.sql_op()),
+        Some(_) => format!(
+            "{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100",
+            base,
+            sf.sql_op()
+        ),
         None => format!("{} ORDER BY created_at DESC, id DESC LIMIT 100", base),
     };
     let mut stmt = conn.prepare(&sql)?;

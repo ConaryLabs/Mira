@@ -250,10 +250,8 @@ impl McpClientManager {
                 // Another task is already connecting — wait for notification
                 let notify = notify.clone();
                 drop(connecting);
-                let timeout = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    notify.notified(),
-                );
+                let timeout =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), notify.notified());
                 if timeout.await.is_err() {
                     return Err(format!(
                         "Timed out waiting for concurrent connection to '{}'",
@@ -267,7 +265,10 @@ impl McpClientManager {
                 }
                 return Err(format!("Concurrent connection to '{}' failed", server_name));
             }
-            connecting.insert(server_name.to_string(), Arc::new(tokio::sync::Notify::new()));
+            connecting.insert(
+                server_name.to_string(),
+                Arc::new(tokio::sync::Notify::new()),
+            );
         }
 
         // Re-check after acquiring guard (another task may have completed between our check and guard)

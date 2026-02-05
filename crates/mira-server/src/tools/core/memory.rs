@@ -591,7 +591,10 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryO
         }
         Ok(Json(MemoryOutput {
             action: "archive".into(),
-            message: format!("Memory {} archived. It will no longer appear in auto-exports.", id),
+            message: format!(
+                "Memory {} archived. It will no longer appear in auto-exports.",
+                id
+            ),
             data: None,
         }))
     } else {

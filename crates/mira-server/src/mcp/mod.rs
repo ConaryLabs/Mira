@@ -10,8 +10,8 @@ pub mod responses;
 mod router;
 mod tasks;
 
-use client::McpClientManager;
 use crate::tools::core as tools;
+use client::McpClientManager;
 
 use std::collections::HashMap;
 use std::sync::Arc;

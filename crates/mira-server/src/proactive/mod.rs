@@ -13,7 +13,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 /// Event types tracked in the behavior log
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum EventType {
@@ -26,11 +28,15 @@ pub enum EventType {
 }
 
 impl EventType {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// Pattern types for behavior analysis
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum PatternType {
@@ -42,7 +48,9 @@ pub enum PatternType {
 }
 
 impl PatternType {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// Intervention types
@@ -57,11 +65,15 @@ pub enum InterventionType {
 }
 
 impl InterventionType {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// User response to an intervention
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum UserResponse {
@@ -72,7 +84,9 @@ pub enum UserResponse {
 }
 
 impl UserResponse {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 
     /// Effectiveness multiplier for learning
     pub fn effectiveness_multiplier(&self) -> f64 {

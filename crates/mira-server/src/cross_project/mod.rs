@@ -18,7 +18,18 @@ pub use storage::{
 use serde::{Deserialize, Serialize};
 
 /// Types of patterns that can be shared across projects
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::IntoStaticStr, strum::EnumString)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::IntoStaticStr,
+    strum::EnumString,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum CrossPatternType {
     /// File access sequences (e.g., "config then main then tests")
@@ -34,7 +45,9 @@ pub enum CrossPatternType {
 }
 
 impl CrossPatternType {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// Direction of pattern sharing
@@ -47,7 +60,9 @@ pub enum SharingDirection {
 }
 
 impl SharingDirection {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// Configuration for cross-project intelligence

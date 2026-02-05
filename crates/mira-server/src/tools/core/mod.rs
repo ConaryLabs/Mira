@@ -189,8 +189,8 @@ pub mod usage;
 // Re-export handler functions used by MCP router, CLI, and tests
 pub use claude_local::export_claude_local;
 pub use code::{
-    find_function_callees, find_function_callers, get_symbols, handle_code, index,
-    query_callees, query_callers, query_search_code, search_code, summarize_codebase,
+    find_function_callees, find_function_callers, get_symbols, handle_code, index, query_callees,
+    query_callers, query_search_code, search_code, summarize_codebase,
 };
 pub use cross_project::cross_project;
 pub use dev::get_session_recap;

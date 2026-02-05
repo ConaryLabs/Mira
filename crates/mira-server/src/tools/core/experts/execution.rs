@@ -251,13 +251,11 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
 
     // Single expert bypass: skip council entirely
     if expert_roles.len() == 1 {
-        return consult_expert(
-            ctx,
-            expert_roles.into_iter().next().expect("len == 1"),
-            context,
-            question,
-        )
-        .await;
+        let role = expert_roles
+            .into_iter()
+            .next()
+            .ok_or_else(|| "expected exactly one role".to_string())?;
+        return consult_expert(ctx, role, context, question).await;
     }
 
     // Council mode: coordinator-driven multi-expert consultation

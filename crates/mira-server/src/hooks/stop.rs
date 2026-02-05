@@ -255,10 +255,7 @@ pub async fn run_session_end() -> Result<()> {
                         &path_clone,
                     ) {
                         Ok(count) if count > 0 => {
-                            eprintln!(
-                                "[mira] Auto-exported {} memories to MEMORY.mira.md",
-                                count
-                            );
+                            eprintln!("[mira] Auto-exported {} memories to MEMORY.mira.md", count);
                         }
                         Err(e) => {
                             eprintln!("[mira] Auto memory export failed: {}", e);

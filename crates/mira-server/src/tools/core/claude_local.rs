@@ -997,7 +997,9 @@ mod tests {
     #[test]
     fn test_auto_memory_dir_exists_nonexistent() {
         // A path that definitely doesn't have an auto memory dir
-        assert!(!auto_memory_dir_exists("/nonexistent/path/that/does/not/exist"));
+        assert!(!auto_memory_dir_exists(
+            "/nonexistent/path/that/does/not/exist"
+        ));
     }
 
     fn make_auto_memory_candidate(
@@ -1141,7 +1143,9 @@ mod tests {
         assert!(is_auto_memory_noise("Task breakdown for database pooling"));
 
         // Should NOT match - these are real insights
-        assert!(!is_auto_memory_noise("DatabasePool must be used for all access"));
+        assert!(!is_auto_memory_noise(
+            "DatabasePool must be used for all access"
+        ));
         assert!(!is_auto_memory_noise("User prefers concise responses"));
         assert!(!is_auto_memory_noise("Using builder pattern for Config"));
     }

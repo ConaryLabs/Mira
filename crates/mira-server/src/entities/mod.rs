@@ -26,7 +26,9 @@ pub enum EntityType {
 }
 
 impl EntityType {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 // Precompiled regexes via LazyLock — compiled once, used many times

@@ -119,6 +119,7 @@ impl ElicitationClient {
 /// - `api_key`: required string, min 10 chars
 /// - `persist`: optional bool (default false) — save to ~/.mira/.env
 pub fn api_key_schema() -> ElicitationSchema {
+    #[allow(clippy::expect_used)] // Infallible: hardcoded enum values with matching titles
     let provider_enum = EnumSchemaBuilder::new(vec!["deepseek".to_string(), "gemini".to_string()])
         .enum_titles(vec!["DeepSeek".to_string(), "Google Gemini".to_string()])
         .expect("enum titles count matches values")

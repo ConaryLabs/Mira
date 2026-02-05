@@ -103,7 +103,8 @@ pub fn get_preferences(conn: &Connection, project_id: i64) -> Result<SharingPref
             sharing_enabled: row.get::<_, i32>(0)? != 0,
             export_patterns: row.get::<_, i32>(1)? != 0,
             import_patterns: row.get::<_, i32>(2)? != 0,
-            min_anonymization_level: level_str.parse::<AnonymizationLevel>()
+            min_anonymization_level: level_str
+                .parse::<AnonymizationLevel>()
                 .unwrap_or(AnonymizationLevel::Full),
             allowed_pattern_types: allowed_types,
             privacy_epsilon_budget: row.get(5)?,

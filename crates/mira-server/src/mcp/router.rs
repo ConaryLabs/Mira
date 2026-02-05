@@ -31,6 +31,7 @@ where
     }
 }
 
+#[allow(clippy::expect_used)] // schema_for_output on derived JsonSchema types is infallible
 #[tool_router]
 impl MiraServer {
     #[tool(

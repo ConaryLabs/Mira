@@ -150,7 +150,8 @@ pub fn get_shareable_patterns(
 
         Ok(CrossProjectPattern {
             id: Some(row.get(0)?),
-            pattern_type: type_str.parse::<CrossPatternType>()
+            pattern_type: type_str
+                .parse::<CrossPatternType>()
                 .unwrap_or(CrossPatternType::Behavior),
             pattern_hash: row.get(2)?,
             anonymized_data: serde_json::from_str(&data_str).unwrap_or(serde_json::json!({})),

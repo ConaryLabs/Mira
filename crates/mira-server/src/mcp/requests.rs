@@ -445,7 +445,6 @@ pub struct DocumentationRequest {
     pub status: Option<String>,
 }
 
-
 // Review findings request type (unified)
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

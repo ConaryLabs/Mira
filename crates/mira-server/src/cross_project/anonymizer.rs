@@ -9,7 +9,17 @@ use sha2::{Digest, Sha256};
 use super::CrossPatternType;
 
 /// Level of anonymization applied to patterns
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr, strum::EnumString)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::IntoStaticStr,
+    strum::EnumString,
+)]
 #[strum(serialize_all = "lowercase")]
 pub enum AnonymizationLevel {
     /// Full anonymization: all identifiers removed, noise added
@@ -21,7 +31,9 @@ pub enum AnonymizationLevel {
 }
 
 impl AnonymizationLevel {
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// An anonymized pattern ready for cross-project sharing

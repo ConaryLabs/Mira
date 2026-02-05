@@ -240,7 +240,7 @@ impl FindingsStore {
 
     /// Add a finding. Returns the result indicating success or which limit was hit.
     pub fn add(&self, finding: CouncilFinding) -> AddFindingResult {
-        let mut findings = self.findings.lock().expect("findings mutex not poisoned");
+        let mut findings = self.findings.lock().unwrap_or_else(|e| e.into_inner());
         if findings.len() >= MAX_COUNCIL_FINDINGS {
             return AddFindingResult::GlobalLimitReached {
                 total: findings.len(),
@@ -262,7 +262,7 @@ impl FindingsStore {
     pub fn by_role(&self, role: &str) -> Vec<CouncilFinding> {
         self.findings
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|f| f.role == role)
             .cloned()
@@ -273,13 +273,13 @@ impl FindingsStore {
     pub fn count(&self) -> usize {
         self.findings
             .lock()
-            .expect("findings mutex not poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .len()
     }
 
     /// Format all findings for the synthesis prompt.
     pub fn format_for_synthesis(&self) -> String {
-        let findings = self.findings.lock().expect("findings mutex not poisoned");
+        let findings = self.findings.lock().unwrap_or_else(|e| e.into_inner());
         if findings.is_empty() {
             return "No structured findings were recorded.".to_string();
         }

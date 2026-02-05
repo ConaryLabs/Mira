@@ -79,7 +79,9 @@ impl std::fmt::Display for GoogleEmbeddingModel {
 
 /// Task type for embedding optimization
 /// Different task types optimize the embedding for specific use cases
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, strum::IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum TaskType {
@@ -104,7 +106,9 @@ pub enum TaskType {
 
 impl TaskType {
     /// Get the task type string for API calls
-    pub fn as_str(&self) -> &'static str { self.into() }
+    pub fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// Google Gemini embeddings client
