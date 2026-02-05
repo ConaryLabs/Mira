@@ -6,6 +6,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+use crate::utils::truncate;
+
 use super::EventType;
 
 /// A single behavior event
@@ -123,11 +125,7 @@ impl BehaviorTracker {
         query_type: &str,
     ) -> Result<i64> {
         // Hash or truncate the query for privacy
-        let query_summary = if query_text.len() > 200 {
-            format!("{}...", &query_text[..200])
-        } else {
-            query_text.to_string()
-        };
+        let query_summary = truncate(query_text, 200);
 
         let data = serde_json::json!({
             "query_summary": query_summary,

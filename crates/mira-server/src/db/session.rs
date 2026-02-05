@@ -4,6 +4,8 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 
+use crate::utils::{truncate, truncate_at_boundary};
+
 use super::types::{SessionInfo, ToolHistoryEntry};
 
 // ============================================================================
@@ -129,8 +131,8 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
             if !recent.is_empty() {
                 let mut session_lines = Vec::new();
                 for sess in recent {
-                    let short_id = &sess.id[..8.min(sess.id.len())];
-                    let timestamp = &sess.last_activity[..16.min(sess.last_activity.len())];
+                    let short_id = truncate_at_boundary(&sess.id, 8);
+                    let timestamp = truncate_at_boundary(&sess.last_activity, 16);
                     if let Some(ref summary) = sess.summary {
                         session_lines.push(format!("• [{}] {} - {}", short_id, timestamp, summary));
                     } else {
@@ -267,24 +269,8 @@ pub fn get_session_tool_summary_sync(
             let success: i32 = row.get(3)?;
 
             let status = if success != 0 { "✓" } else { "✗" };
-            let args_preview = args
-                .map(|a| {
-                    if a.len() > 100 {
-                        format!("{}...", &a[..100])
-                    } else {
-                        a
-                    }
-                })
-                .unwrap_or_default();
-            let result_preview = result
-                .map(|r| {
-                    if r.len() > 150 {
-                        format!("{}...", &r[..150])
-                    } else {
-                        r
-                    }
-                })
-                .unwrap_or_default();
+            let args_preview = args.map(|a| truncate(&a, 100)).unwrap_or_default();
+            let result_preview = result.map(|r| truncate(&r, 150)).unwrap_or_default();
 
             Ok(format!(
                 "{} {}({}) -> {}",

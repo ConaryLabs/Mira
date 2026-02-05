@@ -6,7 +6,7 @@ use crate::db::{
     StoreMemoryParams, get_error_heavy_functions_sync, get_large_functions_sync, store_memory_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate_at_boundary};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -29,12 +29,12 @@ fn truncate_function_code(code: &str, max_bytes: usize) -> String {
     );
 
     // Find a good truncation point - try to end at a line boundary
-    let truncated = &code[..max_bytes];
+    let truncated = truncate_at_boundary(code, max_bytes);
     if let Some(last_newline) = truncated.rfind('\n') {
         // Keep everything up to the last newline
         format!(
             "{}\n// ... [code truncated, {} bytes total -> {} bytes]",
-            &truncated[..last_newline],
+            truncate_at_boundary(truncated, last_newline),
             code.len(),
             max_bytes
         )

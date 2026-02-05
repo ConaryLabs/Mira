@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::PatternType;
+use crate::utils::truncate_at_boundary;
 
 /// A recognized behavior pattern
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,7 +234,7 @@ pub fn get_high_confidence_patterns(
                 tracing::warn!(
                     "Skipping pattern with invalid data: type={}, data={}...",
                     pattern_type_str,
-                    &pattern_data_str[..pattern_data_str.len().min(100)]
+                    truncate_at_boundary(&pattern_data_str, 100)
                 );
             }
         }

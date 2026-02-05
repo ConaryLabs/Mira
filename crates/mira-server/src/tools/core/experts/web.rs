@@ -1,6 +1,7 @@
 // crates/mira-server/src/tools/core/experts/web.rs
 // Web fetch and search execution for expert sub-agents
 
+use crate::utils::truncate_at_boundary;
 use serde_json::Value;
 
 /// Fetch a web page and extract text content
@@ -88,7 +89,7 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
     let truncated = if text.len() > max_chars {
         format!(
             "{}\n\n... (truncated at {} chars, total {})",
-            &text[..max_chars],
+            truncate_at_boundary(&text, max_chars),
             max_chars,
             text.len()
         )

@@ -4,6 +4,7 @@
 use super::ToolContext;
 use crate::db::{get_llm_usage_summary, query_llm_usage_stats};
 use crate::mcp::requests::UsageAction;
+use crate::utils::truncate;
 
 /// Query LLM usage statistics
 pub async fn usage<C: ToolContext>(
@@ -76,7 +77,7 @@ pub async fn usage<C: ToolContext>(
             for stat in &stats {
                 output.push_str(&format!(
                     "{:<30} {:>8} {:>12} ${:>9.4}\n",
-                    truncate_str(&stat.group_key, 30),
+                    truncate(&stat.group_key, 27),
                     stat.total_requests,
                     stat.total_tokens,
                     stat.total_cost
@@ -125,13 +126,5 @@ pub async fn usage<C: ToolContext>(
 
             Ok(output)
         }
-    }
-}
-
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len - 3])
     }
 }

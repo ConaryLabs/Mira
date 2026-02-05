@@ -3,7 +3,7 @@
 
 use super::types::{MemoryEntry, ToolUsageEntry};
 use crate::db::pool::DatabasePool;
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate};
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -64,11 +64,7 @@ pub(super) fn summarize_arguments(args: &str) -> String {
             return format!("keys: {}", keys.join(", "));
         }
     // Fallback: truncate
-    if args.len() > 50 {
-        format!("{}...", &args[..50])
-    } else {
-        args.to_string()
-    }
+    truncate(args, 50)
 }
 
 /// Get recent memories for a project

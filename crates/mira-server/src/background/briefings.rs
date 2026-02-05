@@ -5,7 +5,7 @@ use super::{HEURISTIC_PREFIX, is_fallback_content};
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -200,11 +200,7 @@ fn get_files_changed(project_path: &str, from_commit: Option<&str>) -> Option<St
     }
 
     // Truncate if too long
-    if stat.len() > 1000 {
-        Some(format!("{}...", &stat[..1000]))
-    } else {
-        Some(stat)
-    }
+    Some(truncate(&stat, 1000))
 }
 
 /// Generate a briefing — LLM when available, heuristic fallback otherwise
@@ -305,11 +301,7 @@ fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -
                 .trim();
             // Strip newlines and truncate
             let msg = msg.replace('\n', " ");
-            if msg.len() > 72 {
-                format!("{}...", &msg[..69])
-            } else {
-                msg.to_string()
-            }
+            truncate(&msg, 69)
         })
         .unwrap_or_default();
 

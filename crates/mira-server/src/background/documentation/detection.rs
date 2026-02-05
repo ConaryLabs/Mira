@@ -9,7 +9,7 @@ use crate::db::{
     get_documented_by_category_sync, get_indexed_project_ids_sync, get_lib_symbols_sync,
     get_modules_for_doc_gaps_sync, get_project_paths_by_ids_sync, get_symbols_for_file_sync,
 };
-use crate::utils::ResultExt;
+use crate::utils::{truncate_at_boundary, ResultExt};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -398,8 +398,8 @@ async fn detect_stale_docs_for_project(
                     is_stale = true;
                     reason = format!(
                         "Git history changed (rebase/force-push detected). Old: {}, Current: {}",
-                        &stored_commit[..8.min(stored_commit.len())],
-                        &current[..8.min(current.len())]
+                        truncate_at_boundary(stored_commit, 8),
+                        truncate_at_boundary(current, 8)
                     );
                 }
             }

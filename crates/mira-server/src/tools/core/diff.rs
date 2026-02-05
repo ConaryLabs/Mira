@@ -18,6 +18,7 @@ use crate::mcp::responses::{
 };
 use crate::search::format_project_header;
 use crate::tools::core::ToolContext;
+use crate::utils::truncate;
 
 /// Analyze git diff semantically
 ///
@@ -309,11 +310,7 @@ pub async fn list_diff_analyses<C: ToolContext>(
 
     for analysis in analyses {
         let summary = analysis.summary.as_deref().unwrap_or("No summary");
-        let truncated = if summary.len() > 100 {
-            format!("{}...", &summary[..100])
-        } else {
-            summary.to_string()
-        };
+        let truncated = truncate(summary, 100);
 
         output.push_str(&format!(
             "- **{}..{}** ({})\n  {} files, +{} -{}\n  {}\n\n",

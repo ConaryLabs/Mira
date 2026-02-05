@@ -54,23 +54,6 @@ impl TestContext {
         &self.pool
     }
 
-    /// Get a reference to the LLM factory
-    #[allow(dead_code)]
-    pub fn llm_factory(&self) -> &Arc<ProviderFactory> {
-        &self.llm_factory
-    }
-
-    /// Clear project state (useful for tests that need fresh state)
-    #[allow(dead_code)]
-    pub async fn clear_project(&self) {
-        *self.project_state.write().await = None;
-    }
-
-    /// Clear session state
-    #[allow(dead_code)]
-    pub async fn clear_session(&self) {
-        *self.session_state.write().await = None;
-    }
 }
 
 #[async_trait]

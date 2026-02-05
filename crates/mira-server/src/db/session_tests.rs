@@ -20,13 +20,12 @@ mod tests {
     async fn test_create_session_basic() {
         let (pool, _project_id) = setup_test_pool_with_project().await;
 
-        let result = db!(pool, |conn| create_session_sync(
+        db!(pool, |conn| create_session_sync(
             conn,
             "test-session-123",
             None
         )
         .map_err(Into::into));
-        assert_eq!(result, ());
     }
 
     #[tokio::test]

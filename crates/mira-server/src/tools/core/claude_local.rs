@@ -6,7 +6,7 @@ use crate::db::{
     pool::DatabasePool, search_memories_sync,
 };
 use crate::tools::core::ToolContext;
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate_at_boundary};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -146,7 +146,7 @@ fn import_claude_local_md_sync(
         // Store as memory with source key for tracking
         let key = format!(
             "claude_local:{}",
-            &entry_content[..entry_content.len().min(50)]
+            truncate_at_boundary(&entry_content, 50)
         );
         let fact_type = match category.as_deref() {
             Some("preference") => "preference",

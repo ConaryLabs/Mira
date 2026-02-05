@@ -4,6 +4,7 @@
 use super::types::ModuleSummaryContext;
 use crate::db::{get_modules_needing_summaries_sync, update_module_purposes_sync};
 use crate::project_files::walker::FileWalker;
+use crate::utils::truncate_at_boundary;
 use anyhow::Result;
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -118,7 +119,7 @@ pub fn get_module_full_code(project_path: &Path, module_path: &str, max_bytes: u
                 // Partial content
                 code.push_str(&header);
                 let take = available - header.len() - 30;
-                code.push_str(&content[..take.min(content.len())]);
+                code.push_str(truncate_at_boundary(&content, take));
                 code.push_str("\n// ... truncated ...\n");
                 total_bytes = max_bytes;
             }

@@ -6,6 +6,7 @@ use super::keyword::keyword_search;
 use super::utils::{Locatable, deduplicate_by_location, distance_to_score, embedding_to_bytes};
 use crate::Result;
 use crate::db::pool::DatabasePool;
+use crate::utils::{truncate, truncate_at_boundary};
 use crate::db::semantic_code_search_sync;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
@@ -170,10 +171,10 @@ fn rerank_results_with_intent(
                 continue;
             }
             let full_path = Path::new(proj_path).join(&result.file_path);
-            if let Ok(metadata) = std::fs::metadata(&full_path) {
-                if let Ok(modified) = metadata.modified() {
-                    cache.insert(result.file_path.clone(), modified);
-                }
+            if let Ok(metadata) = std::fs::metadata(&full_path)
+                && let Ok(modified) = metadata.modified()
+            {
+                cache.insert(result.file_path.clone(), modified);
             }
         }
         cache
@@ -232,17 +233,17 @@ fn rerank_results_with_intent(
         }
 
         // Boost recent files (up to 20% for files modified in last day)
-        if let Some(modified) = mod_times.get(&result.file_path) {
-            if let Ok(age) = now.duration_since(*modified) {
-                let recency_boost = if age < one_day {
-                    1.20 // Modified today
-                } else if age < one_week {
-                    1.10 // Modified this week
-                } else {
-                    1.0 // Older
-                };
-                boost *= recency_boost;
-            }
+        if let Some(modified) = mod_times.get(&result.file_path)
+            && let Ok(age) = now.duration_since(*modified)
+        {
+            let recency_boost = if age < one_day {
+                1.20 // Modified today
+            } else if age < one_week {
+                1.10 // Modified this week
+            } else {
+                1.0 // Older
+            };
+            boost *= recency_boost;
         }
 
         result.score *= boost;
@@ -454,7 +455,7 @@ pub fn format_results(
                     response.push_str(&format!("{}\n", info));
                 }
                 if expanded.len() > 1500 {
-                    format!("{}...\n[truncated]", &expanded[..1500])
+                    format!("{}...\n[truncated]", truncate_at_boundary(&expanded, 1500))
                 } else {
                     expanded
                 }
@@ -462,7 +463,7 @@ pub fn format_results(
                 result.content.clone()
             }
         } else if result.content.len() > 500 {
-            format!("{}...", &result.content[..500])
+            truncate(&result.content, 500)
         } else {
             result.content.clone()
         };

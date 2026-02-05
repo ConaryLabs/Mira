@@ -6,6 +6,7 @@
 
 use crate::mcp::MiraServer;
 use crate::mcp::requests::{TasksAction, TasksRequest};
+use crate::utils::truncate;
 use crate::mcp::responses::{
     Json, TaskSummary, TasksData, TasksListData, TasksOutput, TasksStatusData,
 };
@@ -120,7 +121,9 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
         Some(idx) => {
             // Found — extract from vec (we can't put the rest back easily,
             // but completed results are consumed on get, which is the expected behavior)
-            let task_result = completed.into_iter().nth(idx).unwrap();
+            let Some(task_result) = completed.into_iter().nth(idx) else {
+                return Err(format!("Task '{}' not found", task_id));
+            };
 
             let (status, result_text, result_structured) = match task_result.result {
                 Ok(boxed) => {
@@ -156,10 +159,7 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
             };
 
             let message = match &result_text {
-                Some(t) if t.len() > 100 => {
-                    format!("Task {}: {} — {}...", task_id, status, &t[..100])
-                }
-                Some(t) => format!("Task {}: {} — {}", task_id, status, t),
+                Some(t) => format!("Task {}: {} — {}", task_id, status, truncate(t, 100)),
                 None => format!("Task {}: {}", task_id, status),
             };
 

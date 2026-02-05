@@ -4,6 +4,7 @@
 use super::ToolContext;
 use super::role::ExpertRole;
 use crate::mcp::requests::ExpertConfigAction;
+use crate::utils::truncate;
 
 /// Configure expert system prompts and LLM providers (set, get, delete, list, providers)
 pub async fn configure_expert<C: ToolContext>(
@@ -116,12 +117,7 @@ pub async fn configure_expert<C: ToolContext>(
                 ));
             }
             if let Some(ref p) = config.prompt {
-                let preview = if p.len() > 200 {
-                    format!("{}...", &p[..200])
-                } else {
-                    p.clone()
-                };
-                output.push_str(&format!("  Custom prompt: {}\n", preview));
+                output.push_str(&format!("  Custom prompt: {}\n", truncate(p, 200)));
             } else {
                 output.push_str("  Prompt: (default)\n");
             }
@@ -170,12 +166,10 @@ pub async fn configure_expert<C: ToolContext>(
             } else {
                 let mut output = format!("{} expert configurations:\n\n", configs.len());
                 for (role_key, prompt_text, provider_str, model_opt) in configs {
-                    let prompt_preview = if prompt_text.len() > 50 {
-                        format!("{}...", &prompt_text[..50])
-                    } else if prompt_text.is_empty() {
+                    let prompt_preview = if prompt_text.is_empty() {
                         "(default)".to_string()
                     } else {
-                        prompt_text
+                        truncate(&prompt_text, 50)
                     };
                     let model_str = model_opt.as_deref().unwrap_or("default");
                     output.push_str(&format!(

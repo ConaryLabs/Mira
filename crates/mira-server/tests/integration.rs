@@ -9,7 +9,6 @@ use mira::mcp::requests::{
     ExpertConfigAction, GoalAction, GoalRequest, IndexAction, SessionHistoryAction,
 };
 use mira::mcp::responses::*;
-#[allow(unused_imports)]
 use mira::tools::core::{
     ToolContext, configure_expert, ensure_session, find_function_callees, find_function_callers,
     forget, get_project, get_session_recap, get_symbols, goal, index, recall, remember,

@@ -3,6 +3,7 @@
 
 use super::MiraServer;
 use super::tasks;
+use crate::utils::truncate;
 
 use rmcp::{
     ErrorData, ServerHandler,
@@ -287,11 +288,7 @@ impl ServerHandler for MiraServer {
                             };
                             let summary = match &tcr.result {
                                 Ok(r) => r.content.first().and_then(|c| c.as_text()).map(|t| {
-                                    if t.text.len() > 200 {
-                                        format!("{}...", &t.text[..200])
-                                    } else {
-                                        t.text.to_string()
-                                    }
+                                    truncate(&t.text, 200)
                                 }),
                                 Err(e) => Some(e.message.to_string()),
                             };

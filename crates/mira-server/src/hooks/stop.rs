@@ -3,6 +3,7 @@
 
 use crate::db::pool::DatabasePool;
 use crate::hooks::{read_hook_input, write_hook_output};
+use crate::utils::truncate_at_boundary;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ pub async fn run() -> Result<()> {
 
     eprintln!(
         "[mira] Stop hook triggered (session: {}, stop_hook_active: {})",
-        &stop_input.session_id[..stop_input.session_id.len().min(8)],
+        truncate_at_boundary(&stop_input.session_id, 8),
         stop_input.stop_hook_active
     );
 
@@ -145,7 +146,7 @@ pub async fn run() -> Result<()> {
                     crate::db::close_session_sync(conn, &session_id, None).ok();
                     eprintln!(
                         "[mira] Closed session {}",
-                        &session_id[..session_id.len().min(8)]
+                        truncate_at_boundary(&session_id, 8)
                     );
                 }
                 Ok::<_, anyhow::Error>(())

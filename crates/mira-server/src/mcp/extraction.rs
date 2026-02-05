@@ -10,6 +10,7 @@ use crate::embeddings::EmbeddingClient;
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::search::embedding_to_bytes;
 use crate::utils::json::parse_json_hardened;
+use crate::utils::truncate_at_boundary;
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
@@ -91,12 +92,8 @@ async fn extract_and_store(
         "Tool: {}\nArguments: {}\nResult:\n{}",
         tool_name,
         args,
-        // Truncate very long results
-        if result.len() > 3000 {
-            &result[..3000]
-        } else {
-            result
-        }
+        // Truncate very long results (char-boundary safe)
+        truncate_at_boundary(result, 3000)
     );
 
     let messages = PromptBuilder::for_tool_extraction().build_messages(tool_context);

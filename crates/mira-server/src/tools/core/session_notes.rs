@@ -6,6 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::utils::truncate;
+
 /// Claude Code session note structure
 #[derive(Debug, Default)]
 pub struct SessionNote {
@@ -176,11 +178,7 @@ pub fn format_session_notes(notes: &[SessionNote]) -> String {
         output.push_str(&format!("  [{}] {}\n", short_id, title));
 
         if let Some(state) = &note.current_state {
-            let preview = if state.len() > 100 {
-                format!("{}...", &state[..100])
-            } else {
-                state.clone()
-            };
+            let preview = truncate(state, 100);
             output.push_str(&format!("    State: {}\n", preview.replace('\n', " ")));
         }
     }
@@ -228,9 +226,9 @@ _What has worked well?_
 CSS custom properties work well for theming.
 "#;
 
-        // Write to temp file
-        let temp_dir = std::env::temp_dir();
-        let session_dir = temp_dir.join("test-session-id").join("session-memory");
+        // Write to temp file (auto-cleaned on drop)
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let session_dir = temp_dir.path().join("test-session-id").join("session-memory");
         std::fs::create_dir_all(&session_dir).unwrap();
         let summary_path = session_dir.join("summary.md");
         std::fs::write(&summary_path, content).unwrap();
@@ -243,8 +241,5 @@ CSS custom properties work well for theming.
         assert!(note.task_specification.is_some());
         assert!(note.files_and_functions.is_some());
         assert!(note.learnings.is_some());
-
-        // Cleanup
-        std::fs::remove_dir_all(temp_dir.join("test-session-id")).ok();
     }
 }

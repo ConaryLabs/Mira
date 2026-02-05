@@ -14,7 +14,7 @@ use crate::search::{
     format_project_header,
 };
 use crate::tools::core::ToolContext;
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate};
 
 use super::{query_callees, query_callers, query_search_code};
 
@@ -127,20 +127,8 @@ pub async fn search_code<C: ToolContext>(
             symbol_info: expanded.as_ref().and_then(|(info, _)| info.clone()),
             content: expanded
                 .as_ref()
-                .map(|(_, code)| {
-                    if code.len() > 1500 {
-                        format!("{}...", &code[..1500])
-                    } else {
-                        code.clone()
-                    }
-                })
-                .unwrap_or_else(|| {
-                    if content.len() > 500 {
-                        format!("{}...", &content[..500])
-                    } else {
-                        content.clone()
-                    }
-                }),
+                .map(|(_, code)| truncate(code, 1500))
+                .unwrap_or_else(|| truncate(content, 500)),
         })
         .collect();
 
@@ -152,17 +140,13 @@ pub async fn search_code<C: ToolContext>(
                 response.push_str(&format!("{}\n", info));
             }
             let code_display = if full_code.len() > 1500 {
-                format!("{}...\n[truncated]", &full_code[..1500])
+                format!("{}\n[truncated]", truncate(&full_code, 1500))
             } else {
                 full_code
             };
             response.push_str(&format!("```\n{}\n```\n\n", code_display));
         } else {
-            let display = if content.len() > 500 {
-                format!("{}...", &content[..500])
-            } else {
-                content
-            };
+            let display = truncate(&content, 500);
             response.push_str(&format!("```\n{}\n```\n\n", display));
         }
     }

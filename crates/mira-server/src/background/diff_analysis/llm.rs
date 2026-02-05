@@ -5,6 +5,7 @@ use super::types::{LlmDiffResponse, SemanticChange};
 use crate::db::pool::DatabasePool;
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::json::parse_json_hardened;
+use crate::utils::truncate_at_boundary;
 use std::sync::Arc;
 
 /// Maximum diff size to send to LLM (in bytes)
@@ -25,7 +26,7 @@ pub async fn analyze_diff_semantic(
     let diff_to_analyze = if diff_content.len() > MAX_DIFF_SIZE {
         format!(
             "{}...\n\n[Diff truncated - {} more bytes]",
-            &diff_content[..MAX_DIFF_SIZE],
+            truncate_at_boundary(diff_content, MAX_DIFF_SIZE),
             diff_content.len() - MAX_DIFF_SIZE
         )
     } else {

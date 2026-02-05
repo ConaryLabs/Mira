@@ -5,6 +5,7 @@ use crate::db::pool::DatabasePool;
 use crate::db::{
     StoreMemoryParams, get_last_active_project_sync, get_or_create_project_sync, store_memory_sync,
 };
+use crate::utils::truncate_at_boundary;
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
@@ -46,7 +47,7 @@ pub async fn run() -> Result<()> {
 
     eprintln!(
         "[mira] PreCompact hook triggered (session: {}, trigger: {})",
-        &session_id[..session_id.len().min(8)],
+        truncate_at_boundary(&session_id, 8),
         trigger
     );
 
@@ -97,7 +98,7 @@ async fn save_pre_compaction_state(
     let note_content = format!(
         "Context compaction ({}) triggered for session {}",
         trigger,
-        &session_id[..session_id.len().min(8)]
+        truncate_at_boundary(&session_id, 8)
     );
 
     // Store as a session event

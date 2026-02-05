@@ -19,6 +19,7 @@ use super::MiraServer;
 use super::requests::*;
 use super::responses;
 use crate::hooks::session::read_claude_session_id;
+use crate::utils::truncate;
 
 fn tool_result<T>(result: Result<Json<T>, String>) -> Result<CallToolResult, ErrorData>
 where
@@ -249,11 +250,7 @@ impl MiraServer {
         result_text: &str,
         success: bool,
     ) {
-        let summary = if result_text.len() > 2000 {
-            format!("{}...", &result_text[..2000])
-        } else {
-            result_text.to_string()
-        };
+        let summary = truncate(result_text, 2000);
         let full_result_str = if result_text.len() > 100 {
             Some(result_text.to_string())
         } else {

@@ -5,6 +5,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
 use crate::search::{embedding_to_bytes, format_project_header};
 use crate::tools::core::ToolContext;
+use crate::utils::truncate;
 use mira_types::MemoryFact;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -331,11 +332,7 @@ pub async fn recall<C: ToolContext>(
                 let mut response = format!("{}Found {} memories:\n", context_header, total);
                 for (id, content, distance, branch) in &results {
                     let score = 1.0 - distance;
-                    let preview = if content.len() > 100 {
-                        format!("{}...", &content[..100])
-                    } else {
-                        content.clone()
-                    };
+                    let preview = truncate(content, 100);
                     let branch_tag = branch
                         .as_ref()
                         .map(|b| format!(" [{}]", b))
@@ -381,11 +378,7 @@ pub async fn recall<C: ToolContext>(
                 let total = items.len();
                 let mut response = format!("{}Found {} memories (fuzzy):\n", context_header, total);
                 for mem in &results {
-                    let preview = if mem.content.len() > 100 {
-                        format!("{}...", &mem.content[..100])
-                    } else {
-                        mem.content.clone()
-                    };
+                    let preview = truncate(&mem.content, 100);
                     response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
                 }
                 return Ok(Json(MemoryOutput {
@@ -444,11 +437,7 @@ pub async fn recall<C: ToolContext>(
     let total = items.len();
     let mut response = format!("{}Found {} memories:\n", context_header, total);
     for mem in &results {
-        let preview = if mem.content.len() > 100 {
-            format!("{}...", &mem.content[..100])
-        } else {
-            mem.content.clone()
-        };
+        let preview = truncate(&mem.content, 100);
         response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
     }
 

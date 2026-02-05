@@ -8,7 +8,7 @@ use crate::db::{
     get_stale_sessions_sync, update_session_summary_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate_at_boundary};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -75,7 +75,7 @@ async fn close_stale_sessions(
             })
             .await
         {
-            tracing::warn!("Failed to close session {}: {}", &session_id[..8], e);
+            tracing::warn!("Failed to close session {}: {}", truncate_at_boundary(&session_id, 8), e);
             continue;
         }
 
@@ -86,7 +86,7 @@ async fn close_stale_sessions(
         };
         tracing::info!(
             "Closed stale session {} ({} tools, {})",
-            &session_id[..8.min(session_id.len())],
+            truncate_at_boundary(&session_id, 8),
             tool_count,
             summary_status
         );
@@ -129,7 +129,7 @@ async fn generate_missing_summaries(
             {
                 tracing::warn!(
                     "Failed to update summary for session {}: {}",
-                    &session_id[..8],
+                    truncate_at_boundary(&session_id, 8),
                     e
                 );
                 continue;
@@ -137,7 +137,7 @@ async fn generate_missing_summaries(
 
             tracing::info!(
                 "Generated summary for session {}",
-                &session_id[..8.min(session_id.len())]
+                truncate_at_boundary(&session_id, 8)
             );
             processed += 1;
         }

@@ -12,6 +12,7 @@ use crate::mcp::responses::{
     SessionHistoryData, SessionListData, SessionOutput, SessionSummary,
 };
 use crate::tools::core::ToolContext;
+use crate::utils::{truncate, truncate_at_boundary};
 use mira_types::{AgentRole, WsEvent};
 use uuid::Uuid;
 
@@ -188,7 +189,7 @@ pub async fn session_history<C: ToolContext>(
                 .map(|s| {
                     output.push_str(&format!(
                         "  [{}] {} - {} ({} tool calls)\n",
-                        &s.id[..8],
+                        truncate_at_boundary(&s.id, 8),
                         s.started_at,
                         s.status,
                         s.summary.as_deref().unwrap_or("no summary")
@@ -230,7 +231,7 @@ pub async fn session_history<C: ToolContext>(
             if history.is_empty() {
                 return Ok(Json(SessionOutput {
                     action: "get_history".into(),
-                    message: format!("No history for session {}", &target_session_id[..8]),
+                    message: format!("No history for session {}", truncate_at_boundary(&target_session_id, 8)),
                     data: Some(SessionData::History(SessionHistoryData {
                         session_id: target_session_id,
                         entries: vec![],
@@ -242,7 +243,7 @@ pub async fn session_history<C: ToolContext>(
             let mut output = format!(
                 "{} tool calls in session {}:\n",
                 history.len(),
-                &target_session_id[..8]
+                truncate_at_boundary(&target_session_id, 8)
             );
             let items: Vec<HistoryEntry> = history
                 .into_iter()
@@ -251,13 +252,7 @@ pub async fn session_history<C: ToolContext>(
                     let preview = entry
                         .result_summary
                         .as_ref()
-                        .map(|s| {
-                            if s.len() > 60 {
-                                format!("{}...", &s[..60])
-                            } else {
-                                s.clone()
-                            }
-                        })
+                        .map(|s| truncate(s, 60))
                         .unwrap_or_default();
                     output.push_str(&format!(
                         "  {} {} [{}] {}\n",
@@ -267,13 +262,7 @@ pub async fn session_history<C: ToolContext>(
                         tool_name: entry.tool_name,
                         created_at: entry.created_at,
                         success: entry.success,
-                        result_preview: entry.result_summary.map(|s| {
-                            if s.len() > 60 {
-                                format!("{}...", &s[..60])
-                            } else {
-                                s
-                            }
-                        }),
+                        result_preview: entry.result_summary.map(|s| truncate(&s, 60)),
                     }
                 })
                 .collect();

@@ -100,19 +100,19 @@ pub fn walk(
             // Check for const function assignments: const foo = () => {}
             for declarator in node.children(&mut node.walk()) {
                 if declarator.kind() == "variable_declarator"
-                    && let Some(value) = declarator.child_by_field_name("value") {
-                        if (value.kind() == "arrow_function" || value.kind() == "function")
-                            && let Some(name_node) = declarator.child_by_field_name("name") {
-                                let name = node_text(name_node, ctx.source);
-                                if let Some(mut sym) =
-                                    extract_function(value, ctx.source, parent_name, ctx.language)
-                                {
-                                    sym.name = name.clone();
-                                    sym.qualified_name = Some(name);
-                                    ctx.symbols.push(sym);
-                                }
-                            }
+                    && let Some(value) = declarator.child_by_field_name("value")
+                    && (value.kind() == "arrow_function" || value.kind() == "function")
+                    && let Some(name_node) = declarator.child_by_field_name("name")
+                {
+                    let name = node_text(name_node, ctx.source);
+                    if let Some(mut sym) =
+                        extract_function(value, ctx.source, parent_name, ctx.language)
+                    {
+                        sym.name = name.clone();
+                        sym.qualified_name = Some(name);
+                        ctx.symbols.push(sym);
                     }
+                }
             }
         }
         _ => {}

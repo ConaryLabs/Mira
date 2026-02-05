@@ -5,6 +5,7 @@ use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::search::hybrid_search;
+use crate::utils::truncate_at_boundary;
 use std::sync::Arc;
 
 pub struct SemanticInjector {
@@ -70,11 +71,7 @@ impl SemanticInjector {
                         .next_back()
                         .unwrap_or(&search_result.file_path);
                     // Truncate content appropriately
-                    let content = if search_result.content.len() > 200 {
-                        &search_result.content[..200]
-                    } else {
-                        &search_result.content
-                    };
+                    let content = truncate_at_boundary(&search_result.content, 200);
                     context.push_str(&format!("{}. {}:\n```\n{}\n```", i + 1, filename, content));
                 }
 

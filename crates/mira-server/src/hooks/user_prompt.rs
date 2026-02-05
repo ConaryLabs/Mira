@@ -8,6 +8,7 @@ use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::hooks::{read_hook_input, write_hook_output};
 use crate::proactive::{behavior::BehaviorTracker, predictor};
+use crate::utils::truncate_at_boundary;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -40,7 +41,7 @@ pub async fn run() -> Result<()> {
 
     eprintln!(
         "[mira] UserPromptSubmit hook triggered (session: {}, message length: {})",
-        &session_id[..session_id.len().min(8)],
+        truncate_at_boundary(&session_id, 8),
         user_message.len()
     );
     eprintln!(

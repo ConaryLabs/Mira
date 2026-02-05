@@ -4,6 +4,7 @@
 use crate::db::pool::DatabasePool;
 use crate::db::{EmbeddingUsageRecord, insert_embedding_usage_sync};
 use crate::http::create_fast_client;
+use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -283,7 +284,7 @@ impl GoogleEmbeddings {
                 text.len(),
                 MAX_TEXT_CHARS
             );
-            &text[..MAX_TEXT_CHARS]
+            truncate_at_boundary(text, MAX_TEXT_CHARS)
         } else {
             text
         };
@@ -432,7 +433,7 @@ impl GoogleEmbeddings {
             .iter()
             .map(|text| {
                 let truncated = if text.len() > MAX_TEXT_CHARS {
-                    &text[..MAX_TEXT_CHARS]
+                    truncate_at_boundary(text, MAX_TEXT_CHARS)
                 } else {
                     text.as_str()
                 };

@@ -41,15 +41,29 @@ pub fn relative_to<'a>(path: &'a Path, base: &Path) -> &'a Path {
     path.strip_prefix(base).unwrap_or(path)
 }
 
+/// Return a `&str` prefix of at most `max_bytes` bytes, rounded down to a
+/// UTF-8 char boundary. Never allocates.
+pub fn truncate_at_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        s
+    } else {
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
+    }
+}
+
 /// Truncate a string to max length with ellipsis.
 ///
 /// If the string is longer than `max_len`, it will be truncated and
-/// "..." will be appended. The total length will be `max_len + 3`.
+/// "..." will be appended. The total length will be at most `max_len + 3`.
 pub fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        format!("{}...", truncate_at_boundary(s, max_len))
     }
 }
 
@@ -98,5 +112,31 @@ mod tests {
     #[test]
     fn test_truncate_empty_string() {
         assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn test_truncate_at_boundary_ascii() {
+        assert_eq!(truncate_at_boundary("hello world", 5), "hello");
+        assert_eq!(truncate_at_boundary("hi", 10), "hi");
+    }
+
+    #[test]
+    fn test_truncate_at_boundary_multibyte() {
+        // 'é' is 2 bytes in UTF-8; slicing at byte 1 would panic without boundary check
+        let s = "é";
+        assert_eq!(truncate_at_boundary(s, 1), "");
+        assert_eq!(truncate_at_boundary(s, 2), "é");
+
+        // Chinese character is 3 bytes
+        let s = "a\u{4e16}b"; // 'a' + CJK char + 'b'
+        assert_eq!(truncate_at_boundary(s, 2), "a");
+        assert_eq!(truncate_at_boundary(s, 4), "a\u{4e16}");
+    }
+
+    #[test]
+    fn test_truncate_multibyte() {
+        assert_eq!(truncate("caf\u{00e9}", 3), "caf...");
+        assert_eq!(truncate("caf\u{00e9}", 4), "caf...");
+        assert_eq!(truncate("caf\u{00e9}", 5), "caf\u{00e9}");
     }
 }

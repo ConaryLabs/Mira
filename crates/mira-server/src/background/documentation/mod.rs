@@ -9,7 +9,7 @@ use crate::db::{
     StoreMemoryParams, delete_memory_by_key_sync, get_scan_info_sync, is_time_older_than_sync,
     store_memory_sync,
 };
-use crate::utils::ResultExt;
+use crate::utils::{truncate_at_boundary, ResultExt};
 use std::sync::Arc;
 
 pub use detection::*;
@@ -346,8 +346,8 @@ pub fn needs_documentation_scan(
                     tracing::debug!(
                         "Project {} needs doc scan: git changed ({} -> {}) and rate limit passed",
                         project_id,
-                        &last[..8.min(last.len())],
-                        &current[..8.min(current.len())]
+                        truncate_at_boundary(last, 8),
+                        truncate_at_boundary(current, 8)
                     );
                     return Ok(true);
                 }

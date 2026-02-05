@@ -8,6 +8,7 @@ use crate::db::{recall_semantic_sync, search_memories_sync};
 use crate::indexer;
 use crate::llm::{Tool, ToolCall};
 use crate::search::embedding_to_bytes;
+use crate::utils::{truncate, truncate_at_boundary};
 use crate::tools::core::code::{query_callees, query_callers, query_search_code};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -172,7 +173,7 @@ async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize)
                 let mut output = format!("Found {} results:\n\n", result.results.len());
                 for r in result.results {
                     let content_preview = if r.content.len() > 2000 {
-                        format!("{}\n... (truncated)", &r.content[..2000])
+                        format!("{}\n... (truncated)", truncate_at_boundary(&r.content, 2000))
                     } else {
                         r.content
                     };
@@ -396,11 +397,7 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
                     let mut output = format!("Found {} relevant memories:\n\n", results.len());
                     for (id, content, distance) in results {
                         let score = 1.0 - distance;
-                        let preview = if content.len() > 150 {
-                            format!("{}...", &content[..150])
-                        } else {
-                            content
-                        };
+                        let preview = truncate(&content, 150);
                         output.push_str(&format!("[{}] (score: {:.2}) {}\n", id, score, preview));
                     }
                     return output;
@@ -421,11 +418,7 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
             } else {
                 let mut output = format!("Found {} memories:\n\n", memories.len());
                 for mem in memories {
-                    let preview = if mem.content.len() > 150 {
-                        format!("{}...", &mem.content[..150])
-                    } else {
-                        mem.content
-                    };
+                    let preview = truncate(&mem.content, 150);
                     output.push_str(&format!("[{}] {}\n", mem.id, preview));
                 }
                 output
@@ -437,7 +430,6 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::definitions::{WEB_FETCH_TOOL, WEB_SEARCH_TOOL};
 
     #[test]

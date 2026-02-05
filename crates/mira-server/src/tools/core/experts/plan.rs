@@ -3,6 +3,7 @@
 
 use crate::llm::{LlmClient, Message};
 use crate::utils::json::parse_json_hardened;
+use crate::utils::truncate_at_boundary;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 
@@ -88,7 +89,7 @@ pub async fn parse_json_with_retry<T: DeserializeOwned>(
              Your broken output:\n```\n{}\n```\n\n\
              Return ONLY the corrected JSON, no markdown fences or explanations.",
             type_description,
-            &last_content[..last_content.len().min(2000)]
+            truncate_at_boundary(&last_content, 2000)
         );
 
         let messages = vec![Message::user(fix_prompt)];
@@ -110,7 +111,7 @@ pub async fn parse_json_with_retry<T: DeserializeOwned>(
 
     Err(format!(
         "Failed to parse JSON after 2 LLM retries. Last content start: {}",
-        &last_content[..last_content.len().min(200)]
+        truncate_at_boundary(&last_content, 200)
     ))
 }
 

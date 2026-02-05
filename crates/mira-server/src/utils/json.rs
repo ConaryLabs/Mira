@@ -3,6 +3,8 @@
 
 use serde::de::DeserializeOwned;
 
+use super::truncate_at_boundary;
+
 /// Parse JSON from LLM output with multiple fallback strategies.
 ///
 /// Tries in order:
@@ -32,7 +34,7 @@ pub fn parse_json_hardened<T: DeserializeOwned>(content: &str) -> Result<T, Stri
 
     Err(format!(
         "Failed to parse JSON from LLM output (tried direct, fence-strip, brace-extract). Content start: {}",
-        &trimmed[..trimmed.len().min(200)]
+        truncate_at_boundary(trimmed, 200)
     ))
 }
 

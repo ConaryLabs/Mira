@@ -10,7 +10,7 @@ use crate::db::diff_outcomes::{StoreDiffOutcomeParams, store_diff_outcome_sync};
 use crate::db::pool::DatabasePool;
 use crate::db::{get_indexed_projects_sync, set_server_state_sync};
 use crate::git::{CommitWithFiles, get_commits_with_files, get_git_head};
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate_at_boundary};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -216,7 +216,7 @@ fn detect_reverts<'a>(
         // Check if the revert message references any of our tracked commits
         for hash in commit_hashes {
             // Check for full SHA or short SHA (first 7+ chars) in the revert message
-            let short_hash = &hash[..std::cmp::min(hash.len(), 8)];
+            let short_hash = truncate_at_boundary(hash, 8);
             if commit.message.contains(hash.as_str()) || commit.message.contains(short_hash) {
                 // Look up original commit timestamp from pre-fetched data
                 if let Some(original) = commit_map.get(hash.as_str()) {
