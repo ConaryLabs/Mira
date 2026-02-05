@@ -41,7 +41,7 @@ pub async fn run() -> Result<()> {
 
     eprintln!(
         "[mira] UserPromptSubmit hook triggered (session: {}, message length: {})",
-        truncate_at_boundary(&session_id, 8),
+        truncate_at_boundary(session_id, 8),
         user_message.len()
     );
     eprintln!(

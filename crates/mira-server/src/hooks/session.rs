@@ -183,9 +183,7 @@ async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> O
         None
     };
 
-    let Some(project_id) = project_id else {
-        return None;
-    };
+    let project_id = project_id?;
 
     let mut context_parts: Vec<String> = Vec::new();
 
@@ -218,26 +216,24 @@ async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> O
             .ok()
             .flatten();
 
-        if let Some(history) = tool_history {
-            if !history.is_empty() {
-                let tool_lines: Vec<String> = history
-                    .iter()
-                    .rev() // Oldest first
-                    .map(|h| {
-                        let status = if h.success { "✓" } else { "✗" };
-                        let summary = h
-                            .result_summary
-                            .as_deref()
-                            .map(|s| if s.len() > 80 { format!("{}...", &s[..80]) } else { s.to_string() })
-                            .unwrap_or_default();
-                        format!("  {} {} -> {}", status, h.tool_name, summary)
-                    })
-                    .collect();
-                context_parts.push(format!(
-                    "**Last session's recent actions:**\n{}",
-                    tool_lines.join("\n")
-                ));
-            }
+        if let Some(history) = tool_history.filter(|h| !h.is_empty()) {
+            let tool_lines: Vec<String> = history
+                .iter()
+                .rev() // Oldest first
+                .map(|h| {
+                    let status = if h.success { "✓" } else { "✗" };
+                    let summary = h
+                        .result_summary
+                        .as_deref()
+                        .map(|s| if s.len() > 80 { format!("{}...", &s[..80]) } else { s.to_string() })
+                        .unwrap_or_default();
+                    format!("  {} {} -> {}", status, h.tool_name, summary)
+                })
+                .collect();
+            context_parts.push(format!(
+                "**Last session's recent actions:**\n{}",
+                tool_lines.join("\n")
+            ));
         }
 
         // Add session summary if available
@@ -256,17 +252,15 @@ async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> O
         .ok()
         .flatten();
 
-    if let Some(goals) = goals {
-        if !goals.is_empty() {
-            let goal_lines: Vec<String> = goals
-                .iter()
-                .map(|g| format!("  • {} [{}%] - {}", g.title, g.progress_percent, g.status))
-                .collect();
-            context_parts.push(format!(
-                "**Active goals:**\n{}",
-                goal_lines.join("\n")
-            ));
-        }
+    if let Some(goals) = goals.filter(|g| !g.is_empty()) {
+        let goal_lines: Vec<String> = goals
+            .iter()
+            .map(|g| format!("  • {} [{}%] - {}", g.title, g.progress_percent, g.status))
+            .collect();
+        context_parts.push(format!(
+            "**Active goals:**\n{}",
+            goal_lines.join("\n")
+        ));
     }
 
     if context_parts.is_empty() {

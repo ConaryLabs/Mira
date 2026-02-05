@@ -47,7 +47,7 @@ pub async fn run() -> Result<()> {
 
     eprintln!(
         "[mira] PreCompact hook triggered (session: {}, trigger: {})",
-        truncate_at_boundary(&session_id, 8),
+        truncate_at_boundary(session_id, 8),
         trigger
     );
 
@@ -98,7 +98,7 @@ async fn save_pre_compaction_state(
     let note_content = format!(
         "Context compaction ({}) triggered for session {}",
         trigger,
-        truncate_at_boundary(&session_id, 8)
+        truncate_at_boundary(session_id, 8)
     );
 
     // Store as a session event
