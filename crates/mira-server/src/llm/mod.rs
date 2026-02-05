@@ -16,6 +16,7 @@ mod types;
 
 pub use context_budget::{
     CONTEXT_BUDGET, estimate_message_tokens, estimate_tokens, truncate_messages_to_budget,
+    truncate_messages_to_default_budget,
 };
 pub use deepseek::DeepSeekClient;
 pub use factory::ProviderFactory;

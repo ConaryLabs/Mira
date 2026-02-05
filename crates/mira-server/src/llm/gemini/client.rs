@@ -68,6 +68,11 @@ impl LlmClient for GeminiClient {
         self.model.clone()
     }
 
+    /// Gemini budget: 170K tokens (85% of 200K pricing tier)
+    fn context_budget(&self) -> u64 {
+        170_000
+    }
+
     #[instrument(skip(self, messages, tools), fields(request_id, model = %self.model, message_count = messages.len()))]
     async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {
         let request_id = Uuid::new_v4().to_string();

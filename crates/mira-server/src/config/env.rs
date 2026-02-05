@@ -211,6 +211,58 @@ impl ConfigValidation {
     }
 }
 
+/// Runtime guardrails for expert agentic loops
+#[derive(Debug, Clone)]
+pub struct ExpertGuardrails {
+    /// Maximum agentic loop iterations (MIRA_EXPERT_MAX_TURNS, default: 100)
+    pub max_turns: usize,
+    /// Overall expert consultation timeout in seconds (MIRA_EXPERT_TIMEOUT_SECS, default: 600)
+    pub timeout_secs: u64,
+    /// Individual LLM call timeout in seconds (MIRA_LLM_CALL_TIMEOUT_SECS, default: 360)
+    pub llm_call_timeout_secs: u64,
+    /// Maximum concurrent expert consultations (MIRA_MAX_CONCURRENT_EXPERTS, default: 3)
+    pub max_concurrent_experts: usize,
+    /// Maximum characters per tool result before truncation (MIRA_TOOL_RESULT_MAX_CHARS, default: 16000)
+    pub tool_result_max_chars: usize,
+    /// MCP tool call timeout in seconds (MIRA_MCP_TOOL_TIMEOUT_SECS, default: 60)
+    pub mcp_tool_timeout_secs: u64,
+    /// Maximum parallel tool calls per iteration (MIRA_MAX_PARALLEL_TOOL_CALLS, default: 8)
+    pub max_parallel_tool_calls: usize,
+    /// Maximum total tool calls across all iterations (MIRA_MAX_TOTAL_TOOL_CALLS, default: 200)
+    pub max_total_tool_calls: usize,
+}
+
+impl Default for ExpertGuardrails {
+    fn default() -> Self {
+        Self {
+            max_turns: 100,
+            timeout_secs: 600,
+            llm_call_timeout_secs: 360,
+            max_concurrent_experts: 3,
+            tool_result_max_chars: 16_000,
+            mcp_tool_timeout_secs: 60,
+            max_parallel_tool_calls: 8,
+            max_total_tool_calls: 200,
+        }
+    }
+}
+
+impl ExpertGuardrails {
+    /// Load from environment variables, clamped to safe ceilings
+    pub fn from_env() -> Self {
+        Self {
+            max_turns: parse_usize_env("MIRA_EXPERT_MAX_TURNS", 100, 500),
+            timeout_secs: parse_u64_env("MIRA_EXPERT_TIMEOUT_SECS", 600, 1800),
+            llm_call_timeout_secs: parse_u64_env("MIRA_LLM_CALL_TIMEOUT_SECS", 360, 600),
+            max_concurrent_experts: parse_usize_env("MIRA_MAX_CONCURRENT_EXPERTS", 3, 10),
+            tool_result_max_chars: parse_usize_env("MIRA_TOOL_RESULT_MAX_CHARS", 16_000, 64_000),
+            mcp_tool_timeout_secs: parse_u64_env("MIRA_MCP_TOOL_TIMEOUT_SECS", 60, 300),
+            max_parallel_tool_calls: parse_usize_env("MIRA_MAX_PARALLEL_TOOL_CALLS", 8, 20),
+            max_total_tool_calls: parse_usize_env("MIRA_MAX_TOTAL_TOOL_CALLS", 200, 1000),
+        }
+    }
+}
+
 /// Environment configuration - all env vars in one place
 #[derive(Debug, Clone)]
 pub struct EnvConfig {
@@ -224,6 +276,8 @@ pub struct EnvConfig {
     pub user_id: Option<String>,
     /// Enable fuzzy fallback search when embeddings are unavailable (MIRA_FUZZY_FALLBACK)
     pub fuzzy_fallback: bool,
+    /// Expert agentic loop guardrails
+    pub expert: ExpertGuardrails,
 }
 
 impl EnvConfig {
@@ -239,6 +293,7 @@ impl EnvConfig {
                 .filter(|s| !s.is_empty()),
             user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
             fuzzy_fallback: parse_bool_env("MIRA_FUZZY_FALLBACK").unwrap_or(true),
+            expert: ExpertGuardrails::from_env(),
         }
     }
 
@@ -272,6 +327,22 @@ impl EnvConfig {
 
         validation
     }
+}
+
+fn parse_usize_env(name: &str, default: usize, ceiling: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|v| v.clamp(1, ceiling))
+        .unwrap_or(default)
+}
+
+fn parse_u64_env(name: &str, default: u64, ceiling: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| v.clamp(1, ceiling))
+        .unwrap_or(default)
 }
 
 fn parse_bool_env(name: &str) -> Option<bool> {
@@ -322,6 +393,7 @@ mod tests {
             default_provider: None,
             user_id: None,
             fuzzy_fallback: true,
+            expert: ExpertGuardrails::default(),
         };
 
         let validation = config.validate();

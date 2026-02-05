@@ -116,11 +116,13 @@ pub async fn setup_server_context() -> Result<MiraServer> {
         embeddings,
         &env_config.api_keys,
         env_config.fuzzy_fallback,
+        env_config.expert.clone(),
     );
 
     // Initialize MCP client manager for external MCP server access (expert tools)
     let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
-    let mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
+    let mut mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
+    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(env_config.expert.mcp_tool_timeout_secs));
     if mcp_manager.has_servers() {
         server.mcp_client_manager = Some(Arc::new(mcp_manager));
     }
@@ -238,6 +240,7 @@ pub async fn run_mcp_server() -> Result<()> {
         embeddings,
         &env_config.api_keys,
         env_config.fuzzy_fallback,
+        env_config.expert.clone(),
     );
 
     // Spawn file watcher for incremental indexing (uses code_pool)
@@ -254,7 +257,8 @@ pub async fn run_mcp_server() -> Result<()> {
     // Initialize MCP client manager for external MCP server access (expert tools)
     // We initialize with CWD initially; project path will be used when available
     let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
-    let mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
+    let mut mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
+    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(env_config.expert.mcp_tool_timeout_secs));
     if mcp_manager.has_servers() {
         info!("MCP client manager initialized for expert tool access");
         server.mcp_client_manager = Some(Arc::new(mcp_manager));

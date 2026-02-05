@@ -110,11 +110,15 @@ pub trait LlmClient: Send + Sync {
         false
     }
 
+    /// Token budget for this provider's context window (0 = no budget management).
+    /// Used by the agentic loop to truncate messages before sending.
+    fn context_budget(&self) -> u64 {
+        0
+    }
+
     /// Whether this provider supports automatic context budget management.
-    /// When true, the client will truncate messages to fit within the provider's
-    /// token limit before sending the request.
     fn supports_context_budget(&self) -> bool {
-        false
+        self.context_budget() > 0
     }
 
     /// Get the provider type

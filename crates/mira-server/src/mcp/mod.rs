@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::background::watcher::WatcherHandle;
-use crate::config::ApiKeys;
+use crate::config::{ApiKeys, ExpertGuardrails};
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
@@ -56,6 +56,8 @@ pub struct MiraServer {
     pub fuzzy_cache: Arc<FuzzyCache>,
     /// Whether fuzzy fallback is enabled
     pub fuzzy_enabled: bool,
+    /// Expert agentic loop guardrails
+    pub expert_guardrails: ExpertGuardrails,
     /// MCP peer for sampling/createMessage fallback (captured on first tool call)
     pub peer: Arc<RwLock<Option<rmcp::service::Peer<RoleServer>>>>,
     /// Task processor for async long-running operations (SEP-1686)
@@ -71,6 +73,7 @@ impl MiraServer {
         embeddings: Option<Arc<EmbeddingClient>>,
         api_keys: &ApiKeys,
         fuzzy_enabled: bool,
+        expert_guardrails: ExpertGuardrails,
     ) -> Self {
         // Create provider factory from pre-loaded keys
         let mut factory = ProviderFactory::from_api_keys(api_keys.clone());
@@ -95,6 +98,7 @@ impl MiraServer {
             mcp_client_manager: None,
             fuzzy_cache: Arc::new(FuzzyCache::new()),
             fuzzy_enabled,
+            expert_guardrails,
             peer,
             processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
             tool_router: Self::create_tool_router(),
@@ -106,7 +110,7 @@ impl MiraServer {
         code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
     ) -> Self {
-        Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env(), true)
+        Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env(), true, ExpertGuardrails::default())
     }
 
     /// Auto-initialize project from Claude's cwd if not already set or mismatched

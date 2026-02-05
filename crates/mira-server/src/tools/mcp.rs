@@ -35,6 +35,10 @@ impl ToolContext for MiraServer {
         &self.llm_factory
     }
 
+    fn expert_guardrails(&self) -> crate::config::ExpertGuardrails {
+        self.expert_guardrails.clone()
+    }
+
     async fn get_project(&self) -> Option<mira_types::ProjectContext> {
         self.project.read().await.clone()
     }

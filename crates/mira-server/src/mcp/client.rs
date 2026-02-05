@@ -117,6 +117,8 @@ pub struct McpClientManager {
     /// If a server name has a Notify, a connection attempt is in progress.
     /// Waiters await the Notify instead of polling.
     connecting: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    /// Timeout for individual MCP tool calls
+    mcp_tool_timeout: std::time::Duration,
 }
 
 impl McpClientManager {
@@ -165,6 +167,7 @@ impl McpClientManager {
             configs,
             clients: Arc::new(RwLock::new(HashMap::new())),
             connecting: tokio::sync::Mutex::new(HashMap::new()),
+            mcp_tool_timeout: std::time::Duration::from_secs(60),
         }
     }
 
@@ -527,16 +530,18 @@ impl McpClientManager {
 
         let tool_name_owned: std::borrow::Cow<'static, str> = tool_name.to_string().into();
 
-        let result: CallToolResult = server
-            .peer
-            .call_tool(CallToolRequestParams {
+        let result: CallToolResult = tokio::time::timeout(
+            self.mcp_tool_timeout,
+            server.peer.call_tool(CallToolRequestParams {
                 meta: None,
                 name: tool_name_owned,
                 arguments,
                 task: None,
-            })
-            .await
-            .map_err(|e| format!("MCP tool call failed: {}", e))?;
+            }),
+        )
+        .await
+        .map_err(|_| format!("MCP tool call timed out after {}s", self.mcp_tool_timeout.as_secs()))?
+        .map_err(|e| format!("MCP tool call failed: {}", e))?;
 
         // Extract text content from the result
         let text: String = result
@@ -564,6 +569,11 @@ impl McpClientManager {
                 // The TokioChildProcess handles cleanup on drop.
             }
         }
+    }
+
+    /// Set the timeout for individual MCP tool calls
+    pub fn set_mcp_tool_timeout(&mut self, timeout: std::time::Duration) {
+        self.mcp_tool_timeout = timeout;
     }
 
     /// Check if any MCP servers are configured
@@ -770,6 +780,7 @@ mod tests {
             configs: vec![],
             clients: Arc::new(RwLock::new(HashMap::new())),
             connecting: tokio::sync::Mutex::new(HashMap::new()),
+            mcp_tool_timeout: std::time::Duration::from_secs(60),
         };
         assert!(!manager.has_servers());
 
@@ -785,6 +796,7 @@ mod tests {
             }],
             clients: Arc::new(RwLock::new(HashMap::new())),
             connecting: tokio::sync::Mutex::new(HashMap::new()),
+            mcp_tool_timeout: std::time::Duration::from_secs(60),
         };
         assert!(manager.has_servers());
     }

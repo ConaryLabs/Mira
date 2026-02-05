@@ -50,6 +50,11 @@ pub trait ToolContext: Send + Sync {
     /// LLM provider factory for multi-provider support
     fn llm_factory(&self) -> &ProviderFactory;
 
+    /// Expert agentic loop guardrails (configurable via MIRA_EXPERT_* env vars)
+    fn expert_guardrails(&self) -> crate::config::ExpertGuardrails {
+        crate::config::ExpertGuardrails::default()
+    }
+
     // === Project/Session State ===
 
     /// Get current project context (if any)

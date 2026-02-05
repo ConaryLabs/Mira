@@ -3,7 +3,8 @@
 
 use super::ToolContext;
 use super::strategy::ReasoningStrategy;
-use crate::llm::{ChatResult, Message, Tool, ToolCall, record_llm_usage};
+use crate::llm::{ChatResult, Message, Tool, ToolCall, estimate_message_tokens, record_llm_usage, truncate_messages_to_budget};
+use crate::utils::truncate_at_boundary;
 use async_trait::async_trait;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -14,6 +15,14 @@ pub struct AgenticLoopConfig {
     pub timeout: Duration,
     pub llm_call_timeout: Duration,
     pub usage_role: String,
+    /// Maximum characters per tool result before truncation (0 = unlimited)
+    pub max_tool_result_chars: usize,
+    /// Maximum total tool calls across all iterations (0 = unlimited)
+    pub max_total_tool_calls: usize,
+    /// Maximum parallel tool calls per iteration (0 = unlimited, uses join_all)
+    pub max_parallel_tool_calls: usize,
+    /// Token budget for context window (0 = no budget management)
+    pub context_budget: u64,
 }
 
 /// Result from a completed agentic loop.
@@ -39,12 +48,29 @@ pub trait ToolHandler: Send + Sync {
     }
 }
 
+/// Truncate a tool result to the configured maximum length.
+fn truncate_tool_result(result: String, max_chars: usize) -> String {
+    if max_chars == 0 || result.len() <= max_chars {
+        return result;
+    }
+    let truncated = truncate_at_boundary(&result, max_chars);
+    format!(
+        "{}\n\n[GUARDRAIL: tool result truncated from {} to {} chars]",
+        truncated,
+        result.len(),
+        truncated.len()
+    )
+}
+
 /// Run the agentic tool-calling loop shared by single-expert and council modes.
 ///
 /// Handles:
 /// - Stateful provider message slicing
-/// - Tool call execution (parallel or sequential via handler)
-/// - Usage recording
+/// - Context budget truncation (before each LLM call)
+/// - Tool call execution with bounded concurrency (chunked join_all)
+/// - Tool result truncation
+/// - Total tool call limits
+/// - Usage recording with budget warnings
 /// - Decoupled strategy (actor + thinker) synthesis
 pub async fn run_agentic_loop<C: ToolContext>(
     ctx: &C,
@@ -58,19 +84,35 @@ pub async fn run_agentic_loop<C: ToolContext>(
     let mut total_tool_calls = 0usize;
     let mut iterations = 0usize;
     let mut previous_response_id: Option<String> = None;
+    let mut cumulative_tokens: u64 = 0;
 
     let result = timeout(config.timeout, async {
         loop {
             iterations += 1;
             if iterations > config.max_turns {
+                tracing::warn!(
+                    "GUARDRAIL: expert exceeded max iterations ({})",
+                    config.max_turns
+                );
                 return Err(format!(
                     "Expert exceeded maximum iterations ({}). Partial analysis may be available.",
                     config.max_turns
                 ));
             }
 
+            // Check total tool call limit
+            if config.max_total_tool_calls > 0 && total_tool_calls >= config.max_total_tool_calls {
+                tracing::warn!(
+                    "GUARDRAIL: expert exceeded max total tool calls ({})",
+                    config.max_total_tool_calls
+                );
+                return Err(format!(
+                    "Expert exceeded maximum total tool calls ({}). Partial analysis may be available.",
+                    config.max_total_tool_calls
+                ));
+            }
+
             // For stateful providers, only send new tool result messages after the first call.
-            // The previous_response_id preserves context server-side.
             let messages_to_send =
                 if previous_response_id.is_some() && chat_client.supports_stateful() {
                     messages
@@ -83,7 +125,20 @@ pub async fn run_agentic_loop<C: ToolContext>(
                         .rev()
                         .collect()
                 } else {
-                    messages.clone()
+                    // Apply context budget truncation for non-stateful providers
+                    let mut msgs = messages.clone();
+                    if config.context_budget > 0 {
+                        msgs = truncate_messages_to_budget(msgs, config.context_budget);
+                        if msgs.len() != messages.len() {
+                            tracing::info!(
+                                "GUARDRAIL: truncated messages from {} to {} for budget {}",
+                                messages.len(),
+                                msgs.len(),
+                                config.context_budget
+                            );
+                        }
+                    }
+                    msgs
                 };
 
             let result = timeout(
@@ -102,6 +157,23 @@ pub async fn run_agentic_loop<C: ToolContext>(
                 )
             })?
             .map_err(|e| format!("Expert consultation failed: {}", e))?;
+
+            // Track cumulative tokens and warn at 80% of budget
+            if let Some(ref usage) = result.usage {
+                cumulative_tokens += usage.total_tokens as u64;
+                if config.context_budget > 0 {
+                    let threshold = config.context_budget * 80 / 100;
+                    let estimated = estimate_message_tokens(messages);
+                    if estimated > threshold {
+                        tracing::warn!(
+                            "GUARDRAIL: message context at {}% of budget ({}/{})",
+                            estimated * 100 / config.context_budget,
+                            estimated,
+                            config.context_budget
+                        );
+                    }
+                }
+            }
 
             // Record usage
             record_llm_usage(
@@ -127,17 +199,26 @@ pub async fn run_agentic_loop<C: ToolContext>(
                 messages.push(assistant_msg);
 
                 if handler.parallel_execution() {
-                    // Execute tools in parallel
-                    let tool_futures = tool_calls.iter().map(|tc| async {
-                        let result = handler.handle_tool_call(tc).await;
-                        handler.on_tool_executed(tc, &result).await;
-                        (tc.id.clone(), result)
-                    });
+                    // Execute tools with bounded concurrency via chunked join_all
+                    let chunk_size = if config.max_parallel_tool_calls > 0 {
+                        config.max_parallel_tool_calls
+                    } else {
+                        tool_calls.len() // no limit
+                    };
 
-                    let tool_results = futures::future::join_all(tool_futures).await;
-                    for (id, result) in tool_results {
-                        total_tool_calls += 1;
-                        messages.push(Message::tool_result(&id, result));
+                    for chunk in tool_calls.chunks(chunk_size) {
+                        let tool_futures = chunk.iter().map(|tc| async {
+                            let result = handler.handle_tool_call(tc).await;
+                            handler.on_tool_executed(tc, &result).await;
+                            (tc.id.clone(), result)
+                        });
+
+                        let tool_results = futures::future::join_all(tool_futures).await;
+                        for (id, result) in tool_results {
+                            total_tool_calls += 1;
+                            let result = truncate_tool_result(result, config.max_tool_result_chars);
+                            messages.push(Message::tool_result(&id, result));
+                        }
                     }
                 } else {
                     // Execute tools sequentially
@@ -145,6 +226,7 @@ pub async fn run_agentic_loop<C: ToolContext>(
                         total_tool_calls += 1;
                         let tool_result = handler.handle_tool_call(tc).await;
                         handler.on_tool_executed(tc, &tool_result).await;
+                        let tool_result = truncate_tool_result(tool_result, config.max_tool_result_chars);
                         messages.push(Message::tool_result(&tc.id, tool_result));
                     }
                 }

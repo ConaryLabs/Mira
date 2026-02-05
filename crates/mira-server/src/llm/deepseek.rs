@@ -4,7 +4,7 @@
 use crate::llm::http_client::LlmHttpClient;
 use crate::llm::openai_compat::{ChatRequest, parse_chat_response};
 use crate::llm::provider::{LlmClient, Provider};
-use crate::llm::truncate_messages_to_budget;
+use crate::llm::truncate_messages_to_default_budget;
 use crate::llm::{ChatResult, Message, Tool};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -71,7 +71,7 @@ impl DeepSeekClient {
         // Apply budget-aware truncation if enabled
         let messages = if self.supports_context_budget() {
             let original_count = messages.len();
-            let messages = truncate_messages_to_budget(messages);
+            let messages = truncate_messages_to_default_budget(messages);
             if messages.len() != original_count {
                 info!(
                     request_id = %request_id,
@@ -163,9 +163,9 @@ impl LlmClient for DeepSeekClient {
         self.model.clone()
     }
 
-    /// DeepSeek needs budget management due to 131k token limit
-    fn supports_context_budget(&self) -> bool {
-        true
+    /// DeepSeek budget: 110K tokens (85% of 128K context window)
+    fn context_budget(&self) -> u64 {
+        110_000
     }
 
     async fn chat(&self, messages: Vec<Message>, tools: Option<Vec<Tool>>) -> Result<ChatResult> {

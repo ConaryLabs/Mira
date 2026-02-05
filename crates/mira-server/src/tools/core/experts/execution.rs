@@ -6,16 +6,14 @@ use super::context::{build_user_prompt, format_expert_response, get_patterns_con
 use super::findings::{parse_expert_findings, store_findings};
 use super::role::ExpertRole;
 use super::tools::{build_expert_toolset, execute_tool};
-use super::{
-    EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS,
-    PARALLEL_EXPERT_TIMEOUT, ToolContext,
-};
+use super::ToolContext;
 use crate::llm::{
     DeepSeekClient, GeminiClient, LlmClient, Message, Provider, ToolCall, record_llm_usage,
 };
 use crate::utils::ResultExt;
 use async_trait::async_trait;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::timeout;
 
 /// Tool handler for single-expert consultations (parallel tool execution).
@@ -148,11 +146,16 @@ pub async fn consult_expert<C: ToolContext>(
     let mut messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
     let handler = ExpertToolHandler { ctx };
+    let guardrails = ctx.expert_guardrails();
     let config = AgenticLoopConfig {
-        max_turns: MAX_ITERATIONS,
-        timeout: EXPERT_TIMEOUT,
-        llm_call_timeout: LLM_CALL_TIMEOUT,
+        max_turns: guardrails.max_turns,
+        timeout: Duration::from_secs(guardrails.timeout_secs),
+        llm_call_timeout: Duration::from_secs(guardrails.llm_call_timeout_secs),
         usage_role: format!("expert:{}", expert_key),
+        max_tool_result_chars: guardrails.tool_result_max_chars,
+        max_total_tool_calls: guardrails.max_total_tool_calls,
+        max_parallel_tool_calls: guardrails.max_parallel_tool_calls,
+        context_budget: chat_client.context_budget(),
     };
 
     let loop_result =
@@ -189,12 +192,13 @@ async fn consult_expert_via_sampling<C: ToolContext>(
     let messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
     // Single LLM call — no tools, no iteration
-    let result = timeout(LLM_CALL_TIMEOUT, chat_client.chat(messages, None))
+    let llm_timeout = Duration::from_secs(ctx.expert_guardrails().llm_call_timeout_secs);
+    let result = timeout(llm_timeout, chat_client.chat(messages, None))
         .await
         .map_err(|_| {
             format!(
                 "MCP sampling timed out after {}s",
-                LLM_CALL_TIMEOUT.as_secs()
+                llm_timeout.as_secs()
             )
         })?
         .map_err(|e| format!("MCP sampling failed: {}", e))?;
@@ -281,6 +285,10 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
     let context: Arc<str> = Arc::from(context);
     let question: Option<Arc<str>> = question.map(Arc::from);
 
+    let guardrails = ctx.expert_guardrails();
+    let max_concurrent = guardrails.max_concurrent_experts;
+    let parallel_timeout = Duration::from_secs(guardrails.timeout_secs * 3 / 2);
+
     let consultation_future = stream::iter(expert_roles)
         .map(|role| {
             let ctx = ctx.clone();
@@ -298,15 +306,15 @@ pub async fn consult_experts<C: ToolContext + Clone + 'static>(
                 (role_clone, result)
             }
         })
-        .buffer_unordered(MAX_CONCURRENT_EXPERTS)
+        .buffer_unordered(max_concurrent)
         .collect::<Vec<_>>();
 
-    let results = match timeout(PARALLEL_EXPERT_TIMEOUT, consultation_future).await {
+    let results = match timeout(parallel_timeout, consultation_future).await {
         Ok(results) => results,
         Err(_) => {
             return Err(format!(
                 "Parallel expert consultation timed out after {} seconds",
-                PARALLEL_EXPERT_TIMEOUT.as_secs()
+                parallel_timeout.as_secs()
             ));
         }
     };
@@ -406,12 +414,13 @@ async fn consult_expert_one_shot<C: ToolContext>(
     // Single LLM call with tools (includes MCP tools, fixing prior omission)
     let tools = build_expert_toolset(ctx, false).await;
 
-    let result = timeout(LLM_CALL_TIMEOUT, chat_client.chat(messages, Some(tools)))
+    let llm_timeout = Duration::from_secs(ctx.expert_guardrails().llm_call_timeout_secs);
+    let result = timeout(llm_timeout, chat_client.chat(messages, Some(tools)))
         .await
         .map_err(|_| {
             format!(
                 "One-shot expert timed out after {}s",
-                LLM_CALL_TIMEOUT.as_secs()
+                llm_timeout.as_secs()
             )
         })?
         .map_err(|e| format!("One-shot expert consultation failed: {}", e))?;

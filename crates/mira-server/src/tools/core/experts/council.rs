@@ -9,9 +9,7 @@ use super::plan::{ResearchPlan, ResearchTask, ReviewResult, parse_json_with_retr
 use super::prompts::*;
 use super::role::ExpertRole;
 use super::tools::{build_expert_toolset, execute_tool_with_findings};
-use super::{
-    EXPERT_TIMEOUT, LLM_CALL_TIMEOUT, MAX_CONCURRENT_EXPERTS, MAX_ITERATIONS, ToolContext,
-};
+use super::ToolContext;
 use crate::llm::{Message, ToolCall, record_llm_usage};
 use crate::utils::ResultExt;
 use async_trait::async_trait;
@@ -274,10 +272,11 @@ async fn execute_phase<C: ToolContext + Clone + 'static>(
         })
         .collect();
 
+    let max_concurrent = ctx.expert_guardrails().max_concurrent_experts;
     let results = timeout(
         COUNCIL_EXECUTE_TIMEOUT,
         stream::iter(tasks)
-            .buffer_unordered(MAX_CONCURRENT_EXPERTS)
+            .buffer_unordered(max_concurrent)
             .collect::<Vec<_>>(),
     )
     .await
@@ -368,11 +367,17 @@ async fn run_expert_task<C: ToolContext>(
         findings_store,
         role_key,
     };
+    let guardrails = ctx.expert_guardrails();
+    let chat_client = strategy.actor().clone();
     let config = AgenticLoopConfig {
-        max_turns: MAX_ITERATIONS,
-        timeout: EXPERT_TIMEOUT,
-        llm_call_timeout: LLM_CALL_TIMEOUT,
+        max_turns: guardrails.max_turns,
+        timeout: Duration::from_secs(guardrails.timeout_secs),
+        llm_call_timeout: Duration::from_secs(guardrails.llm_call_timeout_secs),
         usage_role: format!("council:expert:{}", role_key),
+        max_tool_result_chars: guardrails.tool_result_max_chars,
+        max_total_tool_calls: guardrails.max_total_tool_calls,
+        max_parallel_tool_calls: guardrails.max_parallel_tool_calls,
+        context_budget: chat_client.context_budget(),
     };
 
     let loop_result =
@@ -518,10 +523,11 @@ async fn delta_round<C: ToolContext + Clone + 'static>(
         })
         .collect();
 
+    let max_concurrent = ctx.expert_guardrails().max_concurrent_experts;
     let results = timeout(
         Duration::from_secs(300), // 5 min for delta rounds
         stream::iter(tasks)
-            .buffer_unordered(MAX_CONCURRENT_EXPERTS)
+            .buffer_unordered(max_concurrent)
             .collect::<Vec<_>>(),
     )
     .await
