@@ -83,12 +83,20 @@ Where it all began - a personal AI assistant with memory.
 ## [0.5.2] - 2026-02-04
 
 ### Changed
-- **UTF-8 safe truncation** — Replaced ~35 raw `&s[..N]` string slices across the codebase with `truncate_at_boundary()`, preventing panics on multi-byte UTF-8 characters. Added `truncate_at_boundary()` to utils as a zero-allocation safe boundary function.
-- **4-tier housecleaning** — Clippy fixes (collapsed nested ifs, removed unused imports and dead code), performance improvements, structural cleanups, and type refinements. Net reduction of ~465 lines.
+- **UTF-8 safe truncation** — Replaced ~35 raw `&s[..N]` string slices with `truncate_at_boundary()`, preventing panics on multi-byte UTF-8 characters. Added `truncate_at_boundary()` to utils as a zero-allocation safe boundary function.
+- **Expert module split** — Split `experts/tools.rs` (959 lines) into `definitions.rs` and `web.rs` for better maintainability.
+- **Batch findings writes** — Separated scan computation from DB writes and batch-insert findings instead of one-at-a-time.
+- **Clippy cleanup** — Fixed 130 collapsible if-statements, added 13 type aliases (eliminating all `type_complexity` warnings), created params structs for 6 functions (eliminating all `too_many_arguments` warnings), moved dead code to `#[cfg(test)]`.
+- **Type system improvements** — `ReviewFindingParams` now owns data, `store_findings` takes `Vec` by value (8 `.clone()` calls removed).
+- **Rust-native PATH scan** — Replaced shell-based tool detection with Rust-native PATH scanning.
+- **Search reranking** — Cached file metadata during search result reranking instead of re-reading per result.
 - **Code formatting** — Applied `cargo fmt` across all crates.
+- **Net reduction of ~544 lines** across 110+ files.
 
 ### Fixed
-- **SQLITE_LOCKED retry** — Added retry logic for shared-cache in-memory databases that could fail with `SQLITE_LOCKED` under concurrent access.
+- **SQLITE_LOCKED retry** — Added `is_sqlite_contention()` to catch both `SQLITE_BUSY` and `SQLITE_LOCKED` errors, with `run_with_retry()` for tool handlers. Fixes failures in shared-cache in-memory databases under concurrent access.
+- **MCP client double-connect race** — Fixed race condition with `Mutex<HashSet>` guard preventing duplicate connections.
+- **Latent JSON escaping bug** — Derived `Serialize` on `PatternMatch`, fixing incorrect JSON output.
 
 ## [0.5.1] - 2026-02-04
 

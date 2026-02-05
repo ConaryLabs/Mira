@@ -15,8 +15,11 @@ Think of it as giving Claude Code long-term memory, deep code understanding, and
 ## What's New in v0.5.2
 
 - **UTF-8 Safe Truncation** — All ~35 raw string slicing sites now use boundary-safe truncation, eliminating potential panics on multi-byte characters
-- **Housecleaning** — Two rounds of clippy fixes, dead code removal, collapsed nested ifs, and structural cleanups (-544 lines net)
-- **SQLITE_LOCKED Fix** — Retry logic for shared-cache in-memory databases under concurrent access
+- **Expert Module Split** — Split 959-line `experts/tools.rs` into focused `definitions.rs` and `web.rs` modules
+- **Performance** — Batch findings writes, cached search reranking metadata, Rust-native PATH scanning
+- **Type System** — 13 type aliases, 6 params structs, owned data in findings (8 clones removed), 130 collapsible-if fixes
+- **Reliability** — Fixed SQLITE_LOCKED retry, MCP client double-connect race, latent JSON escaping bug
+- **-544 Lines Net** — Across 110+ files
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 
