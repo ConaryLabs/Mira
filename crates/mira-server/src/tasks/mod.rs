@@ -27,8 +27,9 @@ pub struct NativeTask {
 ///
 /// Strategy:
 /// 1. Check `CLAUDE_CODE_TASK_LIST_ID` env var → `~/.claude/tasks/{id}/`
-/// 2. Fallback: most recently modified directory in `~/.claude/tasks/`
-/// 3. Return `None` if no task lists exist
+/// 2. Check captured task list ID from SessionStart hook → `~/.mira/claude-task-list-id`
+/// 3. Fallback: most recently modified directory in `~/.claude/tasks/`
+/// 4. Return `None` if no task lists exist
 pub fn find_current_task_list() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let tasks_dir = home.join(".claude/tasks");
@@ -45,7 +46,15 @@ pub fn find_current_task_list() -> Option<PathBuf> {
         }
     }
 
-    // Strategy 2: most recently modified directory
+    // Strategy 2: captured task list ID from SessionStart hook
+    if let Some(list_id) = crate::hooks::session::read_claude_task_list_id() {
+        let dir = tasks_dir.join(&list_id);
+        if dir.is_dir() {
+            return Some(dir);
+        }
+    }
+
+    // Strategy 3: most recently modified directory
     let mut dirs: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(&tasks_dir)
         .ok()?
         .filter_map(|entry| {

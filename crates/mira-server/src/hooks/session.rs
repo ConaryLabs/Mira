@@ -25,6 +25,12 @@ pub fn source_file_path() -> PathBuf {
     home.join(".mira/claude-source.json")
 }
 
+/// File where Claude's task list ID is stored for MCP to read
+pub fn task_list_file_path() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    home.join(".mira/claude-task-list-id")
+}
+
 /// Source information captured from SessionStart hook
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SourceInfo {
@@ -47,6 +53,12 @@ impl SourceInfo {
 /// Extracts session_id, cwd, and source from stdin JSON and writes to files
 pub fn run() -> Result<()> {
     let input = super::read_hook_input()?;
+
+    // Log hook input keys for debugging
+    eprintln!(
+        "[mira] SessionStart hook input keys: {:?}",
+        input.as_object().map(|obj| obj.keys().collect::<Vec<_>>())
+    );
 
     // Ensure .mira directory exists
     let mira_dir = dirs::home_dir()
@@ -93,6 +105,19 @@ pub fn run() -> Result<()> {
     fs::rename(&temp_path, &source_path)?;
     eprintln!("[mira] Captured Claude source: {}", source);
 
+    // Extract task_list_id from Claude's hook input or env var
+    let task_list_id = input
+        .get("task_list_id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| std::env::var("CLAUDE_CODE_TASK_LIST_ID").ok());
+
+    if let Some(ref list_id) = task_list_id {
+        let path = task_list_file_path();
+        fs::write(&path, list_id)?;
+        eprintln!("[mira] Captured Claude task list: {}", list_id);
+    }
+
     // SessionStart hooks don't need to output anything
     Ok(())
 }
@@ -114,6 +139,12 @@ pub fn read_source_info() -> Option<SourceInfo> {
     let path = source_file_path();
     let content = fs::read_to_string(&path).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+/// Read Claude's task list ID from the temp file (if available)
+pub fn read_claude_task_list_id() -> Option<String> {
+    let path = task_list_file_path();
+    fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
 }
 
 #[cfg(test)]
