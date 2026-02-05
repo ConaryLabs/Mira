@@ -47,7 +47,7 @@ pub fn predict_next_files(
         if let PatternData::FileSequence { files, transitions } = &pattern.pattern_data {
             // Check if current file is in this pattern
             for (from, to) in transitions {
-                if from == current_file && pattern.confidence >= config.min_confidence {
+                if from == current_file {
                     predictions.push(Prediction {
                         prediction_type: PredictionType::NextFile,
                         content: to.clone(),
@@ -59,7 +59,7 @@ pub fn predict_next_files(
             }
 
             // Also check if file is part of a related group
-            if files.contains(&current_file.to_string()) {
+            if files.iter().any(|f| f == current_file) {
                 for file in files {
                     if file != current_file {
                         predictions.push(Prediction {

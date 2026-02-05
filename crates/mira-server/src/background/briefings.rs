@@ -224,7 +224,7 @@ async fn generate_briefing(
             let git_log = git_log?;
             generate_briefing_llm(&git_log, file_stats.as_deref(), client, pool, project_id).await
         }
-        None => generate_briefing_fallback(git_log.as_deref(), file_stats.as_deref()),
+        None => Some(generate_briefing_fallback(git_log.as_deref(), file_stats.as_deref())),
     }
 }
 
@@ -280,10 +280,10 @@ Summary:"#,
 }
 
 /// Generate a heuristic briefing from git log (no LLM required)
-fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -> Option<String> {
+fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -> String {
     let git_log = match git_log {
         Some(log) if !log.is_empty() => log,
-        _ => return Some(format!("{}No new git activity", HEURISTIC_PREFIX)),
+        _ => return format!("{}No new git activity", HEURISTIC_PREFIX),
     };
 
     let lines: Vec<&str> = git_log.lines().collect();
@@ -342,7 +342,7 @@ fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -
         result.push_str("...");
     }
 
-    Some(result)
+    result
 }
 
 #[cfg(test)]
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn test_briefing_fallback_with_commits() {
         let log = "abc1234 feat: add nucleo fuzzy fallback\ndef5678 fix: handle empty results";
-        let result = generate_briefing_fallback(Some(log), None).unwrap();
+        let result = generate_briefing_fallback(Some(log), None);
         assert!(result.starts_with(HEURISTIC_PREFIX));
         assert!(result.contains("2 commits"));
         assert!(result.contains("feat: add nucleo fuzzy fallback"));
@@ -361,21 +361,21 @@ mod tests {
     #[test]
     fn test_briefing_fallback_single_commit() {
         let log = "abc1234 fix: typo";
-        let result = generate_briefing_fallback(Some(log), None).unwrap();
+        let result = generate_briefing_fallback(Some(log), None);
         assert!(result.contains("1 commit."));
         assert!(!result.contains("commits"));
     }
 
     #[test]
     fn test_briefing_fallback_no_git() {
-        let result = generate_briefing_fallback(None, None).unwrap();
+        let result = generate_briefing_fallback(None, None);
         assert!(result.starts_with(HEURISTIC_PREFIX));
         assert!(result.contains("No new git activity"));
     }
 
     #[test]
     fn test_briefing_fallback_empty_log() {
-        let result = generate_briefing_fallback(Some(""), None).unwrap();
+        let result = generate_briefing_fallback(Some(""), None);
         assert!(result.contains("No new git activity"));
     }
 
@@ -383,7 +383,7 @@ mod tests {
     fn test_briefing_fallback_with_stats() {
         let log = "abc1234 feat: add feature";
         let stats = " src/main.rs | 10 +++\n 1 file changed, 10 insertions(+)";
-        let result = generate_briefing_fallback(Some(log), Some(stats)).unwrap();
+        let result = generate_briefing_fallback(Some(log), Some(stats));
         assert!(result.contains("1 file changed"));
     }
 
@@ -396,7 +396,7 @@ mod tests {
             }
             log.push_str(&format!("abc{:04} commit {}", i, i));
         }
-        let result = generate_briefing_fallback(Some(&log), None).unwrap();
+        let result = generate_briefing_fallback(Some(&log), None);
         assert!(result.contains("5 commits"));
         assert!(result.contains("(+5 more)"));
     }
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn test_briefing_fallback_long_message_truncated() {
         let long_msg = format!("abc1234 {}", "a".repeat(100));
-        let result = generate_briefing_fallback(Some(&long_msg), None).unwrap();
+        let result = generate_briefing_fallback(Some(&long_msg), None);
         assert!(result.len() <= FALLBACK_MAX_LENGTH);
     }
 }

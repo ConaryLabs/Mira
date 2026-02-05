@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Shared types for Mira (native + WASM compatible)"
+repository = "https://github.com/ConaryLabs/Mira"
+readme = "../../README.md"
+keywords = ["mcp", "claude", "memory", "ai"]
+categories = ["development-tools"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

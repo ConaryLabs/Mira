@@ -84,6 +84,92 @@ fn spawn_record_access(
     });
 }
 
+/// Common interface for recall result types (MemoryFact, FuzzyMemoryResult)
+trait RecallResult {
+    fn id(&self) -> i64;
+    fn content(&self) -> &str;
+    fn fact_type(&self) -> &str;
+    fn category(&self) -> Option<&str>;
+}
+
+impl RecallResult for MemoryFact {
+    fn id(&self) -> i64 { self.id }
+    fn content(&self) -> &str { &self.content }
+    fn fact_type(&self) -> &str { &self.fact_type }
+    fn category(&self) -> Option<&str> { self.category.as_deref() }
+}
+
+impl RecallResult for crate::fuzzy::FuzzyMemoryResult {
+    fn id(&self) -> i64 { self.id }
+    fn content(&self) -> &str { &self.content }
+    fn fact_type(&self) -> &str { &self.fact_type }
+    fn category(&self) -> Option<&str> { self.category.as_deref() }
+}
+
+/// Filter recall results by category and fact_type, applying limit
+fn filter_results<T: RecallResult>(
+    results: Vec<T>,
+    category: &Option<String>,
+    fact_type: &Option<String>,
+    limit: usize,
+) -> Vec<T> {
+    if category.is_none() && fact_type.is_none() {
+        return results;
+    }
+    results
+        .into_iter()
+        .filter(|m| {
+            let ft_ok = fact_type.as_ref().is_none_or(|f| f.as_str() == m.fact_type());
+            let cat_ok = category
+                .as_ref()
+                .is_none_or(|c| m.category() == Some(c.as_str()));
+            ft_ok && cat_ok
+        })
+        .take(limit)
+        .collect()
+}
+
+/// Record access, format response, and build MemoryOutput from any RecallResult type
+fn build_recall_output<T: RecallResult>(
+    results: &[T],
+    context_header: &str,
+    label: &str,
+    session_id: &Option<String>,
+    pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
+) -> Json<MemoryOutput> {
+    // Record access
+    if let Some(sid) = session_id {
+        let ids: Vec<i64> = results.iter().map(|m| m.id()).collect();
+        spawn_record_access(pool.clone(), ids, sid.clone());
+    }
+
+    let items: Vec<MemoryItem> = results
+        .iter()
+        .map(|mem| MemoryItem {
+            id: mem.id(),
+            content: mem.content().to_string(),
+            score: None,
+            fact_type: Some(mem.fact_type().to_string()),
+            branch: None,
+        })
+        .collect();
+    let total = items.len();
+    let mut response = format!("{}Found {} memories{}:\n", context_header, total, label);
+    for mem in results {
+        let preview = truncate(mem.content(), 100);
+        response.push_str(&format!("  [{}] ({}) {}\n", mem.id(), mem.fact_type(), preview));
+    }
+
+    Json(MemoryOutput {
+        action: "recall".into(),
+        message: response,
+        data: Some(MemoryData::Recall(RecallData {
+            memories: items,
+            total,
+        })),
+    })
+}
+
 /// Unified memory tool dispatcher
 pub async fn handle_memory<C: ToolContext>(
     ctx: &C,
@@ -402,54 +488,15 @@ pub async fn recall<C: ToolContext>(
             .await
         && !results.is_empty()
     {
-        // Apply category/fact_type filters
-        let results: Vec<_> = if has_filters {
-            results
-                .into_iter()
-                .filter(|m| {
-                    let ft_ok = fact_type.as_ref().is_none_or(|f| f == &m.fact_type);
-                    let cat_ok = category
-                        .as_ref()
-                        .is_none_or(|c| m.category.as_ref() == Some(c));
-                    ft_ok && cat_ok
-                })
-                .take(limit)
-                .collect()
-        } else {
-            results
-        };
-
+        let results = filter_results(results, &category, &fact_type, limit);
         if !results.is_empty() {
-            // Record memory access for evidence-based tracking
-            if let Some(ref sid) = session_id {
-                let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
-                spawn_record_access(ctx.pool().clone(), ids, sid.clone());
-            }
-
-            let items: Vec<MemoryItem> = results
-                .iter()
-                .map(|mem| MemoryItem {
-                    id: mem.id,
-                    content: mem.content.clone(),
-                    score: None,
-                    fact_type: Some(mem.fact_type.clone()),
-                    branch: None,
-                })
-                .collect();
-            let total = items.len();
-            let mut response = format!("{}Found {} memories (fuzzy):\n", context_header, total);
-            for mem in &results {
-                let preview = truncate(&mem.content, 100);
-                response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
-            }
-            return Ok(Json(MemoryOutput {
-                action: "recall".into(),
-                message: response,
-                data: Some(MemoryData::Recall(RecallData {
-                    memories: items,
-                    total,
-                })),
-            }));
+            return Ok(build_recall_output(
+                &results,
+                &context_header,
+                " (fuzzy)",
+                &session_id,
+                ctx.pool(),
+            ));
         }
     }
 
@@ -469,22 +516,7 @@ pub async fn recall<C: ToolContext>(
         })
         .await?;
 
-    // Apply category/fact_type filters
-    let results: Vec<_> = if has_filters {
-        results
-            .into_iter()
-            .filter(|m| {
-                let ft_ok = fact_type.as_ref().is_none_or(|f| f == &m.fact_type);
-                let cat_ok = category
-                    .as_ref()
-                    .is_none_or(|c| m.category.as_ref() == Some(c));
-                ft_ok && cat_ok
-            })
-            .take(limit)
-            .collect()
-    } else {
-        results
-    };
+    let results = filter_results(results, &category, &fact_type, limit);
 
     if results.is_empty() {
         return Ok(Json(MemoryOutput {
@@ -497,37 +529,13 @@ pub async fn recall<C: ToolContext>(
         }));
     }
 
-    // Record memory access for evidence-based tracking
-    if let Some(ref sid) = session_id {
-        let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
-        spawn_record_access(ctx.pool().clone(), ids, sid.clone());
-    }
-
-    let items: Vec<MemoryItem> = results
-        .iter()
-        .map(|mem| MemoryItem {
-            id: mem.id,
-            content: mem.content.clone(),
-            score: None,
-            fact_type: Some(mem.fact_type.clone()),
-            branch: None,
-        })
-        .collect();
-    let total = items.len();
-    let mut response = format!("{}Found {} memories:\n", context_header, total);
-    for mem in &results {
-        let preview = truncate(&mem.content, 100);
-        response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
-    }
-
-    Ok(Json(MemoryOutput {
-        action: "recall".into(),
-        message: response,
-        data: Some(MemoryData::Recall(RecallData {
-            memories: items,
-            total,
-        })),
-    }))
+    Ok(build_recall_output(
+        &results,
+        &context_header,
+        "",
+        &session_id,
+        ctx.pool(),
+    ))
 }
 
 /// Delete a memory

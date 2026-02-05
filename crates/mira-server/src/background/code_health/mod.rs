@@ -57,7 +57,7 @@ pub async fn process_code_health(
 
             let mut needing_scan = Vec::new();
             for (project_id, project_path) in all_projects {
-                if needs_health_scan(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))? {
+                if needs_health_scan(conn, project_id) {
                     needing_scan.push((project_id, project_path));
                     break; // One project per cycle
                 }
@@ -111,20 +111,20 @@ pub async fn process_code_health(
 /// 1. Never scanned before
 /// 2. Files changed (health_scan_needed flag is set)
 /// 3. Fallback: > 1 day since last scan
-fn needs_health_scan(conn: &rusqlite::Connection, project_id: i64) -> Result<bool, String> {
+fn needs_health_scan(conn: &rusqlite::Connection, project_id: i64) -> bool {
     // Check if the "needs scan" flag is set (triggered by file watcher)
     if memory_key_exists_sync(conn, project_id, "health_scan_needed") {
-        return Ok(true);
+        return true;
     }
 
     // Check last scan time for fallback
     let scan_info = get_scan_info_sync(conn, project_id, "health_scan_time");
 
     match scan_info {
-        None => Ok(true), // Never scanned
+        None => true, // Never scanned
         Some((_, scan_time)) => {
             // Fallback: rescan if > 1 day old
-            Ok(is_time_older_than_sync(conn, &scan_time, "-1 day"))
+            is_time_older_than_sync(conn, &scan_time, "-1 day")
         }
     }
 }
@@ -467,15 +467,22 @@ fn collect_dependency_data(
         return Ok(Vec::new());
     }
 
-    // Map file paths to modules
-    let file_to_mod = |file_path: &str| -> Option<String> {
-        modules
+    // Pre-sort modules by path length descending so longest (most specific) match wins first
+    let mut modules_sorted = modules;
+    modules_sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    // Cache file_path -> module_id lookups to avoid repeated linear scans
+    let mut file_mod_cache: HashMap<String, Option<String>> = HashMap::new();
+    let resolve_mod = |cache: &mut HashMap<String, Option<String>>, file_path: &str| -> Option<String> {
+        if let Some(cached) = cache.get(file_path) {
+            return cached.clone();
+        }
+        let result = modules_sorted
             .iter()
-            .filter(|(_, path)| {
-                file_path.starts_with(path.as_str()) || file_path.contains(path.as_str())
-            })
-            .max_by_key(|(_, path)| path.len())
-            .map(|(id, _)| id.clone())
+            .find(|(_, path)| file_path.starts_with(path.as_str()) || file_path.contains(path.as_str()))
+            .map(|(id, _)| id.clone());
+        cache.insert(file_path.to_string(), result.clone());
+        result
     };
 
     // Count import deps
@@ -491,7 +498,7 @@ fn collect_dependency_data(
             .str_err()?;
         for row in rows {
             let (fp, ip) = row.str_err()?;
-            if let (Some(src), Some(tgt)) = (file_to_mod(&fp), file_to_mod(&ip))
+            if let (Some(src), Some(tgt)) = (resolve_mod(&mut file_mod_cache, &fp), resolve_mod(&mut file_mod_cache, &ip))
                 && src != tgt
             {
                 *import_deps.entry((src, tgt)).or_default() += 1;
@@ -522,7 +529,7 @@ fn collect_dependency_data(
             .str_err()?;
         for row in rows {
             let (f1, f2, cnt) = row.str_err()?;
-            if let (Some(src), Some(tgt)) = (file_to_mod(&f1), file_to_mod(&f2))
+            if let (Some(src), Some(tgt)) = (resolve_mod(&mut file_mod_cache, &f1), resolve_mod(&mut file_mod_cache, &f2))
                 && src != tgt
             {
                 *call_deps.entry((src, tgt)).or_default() += cnt;

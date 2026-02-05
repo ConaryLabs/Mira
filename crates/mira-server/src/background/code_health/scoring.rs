@@ -226,28 +226,39 @@ fn gather_findings(
         })
         .str_err()?;
 
+    // Sort module paths by length descending so longest (most specific) match wins first
+    let mut sorted_paths = module_paths.to_vec();
+    sorted_paths.sort_by(|a, b| b.len().cmp(&a.len()));
+
+    // Cache content -> module_path lookups to avoid repeated linear scans
+    let mut match_cache: HashMap<String, Option<String>> = HashMap::new();
+
     for row in rows {
         let (content, category) = row.str_err()?;
 
-        // Match finding to module by checking if content mentions a file in the module path
-        let module_path = module_paths
-            .iter()
-            .find(|p| content.contains(p.as_str()))
-            .cloned();
-
-        // Fall back: try to extract file path from content and match
-        let module_path = module_path.or_else(|| {
-            // Content often has format: "[type] ... at path/file.rs:line"
-            module_paths
+        // Check cache first
+        let module_path = if let Some(cached) = match_cache.get(&content) {
+            cached.clone()
+        } else {
+            // Match finding to module by checking if content mentions a file in the module path
+            let matched = sorted_paths
                 .iter()
-                .find(|p| {
-                    // Check if any part of the content matches
-                    content
-                        .split_whitespace()
-                        .any(|word| word.starts_with(p.as_str()))
-                })
+                .find(|p| content.contains(p.as_str()))
                 .cloned()
-        });
+                .or_else(|| {
+                    // Fall back: check if any whitespace-delimited word starts with a module path
+                    sorted_paths
+                        .iter()
+                        .find(|p| {
+                            content
+                                .split_whitespace()
+                                .any(|word| word.starts_with(p.as_str()))
+                        })
+                        .cloned()
+                });
+            match_cache.insert(content.clone(), matched.clone());
+            matched
+        };
 
         if let Some(path) = module_path {
             let entry = result.entry(path).or_default();

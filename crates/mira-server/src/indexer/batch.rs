@@ -213,7 +213,7 @@ pub fn store_symbols_and_capture_ids(
     project_id: Option<i64>,
     file_path: &str,
     symbols: &[Symbol],
-) -> rusqlite::Result<(Vec<SymbolRange>, usize)> {
+) -> (Vec<SymbolRange>, usize) {
     let mut symbol_ranges = Vec::new();
     let mut errors = 0usize;
 
@@ -237,7 +237,7 @@ pub fn store_symbols_and_capture_ids(
         }
     }
 
-    Ok((symbol_ranges, errors))
+    (symbol_ranges, errors)
 }
 
 /// Helper to store imports
@@ -353,7 +353,7 @@ pub async fn flush_code_batch(
                     project_id,
                     &batch.file_path,
                     &batch.symbols,
-                )?;
+                );
                 total_errors += symbol_errors;
 
                 // Store imports

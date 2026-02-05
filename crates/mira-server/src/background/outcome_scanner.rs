@@ -108,63 +108,70 @@ async fn scan_project(
     // Detect follow-up fixes
     let followup_fixes = detect_followup_fixes(&unscanned, &commit_map);
 
-    // Store detected outcomes
-    for (diff_id, to_commit, _from_commit, _files_json) in &unscanned {
-        let diff_id = *diff_id;
+    // Collect all detected outcomes, then persist in a single transaction
+    struct Outcome {
+        diff_analysis_id: i64,
+        outcome_type: &'static str,
+        evidence_commit: String,
+        evidence_message: String,
+        time_to_outcome_seconds: i64,
+    }
 
+    let mut outcomes = Vec::new();
+
+    for (diff_id, to_commit, _from_commit, _files_json) in &unscanned {
         // Check for reverts
         if let Some((evidence_commit, evidence_msg, time_delta)) = reverts.get(to_commit.as_str()) {
-            let ev_commit = evidence_commit.clone();
-            let ev_msg = evidence_msg.clone();
-            let td = *time_delta;
-            let pid = project_id;
-            pool.interact(move |conn| {
-                store_diff_outcome_sync(
-                    conn,
-                    &StoreDiffOutcomeParams {
-                        diff_analysis_id: diff_id,
-                        project_id: Some(pid),
-                        outcome_type: "reverted",
-                        evidence_commit: Some(&ev_commit),
-                        evidence_message: Some(&ev_msg),
-                        time_to_outcome_seconds: Some(td),
-                        detected_by: "git_scan",
-                    },
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-            .str_err()?;
-            processed += 1;
+            outcomes.push(Outcome {
+                diff_analysis_id: *diff_id,
+                outcome_type: "reverted",
+                evidence_commit: evidence_commit.clone(),
+                evidence_message: evidence_msg.clone(),
+                time_to_outcome_seconds: *time_delta,
+            });
         }
 
         // Check for follow-up fixes
         if let Some(fixes) = followup_fixes.get(to_commit.as_str()) {
             for (evidence_commit, evidence_msg, time_delta) in fixes {
-                let ev_commit = evidence_commit.clone();
-                let ev_msg = evidence_msg.clone();
-                let td = *time_delta;
-                let pid = project_id;
-                pool.interact(move |conn| {
-                    store_diff_outcome_sync(
-                        conn,
-                        &StoreDiffOutcomeParams {
-                            diff_analysis_id: diff_id,
-                            project_id: Some(pid),
-                            outcome_type: "follow_up_fix",
-                            evidence_commit: Some(&ev_commit),
-                            evidence_message: Some(&ev_msg),
-                            time_to_outcome_seconds: Some(td),
-                            detected_by: "git_scan",
-                        },
-                    )
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .str_err()?;
-                processed += 1;
+                outcomes.push(Outcome {
+                    diff_analysis_id: *diff_id,
+                    outcome_type: "follow_up_fix",
+                    evidence_commit: evidence_commit.clone(),
+                    evidence_message: evidence_msg.clone(),
+                    time_to_outcome_seconds: *time_delta,
+                });
             }
         }
+    }
+
+    // Batch-write all outcomes in one pool.interact call
+    if !outcomes.is_empty() {
+        let pid = project_id;
+        let count = outcomes.len();
+        pool.interact(move |conn| {
+            let tx = conn.unchecked_transaction().map_err(|e| anyhow::anyhow!("{}", e))?;
+            for o in &outcomes {
+                store_diff_outcome_sync(
+                    &tx,
+                    &StoreDiffOutcomeParams {
+                        diff_analysis_id: o.diff_analysis_id,
+                        project_id: Some(pid),
+                        outcome_type: o.outcome_type,
+                        evidence_commit: Some(&o.evidence_commit),
+                        evidence_message: Some(&o.evidence_message),
+                        time_to_outcome_seconds: Some(o.time_to_outcome_seconds),
+                        detected_by: "git_scan",
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            }
+            tx.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .str_err()?;
+        processed += count;
     }
 
     // Mark aged diffs as clean

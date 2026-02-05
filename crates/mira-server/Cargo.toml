@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Memory and Intelligence Layer for Claude Code - Server"
+repository = "https://github.com/ConaryLabs/Mira"
+readme = "../../README.md"
+keywords = ["mcp", "claude", "memory", "ai", "code-intelligence"]
+categories = ["development-tools", "database"]
 
 [lib]
 name = "mira"

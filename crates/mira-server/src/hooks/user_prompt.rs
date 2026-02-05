@@ -24,11 +24,174 @@ fn get_embeddings(pool: Option<Arc<DatabasePool>>) -> Option<Arc<EmbeddingClient
     EmbeddingClient::from_env(pool).map(Arc::new)
 }
 
+/// Resolve active project ID and path in a single DB call
+async fn resolve_project(pool: &Arc<DatabasePool>) -> (Option<i64>, Option<String>) {
+    pool.interact(move |conn| {
+        let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+        let result = if let Some(ref path) = path {
+            crate::db::get_or_create_project_sync(conn, path, None)
+                .ok()
+                .map(|(id, _)| id)
+        } else {
+            None
+        };
+        Ok::<_, anyhow::Error>((result, path))
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Log user query for behavior tracking
+async fn log_behavior(pool: &Arc<DatabasePool>, project_id: i64, session_id: &str, message: &str) {
+    let pool_clone = pool.clone();
+    let session_id_clone = session_id.to_string();
+    let message_clone = message.to_string();
+    let _ = pool_clone
+        .interact(move |conn| {
+            let mut tracker = BehaviorTracker::for_session(conn, session_id_clone, project_id);
+            let _ = tracker.log_query(conn, &message_clone, "user_prompt");
+            Ok::<_, anyhow::Error>(())
+        })
+        .await;
+}
+
+/// Get proactive context predictions (hybrid: pre-generated + on-the-fly)
+async fn get_proactive_context(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+    project_path: Option<&str>,
+) -> Option<String> {
+    let project_path_owned = project_path.map(|s| s.to_string());
+    pool.interact(move |conn| {
+        let config =
+            crate::proactive::get_proactive_config(conn, None, project_id).unwrap_or_default();
+
+        if !config.enabled {
+            return Ok::<Option<String>, anyhow::Error>(None);
+        }
+
+        let recent_files =
+            crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
+                .unwrap_or_default();
+        let current_file = recent_files.first().cloned();
+
+        // 1. Try pre-generated LLM suggestions (fast O(1) lookup)
+        if let Some(ref file) = current_file
+            && let Ok(pre_gen) = get_pre_generated_suggestions(conn, project_id, file)
+            && !pre_gen.is_empty()
+        {
+            let context_lines: Vec<String> = pre_gen
+                .iter()
+                .take(2)
+                .map(|(text, conf)| {
+                    let conf_label = if *conf >= 0.9 {
+                        "high confidence"
+                    } else if *conf >= 0.7 {
+                        "medium confidence"
+                    } else {
+                        "suggested"
+                    };
+                    format!("[Proactive] {} ({})", text, conf_label)
+                })
+                .collect();
+
+            if !context_lines.is_empty() {
+                return Ok(Some(context_lines.join("\n")));
+            }
+        }
+
+        // 2. Fallback: On-the-fly pattern matching
+        let current_context = predictor::CurrentContext {
+            current_file,
+            last_tool: None,
+            recent_queries: vec![],
+            session_stage: None,
+        };
+
+        let mut predictions = predictor::generate_context_predictions(
+            conn,
+            project_id,
+            &current_context,
+            &config,
+        )
+        .unwrap_or_default();
+
+        // Filter out stale file predictions
+        if let Some(ref base) = project_path_owned {
+            predictions.retain(|p| match p.prediction_type {
+                predictor::PredictionType::NextFile
+                | predictor::PredictionType::RelatedFiles => {
+                    let exists = Path::new(base).join(&p.content).exists();
+                    if !exists {
+                        tracing::debug!("Dropping stale file prediction: {}", p.content);
+                    }
+                    exists
+                }
+                _ => true,
+            });
+        }
+
+        if predictions.is_empty() {
+            return Ok(None);
+        }
+
+        let suggestions = predictor::predictions_to_interventions(&predictions, &config);
+        let context_lines: Vec<String> = suggestions
+            .iter()
+            .take(2)
+            .map(|s| s.to_context_string())
+            .collect();
+
+        if context_lines.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(context_lines.join("\n")))
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Get pending native tasks as context string
+fn get_task_context() -> Option<String> {
+    let dir = crate::tasks::find_current_task_list()?;
+    match crate::tasks::get_pending_tasks(&dir) {
+        Ok(pending) if !pending.is_empty() => {
+            let lines: Vec<String> = pending
+                .iter()
+                .map(|t| {
+                    let marker = if t.status == "in_progress" {
+                        "[...]"
+                    } else {
+                        "[ ]"
+                    };
+                    format!("  {} {}", marker, t.subject)
+                })
+                .collect();
+            let total = crate::tasks::count_tasks(&dir)
+                .map(|(c, r)| c + r)
+                .unwrap_or(0);
+            let completed = total - pending.len();
+            Some(format!(
+                "[Mira] {} pending task(s) ({}/{} completed):\n{}",
+                pending.len(),
+                completed,
+                total,
+                lines.join("\n")
+            ))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            eprintln!("[mira] Failed to read native tasks: {}", e);
+            None
+        }
+    }
+}
+
 /// Run UserPromptSubmit hook
 pub async fn run() -> Result<()> {
     let input = read_hook_input()?;
 
-    // Extract user message and session ID
     let user_message = input
         .get("prompt")
         .or_else(|| input.get("user_message"))
@@ -62,37 +225,12 @@ pub async fn run() -> Result<()> {
     let manager =
         crate::context::ContextInjectionManager::new(pool.clone(), embeddings, fuzzy).await;
 
-    // Get project ID for proactive features
-    let project_id: Option<i64> = {
-        let pool_clone = pool.clone();
-        pool_clone
-            .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path {
-                    crate::db::get_or_create_project_sync(conn, &path, None)
-                        .ok()
-                        .map(|(id, _)| id)
-                } else {
-                    None
-                };
-                Ok::<_, anyhow::Error>(result)
-            })
-            .await
-            .unwrap_or_default()
-    };
+    // Resolve project once (eliminates duplicate get_last_active_project_sync calls)
+    let (project_id, project_path) = resolve_project(&pool).await;
 
-    // Log query event for behavior tracking (background, non-blocking)
+    // Log query event for behavior tracking
     if let Some(project_id) = project_id {
-        let pool_clone = pool.clone();
-        let session_id_clone = session_id.to_string();
-        let message_clone = user_message.to_string();
-        let _ = pool_clone
-            .interact(move |conn| {
-                let mut tracker = BehaviorTracker::for_session(conn, session_id_clone, project_id);
-                let _ = tracker.log_query(conn, &message_clone, "user_prompt");
-                Ok::<_, anyhow::Error>(())
-            })
-            .await;
+        log_behavior(&pool, project_id, session_id, user_message).await;
     }
 
     // Get relevant context with metadata
@@ -100,148 +238,15 @@ pub async fn run() -> Result<()> {
         .get_context_for_message(user_message, session_id)
         .await;
 
-    // Get proactive predictions if enabled (hybrid approach)
+    // Get proactive predictions if enabled
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
-        let pool_clone = pool.clone();
-        pool_clone
-            .interact(move |conn| {
-                let config = crate::proactive::get_proactive_config(conn, None, project_id)
-                    .unwrap_or_default();
-
-                if !config.enabled {
-                    return Ok::<Option<String>, anyhow::Error>(None);
-                }
-
-                // Resolve project path for file existence checks
-                let project_path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-
-                // Build current context from recent behavior
-                let recent_files =
-                    crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
-                        .unwrap_or_default();
-
-                let current_file = recent_files.first().cloned();
-
-                // HYBRID APPROACH:
-                // 1. First try pre-generated LLM suggestions (fast O(1) lookup)
-                if let Some(ref file) = current_file
-                    && let Ok(pre_gen) = get_pre_generated_suggestions(conn, project_id, file)
-                    && !pre_gen.is_empty()
-                {
-                    let context_lines: Vec<String> = pre_gen
-                        .iter()
-                        .take(2)
-                        .map(|(text, conf)| {
-                            let conf_label = if *conf >= 0.9 {
-                                "high confidence"
-                            } else if *conf >= 0.7 {
-                                "medium confidence"
-                            } else {
-                                "suggested"
-                            };
-                            format!("[Proactive] {} ({})", text, conf_label)
-                        })
-                        .collect();
-
-                    if !context_lines.is_empty() {
-                        return Ok(Some(context_lines.join("\n")));
-                    }
-                }
-
-                // 2. Fallback: On-the-fly pattern matching (no LLM, simple templates)
-                let current_context = predictor::CurrentContext {
-                    current_file,
-                    last_tool: None, // Will be populated by PostToolUse
-                    recent_queries: vec![],
-                    session_stage: None,
-                };
-
-                // Get predictions from patterns
-                let mut predictions = predictor::generate_context_predictions(
-                    conn,
-                    project_id,
-                    &current_context,
-                    &config,
-                )
-                .unwrap_or_default();
-
-                // Filter out file predictions for files that no longer exist
-                if let Some(ref base) = project_path {
-                    predictions.retain(|p| match p.prediction_type {
-                        predictor::PredictionType::NextFile
-                        | predictor::PredictionType::RelatedFiles => {
-                            let exists = Path::new(base).join(&p.content).exists();
-                            if !exists {
-                                tracing::debug!("Dropping stale file prediction: {}", p.content);
-                            }
-                            exists
-                        }
-                        _ => true,
-                    });
-                }
-
-                if predictions.is_empty() {
-                    return Ok(None);
-                }
-
-                // Convert to intervention suggestions and format
-                let suggestions = predictor::predictions_to_interventions(&predictions, &config);
-                let context_lines: Vec<String> = suggestions
-                    .iter()
-                    .take(2) // Limit to 2 proactive suggestions
-                    .map(|s| s.to_context_string())
-                    .collect();
-
-                if context_lines.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(context_lines.join("\n")))
-                }
-            })
-            .await
-            .unwrap_or_default()
+        get_proactive_context(&pool, project_id, project_path.as_deref()).await
     } else {
         None
     };
 
-    // Inject pending native tasks as additionalContext
-    let task_context: Option<String> = {
-        match crate::tasks::find_current_task_list() {
-            Some(dir) => match crate::tasks::get_pending_tasks(&dir) {
-                Ok(pending) if !pending.is_empty() => {
-                    let lines: Vec<String> = pending
-                        .iter()
-                        .map(|t| {
-                            let marker = if t.status == "in_progress" {
-                                "[...]"
-                            } else {
-                                "[ ]"
-                            };
-                            format!("  {} {}", marker, t.subject)
-                        })
-                        .collect();
-                    let total = crate::tasks::count_tasks(&dir)
-                        .map(|(c, r)| c + r)
-                        .unwrap_or(0);
-                    let completed = total - pending.len();
-                    Some(format!(
-                        "[Mira] {} pending task(s) ({}/{} completed):\n{}",
-                        pending.len(),
-                        completed,
-                        total,
-                        lines.join("\n")
-                    ))
-                }
-                Ok(_) => None,
-                Err(e) => {
-                    eprintln!("[mira] Failed to read native tasks: {}", e);
-                    None
-                }
-            },
-            None => None,
-        }
-    };
-
+    // Get pending native tasks
+    let task_context = get_task_context();
     if task_context.is_some() {
         eprintln!("[mira] Added pending task context");
     }
@@ -289,7 +294,6 @@ pub async fn run() -> Result<()> {
         if let Some(reason) = &result.skip_reason {
             eprintln!("[mira] Context injection skipped: {}", reason);
         }
-        // No context to inject - output empty object
         write_hook_output(&serde_json::json!({}));
     }
 

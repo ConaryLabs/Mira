@@ -303,49 +303,34 @@ fn format_session_insights(
     out
 }
 
-/// Initialize session with project
-pub async fn session_start<C: ToolContext>(
+/// Persist session: create session record, store system context, retrieve briefing
+async fn persist_session<C: ToolContext>(
     ctx: &C,
-    project_path: String,
-    name: Option<String>,
-    session_id: Option<String>,
-) -> Result<Json<ProjectOutput>, String> {
-    // Initialize project (shared with set_project)
-    let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
-
-    // Set session ID (use provided, or generate new)
-    let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    // Detect git branch for branch-aware context
-    let branch = get_git_branch(&project_path);
-
-    // Gather system context content (synchronous, no DB needed)
+    project_id: i64,
+    sid: &str,
+    branch: Option<&str>,
+) -> Result<Option<String>, String> {
     let system_context = gather_system_context_content();
+    let sid_owned = sid.to_string();
+    let branch_owned = branch.map(|b| b.to_string());
 
-    // Create session, persist state, store system context, and get briefing in one pool call
-    let sid_for_db = sid.clone();
-    let branch_for_db = branch.clone();
-    let briefing_text: Option<String> = ctx
-        .pool()
+    ctx.pool()
         .run(move |conn| {
-            // Create/update session with branch
             upsert_session_with_branch_sync(
                 conn,
-                &sid_for_db,
+                &sid_owned,
                 Some(project_id),
-                branch_for_db.as_deref(),
+                branch_owned.as_deref(),
             )
             .str_err()?;
 
-            // Persist active session ID for restart recovery
-            set_server_state_sync(conn, "active_session_id", &sid_for_db).str_err()?;
+            set_server_state_sync(conn, "active_session_id", &sid_owned).str_err()?;
 
-            // Store system context as memory
             if let Some(ref content) = system_context {
                 let _ = store_memory_sync(
                     conn,
                     StoreMemoryParams {
-                        project_id: None, // global
+                        project_id: None,
                         key: Some("system_context"),
                         content,
                         fact_type: "context",
@@ -359,60 +344,31 @@ pub async fn session_start<C: ToolContext>(
                 );
             }
 
-            // Get project briefing
             let briefing = get_project_briefing_sync(conn, project_id)
                 .ok()
                 .flatten()
                 .and_then(|b| b.briefing_text);
-
-            // Mark session for briefing (clears briefing for next time)
             let _ = mark_session_for_briefing_sync(conn, project_id);
 
             Ok::<_, String>(briefing)
         })
-        .await?;
+        .await
+}
 
-    ctx.set_session_id(sid.clone()).await;
-
-    // Set branch in context
-    ctx.set_branch(branch.clone()).await;
-
-    // Import CLAUDE.local.md entries as memories (if file exists)
-    let imported_count =
-        claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
-            .await
-            .unwrap_or(0);
-
-    // Detect project type
-    let project_type = detect_project_type(&project_path);
-
-    // Build response with context
-    let display_name = project_name.as_deref().unwrap_or("unnamed");
-    let mut response = format!("Project: {} ({})\n", display_name, project_type);
-
-    // Report CLAUDE.local.md imports
-    if imported_count > 0 {
-        response.push_str(&format!(
-            "\nImported {} entries from CLAUDE.local.md\n",
-            imported_count
-        ));
-    }
-
-    // Check for "What's New" briefing
-    if let Some(text) = briefing_text {
-        response.push_str(&format!("\nWhat's new: {}\n", text));
-    }
-
-    // Get recent sessions and their stats in one pool call
-    let sid_for_filter = sid.clone();
-    let recent_session_data: Vec<SessionInfo> = ctx
-        .pool()
+/// Load recent sessions (excluding current), with stats
+async fn load_recent_sessions<C: ToolContext>(
+    ctx: &C,
+    project_id: i64,
+    current_sid: &str,
+) -> Result<Vec<SessionInfo>, String> {
+    let sid_owned = current_sid.to_string();
+    ctx.pool()
         .run(move |conn| {
             let sessions = get_recent_sessions_sync(conn, project_id, 4).unwrap_or_default();
             let mut result = Vec::new();
             for sess in sessions
                 .into_iter()
-                .filter(|s| s.id != sid_for_filter)
+                .filter(|s| s.id != sid_owned)
                 .take(3)
             {
                 let (tool_count, tools) =
@@ -421,46 +377,84 @@ pub async fn session_start<C: ToolContext>(
             }
             Ok::<_, String>(result)
         })
-        .await?;
+        .await
+}
 
+/// Load recap data: preferences, memories, health alerts, doc counts, interventions
+async fn load_recap_data<C: ToolContext>(
+    ctx: &C,
+    project_id: i64,
+) -> Result<RecapData, String> {
+    ctx.pool()
+        .run(move |conn| {
+            let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
+            let memories =
+                search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
+            let health_alerts =
+                get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
+            let doc_task_counts =
+                count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
+            let config = ProactiveConfig::default();
+            let interventions_list =
+                interventions::get_pending_interventions_sync(conn, project_id, &config)
+                    .unwrap_or_default();
+
+            Ok::<_, String>((
+                preferences,
+                memories,
+                health_alerts,
+                doc_task_counts,
+                interventions_list,
+            ))
+        })
+        .await
+}
+
+/// Initialize session with project
+pub async fn session_start<C: ToolContext>(
+    ctx: &C,
+    project_path: String,
+    name: Option<String>,
+    session_id: Option<String>,
+) -> Result<Json<ProjectOutput>, String> {
+    let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
+    let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let branch = get_git_branch(&project_path);
+
+    // Phase 1: Persist session + retrieve briefing
+    let briefing_text = persist_session(ctx, project_id, &sid, branch.as_deref()).await?;
+    ctx.set_session_id(sid.clone()).await;
+    ctx.set_branch(branch.clone()).await;
+
+    // Phase 2: Import CLAUDE.local.md
+    let imported_count =
+        claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
+            .await
+            .unwrap_or(0);
+
+    // Phase 3: Build response
+    let project_type = detect_project_type(&project_path);
+    let display_name = project_name.as_deref().unwrap_or("unnamed");
+    let mut response = format!("Project: {} ({})\n", display_name, project_type);
+
+    if imported_count > 0 {
+        response.push_str(&format!(
+            "\nImported {} entries from CLAUDE.local.md\n",
+            imported_count
+        ));
+    }
+    if let Some(text) = briefing_text {
+        response.push_str(&format!("\nWhat's new: {}\n", text));
+    }
+
+    // Phase 4: Load session history + recap data
+    let recent_session_data = load_recent_sessions(ctx, project_id, &sid).await?;
     if !recent_session_data.is_empty() {
         response.push_str(&format_recent_sessions(&recent_session_data));
     }
 
-    // Load preferences, memories, health alerts, doc task counts, and interventions in a single pool call
-    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions): RecapData =
-        ctx.pool()
-            .run(move |conn| {
-                // Get preferences
-                let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
-
-                // Get recent memories
-                let memories =
-                    search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
-
-                // Get health alerts
-                let health_alerts =
-                    get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
-
-                // Get documentation task counts
-                let doc_task_counts =
-                    count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
-
-                // Get pending proactive interventions
-                let config = ProactiveConfig::default();
-                let interventions_list =
-                    interventions::get_pending_interventions_sync(conn, project_id, &config)
-                        .unwrap_or_default();
-
-                Ok::<_, String>((
-                    preferences,
-                    memories,
-                    health_alerts,
-                    doc_task_counts,
-                    interventions_list,
-                ))
-            })
-            .await?;
+    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions) =
+        load_recap_data(ctx, project_id).await?;
 
     response.push_str(&format_session_insights(
         &preferences,
@@ -470,7 +464,7 @@ pub async fn session_start<C: ToolContext>(
         &doc_task_counts,
     ));
 
-    // Record that interventions were shown
+    // Record shown interventions
     if !pending_interventions.is_empty() {
         let interventions_to_record = pending_interventions.clone();
         let sid_for_record = sid.clone();
@@ -490,7 +484,7 @@ pub async fn session_start<C: ToolContext>(
             .await;
     }
 
-    // Load codebase map (only for Rust projects for now)
+    // Phase 5: Codebase map
     if project_type == "rust" {
         match cartographer::get_or_generate_map_pool(
             ctx.pool().clone(),
@@ -503,18 +497,15 @@ pub async fn session_start<C: ToolContext>(
         {
             Ok(map) => {
                 if !map.modules.is_empty() {
-                    let formatted = cartographer::format_compact(&map);
-                    response.push_str(&formatted);
+                    response.push_str(&cartographer::format_compact(&map));
                 }
             }
             Err(e) => {
                 tracing::warn!("Failed to generate codebase map: {}", e);
-                // Continue without map - non-fatal error
             }
         }
     }
 
-    // Show database path
     if let Some(db_path) = ctx.pool().path() {
         response.push_str(&format!("\nDatabase: {}\n", db_path.display()));
     }
