@@ -86,7 +86,7 @@ install_binary() {
     info "Installed mira to $INSTALL_DIR/mira"
 }
 
-# Install Claude Code plugin
+# Install Claude Code plugin (returns 0 on success, 1 on failure)
 install_plugin() {
     if command -v claude &> /dev/null; then
         info "Adding Mira marketplace..."
@@ -94,16 +94,15 @@ install_plugin() {
 
         info "Installing Claude Code plugin..."
         if claude plugin install "mira@mira" 2>/dev/null; then
-            info "Plugin installed successfully"
+            info "Plugin installed successfully (hooks + skills auto-configured)"
+            return 0
         else
-            warn "Plugin install failed - you may need to install it manually:"
-            echo "    claude plugin marketplace add $REPO"
-            echo "    claude plugin install mira@mira"
+            warn "Plugin install failed - falling back to manual hook setup"
+            return 1
         fi
     else
-        warn "Claude Code CLI not found. Install the plugin manually with:"
-        echo "    claude plugin marketplace add $REPO"
-        echo "    claude plugin install mira@mira"
+        warn "Claude Code CLI not found - falling back to manual hook setup"
+        return 1
     fi
 }
 
@@ -119,21 +118,67 @@ setup_config() {
     if [ ! -f "$config_dir/.env" ]; then
         info "Creating .env template at $config_dir/.env"
         cat > "$config_dir/.env" << 'EOF'
-# ============================================
-# MIRA API KEYS - Replace the values below
-# ============================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# Mira Environment Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Configuration is loaded once at startup from:
+#   1. ~/.mira/.env (global)
+#   2. .env (project-level, overrides global)
 
-# DeepSeek (for expert consultations)
-# Get your key: https://platform.deepseek.com/api_keys
-DEEPSEEK_API_KEY=PASTE_YOUR_DEEPSEEK_KEY_HERE
+# ═══════════════════════════════════════════════════════════════════════════════
+# API Keys
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# Google Gemini (for embeddings/semantic search)
-# Get your key: https://aistudio.google.com/app/apikey
-GEMINI_API_KEY=PASTE_YOUR_GEMINI_KEY_HERE
+# DeepSeek - Primary LLM provider for experts and reasoning
+# Get from: https://platform.deepseek.com/api_keys
+DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 
-# Brave Search (optional - enables web search for experts)
-# Get your key: https://brave.com/search/api/
-# BRAVE_API_KEY=PASTE_YOUR_BRAVE_KEY_HERE
+# Gemini - Required for semantic search (embeddings)
+# Also usable as an LLM provider
+# Get from: https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=your-gemini-key-here
+
+# Brave Search - Enables web search for expert consultations
+# Get from: https://brave.com/search/api/
+# BRAVE_API_KEY=your-brave-search-key-here
+
+# Alternative to GEMINI_API_KEY (either works)
+# GOOGLE_API_KEY=your-google-key-here
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LLM Provider Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Override default LLM provider (options: deepseek, gemini)
+# By default, Mira uses DeepSeek if available, then falls back to Gemini
+# DEFAULT_LLM_PROVIDER=deepseek
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# User Identity
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Override user identity for multi-user memory scoping
+# By default, Mira uses git config user.email or system username
+# MIRA_USER_ID=your-unique-id
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Advanced Options
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Disable all LLM features (use heuristic fallbacks only)
+# MIRA_DISABLE_LLM=1
+
+# Override embedding dimensions (default: 1536)
+# MIRA_EMBEDDING_DIMENSIONS=1536
+
+# Override embedding task type (SEMANTIC_SIMILARITY, RETRIEVAL_DOCUMENT, etc.)
+# MIRA_EMBEDDING_TASK_TYPE=RETRIEVAL_DOCUMENT
+
+# Enable fuzzy fallback when embeddings are unavailable (default: true)
+# MIRA_FUZZY_FALLBACK=true
+
+# Override project path detection
+# MIRA_PROJECT_PATH=/path/to/project
 EOF
     fi
 }
@@ -149,24 +194,76 @@ setup_hooks() {
 
     # Check if jq is available for JSON manipulation
     if ! command -v jq &> /dev/null; then
-        warn "jq not found - skipping hook configuration"
+        warn "jq not found - skipping automatic hook configuration"
         warn "Install hooks manually by adding to ~/.claude/settings.json:"
-        echo '    "hooks": {'
-        echo '      "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000}]}],'
-        echo '      "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],'
-        echo '      "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],'
-        echo '      "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],'
-        echo '      "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}]'
-        echo '    }'
+        cat << MANUAL
+    "hooks": {
+      "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10}]}],
+      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5}]}],
+      "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3}]}],
+      "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2}]}],
+      "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5, "async": true}]}],
+      "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30, "async": true}]}],
+      "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5}]}],
+      "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5}]}],
+      "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3}]}],
+      "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3, "async": true}]}]
+    }
+MANUAL
         return
     fi
 
     info "Configuring Claude Code hooks..."
 
-    # Define the hooks we want to add
+    # Define all 10 hooks matching plugin/hooks/hooks.json
     local hooks_json
     hooks_json=$(cat << EOF
 {
+  "SessionStart": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook session-start",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook user-prompt",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "PermissionRequest": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook permission",
+          "timeout": 3
+        }
+      ]
+    }
+  ],
+  "PreToolUse": [
+    {
+      "matcher": "Grep|Glob|Read",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook pre-tool",
+          "timeout": 2
+        }
+      ]
+    }
+  ],
   "PostToolUse": [
     {
       "matcher": "Write|Edit|NotebookEdit",
@@ -174,55 +271,66 @@ setup_hooks() {
         {
           "type": "command",
           "command": "${mira_bin} hook post-tool",
-          "timeout": 5000
-        }
-      ]
-    }
-  ],
-  "UserPromptSubmit": [
-    {
-      "matcher": "",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "${mira_bin} hook user-prompt",
-          "timeout": 5000
-        }
-      ]
-    }
-  ],
-  "SessionStart": [
-    {
-      "matcher": "",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "${mira_bin} hook session-start",
-          "timeout": 10000
+          "timeout": 5,
+          "async": true
         }
       ]
     }
   ],
   "PreCompact": [
     {
-      "matcher": "",
+      "matcher": "*",
       "hooks": [
         {
           "type": "command",
           "command": "${mira_bin} hook pre-compact",
-          "timeout": 30000
+          "timeout": 30,
+          "async": true
         }
       ]
     }
   ],
   "Stop": [
     {
-      "matcher": "",
       "hooks": [
         {
           "type": "command",
           "command": "${mira_bin} hook stop",
-          "timeout": 5000
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "SessionEnd": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook session-end",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "SubagentStart": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook subagent-start",
+          "timeout": 3
+        }
+      ]
+    }
+  ],
+  "SubagentStop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook subagent-stop",
+          "timeout": 3,
+          "async": true
         }
       ]
     }
@@ -261,7 +369,7 @@ main() {
     echo "  Installer"
     echo ""
 
-    local platform version
+    local platform version plugin_ok
 
     platform=$(detect_platform)
     info "Detected platform: $platform"
@@ -271,8 +379,15 @@ main() {
 
     install_binary "$platform" "$version"
     setup_config
-    setup_hooks
-    install_plugin
+
+    # Try plugin install first — it configures hooks and skills automatically.
+    # Only fall back to manual hook setup if plugin install fails.
+    plugin_ok=0
+    install_plugin || plugin_ok=1
+
+    if [ "$plugin_ok" -eq 1 ]; then
+        setup_hooks
+    fi
 
     echo ""
     info "Installation complete!"
@@ -281,25 +396,28 @@ main() {
     echo ""
     echo "    1. Add your API keys:"
     echo ""
-    echo "       Open ~/.mira/.env in your editor and replace:"
-    echo "         PASTE_YOUR_DEEPSEEK_KEY_HERE  ->  your actual DeepSeek key"
-    echo "         PASTE_YOUR_GEMINI_KEY_HERE    ->  your actual Gemini key"
+    echo "       Open ~/.mira/.env in your editor and replace the placeholder values."
     echo ""
     echo "       Get keys from:"
     echo "         DeepSeek: https://platform.deepseek.com/api_keys"
     echo "         Gemini:   https://aistudio.google.com/app/apikey"
     echo ""
-    echo "    2. Add Mira instructions to your project:"
+
+    if [ "$plugin_ok" -eq 0 ]; then
+        echo "    2. Hooks and skills were auto-configured by the plugin."
+        echo ""
+    else
+        echo "    2. Hooks were configured in ~/.claude/settings.json."
+        echo "       To install the plugin later (includes skills):"
+        echo "         claude plugin marketplace add $REPO"
+        echo "         claude plugin install mira@mira"
+        echo ""
+    fi
+
+    echo "    3. Add Mira instructions to your project:"
+    echo "       See docs/CLAUDE_TEMPLATE.md for the recommended CLAUDE.md layout."
     echo ""
-    echo "       cd /path/to/your/project"
-    echo "       mira init"
-    echo ""
-    echo "       This creates CLAUDE.md, .claude/rules/, and .claude/skills/"
-    echo "       with all Mira guidance in a modular structure."
-    echo ""
-    echo "       Or manually: see docs/CLAUDE_TEMPLATE.md for the file layout."
-    echo ""
-    echo "    3. Restart Claude Code (if running) to enable hooks"
+    echo "    4. Restart Claude Code (if running) to enable hooks"
     echo ""
     echo "  Verify: mira --version"
     echo ""
