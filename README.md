@@ -18,7 +18,7 @@ Mira is a Rust MCP server that gives Claude Code long-term memory, deep code und
 
 **Builds intelligence in the background.** A background engine continuously generates module summaries, detects capabilities, summarizes git changes since your last session, scores tech debt, and surfaces insights — all without you asking.
 
-**Provides expert second opinions.** On-demand consultation from specialized AI reviewers (architect, security, code reviewer, scope analyst, plan reviewer) that have full access to search your codebase before answering. Powered by DeepSeek Reasoner and Gemini, or routed through the host client via MCP Sampling if you prefer not to bring your own keys.
+**Provides expert second opinions.** On-demand consultation from specialized AI reviewers (architect, security, code reviewer, scope analyst, plan reviewer) that have full access to search your codebase before answering. Powered by DeepSeek Reasoner and Gemini. Mira also implements MCP Sampling support, which would allow expert consultation without API keys by routing through the host client — but Claude Code doesn't advertise the sampling capability yet, so this will activate automatically if/when Anthropic enables it.
 
 **Tracks goals across sessions.** Weighted milestones that persist across conversations, so multi-session work doesn't lose its thread.
 
@@ -40,7 +40,7 @@ DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
 GEMINI_API_KEY=your-key-here    # https://aistudio.google.com/app/apikey
 ```
 
-> **No API keys?** Mira works without them — expert consultation routes through MCP Sampling (uses the host client), search falls back to fuzzy/keyword matching, and analysis uses heuristic parsers. Keys unlock dedicated providers for faster, higher-quality results.
+> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without them. Search falls back to fuzzy/keyword matching and analysis uses heuristic parsers. Expert consultation requires at least one LLM key (DeepSeek or Gemini). Keys unlock dedicated providers for faster, higher-quality results across all features.
 
 ### Manual Install
 
