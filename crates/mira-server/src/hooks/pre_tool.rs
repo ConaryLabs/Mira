@@ -2,7 +2,7 @@
 // PreToolUse hook handler - injects relevant context before Grep/Glob searches
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{read_hook_input, write_hook_output, HookTimer};
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -65,7 +65,10 @@ pub async fn run() -> Result<()> {
 
     // Only process Grep/Glob/Read operations
     let dominated_tools = ["Grep", "Glob", "Read"];
-    if !dominated_tools.iter().any(|t| pre_input.tool_name.contains(t)) {
+    if !dominated_tools
+        .iter()
+        .any(|t| pre_input.tool_name.contains(t))
+    {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     }

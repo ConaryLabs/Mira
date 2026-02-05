@@ -83,8 +83,7 @@ pub fn get_pending_session_tasks_sync(
 
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(params![project_id, limit as i64], parse_session_task_row)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(Into::into)
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 /// Count completed vs remaining session tasks for a project.

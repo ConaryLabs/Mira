@@ -114,6 +114,7 @@ pub use memory::{
     get_base_persona_sync,
     get_global_memories_sync,
     get_health_alerts_sync as get_health_alerts_memory_sync,
+    get_memory_metadata_sync,
     get_memory_stats_sync,
     get_preferences_sync as get_preferences_memory_sync,
     get_project_persona_sync,
@@ -125,7 +126,6 @@ pub use memory::{
     recall_semantic_with_entity_boost_sync,
     record_memory_access_sync,
     search_memories_sync,
-    get_memory_metadata_sync,
     store_embedding_sync,
     store_fact_embedding_sync,
     // Sync functions for pool.interact() usage

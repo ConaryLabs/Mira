@@ -220,8 +220,9 @@ pub async fn run() -> Result<()> {
                             format!("  {} {}", marker, t.subject)
                         })
                         .collect();
-                    let total =
-                        crate::tasks::count_tasks(&dir).map(|(c, r)| c + r).unwrap_or(0);
+                    let total = crate::tasks::count_tasks(&dir)
+                        .map(|(c, r)| c + r)
+                        .unwrap_or(0);
                     let completed = total - pending.len();
                     Some(format!(
                         "[Mira] {} pending task(s) ({}/{} completed):\n{}",

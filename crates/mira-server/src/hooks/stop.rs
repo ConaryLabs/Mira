@@ -306,11 +306,7 @@ async fn snapshot_tasks(
 
     match result {
         Ok(count) => {
-            let label = if is_session_end {
-                "SessionEnd"
-            } else {
-                "Stop"
-            };
+            let label = if is_session_end { "SessionEnd" } else { "Stop" };
             eprintln!(
                 "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
                 label, count, completed, remaining,
@@ -376,7 +372,11 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
 
     // Tools used
     if !top_tools.is_empty() {
-        parts.push(format!("{} tool calls ({})", tool_count, top_tools.join(", ")));
+        parts.push(format!(
+            "{} tool calls ({})",
+            tool_count,
+            top_tools.join(", ")
+        ));
     } else {
         parts.push(format!("{} tool calls", tool_count));
     }

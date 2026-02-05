@@ -98,7 +98,11 @@ pub fn run() -> Result<()> {
         .and_then(|v| v.as_str())
         .or_else(|| {
             // Check for resumed flag as fallback
-            if input.get("resumed").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if input
+                .get("resumed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
                 Some("resume")
             } else {
                 None
@@ -225,7 +229,13 @@ async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> O
                     let summary = h
                         .result_summary
                         .as_deref()
-                        .map(|s| if s.len() > 80 { format!("{}...", &s[..80]) } else { s.to_string() })
+                        .map(|s| {
+                            if s.len() > 80 {
+                                format!("{}...", &s[..80])
+                            } else {
+                                s.to_string()
+                            }
+                        })
                         .unwrap_or_default();
                     format!("  {} {} -> {}", status, h.tool_name, summary)
                 })
@@ -257,10 +267,7 @@ async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> O
             .iter()
             .map(|g| format!("  • {} [{}%] - {}", g.title, g.progress_percent, g.status))
             .collect();
-        context_parts.push(format!(
-            "**Active goals:**\n{}",
-            goal_lines.join("\n")
-        ));
+        context_parts.push(format!("**Active goals:**\n{}", goal_lines.join("\n")));
     }
 
     if context_parts.is_empty() {

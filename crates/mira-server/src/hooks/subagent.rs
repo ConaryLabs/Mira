@@ -2,7 +2,7 @@
 // SubagentStart and SubagentStop hook handlers
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{read_hook_input, write_hook_output, HookTimer};
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -246,7 +246,8 @@ async fn get_relevant_memories(
             for kw in &keywords {
                 params.push(Box::new(kw.clone()));
             }
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|b| b.as_ref()).collect();
 
             let memories: Vec<String> = stmt
                 .query_map(params_refs.as_slice(), |row| {

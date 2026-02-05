@@ -189,7 +189,9 @@ pub async fn session_history<C: ToolContext>(
                 .into_iter()
                 .map(|s| {
                     let source_info = match (&s.source, &s.resumed_from) {
-                        (Some(src), Some(from)) => format!(" [{}←{}]", src, truncate_at_boundary(from, 8)),
+                        (Some(src), Some(from)) => {
+                            format!(" [{}←{}]", src, truncate_at_boundary(from, 8))
+                        }
                         (Some(src), None) => format!(" [{}]", src),
                         _ => String::new(),
                     };

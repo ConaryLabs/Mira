@@ -2,7 +2,7 @@
 // PostToolUse hook handler - tracks file changes and provides hints
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{read_hook_input, write_hook_output, HookTimer};
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use crate::proactive::behavior::BehaviorTracker;
 use anyhow::Result;
 use std::path::PathBuf;

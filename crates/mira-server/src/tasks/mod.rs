@@ -90,19 +90,11 @@ pub fn read_task_list(dir: &Path) -> Result<Vec<NativeTask>> {
             Ok(content) => match serde_json::from_str::<NativeTask>(&content) {
                 Ok(task) => tasks.push(task),
                 Err(e) => {
-                    eprintln!(
-                        "[mira] Failed to parse task file {}: {}",
-                        path.display(),
-                        e
-                    );
+                    eprintln!("[mira] Failed to parse task file {}: {}", path.display(), e);
                 }
             },
             Err(e) => {
-                eprintln!(
-                    "[mira] Failed to read task file {}: {}",
-                    path.display(),
-                    e
-                );
+                eprintln!("[mira] Failed to read task file {}: {}", path.display(), e);
             }
         }
     }

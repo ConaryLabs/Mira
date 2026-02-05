@@ -388,7 +388,13 @@ pub async fn recall<C: ToolContext>(
     // Fall back to fuzzy search if enabled
     if let Some(cache) = ctx.fuzzy_cache()
         && let Ok(results) = cache
-            .search_memories(ctx.pool(), project_id, user_id.as_deref(), &query, fetch_limit)
+            .search_memories(
+                ctx.pool(),
+                project_id,
+                user_id.as_deref(),
+                &query,
+                fetch_limit,
+            )
             .await
         && !results.is_empty()
     {
@@ -398,7 +404,9 @@ pub async fn recall<C: ToolContext>(
                 .into_iter()
                 .filter(|m| {
                     let ft_ok = fact_type.as_ref().is_none_or(|f| f == &m.fact_type);
-                    let cat_ok = category.as_ref().is_none_or(|c| m.category.as_ref() == Some(c));
+                    let cat_ok = category
+                        .as_ref()
+                        .is_none_or(|c| m.category.as_ref() == Some(c));
                     ft_ok && cat_ok
                 })
                 .take(limit)
@@ -463,7 +471,9 @@ pub async fn recall<C: ToolContext>(
             .into_iter()
             .filter(|m| {
                 let ft_ok = fact_type.as_ref().is_none_or(|f| f == &m.fact_type);
-                let cat_ok = category.as_ref().is_none_or(|c| m.category.as_ref() == Some(c));
+                let cat_ok = category
+                    .as_ref()
+                    .is_none_or(|c| m.category.as_ref() == Some(c));
                 ft_ok && cat_ok
             })
             .take(limit)
