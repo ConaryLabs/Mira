@@ -64,7 +64,7 @@ Council mode pipeline:
 
 Falls back to parallel independent consultations if council fails.
 
-**MCP Sampling**: When no API keys are configured, experts can consult via the host client using MCP Sampling — no `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` required.
+**MCP Sampling**: Mira implements MCP Sampling support for zero-key expert consultation via the host client, but Claude Code does not currently advertise the sampling capability. This will activate automatically if/when Anthropic enables it. For now, at least one API key (`DEEPSEEK_API_KEY` or `GEMINI_API_KEY`) is required for expert consultation.
 
 **Concurrency**: Max 3 concurrent experts, 10-minute per-expert timeout, 15-minute council timeout.
 
@@ -99,7 +99,7 @@ Uses `config_action` sub-parameter:
 
 ## Errors
 
-- **No LLM provider**: Set `DEEPSEEK_API_KEY` or `GEMINI_API_KEY`, or use MCP Sampling
+- **No LLM provider**: Set `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` in `~/.mira/.env`
 - **Invalid role**: Must be one of the valid role keys
 - **Timeout**: Consultations exceeding 15 minutes are cancelled
 

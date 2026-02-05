@@ -94,7 +94,7 @@ Key components:
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
 | LLM Factory | `llm/factory.rs` | DeepSeek, Gemini providers |
 | Embeddings | `embeddings/mod.rs` | Embedding queue and Google client (gemini-embedding-001) |
-| MCP Sampling | `llm/sampling.rs` | Zero-key expert consultation via host client |
+| MCP Sampling | `llm/sampling.rs` | Expert consultation via host client (awaiting Claude Code support) |
 | Elicitation | `elicitation.rs` | Interactive API key setup flow |
 | Async Tasks | `tools/core/tasks.rs` | Background task management |
 | Change Intelligence | `background/change_patterns.rs` | Outcome tracking, pattern mining, predictive risk |
@@ -244,7 +244,7 @@ rather than failing:
 - **Diff analysis** falls back to heuristic parsing (regex-based function detection, security keyword scanning)
 - **Module summaries** fall back to metadata extraction (file counts, language distribution, symbol names)
 - **Pondering/insights** fall back to tool history analysis (usage distribution, friction detection)
-- **Expert consultation** can use MCP Sampling (host client) when no API keys are configured, or falls back to a clear error message with setup instructions
+- **Expert consultation** requires at least one LLM key (MCP Sampling support is implemented but Claude Code doesn't advertise the capability yet)
 
 Heuristic results are prefixed with `[heuristic]` and cached separately, so LLM re-analysis
 can upgrade them when a provider becomes available.
@@ -384,8 +384,8 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 Mira exposes 10 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
-The server supports MCP Sampling (zero-key expert consultation), MCP Elicitation (interactive
-setup), and MCP Tasks (async long-running operations).
+The server implements MCP Sampling (expert consultation via host client, awaiting Claude Code support),
+MCP Elicitation (interactive setup), and MCP Tasks (async long-running operations).
 
 This architecture encourages:
 - A stable "capabilities surface" with fewer, more capable tools
@@ -541,7 +541,7 @@ The following were previously planned and are now complete:
 
 ### Recently Implemented (v0.5.0) ✓
 
-- ✓ MCP Sampling for zero-key expert consultation
+- ✓ MCP Sampling implemented (awaiting Claude Code capability advertisement)
 - ✓ MCP Elicitation for interactive API key setup
 - ✓ MCP Tasks for async long-running operations
 - ✓ Structured JSON responses via outputSchema

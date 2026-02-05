@@ -21,7 +21,7 @@ Mira uses environment variables for API keys and configuration. These can be set
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |
 
-*API keys are optional. Mira runs without any keys using heuristic fallbacks — diff analysis uses pattern-based parsing, module summaries use metadata extraction, and background insights use tool history analysis. Expert consultation works without keys via MCP Sampling (uses the host client). Semantic search requires `GEMINI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it. At least one provider key is recommended for full LLM-powered intelligence features.*
+*API keys are optional for core features. Mira's memory, code intelligence, and goal tracking work without any keys. Diff analysis, module summaries, and background insights use heuristic fallbacks (pattern-based parsing, metadata extraction, tool history analysis). Expert consultation requires at least one LLM key (`DEEPSEEK_API_KEY` or `GEMINI_API_KEY`). Semantic search requires `GEMINI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it.*
 
 ### Embeddings Configuration
 

@@ -176,7 +176,7 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 ### Provider Configuration
 
 Experts can be backed by different LLM providers via `expert(action="configure")` or `~/.mira/config.toml`:
-- **MCP Sampling** (zero-key) — Uses the host client, no API keys needed
+- **MCP Sampling** — Implemented but awaiting Claude Code support; will route through the host client when enabled
 - **DeepSeek** (default with key) — Optimized for extended reasoning
 - **Gemini** — Google's models, cost-effective for simpler tasks
 
