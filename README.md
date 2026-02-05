@@ -12,14 +12,12 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.5.2
+## What's New in v0.5.3
 
-- **UTF-8 Safe Truncation** — All ~35 raw string slicing sites now use boundary-safe truncation, eliminating potential panics on multi-byte characters
-- **Expert Module Split** — Split 959-line `experts/tools.rs` into focused `definitions.rs` and `web.rs` modules
-- **Performance** — Batch findings writes, cached search reranking metadata, Rust-native PATH scanning
-- **Type System** — 13 type aliases, 6 params structs, owned data in findings (8 clones removed), 130 collapsible-if fixes
-- **Reliability** — Fixed SQLITE_LOCKED retry, MCP client double-connect race, latent JSON escaping bug
-- **-544 Lines Net** — Across 110+ files
+- **Enhanced Hook System** — New `PreToolUse`, `SubagentStart`/`SubagentStop`, and `SessionEnd` hooks for deeper Claude Code integration
+- **New Skills** — Added `/mira:diff`, `/mira:experts`, `/mira:insights`, and `/mira:remember` slash commands
+- **Session Bridging** — Hooks now detect startup vs resume, capture task list IDs, and track session continuity
+- **Recall Filters Fixed** — `category` and `fact_type` filters in `memory(action="recall")` now work correctly
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 

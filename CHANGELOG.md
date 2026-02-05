@@ -80,6 +80,8 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-02-05
+
 ### Added
 - **Enhanced hook system** - Added `PreToolUse` (context injection before Grep/Glob/Read), `SubagentStart`/`SubagentStop` (subagent context and discovery capture), and `SessionEnd` hooks.
 - **New skills** - Added `/mira:diff` (semantic diff analysis), `/mira:experts` (expert consultation), `/mira:insights` (background analysis), and `/mira:remember` (quick memory storage) skills.
@@ -88,6 +90,7 @@ Where it all began - a personal AI assistant with memory.
 
 ### Fixed
 - **Recall filters** - `category` and `fact_type` filters in `memory(action="recall")` now work correctly.
+- **Clippy warnings** - Resolved needless borrows, collapsible ifs, and let-else patterns in hooks.
 
 ## [0.5.2] - 2026-02-04
 
