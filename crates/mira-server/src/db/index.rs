@@ -96,6 +96,19 @@ pub fn clear_file_index_sync(
     project_id: i64,
     file_path: &str,
 ) -> rusqlite::Result<()> {
+    // Delete call_graph edges first (references code_symbols via caller_id/callee_id).
+    // We clear both directions to avoid foreign-key failures when symbols are removed.
+    conn.execute(
+        "DELETE FROM call_graph
+         WHERE caller_id IN (
+             SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2
+         )
+         OR callee_id IN (
+             SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2
+         )",
+        params![project_id, file_path],
+    )?;
+
     // Delete symbols for this file
     conn.execute(
         "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
@@ -110,6 +123,12 @@ pub fn clear_file_index_sync(
 
     conn.execute(
         "DELETE FROM code_fts WHERE project_id = ? AND file_path = ?",
+        params![project_id, file_path],
+    )?;
+
+    // Delete pending embeddings for this file
+    conn.execute(
+        "DELETE FROM pending_embeddings WHERE project_id = ? AND file_path = ?",
         params![project_id, file_path],
     )?;
 

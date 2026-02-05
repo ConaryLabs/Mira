@@ -473,17 +473,20 @@ fn collect_dependency_data(
 
     // Cache file_path -> module_id lookups to avoid repeated linear scans
     let mut file_mod_cache: HashMap<String, Option<String>> = HashMap::new();
-    let resolve_mod = |cache: &mut HashMap<String, Option<String>>, file_path: &str| -> Option<String> {
-        if let Some(cached) = cache.get(file_path) {
-            return cached.clone();
-        }
-        let result = modules_sorted
-            .iter()
-            .find(|(_, path)| file_path.starts_with(path.as_str()) || file_path.contains(path.as_str()))
-            .map(|(id, _)| id.clone());
-        cache.insert(file_path.to_string(), result.clone());
-        result
-    };
+    let resolve_mod =
+        |cache: &mut HashMap<String, Option<String>>, file_path: &str| -> Option<String> {
+            if let Some(cached) = cache.get(file_path) {
+                return cached.clone();
+            }
+            let result = modules_sorted
+                .iter()
+                .find(|(_, path)| {
+                    file_path.starts_with(path.as_str()) || file_path.contains(path.as_str())
+                })
+                .map(|(id, _)| id.clone());
+            cache.insert(file_path.to_string(), result.clone());
+            result
+        };
 
     // Count import deps
     let mut import_deps: HashMap<(String, String), i64> = HashMap::new();
@@ -498,8 +501,10 @@ fn collect_dependency_data(
             .str_err()?;
         for row in rows {
             let (fp, ip) = row.str_err()?;
-            if let (Some(src), Some(tgt)) = (resolve_mod(&mut file_mod_cache, &fp), resolve_mod(&mut file_mod_cache, &ip))
-                && src != tgt
+            if let (Some(src), Some(tgt)) = (
+                resolve_mod(&mut file_mod_cache, &fp),
+                resolve_mod(&mut file_mod_cache, &ip),
+            ) && src != tgt
             {
                 *import_deps.entry((src, tgt)).or_default() += 1;
             }
@@ -529,8 +534,10 @@ fn collect_dependency_data(
             .str_err()?;
         for row in rows {
             let (f1, f2, cnt) = row.str_err()?;
-            if let (Some(src), Some(tgt)) = (resolve_mod(&mut file_mod_cache, &f1), resolve_mod(&mut file_mod_cache, &f2))
-                && src != tgt
+            if let (Some(src), Some(tgt)) = (
+                resolve_mod(&mut file_mod_cache, &f1),
+                resolve_mod(&mut file_mod_cache, &f2),
+            ) && src != tgt
             {
                 *call_deps.entry((src, tgt)).or_default() += cnt;
             }

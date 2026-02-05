@@ -6,6 +6,7 @@ use crate::db::{
     SymbolSearchResult, chunk_like_search_sync, fts_search_sync, symbol_like_search_sync,
 };
 use rusqlite::Connection;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Result from keyword search: (file_path, content, score, start_line)
@@ -84,6 +85,8 @@ pub fn keyword_search(
     }
 
     // Strategy 2: Symbol name search (always runs, not just as fallback)
+    // Cache file reads so multiple symbols from one file don't hit disk repeatedly.
+    let mut symbol_file_cache: HashMap<String, Option<String>> = HashMap::new();
     if let Some(pid) = project_id {
         let terms: Vec<&str> = query.split_whitespace().collect();
         if !terms.is_empty() {
@@ -93,7 +96,7 @@ pub fn keyword_search(
                 .collect();
             let symbol_results = symbol_like_search_sync(conn, &like_patterns, pid, fetch_limit);
             for sym in symbol_results {
-                let content = read_symbol_content(&sym, project_path);
+                let content = read_symbol_content(&sym, project_path, &mut symbol_file_cache);
                 let score = score_symbol_match(&sym.name, query);
                 all_results.push((sym.file_path, content, score, sym.start_line));
             }
@@ -132,11 +135,19 @@ pub fn keyword_search(
     if let Some(ref near_query) = plan.proximity {
         let proximity_hits = fts5_search(conn, near_query, project_id, fetch_limit);
         if !proximity_hits.is_empty() {
-            // Build a set of (file_path, start_line) that have proximity matches
-            let near_set: std::collections::HashSet<(String, i64)> =
-                proximity_hits.iter().map(|r| (r.0.clone(), r.3)).collect();
+            // Build file -> line set for O(1) lookups without per-result string clones.
+            let mut near_lines_by_file: HashMap<String, HashSet<i64>> = HashMap::new();
+            for (file_path, _content, _score, start_line) in proximity_hits {
+                near_lines_by_file
+                    .entry(file_path)
+                    .or_default()
+                    .insert(start_line);
+            }
             for result in &mut all_results {
-                if near_set.contains(&(result.0.clone(), result.3)) {
+                if near_lines_by_file
+                    .get(&result.0)
+                    .is_some_and(|lines| lines.contains(&result.3))
+                {
                     result.2 *= PROXIMITY_BOOST;
                 }
             }
@@ -253,15 +264,27 @@ fn fts5_search(
 }
 
 /// Read a symbol's source code from the filesystem, falling back to signature/name
-fn read_symbol_content(sym: &SymbolSearchResult, project_path: Option<&str>) -> String {
+fn read_symbol_content(
+    sym: &SymbolSearchResult,
+    project_path: Option<&str>,
+    file_cache: &mut HashMap<String, Option<String>>,
+) -> String {
     if let Some(proj_path) = project_path {
-        let full_path = Path::new(proj_path).join(&sym.file_path);
-        if let Ok(file_content) = std::fs::read_to_string(&full_path) {
-            let lines: Vec<&str> = file_content.lines().collect();
-            let start_idx = (sym.start_line as usize).saturating_sub(1).min(lines.len());
-            let end_idx = (sym.end_line as usize).min(lines.len());
-            if start_idx < end_idx {
-                return lines[start_idx..end_idx].join("\n");
+        let cached = file_cache.entry(sym.file_path.clone()).or_insert_with(|| {
+            let full_path = Path::new(proj_path).join(&sym.file_path);
+            std::fs::read_to_string(&full_path).ok()
+        });
+
+        if let Some(file_content) = cached.as_deref() {
+            let start_idx = (sym.start_line as usize).saturating_sub(1);
+            let line_count = (sym.end_line.saturating_sub(sym.start_line) + 1) as usize;
+            let snippet: Vec<&str> = file_content
+                .lines()
+                .skip(start_idx)
+                .take(line_count)
+                .collect();
+            if !snippet.is_empty() {
+                return snippet.join("\n");
             }
         }
     }

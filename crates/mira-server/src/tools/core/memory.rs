@@ -93,17 +93,33 @@ trait RecallResult {
 }
 
 impl RecallResult for MemoryFact {
-    fn id(&self) -> i64 { self.id }
-    fn content(&self) -> &str { &self.content }
-    fn fact_type(&self) -> &str { &self.fact_type }
-    fn category(&self) -> Option<&str> { self.category.as_deref() }
+    fn id(&self) -> i64 {
+        self.id
+    }
+    fn content(&self) -> &str {
+        &self.content
+    }
+    fn fact_type(&self) -> &str {
+        &self.fact_type
+    }
+    fn category(&self) -> Option<&str> {
+        self.category.as_deref()
+    }
 }
 
 impl RecallResult for crate::fuzzy::FuzzyMemoryResult {
-    fn id(&self) -> i64 { self.id }
-    fn content(&self) -> &str { &self.content }
-    fn fact_type(&self) -> &str { &self.fact_type }
-    fn category(&self) -> Option<&str> { self.category.as_deref() }
+    fn id(&self) -> i64 {
+        self.id
+    }
+    fn content(&self) -> &str {
+        &self.content
+    }
+    fn fact_type(&self) -> &str {
+        &self.fact_type
+    }
+    fn category(&self) -> Option<&str> {
+        self.category.as_deref()
+    }
 }
 
 /// Filter recall results by category and fact_type, applying limit
@@ -119,7 +135,9 @@ fn filter_results<T: RecallResult>(
     results
         .into_iter()
         .filter(|m| {
-            let ft_ok = fact_type.as_ref().is_none_or(|f| f.as_str() == m.fact_type());
+            let ft_ok = fact_type
+                .as_ref()
+                .is_none_or(|f| f.as_str() == m.fact_type());
             let cat_ok = category
                 .as_ref()
                 .is_none_or(|c| m.category() == Some(c.as_str()));
@@ -157,7 +175,12 @@ fn build_recall_output<T: RecallResult>(
     let mut response = format!("{}Found {} memories{}:\n", context_header, total, label);
     for mem in results {
         let preview = truncate(mem.content(), 100);
-        response.push_str(&format!("  [{}] ({}) {}\n", mem.id(), mem.fact_type(), preview));
+        response.push_str(&format!(
+            "  [{}] ({}) {}\n",
+            mem.id(),
+            mem.fact_type(),
+            preview
+        ));
     }
 
     Json(MemoryOutput {
@@ -243,9 +266,12 @@ pub async fn remember<C: ToolContext>(
         ));
     }
 
-    // Personal scope requires user_id
-    if scope == "personal" && user_id.is_none() {
-        return Err("Cannot create personal memory: user identity not available".to_string());
+    // Personal and team scopes require user identity for access control
+    if matches!(scope.as_str(), "personal" | "team") && user_id.is_none() {
+        return Err(format!(
+            "Cannot create {} memory: user identity not available",
+            scope
+        ));
     }
 
     // Get current branch for branch-aware memory

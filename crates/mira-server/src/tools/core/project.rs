@@ -366,11 +366,7 @@ async fn load_recent_sessions<C: ToolContext>(
         .run(move |conn| {
             let sessions = get_recent_sessions_sync(conn, project_id, 4).unwrap_or_default();
             let mut result = Vec::new();
-            for sess in sessions
-                .into_iter()
-                .filter(|s| s.id != sid_owned)
-                .take(3)
-            {
+            for sess in sessions.into_iter().filter(|s| s.id != sid_owned).take(3) {
                 let (tool_count, tools) =
                     get_session_stats_sync(conn, &sess.id).unwrap_or((0, vec![]));
                 result.push((sess.id, sess.last_activity, sess.summary, tool_count, tools));
@@ -381,10 +377,7 @@ async fn load_recent_sessions<C: ToolContext>(
 }
 
 /// Load recap data: preferences, memories, health alerts, doc counts, interventions
-async fn load_recap_data<C: ToolContext>(
-    ctx: &C,
-    project_id: i64,
-) -> Result<RecapData, String> {
+async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<RecapData, String> {
     ctx.pool()
         .run(move |conn| {
             let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();

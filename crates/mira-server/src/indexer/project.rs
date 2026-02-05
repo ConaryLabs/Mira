@@ -134,6 +134,7 @@ async fn process_parsed_files(
     stats: &mut IndexStats,
 ) -> Result<()> {
     let total_files = parsed_files.len();
+    let mut batched_symbol_count: usize = 0;
 
     for (i, parsed) in parsed_files.into_iter().enumerate() {
         tracing::info!(
@@ -160,6 +161,8 @@ async fn process_parsed_files(
             })
             .collect();
 
+        let symbol_count = parsed.symbols.len();
+
         // Accumulate file data for batch insertion
         pending_batches.push(PendingFileBatch {
             file_path: parsed.relative_path.clone(),
@@ -167,14 +170,15 @@ async fn process_parsed_files(
             imports: parsed.imports,
             calls: parsed.calls,
         });
+        batched_symbol_count += symbol_count;
 
         // Check if we should flush accumulated batches
-        let total_batched_symbols: usize = pending_batches.iter().map(|b| b.symbols.len()).sum();
-        if total_batched_symbols >= SYMBOL_FLUSH_THRESHOLD
+        if batched_symbol_count >= SYMBOL_FLUSH_THRESHOLD
             || pending_batches.len() >= FILE_FLUSH_THRESHOLD
         {
             let flush_start = std::time::Instant::now();
             flush_code_batch(pending_batches, pool.clone(), project_id, stats).await?;
+            batched_symbol_count = 0;
             tracing::debug!("  Batch flush in {:?}", flush_start.elapsed());
         }
 

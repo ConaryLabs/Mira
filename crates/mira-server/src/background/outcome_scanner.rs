@@ -150,7 +150,9 @@ async fn scan_project(
         let pid = project_id;
         let count = outcomes.len();
         pool.interact(move |conn| {
-            let tx = conn.unchecked_transaction().map_err(|e| anyhow::anyhow!("{}", e))?;
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             for o in &outcomes {
                 store_diff_outcome_sync(
                     &tx,

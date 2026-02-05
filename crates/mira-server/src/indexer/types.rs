@@ -19,6 +19,7 @@ pub struct CodeChunk {
 pub struct FileParseResult {
     pub symbols: Vec<ParsedSymbol>,
     pub imports: Vec<ParsedImport>,
+    pub calls: Vec<ParsedCall>,
     pub chunks: Vec<CodeChunk>,
 }
 
@@ -35,4 +36,11 @@ pub struct ParsedSymbol {
 pub struct ParsedImport {
     pub path: String,
     pub is_external: bool,
+}
+
+/// Simplified function call for incremental indexing
+pub struct ParsedCall {
+    pub caller_name: String,
+    pub callee_name: String,
+    pub call_line: u32,
 }

@@ -224,7 +224,10 @@ async fn generate_briefing(
             let git_log = git_log?;
             generate_briefing_llm(&git_log, file_stats.as_deref(), client, pool, project_id).await
         }
-        None => Some(generate_briefing_fallback(git_log.as_deref(), file_stats.as_deref())),
+        None => Some(generate_briefing_fallback(
+            git_log.as_deref(),
+            file_stats.as_deref(),
+        )),
     }
 }
 

@@ -6,7 +6,7 @@ use super::code_health;
 use crate::config::ignore;
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    ImportInsert, SymbolInsert, clear_file_index_sync, insert_code_chunk_sync,
+    ImportInsert, SymbolInsert, clear_file_index_sync, insert_call_sync, insert_code_chunk_sync,
     insert_code_fts_entry_sync, insert_import_sync, insert_symbol_sync,
     queue_pending_embedding_sync,
 };
@@ -155,15 +155,17 @@ impl FileWatcher {
 
                 // Unwatch removed projects
                 let current_paths: HashSet<_> = projects.values().cloned().collect();
-                for path in watched_paths.clone() {
-                    if !current_paths.contains(&path) {
-                        if let Err(e) = watcher.unwatch(&path) {
+                watched_paths.retain(|path| {
+                    if current_paths.contains(path) {
+                        true
+                    } else {
+                        if let Err(e) = watcher.unwatch(path) {
                             tracing::debug!("Failed to unwatch path {:?}: {}", path, e);
                         }
-                        watched_paths.remove(&path);
                         tracing::debug!("Stopped watching {:?}", path);
+                        false
                     }
-                }
+                });
             }
 
             // Process file events with timeout
@@ -256,16 +258,24 @@ impl FileWatcher {
         // Find which project this file belongs to
         let (project_id, relative_path) = {
             let projects = self.watched_projects.read().await;
-            let mut found = None;
+            let mut found: Option<(usize, i64, PathBuf)> = None;
             for (pid, project_path) in projects.iter() {
                 if path.starts_with(project_path)
                     && let Ok(rel) = path.strip_prefix(project_path)
                 {
-                    found = Some((*pid, rel.to_path_buf()));
-                    break;
+                    // Prefer the most specific (longest) matching project root.
+                    let depth = project_path.components().count();
+                    if found
+                        .as_ref()
+                        .is_none_or(|(best_depth, _, _)| depth > *best_depth)
+                    {
+                        found = Some((depth, *pid, rel.to_path_buf()));
+                    }
                 }
             }
-            found.ok_or_else(|| format!("No project found for path {:?}", path))?
+            let (_, pid, rel) =
+                found.ok_or_else(|| format!("No project found for path {:?}", path))?;
+            (pid, rel)
         };
 
         let rel_path_str = crate::utils::path_to_string(&relative_path);
@@ -335,9 +345,6 @@ impl FileWatcher {
         full_path: &Path,
         relative_path: &str,
     ) -> Result<(), String> {
-        // First delete existing data for this file
-        self.delete_file_data(project_id, relative_path).await?;
-
         // Read the file content
         let content = tokio::fs::read_to_string(full_path)
             .await
@@ -354,22 +361,30 @@ impl FileWatcher {
             _ => return Err(format!("Unsupported extension: {}", ext)),
         };
 
-        // Parse the file (CPU-bound, runs on current thread - that's fine)
+        // Parse is CPU-bound; move it off the async runtime.
         let parse_result =
-            indexer::parse_file(&content, language).map_err(|e| format!("Parse error: {}", e))?;
+            tokio::task::spawn_blocking(move || indexer::parse_file(&content, language))
+                .await
+                .map_err(|e| format!("Parse task failed: {}", e))?
+                .map_err(|e| format!("Parse error: {}", e))?;
 
         // Run DB inserts on pool connection with a transaction for speed
         let relative_path = relative_path.to_string();
         let relative_path_for_db = relative_path.clone();
         let symbol_count = parse_result.symbols.len();
+        let call_count = parse_result.calls.len();
         let chunk_count = parse_result.chunks.len();
         self.pool
             .interact(move |conn| -> Result<(), anyhow::Error> {
                 let relative_path = relative_path_for_db;
                 // Use a transaction for batch inserts (much faster)
                 let tx = conn.unchecked_transaction()?;
+                // Replace index data atomically so parse failures don't drop existing entries.
+                clear_file_index_sync(&tx, project_id, &relative_path)?;
 
-                // Insert symbols
+                // Insert symbols and capture inserted IDs for call-graph linking.
+                let mut symbol_ranges: Vec<(String, u32, u32, i64)> =
+                    Vec::with_capacity(parse_result.symbols.len());
                 for symbol in &parse_result.symbols {
                     let sym_insert = SymbolInsert {
                         name: &symbol.name,
@@ -378,7 +393,14 @@ impl FileWatcher {
                         end_line: symbol.end_line,
                         signature: symbol.signature.as_deref(),
                     };
-                    insert_symbol_sync(&tx, Some(project_id), &relative_path, &sym_insert)?;
+                    let symbol_id =
+                        insert_symbol_sync(&tx, Some(project_id), &relative_path, &sym_insert)?;
+                    symbol_ranges.push((
+                        symbol.name.clone(),
+                        symbol.start_line,
+                        symbol.end_line,
+                        symbol_id,
+                    ));
                 }
 
                 // Insert imports
@@ -388,6 +410,27 @@ impl FileWatcher {
                         is_external: import.is_external,
                     };
                     insert_import_sync(&tx, Some(project_id), &relative_path, &import_insert)?;
+                }
+
+                // Rebuild call graph edges for this file.
+                for call in &parse_result.calls {
+                    let caller_id = symbol_ranges
+                        .iter()
+                        .find(|(name, start, end, _)| {
+                            name == &call.caller_name
+                                && call.call_line >= *start
+                                && call.call_line <= *end
+                        })
+                        .map(|(_, _, _, id)| *id);
+
+                    if let Some(cid) = caller_id {
+                        let callee_id = symbol_ranges
+                            .iter()
+                            .find(|(name, _, _, _)| name == &call.callee_name)
+                            .map(|(_, _, _, id)| *id);
+
+                        insert_call_sync(&tx, cid, &call.callee_name, callee_id)?;
+                    }
                 }
 
                 // Store chunks to code_chunks and queue for background embedding
@@ -432,10 +475,11 @@ impl FileWatcher {
         }
 
         tracing::debug!(
-            "Updated file {} in project {}: {} symbols, {} chunks queued",
+            "Updated file {} in project {}: {} symbols, {} calls, {} chunks queued",
             relative_path,
             project_id,
             symbol_count,
+            call_count,
             chunk_count
         );
 

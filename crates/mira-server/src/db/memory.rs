@@ -106,7 +106,7 @@ pub fn scope_filter_sql(prefix: &str) -> String {
              {p}scope = 'project'
              OR {p}scope IS NULL
              OR ({p}scope = 'personal' AND {p}user_id = ?{{uid}})
-             OR {p}user_id IS NULL
+             OR ({p}scope = 'team' AND {p}user_id = ?{{uid}})
            )",
         p = prefix,
     )

@@ -228,7 +228,7 @@ fn gather_findings(
 
     // Sort module paths by length descending so longest (most specific) match wins first
     let mut sorted_paths = module_paths.to_vec();
-    sorted_paths.sort_by(|a, b| b.len().cmp(&a.len()));
+    sorted_paths.sort_by_key(|path| std::cmp::Reverse(path.len()));
 
     // Cache content -> module_path lookups to avoid repeated linear scans
     let mut match_cache: HashMap<String, Option<String>> = HashMap::new();

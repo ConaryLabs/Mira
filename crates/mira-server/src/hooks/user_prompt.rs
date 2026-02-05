@@ -108,19 +108,14 @@ async fn get_proactive_context(
             session_stage: None,
         };
 
-        let mut predictions = predictor::generate_context_predictions(
-            conn,
-            project_id,
-            &current_context,
-            &config,
-        )
-        .unwrap_or_default();
+        let mut predictions =
+            predictor::generate_context_predictions(conn, project_id, &current_context, &config)
+                .unwrap_or_default();
 
         // Filter out stale file predictions
         if let Some(ref base) = project_path_owned {
             predictions.retain(|p| match p.prediction_type {
-                predictor::PredictionType::NextFile
-                | predictor::PredictionType::RelatedFiles => {
+                predictor::PredictionType::NextFile | predictor::PredictionType::RelatedFiles => {
                     let exists = Path::new(base).join(&p.content).exists();
                     if !exists {
                         tracing::debug!("Dropping stale file prediction: {}", p.content);

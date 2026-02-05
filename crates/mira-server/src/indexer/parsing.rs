@@ -3,7 +3,7 @@
 
 use crate::indexer::chunking::create_semantic_chunks;
 use crate::indexer::parsers::{self, PARSERS};
-use crate::indexer::types::{FileParseResult, ParsedImport, ParsedSymbol};
+use crate::indexer::types::{FileParseResult, ParsedCall, ParsedImport, ParsedSymbol};
 use anyhow::{Context, Result};
 use std::path::Path;
 use tree_sitter::Parser;
@@ -46,7 +46,7 @@ pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
 
     let mut parser = Parser::new();
     lang_parser.configure_parser(&mut parser)?;
-    let (symbols, imports, _) = lang_parser.parse(&mut parser, content)?;
+    let (symbols, imports, calls) = lang_parser.parse(&mut parser, content)?;
 
     // Convert to simplified types
     let parsed_symbols: Vec<ParsedSymbol> = symbols
@@ -68,12 +68,22 @@ pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
         })
         .collect();
 
+    let parsed_calls: Vec<ParsedCall> = calls
+        .into_iter()
+        .map(|c| ParsedCall {
+            caller_name: c.caller_name,
+            callee_name: c.callee_name,
+            call_line: c.call_line,
+        })
+        .collect();
+
     // AST-aware chunking: chunk at symbol boundaries
     let chunks = create_semantic_chunks(content, &parsed_symbols);
 
     Ok(FileParseResult {
         symbols: parsed_symbols,
         imports: parsed_imports,
+        calls: parsed_calls,
         chunks,
     })
 }
