@@ -110,14 +110,8 @@ CREATE INDEX IF NOT EXISTS idx_code_chunks_file ON code_chunks(project_id, file_
 -- =======================================
 -- VECTOR TABLES (sqlite-vec)
 -- =======================================
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
-    embedding float[1536],
-    +file_path TEXT,
-    +chunk_content TEXT,
-    +project_id INTEGER,
-    +start_line INTEGER,
-    chunk_size=256
-);
+-- vec_code is created separately via VEC_CODE_CREATE_SQL constant
+-- to maintain a single source of truth for its DDL.
 
 -- =======================================
 -- FULL-TEXT SEARCH (FTS5)
@@ -139,6 +133,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
 /// Called during code database initialization. Idempotent.
 pub fn run_code_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch(CODE_SCHEMA)?;
+
+    // Create vec_code using the single source of truth constant
+    conn.execute(VEC_CODE_CREATE_SQL, [])?;
 
     // Run code-specific migrations
     migrate_vec_code_line_numbers(conn)?;

@@ -16,58 +16,75 @@ type EmbeddingRow = (Vec<u8>, String, String, Option<i64>, i64);
 ///
 /// This is used when re-indexing a project from scratch.
 /// Order matters: call_graph references code_symbols, so delete it first.
+/// Wrapped in a transaction for atomicity and reduced fsyncs.
 pub fn clear_project_index_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+
     // Delete call_graph first (references code_symbols via caller_id)
-    conn.execute(
+    tx.execute(
         "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
         params![project_id],
     )?;
 
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_symbols WHERE project_id = ?",
         params![project_id],
     )?;
 
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_chunks WHERE project_id = ?",
         params![project_id],
     )?;
 
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_fts WHERE project_id = ?",
+        params![project_id],
+    )?;
+
+    // Clear pending embeddings to avoid stale entries after reindex
+    tx.execute(
+        "DELETE FROM pending_embeddings WHERE project_id = ?",
         params![project_id],
     )?;
 
     // For vec_code: DROP+recreate if this is the only project to reclaim
     // sqlite-vec chunk storage. Otherwise DELETE as usual.
-    let other_project_vectors: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM vec_code WHERE project_id != ?",
-            params![project_id],
-            |r| r.get(0),
-        )
-        .unwrap_or(1); // Default to 1 (safe path) on error
+    let other_project_vectors: i64 = match tx.query_row(
+        "SELECT COUNT(*) FROM vec_code WHERE project_id != ?",
+        params![project_id],
+        |r| r.get(0),
+    ) {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to count vec_code for other projects: {}. Using safe DELETE path.",
+                e
+            );
+            1 // Default to safe path (DELETE instead of DROP+recreate)
+        }
+    };
 
     if other_project_vectors == 0 {
-        conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
-        conn.execute(VEC_CODE_CREATE_SQL, [])?;
+        tx.execute("DROP TABLE IF EXISTS vec_code", [])?;
+        tx.execute(VEC_CODE_CREATE_SQL, [])?;
     } else {
-        conn.execute(
+        tx.execute(
             "DELETE FROM vec_code WHERE project_id = ?",
             params![project_id],
         )?;
     }
 
-    conn.execute(
+    tx.execute(
         "DELETE FROM imports WHERE project_id = ?",
         params![project_id],
     )?;
 
-    conn.execute(
+    tx.execute(
         "DELETE FROM codebase_modules WHERE project_id = ?",
         params![project_id],
     )?;
 
+    tx.commit()?;
     Ok(())
 }
 

@@ -378,17 +378,14 @@ pub fn auto_memory_dir_exists(project_path: &str) -> bool {
     get_auto_memory_dir(project_path).exists()
 }
 
-/// Extended RankedMemory with additional fields for stricter filtering.
-/// Some fields are fetched for potential debugging/logging but not directly read.
-#[allow(dead_code)]
+/// Memory candidate for auto memory export.
+/// Only contains fields actually used in build_auto_memory_export.
+/// Filtering (confidence, session_count, status) and ordering (hotness)
+/// are handled in the SQL query.
 struct AutoMemoryCandidate {
     content: String,
     fact_type: String,
     category: Option<String>,
-    hotness: f64,
-    confidence: f64,
-    session_count: i64,
-    status: String,
 }
 
 /// Fetch memories with stricter thresholds for auto memory export.
@@ -404,23 +401,9 @@ fn fetch_auto_memory_candidates_sync(
     project_id: i64,
     limit: usize,
 ) -> Result<Vec<AutoMemoryCandidate>, String> {
+    // Only SELECT fields we actually use; hotness is computed for ORDER BY only
     let sql = r#"
-        SELECT content, fact_type, category,
-            (
-                session_count
-                * confidence
-                * CASE
-                    WHEN category = 'preference' THEN 1.4
-                    WHEN category = 'decision' THEN 1.3
-                    WHEN category IN ('pattern', 'convention') THEN 1.1
-                    WHEN category = 'context' THEN 1.0
-                    ELSE 0.9
-                  END
-                / (1.0 + (CAST(julianday('now') - julianday(COALESCE(updated_at, created_at)) AS REAL) / 30.0))
-            ) AS hotness,
-            confidence,
-            session_count,
-            status
+        SELECT content, fact_type, category
         FROM memory_facts
         WHERE project_id = ?1
           AND scope = 'project'
@@ -434,7 +417,18 @@ fn fetch_auto_memory_candidates_sync(
               (julianday('now') - julianday(COALESCE(updated_at, created_at)) > 14
                AND confidence >= 0.9 AND session_count >= 5)
           )
-        ORDER BY hotness DESC
+        ORDER BY (
+            session_count
+            * confidence
+            * CASE
+                WHEN category = 'preference' THEN 1.4
+                WHEN category = 'decision' THEN 1.3
+                WHEN category IN ('pattern', 'convention') THEN 1.1
+                WHEN category = 'context' THEN 1.0
+                ELSE 0.9
+              END
+            / (1.0 + (CAST(julianday('now') - julianday(COALESCE(updated_at, created_at)) AS REAL) / 30.0))
+        ) DESC
         LIMIT ?2
     "#;
 
@@ -448,10 +442,6 @@ fn fetch_auto_memory_candidates_sync(
                 content: row.get(0)?,
                 fact_type: row.get(1)?,
                 category: row.get(2)?,
-                hotness: row.get(3)?,
-                confidence: row.get(4)?,
-                session_count: row.get(5)?,
-                status: row.get(6)?,
             })
         })
         .map_err(|e| format!("Failed to execute auto memory query: {}", e))?;
@@ -1014,16 +1004,12 @@ mod tests {
         content: &str,
         fact_type: &str,
         category: Option<&str>,
-        hotness: f64,
+        _hotness: f64, // kept for test API compatibility, not stored
     ) -> AutoMemoryCandidate {
         AutoMemoryCandidate {
             content: content.to_string(),
             fact_type: fact_type.to_string(),
             category: category.map(|s| s.to_string()),
-            hotness,
-            confidence: 0.9,
-            session_count: 5,
-            status: "confirmed".to_string(),
         }
     }
 
