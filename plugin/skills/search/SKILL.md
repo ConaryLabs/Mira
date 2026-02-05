@@ -1,6 +1,6 @@
 ---
 name: search
-description: Search codebase semantically by concept or functionality. Use when looking for code related to a topic, feature, or pattern rather than exact text matches.
+description: This skill should be used when the user asks "find code that does X", "search for authentication", "where is X implemented", "look for code related to", or needs semantic code search by concept rather than exact text.
 ---
 
 # Semantic Code Search

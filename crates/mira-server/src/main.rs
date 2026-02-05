@@ -67,6 +67,9 @@ async fn main() -> Result<()> {
             HookAction::PreCompact => {
                 mira::hooks::precompact::run().await?;
             }
+            HookAction::PreTool => {
+                mira::hooks::pre_tool::run().await?;
+            }
             HookAction::UserPrompt => {
                 mira::hooks::user_prompt::run().await?;
             }
@@ -78,6 +81,12 @@ async fn main() -> Result<()> {
             }
             HookAction::SessionEnd => {
                 mira::hooks::stop::run_session_end().await?;
+            }
+            HookAction::SubagentStart => {
+                mira::hooks::subagent::run_start().await?;
+            }
+            HookAction::SubagentStop => {
+                mira::hooks::subagent::run_stop().await?;
             }
         },
         Some(Commands::DebugCarto { path }) => {

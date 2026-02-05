@@ -1,21 +1,22 @@
 ---
 name: recap
-description: Get session recap including preferences, recent context, and active goals. Use at the start of a session or when context seems lost.
+description: This skill should be used when the user asks "what were we working on", "session recap", "remind me of context", "catch me up", or starts a new session needing prior context.
 ---
 
 # Session Recap
 
-Retrieve the current session context from Mira including user preferences, recent decisions, and active goals.
+## Current Context (Live)
+
+!`mira tool session '{"action":"recap"}'`
 
 ## Instructions
 
-1. Use the `mcp__mira__session` tool with `action="recap"`
-2. Present the recap in a clear, organized format:
-   - **Preferences**: User coding style, tool preferences
-   - **Recent Context**: What was worked on recently
-   - **Active Goals**: In-progress goals with milestones
-3. Highlight any blocked or high-priority items
-4. If no recap is available, suggest using `memory(action="remember")` to store context
+Present the recap above in a clear, organized format:
+- **Preferences**: User coding style, tool preferences
+- **Recent Context**: What was worked on recently
+- **Active Goals**: In-progress goals with milestones
+
+Highlight any blocked or high-priority items. If the recap above is empty, suggest using `memory(action="remember")` to store context for future sessions.
 
 ## When to Use
 

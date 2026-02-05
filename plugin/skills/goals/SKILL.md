@@ -1,6 +1,6 @@
 ---
 name: goals
-description: List and manage cross-session goals and milestones. Use for tracking multi-session work, viewing progress, or managing milestones.
+description: This skill should be used when the user asks "show my goals", "what should I work on", "update goal progress", "create a goal", "add milestone", "complete milestone", or wants to track work across multiple sessions.
 ---
 
 # Goal Management
@@ -9,13 +9,16 @@ Manage goals and milestones that persist across Claude Code sessions.
 
 **Command:** $ARGUMENTS
 
+## Current Goals (Live)
+
+!`mira tool goal '{"action":"list","limit":5}'`
+
 ## Instructions
 
 Parse the command and use the appropriate `mcp__mira__goal` action:
 
 ### No arguments or "list"
-- Use `action="list"` to show all goals
-- Display: title, status, progress %, priority
+- The goals are already shown above
 - Highlight in-progress and blocked goals
 
 ### "add <title>" or "create <title>"

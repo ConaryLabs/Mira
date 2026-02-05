@@ -84,3 +84,36 @@ If no keys are configured, experts use MCP Sampling to route through the host cl
 | `~/.claude/mcp.json` | Global MCP servers | Global |
 | `<project>/.mcp.json` | Project MCP servers (preferred) | Project |
 | `<project>/CLAUDE.md` | Project instructions | Project |
+
+## Mira Skills (Slash Commands)
+
+| Command | Purpose |
+|---------|---------|
+| `/mira:goals` | List and manage cross-session goals and milestones |
+| `/mira:recap` | Get session context, preferences, and active goals |
+| `/mira:search <query>` | Semantic code search by concept |
+| `/mira:remember <content>` | Quick memory storage |
+| `/mira:insights` | Surface background analysis and predictions |
+| `/mira:experts <question>` | Get second opinions from AI experts |
+| `/mira:diff` | Semantic analysis of code changes |
+
+## Hook Integration
+
+Mira hooks **automatically inject context** — don't manually duplicate this:
+
+| Hook | What It Injects |
+|------|-----------------|
+| `SessionStart` | Session ID, startup vs resume, working directory |
+| `UserPromptSubmit` | Pending tasks, relevant memories, file-aware context |
+| `PostToolUse` | Tracks file modifications (async, non-blocking) |
+| `PreCompact` | Preserves important context before summarization |
+| `Stop` | Session snapshot for continuity |
+
+**Don't:** Manually inject session info, pending tasks, or file tracking that hooks already provide.
+
+## What NOT to Do
+
+Beyond the anti-patterns above, avoid:
+- Manually fetching session context that `UserPromptSubmit` hook already injects
+- Creating memories for ephemeral info (hooks track file access automatically)
+- Duplicating goal/task state between Claude tasks and Mira goals

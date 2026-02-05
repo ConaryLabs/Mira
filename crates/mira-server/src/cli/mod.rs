@@ -85,6 +85,8 @@ pub enum HookAction {
     SessionStart,
     /// Handle PreCompact hooks - preserve context before summarization
     PreCompact,
+    /// Handle PreToolUse hooks - inject context before Grep/Glob searches
+    PreTool,
     /// Handle UserPromptSubmit hooks - inject proactive context
     UserPrompt,
     /// Handle PostToolUse hooks - track file changes, provide hints
@@ -93,6 +95,10 @@ pub enum HookAction {
     Stop,
     /// Handle SessionEnd hooks - snapshot tasks on user interrupt
     SessionEnd,
+    /// Handle SubagentStart hooks - inject context when subagents spawn
+    SubagentStart,
+    /// Handle SubagentStop hooks - capture discoveries from subagent work
+    SubagentStop,
 }
 
 /// Get the default database path

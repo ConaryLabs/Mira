@@ -2,7 +2,7 @@
 // PostToolUse hook handler - tracks file changes and provides hints
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{read_hook_input, write_hook_output};
+use crate::hooks::{read_hook_input, write_hook_output, HookTimer};
 use crate::proactive::behavior::BehaviorTracker;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -53,6 +53,7 @@ impl PostToolInput {
 /// 2. Check for related tests that might need updating
 /// 3. Provide hints about the changed file
 pub async fn run() -> Result<()> {
+    let _timer = HookTimer::start("PostToolUse");
     let input = read_hook_input()?;
     let post_input = PostToolInput::from_json(&input);
 

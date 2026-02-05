@@ -20,6 +20,10 @@
   "skills": [
     "./skills/goals",
     "./skills/recap",
-    "./skills/search"
+    "./skills/search",
+    "./skills/remember",
+    "./skills/insights",
+    "./skills/experts",
+    "./skills/diff"
   ]
 }
