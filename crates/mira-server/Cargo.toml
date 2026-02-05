@@ -73,6 +73,7 @@ scraper = "0.20"
 async-trait = "0.1"
 thiserror = "2.0"
 sha2 = "0.10"
+strum = { version = "0.26", features = ["derive"] }
 nucleo-matcher = "0.3"
 url = "2.5.7"
 futures = "0.3.31"

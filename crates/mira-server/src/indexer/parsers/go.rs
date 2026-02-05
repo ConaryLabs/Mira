@@ -298,10 +298,7 @@ mod tests {
     use super::*;
 
     fn parse_go(code: &str) -> ParseResult {
-        let go_parser = GoParser;
-        let mut parser = tree_sitter::Parser::new();
-        go_parser.configure_parser(&mut parser).unwrap();
-        go_parser.parse(&mut parser, code).unwrap()
+        crate::indexer::parsers::parse_with(&GoParser, code)
     }
 
     #[test]

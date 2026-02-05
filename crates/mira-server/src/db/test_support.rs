@@ -49,6 +49,18 @@ pub async fn setup_second_project(pool: &Arc<DatabasePool>) -> i64 {
     .0
 }
 
+/// Create a sync in-memory connection with all migrations applied.
+/// Use this for sync tests that don't need async pool semantics.
+/// Loads sqlite-vec and runs all migrations.
+pub fn setup_test_connection() -> rusqlite::Connection {
+    use super::pool::ensure_sqlite_vec_registered;
+    use super::schema::run_all_migrations;
+    ensure_sqlite_vec_registered();
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    run_all_migrations(&conn).unwrap();
+    conn
+}
+
 /// Store a test memory with common defaults
 pub fn store_memory_helper(
     conn: &rusqlite::Connection,

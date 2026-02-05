@@ -16,8 +16,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     DiffAnalysisData, DiffData, DiffOutput, HistoricalRiskData, PatternMatchInfo,
 };
-use crate::search::format_project_header;
-use crate::tools::core::ToolContext;
+use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::truncate;
 
 /// Analyze git diff semantically
@@ -29,13 +28,13 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     to_ref: Option<String>,
     include_impact: Option<bool>,
 ) -> Result<Json<DiffOutput>, String> {
-    let project = ctx.get_project().await;
-    let (project_id, project_path) = match project.as_ref() {
-        Some(p) => (Some(p.id), p.path.clone()),
+    let pi = get_project_info(ctx).await;
+    let project_path = match pi.path {
+        Some(ref p) => p.clone(),
         None => return Err("No active project. Call session_start first.".to_string()),
     };
-
-    let context_header = format_project_header(project.as_ref());
+    let project_id = pi.id;
+    let context_header = pi.header;
     let path = Path::new(&project_path);
 
     // Get LLM client for semantic analysis (optional — falls back to heuristic)
@@ -287,9 +286,9 @@ pub async fn list_diff_analyses<C: ToolContext>(
     ctx: &C,
     limit: Option<i64>,
 ) -> Result<Json<DiffOutput>, String> {
-    let project = ctx.get_project().await;
-    let project_id = project.as_ref().map(|p| p.id);
-    let context_header = format_project_header(project.as_ref());
+    let pi = get_project_info(ctx).await;
+    let project_id = pi.id;
+    let context_header = pi.header;
 
     let limit = limit.unwrap_or(10) as usize;
 

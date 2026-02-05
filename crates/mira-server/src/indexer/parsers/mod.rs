@@ -305,6 +305,15 @@ impl<'a> SymbolBuilder<'a> {
     }
 }
 
+/// Test helper: parse code with any LanguageParser implementation.
+/// Replaces the per-language `parse_rust()`, `parse_python()`, etc. test helpers.
+#[cfg(test)]
+pub fn parse_with(parser_impl: &dyn LanguageParser, code: &str) -> ParseResult {
+    let mut parser = Parser::new();
+    parser_impl.configure_parser(&mut parser).unwrap();
+    parser_impl.parse(&mut parser, code).unwrap()
+}
+
 /// Helper to extract text from a tree-sitter node
 pub fn node_text(node: Node, source: &[u8]) -> String {
     std::str::from_utf8(&source[node.byte_range()])

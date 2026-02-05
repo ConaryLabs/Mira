@@ -114,8 +114,9 @@ pub struct McpClientManager {
     configs: Vec<McpServerConfig>,
     clients: Arc<RwLock<HashMap<String, ConnectedServer>>>,
     /// Per-server connection guards to prevent double-connect races.
-    /// If a server name is in this set, a connection attempt is in progress.
-    connecting: tokio::sync::Mutex<std::collections::HashSet<String>>,
+    /// If a server name has a Notify, a connection attempt is in progress.
+    /// Waiters await the Notify instead of polling.
+    connecting: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
 }
 
 impl McpClientManager {
@@ -163,7 +164,7 @@ impl McpClientManager {
         Self {
             configs,
             clients: Arc::new(RwLock::new(HashMap::new())),
-            connecting: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            connecting: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -245,22 +246,28 @@ impl McpClientManager {
         // Acquire the connecting guard to prevent concurrent connection attempts
         {
             let mut connecting = self.connecting.lock().await;
-            if connecting.contains(server_name) {
-                // Another task is already connecting — wait for it by polling
+            if let Some(notify) = connecting.get(server_name) {
+                // Another task is already connecting — wait for notification
+                let notify = notify.clone();
                 drop(connecting);
-                for _ in 0..100 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    let clients = self.clients.read().await;
-                    if clients.contains_key(server_name) {
-                        return Ok(());
-                    }
+                let timeout = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    notify.notified(),
+                );
+                if timeout.await.is_err() {
+                    return Err(format!(
+                        "Timed out waiting for concurrent connection to '{}'",
+                        server_name
+                    ));
                 }
-                return Err(format!(
-                    "Timed out waiting for concurrent connection to '{}'",
-                    server_name
-                ));
+                // Check if it actually connected
+                let clients = self.clients.read().await;
+                if clients.contains_key(server_name) {
+                    return Ok(());
+                }
+                return Err(format!("Concurrent connection to '{}' failed", server_name));
             }
-            connecting.insert(server_name.to_string());
+            connecting.insert(server_name.to_string(), Arc::new(tokio::sync::Notify::new()));
         }
 
         // Re-check after acquiring guard (another task may have completed between our check and guard)
@@ -273,10 +280,12 @@ impl McpClientManager {
             }
         }
 
-        // Actually connect — cleanup guard on both success and failure
+        // Actually connect — cleanup guard and notify waiters on both success and failure
         let result = self.do_connect(server_name).await;
         let mut connecting = self.connecting.lock().await;
-        connecting.remove(server_name);
+        if let Some(notify) = connecting.remove(server_name) {
+            notify.notify_waiters();
+        }
         result
     }
 
@@ -759,7 +768,7 @@ mod tests {
         let manager = McpClientManager {
             configs: vec![],
             clients: Arc::new(RwLock::new(HashMap::new())),
-            connecting: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            connecting: tokio::sync::Mutex::new(HashMap::new()),
         };
         assert!(!manager.has_servers());
 
@@ -774,7 +783,7 @@ mod tests {
                 },
             }],
             clients: Arc::new(RwLock::new(HashMap::new())),
-            connecting: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            connecting: tokio::sync::Mutex::new(HashMap::new()),
         };
         assert!(manager.has_servers());
     }

@@ -42,7 +42,7 @@ use std::os::unix::fs::PermissionsExt;
 static SQLITE_VEC_INIT: Once = Once::new();
 
 #[allow(clippy::missing_transmute_annotations)]
-fn ensure_sqlite_vec_registered() {
+pub(crate) fn ensure_sqlite_vec_registered() {
     SQLITE_VEC_INIT.call_once(|| {
         unsafe {
             rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(

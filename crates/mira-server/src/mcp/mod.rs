@@ -1,6 +1,8 @@
 // crates/mira-server/src/mcp/mod.rs
 // MCP Server — struct definition, construction, and shared helpers
 
+pub mod client;
+pub mod elicitation;
 mod extraction;
 mod handler;
 pub mod requests;
@@ -8,7 +10,7 @@ pub mod responses;
 mod router;
 mod tasks;
 
-use crate::mcp_client::McpClientManager;
+use client::McpClientManager;
 use crate::tools::core as tools;
 
 use std::collections::HashMap;

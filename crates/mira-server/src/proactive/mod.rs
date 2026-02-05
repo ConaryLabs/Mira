@@ -1,6 +1,7 @@
 // crates/mira-server/src/proactive/mod.rs
 // Proactive Intelligence Engine - anticipates developer needs through pattern recognition
 
+pub mod background;
 pub mod behavior;
 pub mod feedback;
 pub mod interventions;
@@ -12,8 +13,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 /// Event types tracked in the behavior log
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum EventType {
     FileAccess,
     ToolUse,
@@ -24,34 +26,13 @@ pub enum EventType {
 }
 
 impl EventType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            EventType::FileAccess => "file_access",
-            EventType::ToolUse => "tool_use",
-            EventType::Query => "query",
-            EventType::ContextSwitch => "context_switch",
-            EventType::GoalUpdate => "goal_update",
-            EventType::MemoryRecall => "memory_recall",
-        }
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "file_access" => Some(EventType::FileAccess),
-            "tool_use" => Some(EventType::ToolUse),
-            "query" => Some(EventType::Query),
-            "context_switch" => Some(EventType::ContextSwitch),
-            "goal_update" => Some(EventType::GoalUpdate),
-            "memory_recall" => Some(EventType::MemoryRecall),
-            _ => None,
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 }
 
 /// Pattern types for behavior analysis
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum PatternType {
     FileSequence,  // Files accessed together or in sequence
     ToolChain,     // Tools used in sequence
@@ -61,32 +42,13 @@ pub enum PatternType {
 }
 
 impl PatternType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PatternType::FileSequence => "file_sequence",
-            PatternType::ToolChain => "tool_chain",
-            PatternType::SessionFlow => "session_flow",
-            PatternType::QueryPattern => "query_pattern",
-            PatternType::ChangePattern => "change_pattern",
-        }
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "file_sequence" => Some(PatternType::FileSequence),
-            "tool_chain" => Some(PatternType::ToolChain),
-            "session_flow" => Some(PatternType::SessionFlow),
-            "query_pattern" => Some(PatternType::QueryPattern),
-            "change_pattern" => Some(PatternType::ChangePattern),
-            _ => None,
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 }
 
 /// Intervention types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum InterventionType {
     ContextPrediction,  // Predict what context the user will need
     SecurityAlert,      // Warn about security issues in code
@@ -95,19 +57,13 @@ pub enum InterventionType {
 }
 
 impl InterventionType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            InterventionType::ContextPrediction => "context_prediction",
-            InterventionType::SecurityAlert => "security_alert",
-            InterventionType::BugWarning => "bug_warning",
-            InterventionType::ResourceSuggestion => "resource_suggestion",
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 }
 
 /// User response to an intervention
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::IntoStaticStr, strum::EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum UserResponse {
     Accepted,  // User explicitly accepted/used the suggestion
     Dismissed, // User explicitly dismissed
@@ -116,25 +72,7 @@ pub enum UserResponse {
 }
 
 impl UserResponse {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            UserResponse::Accepted => "accepted",
-            UserResponse::Dismissed => "dismissed",
-            UserResponse::ActedUpon => "acted_upon",
-            UserResponse::Ignored => "ignored",
-        }
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "accepted" => Some(UserResponse::Accepted),
-            "dismissed" => Some(UserResponse::Dismissed),
-            "acted_upon" => Some(UserResponse::ActedUpon),
-            "ignored" => Some(UserResponse::Ignored),
-            _ => None,
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 
     /// Effectiveness multiplier for learning
     pub fn effectiveness_multiplier(&self) -> f64 {
@@ -224,6 +162,7 @@ pub fn get_proactive_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // EventType Tests
@@ -241,26 +180,14 @@ mod tests {
 
     #[test]
     fn test_event_type_from_str() {
-        assert_eq!(
-            EventType::from_str("file_access"),
-            Some(EventType::FileAccess)
-        );
-        assert_eq!(EventType::from_str("tool_use"), Some(EventType::ToolUse));
-        assert_eq!(EventType::from_str("query"), Some(EventType::Query));
-        assert_eq!(
-            EventType::from_str("context_switch"),
-            Some(EventType::ContextSwitch)
-        );
-        assert_eq!(
-            EventType::from_str("goal_update"),
-            Some(EventType::GoalUpdate)
-        );
-        assert_eq!(
-            EventType::from_str("memory_recall"),
-            Some(EventType::MemoryRecall)
-        );
-        assert_eq!(EventType::from_str("invalid"), None);
-        assert_eq!(EventType::from_str(""), None);
+        assert_eq!("file_access".parse(), Ok(EventType::FileAccess));
+        assert_eq!("tool_use".parse(), Ok(EventType::ToolUse));
+        assert_eq!("query".parse(), Ok(EventType::Query));
+        assert_eq!("context_switch".parse(), Ok(EventType::ContextSwitch));
+        assert_eq!("goal_update".parse(), Ok(EventType::GoalUpdate));
+        assert_eq!("memory_recall".parse(), Ok(EventType::MemoryRecall));
+        assert!("invalid".parse::<EventType>().is_err());
+        assert!("".parse::<EventType>().is_err());
     }
 
     #[test]
@@ -278,7 +205,7 @@ mod tests {
             let parsed = EventType::from_str(s);
             assert_eq!(
                 parsed,
-                Some(event.clone()),
+                Ok(event.clone()),
                 "Roundtrip failed for {:?}",
                 event
             );
@@ -310,27 +237,12 @@ mod tests {
 
     #[test]
     fn test_pattern_type_from_str() {
-        assert_eq!(
-            PatternType::from_str("file_sequence"),
-            Some(PatternType::FileSequence)
-        );
-        assert_eq!(
-            PatternType::from_str("tool_chain"),
-            Some(PatternType::ToolChain)
-        );
-        assert_eq!(
-            PatternType::from_str("session_flow"),
-            Some(PatternType::SessionFlow)
-        );
-        assert_eq!(
-            PatternType::from_str("query_pattern"),
-            Some(PatternType::QueryPattern)
-        );
-        assert_eq!(
-            PatternType::from_str("change_pattern"),
-            Some(PatternType::ChangePattern)
-        );
-        assert_eq!(PatternType::from_str("invalid"), None);
+        assert_eq!("file_sequence".parse(), Ok(PatternType::FileSequence));
+        assert_eq!("tool_chain".parse(), Ok(PatternType::ToolChain));
+        assert_eq!("session_flow".parse(), Ok(PatternType::SessionFlow));
+        assert_eq!("query_pattern".parse(), Ok(PatternType::QueryPattern));
+        assert_eq!("change_pattern".parse(), Ok(PatternType::ChangePattern));
+        assert!("invalid".parse::<PatternType>().is_err());
     }
 
     #[test]
@@ -347,7 +259,7 @@ mod tests {
             let parsed = PatternType::from_str(s);
             assert_eq!(
                 parsed,
-                Some(pattern.clone()),
+                Ok(pattern.clone()),
                 "Roundtrip failed for {:?}",
                 pattern
             );
@@ -396,23 +308,11 @@ mod tests {
 
     #[test]
     fn test_user_response_from_str() {
-        assert_eq!(
-            UserResponse::from_str("accepted"),
-            Some(UserResponse::Accepted)
-        );
-        assert_eq!(
-            UserResponse::from_str("dismissed"),
-            Some(UserResponse::Dismissed)
-        );
-        assert_eq!(
-            UserResponse::from_str("acted_upon"),
-            Some(UserResponse::ActedUpon)
-        );
-        assert_eq!(
-            UserResponse::from_str("ignored"),
-            Some(UserResponse::Ignored)
-        );
-        assert_eq!(UserResponse::from_str("invalid"), None);
+        assert_eq!("accepted".parse(), Ok(UserResponse::Accepted));
+        assert_eq!("dismissed".parse(), Ok(UserResponse::Dismissed));
+        assert_eq!("acted_upon".parse(), Ok(UserResponse::ActedUpon));
+        assert_eq!("ignored".parse(), Ok(UserResponse::Ignored));
+        assert!("invalid".parse::<UserResponse>().is_err());
     }
 
     #[test]

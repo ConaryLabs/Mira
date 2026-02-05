@@ -10,7 +10,7 @@ use crate::indexer::batch::{
 use crate::indexer::chunking::create_semantic_chunks;
 use crate::indexer::parsing::{FunctionCall, Import, Symbol, extract_all};
 use crate::indexer::types::{IndexStats, ParsedSymbol};
-use crate::project_files::walker::FileWalker;
+use crate::project_files::FileWalker;
 use anyhow::Result;
 use rayon::prelude::*;
 use std::path::Path;

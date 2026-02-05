@@ -177,7 +177,7 @@ pub fn get_session_events(
     for row in rows.flatten() {
         let (event_type_str, event_data_str, created_at_str) = row;
 
-        if let Some(event_type) = EventType::from_str(&event_type_str) {
+        if let Ok(event_type) = event_type_str.parse::<EventType>() {
             let data: serde_json::Value = serde_json::from_str(&event_data_str).unwrap_or_default();
             let timestamp = chrono::DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&chrono::Utc))

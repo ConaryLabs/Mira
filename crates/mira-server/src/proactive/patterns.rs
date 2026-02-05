@@ -147,8 +147,8 @@ pub fn get_patterns_by_type(
             occurrence_count,
         ) = row;
 
-        if let (Some(pattern_type), Some(pattern_data)) = (
-            PatternType::from_str(&pattern_type_str),
+        if let (Ok(pattern_type), Some(pattern_data)) = (
+            pattern_type_str.parse::<PatternType>(),
             PatternData::from_json(&pattern_data_str),
         ) {
             patterns.push(BehaviorPattern {
@@ -205,11 +205,11 @@ pub fn get_high_confidence_patterns(
             occurrence_count,
         ) = row;
 
-        let pattern_type = PatternType::from_str(&pattern_type_str);
+        let pattern_type = pattern_type_str.parse::<PatternType>();
         let pattern_data = PatternData::from_json(&pattern_data_str);
 
         match (pattern_type, pattern_data) {
-            (Some(pattern_type), Some(pattern_data)) => {
+            (Ok(pattern_type), Some(pattern_data)) => {
                 patterns.push(BehaviorPattern {
                     id: Some(id),
                     project_id,
@@ -220,7 +220,7 @@ pub fn get_high_confidence_patterns(
                     occurrence_count,
                 });
             }
-            (None, _) => {
+            (Err(_), _) => {
                 // Skip insight patterns (insight_*) silently - they're from pondering, not mining
                 if !pattern_type_str.starts_with("insight_") {
                     tracing::warn!(

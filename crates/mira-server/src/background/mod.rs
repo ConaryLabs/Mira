@@ -16,7 +16,6 @@ pub(crate) mod entity_extraction;
 mod fast_lane;
 pub(crate) mod outcome_scanner;
 mod pondering;
-pub mod proactive;
 pub mod session_summaries;
 mod slow_lane;
 pub(crate) mod summaries;

@@ -105,31 +105,15 @@ pub fn get_tasks_sync(
     project_id: Option<i64>,
     status_filter: Option<&str>,
 ) -> rusqlite::Result<Vec<Task>> {
-    let (negate, status_value) = match status_filter {
-        Some(s) if s.starts_with('!') => (true, Some(&s[1..])),
-        Some(s) => (false, Some(s)),
-        None => (false, None),
+    let sf = super::StatusFilter::parse(status_filter);
+    let base = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
+                FROM tasks WHERE (project_id = ? OR project_id IS NULL)";
+    let sql = match sf.value {
+        Some(_) => format!("{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100", base, sf.sql_op()),
+        None => format!("{} ORDER BY created_at DESC, id DESC LIMIT 100", base),
     };
-
-    let sql = match (status_value, negate) {
-        (Some(_), true) => {
-            "SELECT id, project_id, goal_id, title, description, status, priority, created_at
-                           FROM tasks WHERE (project_id = ? OR project_id IS NULL) AND status != ?
-                           ORDER BY created_at DESC, id DESC LIMIT 100"
-        }
-        (Some(_), false) => {
-            "SELECT id, project_id, goal_id, title, description, status, priority, created_at
-                            FROM tasks WHERE (project_id = ? OR project_id IS NULL) AND status = ?
-                            ORDER BY created_at DESC, id DESC LIMIT 100"
-        }
-        (None, _) => {
-            "SELECT id, project_id, goal_id, title, description, status, priority, created_at
-                     FROM tasks WHERE (project_id = ? OR project_id IS NULL)
-                     ORDER BY created_at DESC, id DESC LIMIT 100"
-        }
-    };
-    let mut stmt = conn.prepare(sql)?;
-    let rows = match status_value {
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = match sf.value {
         Some(status) => stmt.query_map(params![project_id, status], parse_task_row)?,
         None => stmt.query_map(params![project_id], parse_task_row)?,
     };
@@ -207,25 +191,15 @@ pub fn get_goals_sync(
     project_id: Option<i64>,
     status_filter: Option<&str>,
 ) -> rusqlite::Result<Vec<Goal>> {
-    let (negate, status_value) = match status_filter {
-        Some(s) if s.starts_with('!') => (true, Some(&s[1..])),
-        Some(s) => (false, Some(s)),
-        None => (false, None),
+    let sf = super::StatusFilter::parse(status_filter);
+    let base = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
+                FROM goals WHERE (project_id = ? OR project_id IS NULL)";
+    let sql = match sf.value {
+        Some(_) => format!("{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100", base, sf.sql_op()),
+        None => format!("{} ORDER BY created_at DESC, id DESC LIMIT 100", base),
     };
-
-    let sql = match (status_value, negate) {
-        (Some(_), true) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
-                           FROM goals WHERE (project_id = ? OR project_id IS NULL) AND status != ?
-                           ORDER BY created_at DESC, id DESC LIMIT 100",
-        (Some(_), false) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
-                            FROM goals WHERE (project_id = ? OR project_id IS NULL) AND status = ?
-                            ORDER BY created_at DESC, id DESC LIMIT 100",
-        (None, _) => "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
-                     FROM goals WHERE (project_id = ? OR project_id IS NULL)
-                     ORDER BY created_at DESC, id DESC LIMIT 100",
-    };
-    let mut stmt = conn.prepare(sql)?;
-    let rows = match status_value {
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = match sf.value {
         Some(status) => stmt.query_map(params![project_id, status], parse_goal_row)?,
         None => stmt.query_map(params![project_id], parse_goal_row)?,
     };

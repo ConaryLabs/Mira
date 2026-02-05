@@ -144,8 +144,28 @@ pub trait ToolContext: Send + Sync {
     }
 
     /// Get an elicitation client for requesting user input during tool execution
-    fn elicitation_client(&self) -> Option<crate::elicitation::ElicitationClient> {
+    fn elicitation_client(&self) -> Option<crate::mcp::elicitation::ElicitationClient> {
         None
+    }
+}
+
+/// Bundled project context extracted from a ToolContext.
+/// Avoids the repeated 3-4 line pattern of project_id + get_project + path + header.
+pub struct ProjectInfo {
+    pub id: Option<i64>,
+    pub context: Option<ProjectContext>,
+    pub path: Option<String>,
+    pub header: String,
+}
+
+/// Extract all commonly-needed project info in one call.
+pub async fn get_project_info<C: ToolContext + ?Sized>(ctx: &C) -> ProjectInfo {
+    let context = ctx.get_project().await;
+    ProjectInfo {
+        id: context.as_ref().map(|p| p.id),
+        path: context.as_ref().map(|p| p.path.clone()),
+        header: crate::search::format_project_header(context.as_ref()),
+        context,
     }
 }
 
@@ -164,21 +184,22 @@ pub mod reviews;
 pub mod session;
 pub mod session_notes;
 pub mod tasks;
-pub mod teams;
 pub mod usage;
 
-// Re-export commonly used functions
+// Re-export handler functions used by MCP router, CLI, and tests
 pub use claude_local::export_claude_local;
-pub use code::*;
-pub use cross_project::*;
-pub use dev::*;
-pub use diff::*;
-pub use documentation::*;
-pub use experts::*;
-pub use goals::*;
-pub use memory::*;
-pub use project::*;
-pub use reviews::*;
-pub use session::*;
-pub use teams::*;
-pub use usage::*;
+pub use code::{
+    find_function_callees, find_function_callers, get_symbols, handle_code, index,
+    query_callees, query_callers, query_search_code, search_code, summarize_codebase,
+};
+pub use cross_project::cross_project;
+pub use dev::get_session_recap;
+pub use diff::{analyze_diff_tool, list_diff_analyses};
+pub use documentation::documentation;
+pub use experts::{configure_expert, handle_expert};
+pub use goals::goal;
+pub use memory::{forget, handle_memory, recall, remember};
+pub use project::{get_project, project, session_start, set_project};
+pub use reviews::finding;
+pub use session::{ensure_session, handle_session, reply_to_mira, session_history};
+pub use usage::usage;

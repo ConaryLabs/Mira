@@ -43,7 +43,7 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     memory::migrate_documentation_impact_analysis(conn)?;
     memory::migrate_users_table(conn)?;
     memory::migrate_memory_user_scope(conn)?;
-    memory::migrate_teams_tables(conn)?;
+    memory::migrate_drop_teams_tables(conn)?;
 
     // Add review findings table for code review learning loop
     reviews::migrate_review_findings_table(conn)?;

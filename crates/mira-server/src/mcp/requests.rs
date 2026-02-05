@@ -74,23 +74,6 @@ pub enum IndexAction {
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum TeamAction {
-    /// Create a new team
-    Create,
-    /// Invite a user to a team
-    Invite,
-    /// Alias for invite
-    Add,
-    /// Remove a user from a team
-    Remove,
-    /// List teams
-    List,
-    /// List team members
-    Members,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum CrossProjectAction {
     /// Get sharing preferences
     GetPreferences,
@@ -462,21 +445,6 @@ pub struct DocumentationRequest {
     pub status: Option<String>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct TeamRequest {
-    #[schemars(description = "Action: create/invite/remove/list/members")]
-    pub action: TeamAction,
-    #[schemars(description = "Team ID (for invite/remove/members actions)")]
-    pub team_id: Option<i64>,
-    #[schemars(description = "Team name (for create action)")]
-    pub name: Option<String>,
-    #[schemars(description = "Team description (for create action)")]
-    pub description: Option<String>,
-    #[schemars(description = "User identity to invite/remove")]
-    pub user_identity: Option<String>,
-    #[schemars(description = "Role for invited user: member/admin (default: member)")]
-    pub role: Option<String>,
-}
 
 // Review findings request type (unified)
 

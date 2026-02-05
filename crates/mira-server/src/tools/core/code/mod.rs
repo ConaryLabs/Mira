@@ -15,7 +15,7 @@ use crate::mcp::responses::Json;
 use crate::search::{
     CrossRefResult, HybridSearchResult, find_callees, find_callers, hybrid_search,
 };
-use crate::tools::core::ToolContext;
+use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::ResultExt;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -28,16 +28,14 @@ pub async fn query_search_code<C: ToolContext>(
     query: &str,
     limit: usize,
 ) -> Result<HybridSearchResult, String> {
-    let project_id = ctx.project_id().await;
-    let project = ctx.get_project().await;
-    let project_path = project.as_ref().map(|p| p.path.clone());
+    let pi = get_project_info(ctx).await;
     hybrid_search(
         ctx.code_pool(),
         ctx.embeddings(),
         ctx.fuzzy_cache(),
         query,
-        project_id,
-        project_path.as_deref(),
+        pi.id,
+        pi.path.as_deref(),
         limit,
     )
     .await

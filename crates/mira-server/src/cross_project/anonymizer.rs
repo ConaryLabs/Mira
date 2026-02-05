@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 use super::CrossPatternType;
 
 /// Level of anonymization applied to patterns
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
 pub enum AnonymizationLevel {
     /// Full anonymization: all identifiers removed, noise added
     Full,
@@ -20,23 +21,7 @@ pub enum AnonymizationLevel {
 }
 
 impl AnonymizationLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AnonymizationLevel::Full => "full",
-            AnonymizationLevel::Partial => "partial",
-            AnonymizationLevel::None => "none",
-        }
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "full" => Some(AnonymizationLevel::Full),
-            "partial" => Some(AnonymizationLevel::Partial),
-            "none" => Some(AnonymizationLevel::None),
-            _ => None,
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 }
 
 /// An anonymized pattern ready for cross-project sharing

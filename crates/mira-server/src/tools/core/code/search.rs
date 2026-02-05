@@ -11,9 +11,8 @@ use crate::mcp::responses::{
 };
 use crate::search::{
     CrossRefType, crossref_search, expand_context_with_conn, format_crossref_results,
-    format_project_header,
 };
-use crate::tools::core::ToolContext;
+use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::{ResultExt, truncate};
 
 use super::{query_callees, query_callers, query_search_code};
@@ -26,10 +25,10 @@ pub async fn search_code<C: ToolContext>(
     limit: Option<i64>,
 ) -> Result<Json<CodeOutput>, String> {
     let limit = limit.unwrap_or(10) as usize;
-    let project_id = ctx.project_id().await;
-    let project = ctx.get_project().await;
-    let project_path = project.as_ref().map(|p| p.path.clone());
-    let context_header = format_project_header(project.as_ref());
+    let pi = get_project_info(ctx).await;
+    let project_id = pi.id;
+    let project_path = pi.path.clone();
+    let context_header = pi.header;
 
     // Check for cross-reference query patterns first ("who calls X", "callers of X", etc.)
     let query_clone = query.clone();
@@ -174,8 +173,7 @@ pub async fn find_function_callers<C: ToolContext>(
     }
 
     let limit = limit.unwrap_or(20) as usize;
-    let project = ctx.get_project().await;
-    let context_header = format_project_header(project.as_ref());
+    let context_header = get_project_info(ctx).await.header;
 
     let results = query_callers(ctx, &function_name, limit).await;
 
@@ -230,8 +228,7 @@ pub async fn find_function_callees<C: ToolContext>(
     }
 
     let limit = limit.unwrap_or(20) as usize;
-    let project = ctx.get_project().await;
-    let context_header = format_project_header(project.as_ref());
+    let context_header = get_project_info(ctx).await.header;
 
     let results = query_callees(ctx, &function_name, limit).await;
 

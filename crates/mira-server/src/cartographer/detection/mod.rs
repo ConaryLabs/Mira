@@ -7,7 +7,7 @@ mod python;
 pub mod rust;
 
 use super::types::Module;
-use crate::project_files::walker::FileWalker;
+use crate::project_files::FileWalker;
 use std::path::Path;
 
 /// Count lines by walking files with `FileWalker` for a given language.

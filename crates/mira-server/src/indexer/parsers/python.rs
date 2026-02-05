@@ -182,10 +182,7 @@ mod tests {
     use super::*;
 
     fn parse_python(code: &str) -> ParseResult {
-        let python_parser = PythonParser;
-        let mut parser = tree_sitter::Parser::new();
-        python_parser.configure_parser(&mut parser).unwrap();
-        python_parser.parse(&mut parser, code).unwrap()
+        crate::indexer::parsers::parse_with(&PythonParser, code)
     }
 
     #[test]

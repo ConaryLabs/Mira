@@ -36,7 +36,6 @@ mod project_tests;
 mod session_tests;
 #[cfg(test)]
 mod tasks_tests;
-mod teams;
 pub mod tech_debt;
 mod types;
 mod usage;
@@ -169,10 +168,6 @@ pub use tasks::{
     get_goal_by_id_sync, get_goals_sync, get_pending_tasks_sync, get_task_by_id_sync,
     get_tasks_sync, parse_goal_row, parse_task_row, update_goal_sync, update_task_sync,
 };
-pub use teams::{
-    Team, TeamMember, add_team_member_sync, create_team_sync, get_team_by_name_sync, get_team_sync,
-    is_team_member_sync, list_team_members_sync, list_user_teams_sync, remove_team_member_sync,
-};
 pub use types::*;
 pub use usage::{
     EmbeddingUsageRecord, LlmUsageRecord, UsageStats, get_llm_usage_summary,
@@ -185,6 +180,28 @@ pub use usage::{
 /// Shared SQL fragment for ordering by priority (urgent > high > medium > low > rest).
 /// Append to ORDER BY clauses to keep priority ranking consistent across modules.
 pub const PRIORITY_ORDER_SQL: &str = "CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+
+/// Parsed status filter supporting negation (e.g. "!completed" → exclude completed).
+pub struct StatusFilter<'a> {
+    pub value: Option<&'a str>,
+    pub negate: bool,
+}
+
+impl<'a> StatusFilter<'a> {
+    /// Parse an optional status filter string, handling "!" prefix for negation.
+    pub fn parse(filter: Option<&'a str>) -> Self {
+        match filter {
+            Some(s) if s.starts_with('!') => Self { value: Some(&s[1..]), negate: true },
+            Some(s) => Self { value: Some(s), negate: false },
+            None => Self { value: None, negate: false },
+        }
+    }
+
+    /// Returns the SQL operator for this filter: "!=" if negated, "=" otherwise.
+    pub fn sql_op(&self) -> &'static str {
+        if self.negate { "!=" } else { "=" }
+    }
+}
 
 /// Map a priority string to a numeric score (1.0 = urgent, 0.4 = low).
 pub fn priority_score(priority: &str) -> f64 {

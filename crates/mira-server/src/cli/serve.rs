@@ -9,7 +9,7 @@ use mira::config::EnvConfig;
 use mira::db::pool::DatabasePool;
 use mira::http::create_shared_client;
 use mira::mcp::MiraServer;
-use mira::mcp_client::McpClientManager;
+use mira::mcp::client::McpClientManager;
 use mira::tools::core::ToolContext;
 use mira::utils::path_to_string;
 use mira_types::ProjectContext;

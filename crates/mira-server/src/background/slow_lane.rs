@@ -12,7 +12,7 @@ use tokio::sync::watch;
 
 use super::{
     briefings, code_health, documentation, entity_extraction, outcome_scanner, pondering,
-    proactive, session_summaries, summaries,
+    session_summaries, summaries,
 };
 
 /// Delay before first cycle to let the service start up
@@ -174,7 +174,7 @@ impl SlowLaneWorker {
 
         processed += Self::run_task(
             "proactive items",
-            proactive::process_proactive(&self.pool, client, self.cycle_count),
+            crate::proactive::background::process_proactive(&self.pool, client, self.cycle_count),
         )
         .await?;
 

@@ -6,7 +6,7 @@
 // overhead by ~3-4x compared to separate per-detector walks.
 
 use crate::db::{StoreMemoryParams, store_memory_sync};
-use crate::project_files::walker;
+use crate::project_files;
 use crate::utils::ResultExt;
 use regex::Regex;
 use rusqlite::Connection;
@@ -114,7 +114,7 @@ fn is_cfg_test(line: &str) -> bool {
 
 /// Walk Rust files in a project, respecting .gitignore
 fn walk_rust_files(project_path: &str) -> Result<Vec<String>, String> {
-    walker::walk_rust_files(project_path).str_err()
+    project_files::walk_rust_files(project_path).str_err()
 }
 
 /// Single-pass scan for TODO/FIXME, unimplemented!(), .unwrap(), and error handling patterns.

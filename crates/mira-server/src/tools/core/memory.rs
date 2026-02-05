@@ -3,8 +3,8 @@
 use crate::db::{StoreMemoryParams, store_embedding_sync, store_memory_sync};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
-use crate::search::{embedding_to_bytes, format_project_header};
-use crate::tools::core::ToolContext;
+use crate::search::embedding_to_bytes;
+use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::truncate;
 use mira_types::MemoryFact;
 use regex::Regex;
@@ -272,12 +272,12 @@ pub async fn recall<C: ToolContext>(
 ) -> Result<Json<MemoryOutput>, String> {
     use crate::db::search_memories_sync;
 
-    let project_id = ctx.project_id().await;
+    let pi = get_project_info(ctx).await;
+    let project_id = pi.id;
     let session_id = ctx.get_session_id().await;
-    let project = ctx.get_project().await;
     let user_id = ctx.get_user_identity();
     let current_branch = ctx.get_branch().await;
-    let context_header = format_project_header(project.as_ref());
+    let context_header = pi.header;
     let has_filters = category.is_some() || fact_type.is_some();
 
     // Over-fetch when filters are set since some results will be filtered out

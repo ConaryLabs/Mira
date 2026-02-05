@@ -361,7 +361,7 @@ async fn try_elicit_api_key<C: ToolContext>(ctx: &C) -> Option<Arc<dyn LlmClient
         return None;
     }
 
-    let (provider, key, persist) = crate::elicitation::request_api_key(&elicit).await?;
+    let (provider, key, persist) = crate::mcp::elicitation::request_api_key(&elicit).await?;
 
     let client: Arc<dyn LlmClient> = match provider {
         // Use deepseek-chat (tool-capable) rather than deepseek-reasoner for one-shot
@@ -374,7 +374,7 @@ async fn try_elicit_api_key<C: ToolContext>(ctx: &C) -> Option<Arc<dyn LlmClient
     };
 
     if persist {
-        crate::elicitation::persist_api_key(provider.api_key_env_var(), &key);
+        crate::mcp::elicitation::persist_api_key(provider.api_key_env_var(), &key);
     }
 
     tracing::info!(provider = %provider, "[expert] Using elicitated API key (one-shot)");

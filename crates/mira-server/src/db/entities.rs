@@ -138,12 +138,9 @@ pub fn find_facts_without_entities_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema::run_all_migrations;
 
     fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        run_all_migrations(&conn).unwrap();
-        conn
+        crate::db::test_support::setup_test_connection()
     }
 
     fn insert_project(conn: &Connection) -> i64 {

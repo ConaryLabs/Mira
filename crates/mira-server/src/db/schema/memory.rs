@@ -262,31 +262,11 @@ pub fn migrate_remove_capability_data(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Migrate to add teams tables for team-based memory sharing
-pub fn migrate_teams_tables(conn: &Connection) -> Result<()> {
-    create_table_if_missing(
-        conn,
-        "teams",
-        r#"
-        CREATE TABLE IF NOT EXISTS teams (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            created_by TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
-
-        CREATE TABLE IF NOT EXISTS team_members (
-            id INTEGER PRIMARY KEY,
-            team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-            user_identity TEXT NOT NULL,
-            role TEXT DEFAULT 'member',
-            joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(team_id, user_identity)
-        );
-        CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
-        CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_identity);
-    "#,
-    )
+/// Drop unused teams tables (feature was never exposed via MCP router)
+pub fn migrate_drop_teams_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS team_members;
+         DROP TABLE IF EXISTS teams;",
+    )?;
+    Ok(())
 }

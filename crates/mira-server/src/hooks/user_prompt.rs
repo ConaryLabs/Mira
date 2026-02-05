@@ -1,7 +1,7 @@
 // src/hooks/user_prompt.rs
 // UserPromptSubmit hook handler for proactive context injection
 
-use crate::background::proactive::get_pre_generated_suggestions;
+use crate::proactive::background::get_pre_generated_suggestions;
 use crate::config::EnvConfig;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;

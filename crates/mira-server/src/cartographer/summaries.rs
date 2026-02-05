@@ -3,7 +3,7 @@
 
 use super::types::ModuleSummaryContext;
 use crate::db::{get_modules_needing_summaries_sync, update_module_purposes_sync};
-use crate::project_files::walker::FileWalker;
+use crate::project_files::FileWalker;
 use crate::utils::truncate_at_boundary;
 use anyhow::Result;
 use rusqlite::Connection;

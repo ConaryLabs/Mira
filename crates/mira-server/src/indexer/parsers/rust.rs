@@ -337,10 +337,7 @@ mod tests {
     use super::*;
 
     fn parse_rust(code: &str) -> ParseResult {
-        let rust_parser = RustParser;
-        let mut parser = tree_sitter::Parser::new();
-        rust_parser.configure_parser(&mut parser).unwrap();
-        rust_parser.parse(&mut parser, code).unwrap()
+        crate::indexer::parsers::parse_with(&RustParser, code)
     }
 
     #[test]

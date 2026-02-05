@@ -290,18 +290,12 @@ mod tests {
     use super::*;
 
     fn parse_ts(code: &str) -> ParseResult {
-        let ts_parser = TypeScriptParser;
-        let mut parser = tree_sitter::Parser::new();
-        ts_parser.configure_parser(&mut parser).unwrap();
-        ts_parser.parse(&mut parser, code).unwrap()
+        crate::indexer::parsers::parse_with(&TypeScriptParser, code)
     }
 
     fn parse_js(code: &str) -> ParseResult {
         // TypeScript grammar handles JavaScript too
-        let ts_parser = TypeScriptParser;
-        let mut parser = tree_sitter::Parser::new();
-        ts_parser.configure_parser(&mut parser).unwrap();
-        ts_parser.parse(&mut parser, code).unwrap()
+        crate::indexer::parsers::parse_with(&TypeScriptParser, code)
     }
 
     #[test]

@@ -174,8 +174,8 @@ impl ToolContext for MiraServer {
             .unwrap_or(false)
     }
 
-    fn elicitation_client(&self) -> Option<crate::elicitation::ElicitationClient> {
-        Some(crate::elicitation::ElicitationClient::new(
+    fn elicitation_client(&self) -> Option<crate::mcp::elicitation::ElicitationClient> {
+        Some(crate::mcp::elicitation::ElicitationClient::new(
             self.peer.clone(),
         ))
     }

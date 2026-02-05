@@ -18,7 +18,8 @@ pub use storage::{
 use serde::{Deserialize, Serialize};
 
 /// Types of patterns that can be shared across projects
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::IntoStaticStr, strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
 pub enum CrossPatternType {
     /// File access sequences (e.g., "config then main then tests")
     FileSequence,
@@ -33,43 +34,20 @@ pub enum CrossPatternType {
 }
 
 impl CrossPatternType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CrossPatternType::FileSequence => "file_sequence",
-            CrossPatternType::ToolChain => "tool_chain",
-            CrossPatternType::ProblemPattern => "problem_pattern",
-            CrossPatternType::Collaboration => "collaboration",
-            CrossPatternType::Behavior => "behavior",
-        }
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "file_sequence" => Some(CrossPatternType::FileSequence),
-            "tool_chain" => Some(CrossPatternType::ToolChain),
-            "problem_pattern" => Some(CrossPatternType::ProblemPattern),
-            "collaboration" => Some(CrossPatternType::Collaboration),
-            "behavior" => Some(CrossPatternType::Behavior),
-            _ => None,
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 }
 
 /// Direction of pattern sharing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 pub enum SharingDirection {
+    #[strum(serialize = "exported")]
     Export,
+    #[strum(serialize = "imported")]
     Import,
 }
 
 impl SharingDirection {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SharingDirection::Export => "exported",
-            SharingDirection::Import => "imported",
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 }
 
 /// Configuration for cross-project intelligence

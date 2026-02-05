@@ -2,7 +2,7 @@
 // Go package detection from project structure
 
 use super::super::types::Module;
-use crate::project_files::walker::FileWalker;
+use crate::project_files::FileWalker;
 use crate::utils::{path_to_string, relative_to};
 use std::collections::HashSet;
 use std::path::Path;

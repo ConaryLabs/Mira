@@ -17,7 +17,8 @@ pub struct RawEntity {
 }
 
 /// Entity type classification
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum EntityType {
     CodeIdent,
     FilePath,
@@ -25,13 +26,7 @@ pub enum EntityType {
 }
 
 impl EntityType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            EntityType::CodeIdent => "code_ident",
-            EntityType::FilePath => "file_path",
-            EntityType::CrateName => "crate_name",
-        }
-    }
+    pub fn as_str(&self) -> &'static str { self.into() }
 }
 
 // Precompiled regexes via LazyLock — compiled once, used many times
