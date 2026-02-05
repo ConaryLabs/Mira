@@ -2,6 +2,8 @@
 // SessionStart hook handler - captures Claude Code's session_id and cwd
 
 use anyhow::Result;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,8 +19,32 @@ pub fn cwd_file_path() -> PathBuf {
     home.join(".mira/claude-cwd")
 }
 
+/// File where Claude's session source info is stored for MCP to read
+pub fn source_file_path() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    home.join(".mira/claude-source.json")
+}
+
+/// Source information captured from SessionStart hook
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SourceInfo {
+    pub session_id: Option<String>,
+    pub source: String,
+    pub timestamp: String,
+}
+
+impl SourceInfo {
+    pub fn new(session_id: Option<String>, source: &str) -> Self {
+        Self {
+            session_id,
+            source: source.to_string(),
+            timestamp: Utc::now().to_rfc3339(),
+        }
+    }
+}
+
 /// Handle SessionStart hook from Claude Code
-/// Extracts session_id and cwd from stdin JSON and writes to files
+/// Extracts session_id, cwd, and source from stdin JSON and writes to files
 pub fn run() -> Result<()> {
     let input = super::read_hook_input()?;
 
@@ -29,10 +55,11 @@ pub fn run() -> Result<()> {
     fs::create_dir_all(&mira_dir)?;
 
     // Extract session_id from Claude's hook input
-    if let Some(session_id) = input.get("session_id").and_then(|v| v.as_str()) {
+    let session_id = input.get("session_id").and_then(|v| v.as_str());
+    if let Some(sid) = session_id {
         let path = session_file_path();
-        fs::write(&path, session_id)?;
-        eprintln!("[mira] Captured Claude session: {}", session_id);
+        fs::write(&path, sid)?;
+        eprintln!("[mira] Captured Claude session: {}", sid);
     }
 
     // Extract cwd from Claude's hook input for auto-project detection
@@ -41,6 +68,30 @@ pub fn run() -> Result<()> {
         fs::write(&path, cwd)?;
         eprintln!("[mira] Captured Claude cwd: {}", cwd);
     }
+
+    // Determine session source (startup vs resume)
+    // Claude Code passes "resumed" or similar flag when using --resume
+    let source = input
+        .get("source")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            // Check for resumed flag as fallback
+            if input.get("resumed").and_then(|v| v.as_bool()).unwrap_or(false) {
+                Some("resume")
+            } else {
+                None
+            }
+        })
+        .unwrap_or("startup");
+
+    // Write source info atomically (temp file + rename)
+    let source_info = SourceInfo::new(session_id.map(String::from), source);
+    let source_json = serde_json::to_string(&source_info)?;
+    let source_path = source_file_path();
+    let temp_path = source_path.with_extension("tmp");
+    fs::write(&temp_path, &source_json)?;
+    fs::rename(&temp_path, &source_path)?;
+    eprintln!("[mira] Captured Claude source: {}", source);
 
     // SessionStart hooks don't need to output anything
     Ok(())
@@ -56,6 +107,13 @@ pub fn read_claude_session_id() -> Option<String> {
 pub fn read_claude_cwd() -> Option<String> {
     let path = cwd_file_path();
     fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
+}
+
+/// Read source info from the JSON file (if available)
+pub fn read_source_info() -> Option<SourceInfo> {
+    let path = source_file_path();
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 #[cfg(test)]

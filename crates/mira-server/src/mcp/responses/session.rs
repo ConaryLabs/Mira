@@ -32,6 +32,10 @@ pub struct SessionSummary {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

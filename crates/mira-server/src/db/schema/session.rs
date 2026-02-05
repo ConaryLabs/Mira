@@ -75,3 +75,21 @@ pub fn migrate_sessions_branch(conn: &Connection) -> Result<()> {
 
     Ok(())
 }
+
+/// Migrate sessions to add source and resumed_from columns for session resume tracking
+pub fn migrate_sessions_resume(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "sessions") {
+        return Ok(());
+    }
+
+    add_column_if_missing(conn, "sessions", "source", "TEXT DEFAULT 'startup'")?;
+    add_column_if_missing(conn, "sessions", "resumed_from", "TEXT")?;
+
+    // Index for lineage queries
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_resumed_from ON sessions(resumed_from)",
+        [],
+    )?;
+
+    Ok(())
+}

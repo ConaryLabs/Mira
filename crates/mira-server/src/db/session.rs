@@ -27,6 +27,52 @@ pub fn create_session_sync(
     Ok(())
 }
 
+/// Create or update a session with extended fields (source, resumed_from)
+/// Properly reactivates completed sessions by setting status='active'
+pub fn create_session_ext_sync(
+    conn: &Connection,
+    session_id: &str,
+    project_id: Option<i64>,
+    source: Option<&str>,
+    resumed_from: Option<&str>,
+) -> rusqlite::Result<()> {
+    // Check if session exists and its status
+    let existing_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM sessions WHERE id = ?",
+            [session_id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    match existing_status {
+        Some(status) if status == "completed" => {
+            // Reactivate completed session
+            conn.execute(
+                "UPDATE sessions SET status = 'active', last_activity = datetime('now'),
+                 source = COALESCE(?1, source) WHERE id = ?2",
+                params![source, session_id],
+            )?;
+        }
+        Some(_) => {
+            // Update existing active session
+            conn.execute(
+                "UPDATE sessions SET last_activity = datetime('now') WHERE id = ?",
+                [session_id],
+            )?;
+        }
+        None => {
+            // Create new session
+            conn.execute(
+                "INSERT INTO sessions (id, project_id, status, source, resumed_from, started_at, last_activity)
+                 VALUES (?1, ?2, 'active', ?3, ?4, datetime('now'), datetime('now'))",
+                params![session_id, project_id, source.unwrap_or("startup"), resumed_from],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Get recent sessions for a project (sync version for pool.interact)
 pub fn get_recent_sessions_sync(
     conn: &Connection,
@@ -34,7 +80,7 @@ pub fn get_recent_sessions_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<SessionInfo>> {
     let mut stmt = conn.prepare(
-        "SELECT id, project_id, status, summary, started_at, last_activity
+        "SELECT id, project_id, status, summary, started_at, last_activity, source, resumed_from
          FROM sessions
          WHERE project_id = ?
          ORDER BY last_activity DESC, rowid DESC
@@ -48,6 +94,8 @@ pub fn get_recent_sessions_sync(
             summary: row.get(3)?,
             started_at: row.get(4)?,
             last_activity: row.get(5)?,
+            source: row.get(6)?,
+            resumed_from: row.get(7)?,
         })
     })?;
     rows.collect()

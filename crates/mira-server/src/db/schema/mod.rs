@@ -94,6 +94,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add session_tasks tables for Claude Code task persistence bridge
     session_tasks::migrate_session_tasks_tables(conn)?;
 
+    // Add source and resumed_from columns for session resume tracking
+    session::migrate_sessions_resume(conn)?;
+
     Ok(())
 }
 

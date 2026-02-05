@@ -2,9 +2,10 @@
 // Unified session management and collaboration tools
 
 use crate::db::{
-    create_session_sync, get_recent_sessions_sync, get_session_history_sync,
+    create_session_ext_sync, get_recent_sessions_sync, get_session_history_sync,
     get_unified_insights_sync,
 };
+use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::requests::SessionHistoryAction;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
@@ -187,11 +188,17 @@ pub async fn session_history<C: ToolContext>(
             let items: Vec<SessionSummary> = sessions
                 .into_iter()
                 .map(|s| {
+                    let source_info = match (&s.source, &s.resumed_from) {
+                        (Some(src), Some(from)) => format!(" [{}←{}]", src, truncate_at_boundary(from, 8)),
+                        (Some(src), None) => format!(" [{}]", src),
+                        _ => String::new(),
+                    };
                     output.push_str(&format!(
-                        "  [{}] {} - {} ({} tool calls)\n",
+                        "  [{}] {} - {}{} ({})\n",
                         truncate_at_boundary(&s.id, 8),
                         s.started_at,
                         s.status,
+                        source_info,
                         s.summary.as_deref().unwrap_or("no summary")
                     ));
                     SessionSummary {
@@ -199,6 +206,8 @@ pub async fn session_history<C: ToolContext>(
                         started_at: s.started_at,
                         status: s.status,
                         summary: s.summary,
+                        source: s.source,
+                        resumed_from: s.resumed_from,
                     }
                 })
                 .collect();
@@ -285,27 +294,76 @@ pub async fn session_history<C: ToolContext>(
 
 /// Ensure a session exists in database and return session ID
 pub async fn ensure_session<C: ToolContext>(ctx: &C) -> Result<String, String> {
-    // Check if session ID already exists
+    // Check if session ID already exists in context
     if let Some(existing_id) = ctx.get_session_id().await {
         return Ok(existing_id);
     }
 
-    // Generate new session ID
-    let new_id = Uuid::new_v4().to_string();
+    // Read Claude's session ID (prefer over generating new)
+    let session_id = read_claude_session_id().unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    // Read source info from hook
+    let source_info = read_source_info();
+    let source = source_info
+        .as_ref()
+        .map(|s| s.source.as_str())
+        .unwrap_or("startup");
 
     // Get project ID if available
     let project_id = ctx.project_id().await;
 
-    // Create session in database
-    let new_id_clone = new_id.clone();
+    // Determine resumed_from for resume source
+    let resumed_from = if source == "resume" {
+        find_previous_session_heuristic(ctx, project_id).await
+    } else {
+        None
+    };
+
+    // Create/reactivate session using extended function
+    let sid = session_id.clone();
+    let src = source.to_string();
+    let rf = resumed_from.clone();
     ctx.pool()
-        .run(move |conn| create_session_sync(conn, &new_id_clone, project_id))
+        .run(move |conn| create_session_ext_sync(conn, &sid, project_id, Some(&src), rf.as_deref()))
         .await?;
 
     // Set session ID in context
-    ctx.set_session_id(new_id.clone()).await;
+    ctx.set_session_id(session_id.clone()).await;
 
-    Ok(new_id)
+    Ok(session_id)
+}
+
+/// Find previous session using branch-aware heuristic
+/// Prioritizes: same branch + recent + has tool history
+async fn find_previous_session_heuristic<C: ToolContext>(
+    ctx: &C,
+    project_id: Option<i64>,
+) -> Option<String> {
+    let project_id = project_id?;
+    let branch = ctx.get_branch().await;
+
+    ctx.pool()
+        .run(move |conn| {
+            // Prioritize: same branch + recent + has tool history
+            let sql = r#"
+                SELECT s.id FROM sessions s
+                LEFT JOIN tool_history t ON t.session_id = s.id
+                WHERE s.project_id = ?1
+                  AND s.status = 'completed'
+                  AND (?2 IS NULL OR s.branch = ?2)
+                  AND s.last_activity > datetime('now', '-24 hours')
+                GROUP BY s.id
+                ORDER BY COUNT(t.id) DESC, s.last_activity DESC
+                LIMIT 1
+            "#;
+            let result: Option<String> = conn
+                .query_row(sql, rusqlite::params![project_id, branch], |row| row.get(0))
+                .ok();
+            Ok::<_, String>(result)
+        })
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Send a response back to Mira during collaboration.

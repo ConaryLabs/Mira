@@ -74,6 +74,7 @@ pub fn upsert_session_sync(
 }
 
 /// Create or update a session with branch - sync version for pool.interact()
+/// Note: Sets status='active' on conflict to properly reactivate completed sessions
 pub fn upsert_session_with_branch_sync(
     conn: &Connection,
     session_id: &str,
@@ -85,6 +86,7 @@ pub fn upsert_session_with_branch_sync(
          VALUES (?1, ?2, ?3, 'active', datetime('now'), datetime('now'))
          ON CONFLICT(id) DO UPDATE SET
             last_activity = datetime('now'),
+            status = 'active',
             branch = COALESCE(?3, sessions.branch)",
         params![session_id, project_id, branch],
     )?;

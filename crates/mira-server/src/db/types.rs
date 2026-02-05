@@ -25,6 +25,8 @@ pub struct SessionInfo {
     pub summary: Option<String>,
     pub started_at: String,
     pub last_activity: String,
+    pub source: Option<String>,
+    pub resumed_from: Option<String>,
 }
 
 /// Chat message record
