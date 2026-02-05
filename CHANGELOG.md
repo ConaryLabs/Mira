@@ -80,6 +80,15 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+### Added
+- **Enhanced hook system** - Added `PreToolUse` (context injection before Grep/Glob/Read), `SubagentStart`/`SubagentStop` (subagent context and discovery capture), and `SessionEnd` hooks.
+- **New skills** - Added `/mira:diff` (semantic diff analysis), `/mira:experts` (expert consultation), `/mira:insights` (background analysis), and `/mira:remember` (quick memory storage) skills.
+- **Task list bridging** - SessionStart hook now captures Claude Code's task list ID for session-task correlation.
+- **Session resume detection** - Hooks detect `startup` vs `resume` sessions and track the previous session ID.
+
+### Fixed
+- **Recall filters** - `category` and `fact_type` filters in `memory(action="recall")` now work correctly.
+
 ## [0.5.2] - 2026-02-04
 
 ### Changed

@@ -103,11 +103,14 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 
 | Hook | What It Injects |
 |------|-----------------|
-| `SessionStart` | Session ID, startup vs resume, working directory |
+| `SessionStart` | Session ID, startup vs resume, task list ID, working directory |
 | `UserPromptSubmit` | Pending tasks, relevant memories, file-aware context |
+| `PreToolUse` | Context before Grep/Glob/Read (suggests semantic alternatives) |
 | `PostToolUse` | Tracks file modifications (async, non-blocking) |
 | `PreCompact` | Preserves important context before summarization |
-| `Stop` | Session snapshot for continuity |
+| `Stop` | Session snapshot, task export for continuity |
+| `SubagentStart` | Injects relevant context when subagents spawn |
+| `SubagentStop` | Captures discoveries from subagent work |
 
 **Don't:** Manually inject session info, pending tasks, or file tracking that hooks already provide.
 

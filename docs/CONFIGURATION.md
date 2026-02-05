@@ -144,17 +144,21 @@ The installer adds all hooks to `~/.claude/settings.json` using `jq` for JSON ma
 
 | Hook | Command | Timeout | Purpose |
 |------|---------|---------|---------|
-| `SessionStart` | `mira hook session-start` | 10s | Captures session ID for tracking |
+| `SessionStart` | `mira hook session-start` | 10s | Captures session ID, startup vs resume, task list ID |
 | `UserPromptSubmit` | `mira hook user-prompt` | 5s | Injects proactive context into prompts |
-| `PostToolUse` | `mira hook post-tool` | 5s | Tracks behavior for pattern mining (scoped to `Write\|Edit\|NotebookEdit`) |
+| `PreToolUse` | `mira hook pre-tool` | 2s | Injects context before Grep/Glob/Read (matcher: `Grep\|Glob\|Read`) |
+| `PostToolUse` | `mira hook post-tool` | 5s | Tracks behavior for pattern mining (matcher: `Write\|Edit\|NotebookEdit`) |
 | `PreCompact` | `mira hook pre-compact` | 30s | Preserves context before summarization |
-| `Stop` | `mira hook stop` | 5s | Save session state, auto-export memories to CLAUDE.local.md, check goal progress |
+| `Stop` | `mira hook stop` | 5s | Save session state, auto-export memories to CLAUDE.local.md |
+| `SessionEnd` | `mira hook session-end` | 5s | Snapshot tasks on user interrupt |
+| `SubagentStart` | `mira hook subagent-start` | 3s | Inject context when subagents spawn |
+| `SubagentStop` | `mira hook subagent-stop` | 3s | Capture discoveries from subagent work |
 
-Additional hooks (not auto-configured):
+Additional hooks (not auto-configured by installer script):
 
 | Hook | Command | Purpose |
 |------|---------|---------|
-| `Permission` | `mira hook permission` | Auto-approve tools based on stored rules |
+| `PermissionRequest` | `mira hook permission` | Auto-approve tools based on stored rules |
 
 ### Manual Configuration
 
@@ -163,11 +167,14 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
+    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2000}]}],
     "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000}]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
-    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
-    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],
-    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}]
+    "PreCompact": [{"hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000}]}]
   }
 }
 ```
@@ -175,7 +182,8 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 ### What Each Hook Does
 
 **SessionStart**
-- Captures Claude's session ID
+- Captures Claude's session ID and task list ID
+- Detects startup vs resume (session bridging)
 - Enables cross-session memory tracking
 - Links tool history to sessions
 
@@ -185,8 +193,13 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 - Injects proactive suggestions based on behavior patterns
 - Context appears automatically without explicit `recall()` calls
 
+**PreToolUse**
+- Fires before Grep/Glob/Read tool execution
+- Suggests Mira semantic search alternatives
+- Injects relevant code context
+
 **PostToolUse**
-- Fires after Write/Edit/Read tools complete
+- Fires after Write/Edit/NotebookEdit tools complete
 - Tracks file access patterns for behavior mining
 - Queues modified files for re-indexing
 - Provides contextual hints about changed files
@@ -195,6 +208,21 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 - Fires before context summarization
 - Extracts important decisions, TODOs, issues
 - Stores them as memories before they're lost
+
+**Stop**
+- Fires when session stops
+- Saves session state and snapshots tasks
+- Auto-exports memories to CLAUDE.local.md
+
+**SubagentStart**
+- Fires when a subagent (Task tool) spawns
+- Injects relevant context for the subagent's task
+- Provides codebase awareness to subagents
+
+**SubagentStop**
+- Fires when a subagent completes
+- Captures useful discoveries from subagent work
+- Stores insights for future sessions
 
 ---
 

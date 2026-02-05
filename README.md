@@ -161,17 +161,19 @@ See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for manual setup inst
 
 ### Enable Hooks (Required for Full Features)
 
-The quick install script automatically configures hooks. For manual installs, add to `~/.claude/settings.json`:
+The quick install script and plugin marketplace install automatically configure hooks. For manual installs, add to `~/.claude/settings.json`:
 
 ```json
 {
   "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
+    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2000}]}],
     "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000}]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
-    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
-    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],
-    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
-    "Permission": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook permission", "timeout": 5000}]}]
+    "PreCompact": [{"hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000}]}]
   }
 }
 ```
@@ -180,6 +182,7 @@ Hooks enable:
 - **Behavior tracking** - Learns your workflow patterns for proactive suggestions
 - **Session awareness** - Captures session IDs for context persistence
 - **Proactive context** - Injects relevant memories and predictions into prompts
+- **Subagent awareness** - Injects context when subagents spawn
 
 ### Plugin vs MCP Server
 

@@ -62,6 +62,10 @@ claude --plugin-dir /path/to/Mira/plugin
 | `/mira:search <query>` | Semantic code search |
 | `/mira:recap` | Get session recap |
 | `/mira:goals [command]` | Manage goals and milestones |
+| `/mira:diff [--from REF] [--to REF]` | Semantic diff analysis |
+| `/mira:experts <question>` | Get expert second opinions |
+| `/mira:insights` | Surface background analysis |
+| `/mira:remember <content>` | Quick memory storage |
 
 ## MCP Tools
 
@@ -88,11 +92,16 @@ The plugin uses Claude Code hooks for bidirectional communication:
 
 | Hook | Purpose |
 |------|---------|
-| `SessionStart` | Inject session recap and active goals |
+| `SessionStart` | Initialize session, inject recap and active goals |
 | `UserPromptSubmit` | Auto-recall relevant memories and code context |
+| `PreToolUse` | Inject context before Grep/Glob/Read searches |
 | `PostToolUse` | Track file changes, queue re-indexing |
 | `PreCompact` | Extract important context before summarization |
-| `Stop` | Save session state, auto-export CLAUDE.local.md, check goal progress |
+| `Stop` | Save session state, auto-export CLAUDE.local.md |
+| `SessionEnd` | Snapshot tasks on user interrupt |
+| `SubagentStart` | Inject context when subagents spawn |
+| `SubagentStop` | Capture discoveries from subagent work |
+| `PermissionRequest` | Handle permission checks |
 
 ## Testing
 
