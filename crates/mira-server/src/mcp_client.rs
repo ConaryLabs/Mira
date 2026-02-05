@@ -174,9 +174,10 @@ impl McpClientManager {
         seen: &mut std::collections::HashSet<String>,
     ) {
         if let Ok(content) = std::fs::read_to_string(path)
-            && let Ok(root) = serde_json::from_str::<McpJsonRoot>(&content) {
-                Self::add_servers(root.mcp_servers, configs, seen);
-            }
+            && let Ok(root) = serde_json::from_str::<McpJsonRoot>(&content)
+        {
+            Self::add_servers(root.mcp_servers, configs, seen);
+        }
     }
 
     /// Try to load MCP servers from a Codex config.toml file.
@@ -186,9 +187,10 @@ impl McpClientManager {
         seen: &mut std::collections::HashSet<String>,
     ) {
         if let Ok(content) = std::fs::read_to_string(path)
-            && let Ok(root) = toml::from_str::<CodexTomlRoot>(&content) {
-                Self::add_servers(root.mcp_servers, configs, seen);
-            }
+            && let Ok(root) = toml::from_str::<CodexTomlRoot>(&content)
+        {
+            Self::add_servers(root.mcp_servers, configs, seen);
+        }
     }
 
     /// Convert parsed server entries into configs, deduplicating by name.

@@ -17,9 +17,10 @@ pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
                 if let Some(start) = sql.find("float[") {
                     let rest = &sql[start + 6..];
                     if let Some(end) = rest.find(']')
-                        && let Ok(dim) = rest[..end].parse::<i64>() {
-                            return Ok(Some(dim));
-                        }
+                        && let Ok(dim) = rest[..end].parse::<i64>()
+                    {
+                        return Ok(Some(dim));
+                    }
                 }
                 Ok(None)
             },
@@ -27,14 +28,15 @@ pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
         .unwrap_or(None);
 
     if let Some(dim) = current_dim
-        && dim != 1536 {
-            tracing::info!("Migrating vector tables from {} to 1536 dimensions", dim);
-            // Drop old tables - CASCADE not supported, drop in order
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS vec_memory;
+        && dim != 1536
+    {
+        tracing::info!("Migrating vector tables from {} to 1536 dimensions", dim);
+        // Drop old tables - CASCADE not supported, drop in order
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS vec_memory;
                  DROP TABLE IF EXISTS vec_code;",
-            )?;
-        }
+        )?;
+    }
 
     Ok(())
 }

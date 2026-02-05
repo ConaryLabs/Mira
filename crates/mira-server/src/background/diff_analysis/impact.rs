@@ -133,20 +133,21 @@ pub fn compute_historical_risk(
             match pattern_subtype.as_str() {
                 "module_hotspot" => {
                     if let Some(m) = module
-                        && file_modules.contains(m.as_str()) {
-                            matches.push(MatchedPattern {
-                                pattern_subtype: pattern_subtype.clone(),
-                                description: format!(
-                                    "Module '{}' has {:.0}% bad outcome rate ({} of {} changes)",
-                                    m,
-                                    bad_rate * 100.0,
-                                    outcome_stats.reverted + outcome_stats.follow_up_fix,
-                                    outcome_stats.total
-                                ),
-                                confidence: pattern.confidence,
-                                bad_rate,
-                            });
-                        }
+                        && file_modules.contains(m.as_str())
+                    {
+                        matches.push(MatchedPattern {
+                            pattern_subtype: pattern_subtype.clone(),
+                            description: format!(
+                                "Module '{}' has {:.0}% bad outcome rate ({} of {} changes)",
+                                m,
+                                bad_rate * 100.0,
+                                outcome_stats.reverted + outcome_stats.follow_up_fix,
+                                outcome_stats.total
+                            ),
+                            confidence: pattern.confidence,
+                            bad_rate,
+                        });
+                    }
                 }
                 "co_change_gap" => {
                     if files.len() >= 2 {

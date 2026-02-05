@@ -190,9 +190,10 @@ fn find_package_name(package_path: &Path) -> String {
     let package_json = package_path.join("package.json");
     if package_json.exists()
         && let Ok(content) = std::fs::read_to_string(&package_json)
-            && let Some(name) = parse_package_json_name(&content) {
-                return name;
-            }
+        && let Some(name) = parse_package_json_name(&content)
+    {
+        return name;
+    }
 
     // Fall back to directory name
     package_path
@@ -207,13 +208,14 @@ fn parse_package_json_name(content: &str) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with("\"name\"")
-            && let Some(start) = line.find(':') {
-                let value = line[start + 1..].trim().trim_matches(',');
-                let value = value.trim_matches('"');
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+            && let Some(start) = line.find(':')
+        {
+            let value = line[start + 1..].trim().trim_matches(',');
+            let value = value.trim_matches('"');
+            if !value.is_empty() {
+                return Some(value.to_string());
             }
+        }
     }
     None
 }
@@ -242,15 +244,17 @@ fn find_workspaces(project_path: &Path) -> Vec<std::path::PathBuf> {
 
     for pattern in patterns {
         let base_dir = project_path.join(pattern.trim_end_matches("/*"));
-        if base_dir.exists() && base_dir.is_dir()
-            && let Ok(entries) = std::fs::read_dir(&base_dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    let path = entry.path();
-                    if path.is_dir() && path.join("package.json").exists() {
-                        workspaces.push(path);
-                    }
+        if base_dir.exists()
+            && base_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&base_dir)
+        {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() && path.join("package.json").exists() {
+                    workspaces.push(path);
                 }
             }
+        }
     }
 
     workspaces
@@ -307,9 +311,10 @@ pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
     let mut count = 0u32;
 
     if full_path.is_file()
-        && let Ok(content) = std::fs::read_to_string(&full_path) {
-            return content.lines().count() as u32;
-        }
+        && let Ok(content) = std::fs::read_to_string(&full_path)
+    {
+        return content.lines().count() as u32;
+    }
 
     for path in FileWalker::new(&full_path)
         .for_language("node")

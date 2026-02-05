@@ -175,17 +175,19 @@ fn find_project_name(project_path: &Path) -> String {
     let pyproject = project_path.join("pyproject.toml");
     if pyproject.exists()
         && let Ok(content) = std::fs::read_to_string(&pyproject)
-            && let Some(name) = parse_pyproject_name(&content) {
-                return name;
-            }
+        && let Some(name) = parse_pyproject_name(&content)
+    {
+        return name;
+    }
 
     // Try setup.py
     let setup_py = project_path.join("setup.py");
     if setup_py.exists()
         && let Ok(content) = std::fs::read_to_string(&setup_py)
-            && let Some(name) = parse_setup_py_name(&content) {
-                return name;
-            }
+        && let Some(name) = parse_setup_py_name(&content)
+    {
+        return name;
+    }
 
     // Fall back to directory name
     project_path
@@ -202,13 +204,15 @@ fn parse_pyproject_name(content: &str) -> Option<String> {
         let line = line.trim();
         if line.starts_with('[') {
             in_project = line == "[project]" || line == "[tool.poetry]";
-        } else if in_project && line.starts_with("name")
-            && let Some(name) = line.split('=').nth(1) {
-                let name = name.trim().trim_matches('"').trim_matches('\'');
-                if !name.is_empty() {
-                    return Some(name.to_string());
-                }
+        } else if in_project
+            && line.starts_with("name")
+            && let Some(name) = line.split('=').nth(1)
+        {
+            let name = name.trim().trim_matches('"').trim_matches('\'');
+            if !name.is_empty() {
+                return Some(name.to_string());
             }
+        }
     }
     None
 }
@@ -217,15 +221,17 @@ fn parse_setup_py_name(content: &str) -> Option<String> {
     // Simple regex-free extraction: look for name="..." or name='...'
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("name") && line.contains('=')
-            && let Some(start) = line.find('"').or_else(|| line.find('\'')) {
-                // Safe because we found an ASCII quote character at byte position `start`
-                let quote = line.as_bytes()[start] as char;
-                let rest = &line[start + 1..];
-                if let Some(end) = rest.find(quote) {
-                    return Some(rest[..end].to_string());
-                }
+        if line.starts_with("name")
+            && line.contains('=')
+            && let Some(start) = line.find('"').or_else(|| line.find('\''))
+        {
+            // Safe because we found an ASCII quote character at byte position `start`
+            let quote = line.as_bytes()[start] as char;
+            let rest = &line[start + 1..];
+            if let Some(end) = rest.find(quote) {
+                return Some(rest[..end].to_string());
             }
+        }
     }
     None
 }
@@ -256,9 +262,10 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
             .and_then(|n| n.to_str())
             .unwrap_or("");
         if candidates.contains(&name)
-            && let Ok(rel) = entry.path().strip_prefix(project_path) {
-                entries.push(path_to_string(rel));
-            }
+            && let Ok(rel) = entry.path().strip_prefix(project_path)
+        {
+            entries.push(path_to_string(rel));
+        }
     }
 
     entries.sort();

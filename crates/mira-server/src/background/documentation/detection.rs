@@ -9,7 +9,7 @@ use crate::db::{
     get_documented_by_category_sync, get_indexed_project_ids_sync, get_lib_symbols_sync,
     get_modules_for_doc_gaps_sync, get_project_paths_by_ids_sync, get_symbols_for_file_sync,
 };
-use crate::utils::{truncate_at_boundary, ResultExt};
+use crate::utils::{ResultExt, truncate_at_boundary};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -231,12 +231,13 @@ async fn detect_mcp_tool_gaps(
             continue;
         }
         if trimmed.starts_with("async fn ")
-            && let Some(fn_name) = trimmed.strip_prefix("async fn ") {
-                let fn_name = fn_name.split('(').next().unwrap_or("").trim().to_string();
-                if !fn_name.is_empty() {
-                    tool_names.insert(fn_name);
-                }
+            && let Some(fn_name) = trimmed.strip_prefix("async fn ")
+        {
+            let fn_name = fn_name.split('(').next().unwrap_or("").trim().to_string();
+            if !fn_name.is_empty() {
+                tool_names.insert(fn_name);
             }
+        }
     }
 
     // Check which tools have documentation (main DB)
@@ -392,17 +393,18 @@ async fn detect_stale_docs_for_project(
 
         // Check 1: Git commit changed (with ancestor check for rebases)
         if let (Some(stored_commit), Some(current)) = (&item.last_seen_commit, &current_commit)
-            && stored_commit != current {
-                // Verify it's a real change, not just a rebase
-                if !is_ancestor(project_str, stored_commit) {
-                    is_stale = true;
-                    reason = format!(
-                        "Git history changed (rebase/force-push detected). Old: {}, Current: {}",
-                        truncate_at_boundary(stored_commit, 8),
-                        truncate_at_boundary(current, 8)
-                    );
-                }
+            && stored_commit != current
+        {
+            // Verify it's a real change, not just a rebase
+            if !is_ancestor(project_str, stored_commit) {
+                is_stale = true;
+                reason = format!(
+                    "Git history changed (rebase/force-push detected). Old: {}, Current: {}",
+                    truncate_at_boundary(stored_commit, 8),
+                    truncate_at_boundary(current, 8)
+                );
             }
+        }
 
         // Check 2: Source signature hash changed (code DB for symbols)
         if let Some(source_file) = item.source_symbols.as_ref().and_then(|s| {
@@ -411,15 +413,15 @@ async fn detect_stale_docs_for_project(
             } else {
                 None
             }
-        })
-            && let Some(new_hash) =
-                check_source_signature_changed(code_pool, project_id, &source_file).await?
-                && item.source_signature_hash.as_ref() != Some(&new_hash) {
-                    is_stale = true;
-                    if reason.is_empty() {
-                        reason = "Source signatures changed".to_string();
-                    }
-                }
+        }) && let Some(new_hash) =
+            check_source_signature_changed(code_pool, project_id, &source_file).await?
+            && item.source_signature_hash.as_ref() != Some(&new_hash)
+        {
+            is_stale = true;
+            if reason.is_empty() {
+                reason = "Source signatures changed".to_string();
+            }
+        }
 
         if is_stale {
             // Mark as stale (main DB)

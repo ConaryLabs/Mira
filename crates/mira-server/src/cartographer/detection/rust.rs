@@ -78,13 +78,15 @@ pub fn parse_crate_name(cargo_toml: &Path) -> Option<String> {
         let line = line.trim();
         if line.starts_with('[') {
             in_package = line == "[package]";
-        } else if in_package && line.starts_with("name")
-            && let Some(name) = line.split('=').nth(1) {
-                let name = name.trim().trim_matches('"').trim_matches('\'');
-                if !name.is_empty() {
-                    return Some(name.to_string());
-                }
+        } else if in_package
+            && line.starts_with("name")
+            && let Some(name) = line.split('=').nth(1)
+        {
+            let name = name.trim().trim_matches('"').trim_matches('\'');
+            if !name.is_empty() {
+                return Some(name.to_string());
             }
+        }
     }
     None
 }
@@ -194,9 +196,10 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
     {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if (name == "main.rs" || name == "lib.rs")
-            && let Ok(rel) = path.strip_prefix(project_path) {
-                entries.push(path_to_string(rel));
-            }
+            && let Ok(rel) = path.strip_prefix(project_path)
+        {
+            entries.push(path_to_string(rel));
+        }
     }
 
     entries.sort();

@@ -209,36 +209,43 @@ pub(crate) async fn scan_project_health(
 
     // 2-5. Single-pass pattern detection (walks filesystem, reads Rust files)
     let det_path = project_path_owned.clone();
-    let det_output = tokio::task::spawn_blocking(move || {
-        detection::collect_detections(&det_path)
-    })
-    .await
-    .map_err(|e| format!("detection scan join error: {}", e))?
-    .unwrap_or_else(|e| {
-        tracing::warn!("Code health: detection scan failed: {}", e);
-        detection::DetectionOutput {
-            results: detection::DetectionResults {
-                todos: 0,
-                unimplemented: 0,
-                unwraps: 0,
-                error_handling: 0,
-            },
-            findings: Vec::new(),
-        }
-    });
+    let det_output = tokio::task::spawn_blocking(move || detection::collect_detections(&det_path))
+        .await
+        .map_err(|e| format!("detection scan join error: {}", e))?
+        .unwrap_or_else(|e| {
+            tracing::warn!("Code health: detection scan failed: {}", e);
+            detection::DetectionOutput {
+                results: detection::DetectionResults {
+                    todos: 0,
+                    unimplemented: 0,
+                    unwraps: 0,
+                    error_handling: 0,
+                },
+                findings: Vec::new(),
+            }
+        });
 
     let det = &det_output.results;
     if det.todos > 0 {
         tracing::info!("Code health: found {} TODOs", det.todos);
     }
     if det.unimplemented > 0 {
-        tracing::info!("Code health: found {} unimplemented! macros", det.unimplemented);
+        tracing::info!(
+            "Code health: found {} unimplemented! macros",
+            det.unimplemented
+        );
     }
     if det.unwraps > 0 {
-        tracing::info!("Code health: found {} unwrap/expect calls in non-test code", det.unwraps);
+        tracing::info!(
+            "Code health: found {} unwrap/expect calls in non-test code",
+            det.unwraps
+        );
     }
     if det.error_handling > 0 {
-        tracing::info!("Code health: found {} error handling issues", det.error_handling);
+        tracing::info!(
+            "Code health: found {} error handling issues",
+            det.error_handling
+        );
     }
 
     // Batch-write all findings in a single pool.interact() call
@@ -485,9 +492,10 @@ fn collect_dependency_data(
         for row in rows {
             let (fp, ip) = row.str_err()?;
             if let (Some(src), Some(tgt)) = (file_to_mod(&fp), file_to_mod(&ip))
-                && src != tgt {
-                    *import_deps.entry((src, tgt)).or_default() += 1;
-                }
+                && src != tgt
+            {
+                *import_deps.entry((src, tgt)).or_default() += 1;
+            }
         }
     }
 
@@ -515,9 +523,10 @@ fn collect_dependency_data(
         for row in rows {
             let (f1, f2, cnt) = row.str_err()?;
             if let (Some(src), Some(tgt)) = (file_to_mod(&f1), file_to_mod(&f2))
-                && src != tgt {
-                    *call_deps.entry((src, tgt)).or_default() += cnt;
-                }
+                && src != tgt
+            {
+                *call_deps.entry((src, tgt)).or_default() += cnt;
+            }
         }
     }
 

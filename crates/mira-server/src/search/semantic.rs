@@ -6,10 +6,10 @@ use super::keyword::keyword_search;
 use super::utils::{Locatable, deduplicate_by_location, distance_to_score, embedding_to_bytes};
 use crate::Result;
 use crate::db::pool::DatabasePool;
-use crate::utils::{truncate, truncate_at_boundary};
 use crate::db::semantic_code_search_sync;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
+use crate::utils::{truncate, truncate_at_boundary};
 use std::path::Path;
 use std::sync::Arc;
 

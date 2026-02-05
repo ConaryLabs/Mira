@@ -102,21 +102,22 @@ pub fn keyword_search(
 
     // Strategy 3: LIKE chunk search (supplement when results are sparse)
     if all_results.len() < fetch_limit
-        && let Some(pid) = project_id {
-            let terms: Vec<&str> = query.split_whitespace().collect();
-            if !terms.is_empty() {
-                let like_patterns: Vec<String> = terms
-                    .iter()
-                    .map(|t| format!("%{}%", t.to_lowercase()))
-                    .collect();
-                let remaining = fetch_limit - all_results.len();
-                let chunk_results = chunk_like_search_sync(conn, &like_patterns, pid, remaining);
-                for chunk in chunk_results {
-                    let start_line = chunk.start_line.unwrap_or(0);
-                    all_results.push((chunk.file_path, chunk.chunk_content, 0.4, start_line));
-                }
+        && let Some(pid) = project_id
+    {
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        if !terms.is_empty() {
+            let like_patterns: Vec<String> = terms
+                .iter()
+                .map(|t| format!("%{}%", t.to_lowercase()))
+                .collect();
+            let remaining = fetch_limit - all_results.len();
+            let chunk_results = chunk_like_search_sync(conn, &like_patterns, pid, remaining);
+            for chunk in chunk_results {
+                let start_line = chunk.start_line.unwrap_or(0);
+                all_results.push((chunk.file_path, chunk.chunk_content, 0.4, start_line));
             }
         }
+    }
 
     // Apply tree scope boost: results in relevant module subtrees get higher scores
     if let Some(ref paths) = scope_paths {

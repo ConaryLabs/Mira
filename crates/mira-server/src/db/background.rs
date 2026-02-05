@@ -4,7 +4,14 @@
 use rusqlite::{Connection, params};
 
 /// (id, name, symbol_type, start_line, end_line, signature)
-pub type SymbolRow = (i64, String, String, Option<i32>, Option<i32>, Option<String>);
+pub type SymbolRow = (
+    i64,
+    String,
+    String,
+    Option<i32>,
+    Option<i32>,
+    Option<String>,
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Common scan time/rate limiting functions

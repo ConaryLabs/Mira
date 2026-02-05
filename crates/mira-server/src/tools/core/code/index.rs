@@ -58,26 +58,27 @@ pub async fn index<C: ToolContext>(
             // Auto-summarize modules that don't have descriptions yet
             let mut modules_summarized = None;
             if let Some(pid) = project_id
-                && let Some(llm_client) = ctx.llm_factory().client_for_background() {
-                    match auto_summarize_modules(
-                        ctx.code_pool(),
-                        ctx.pool(),
-                        pid,
-                        &project_path,
-                        &*llm_client,
-                    )
-                    .await
-                    {
-                        Ok(count) if count > 0 => {
-                            response.push_str(&format!(", summarized {} modules", count));
-                            modules_summarized = Some(count);
-                        }
-                        Ok(_) => {} // No modules needed summarization
-                        Err(e) => {
-                            tracing::warn!("Auto-summarize failed: {}", e);
-                        }
+                && let Some(llm_client) = ctx.llm_factory().client_for_background()
+            {
+                match auto_summarize_modules(
+                    ctx.code_pool(),
+                    ctx.pool(),
+                    pid,
+                    &project_path,
+                    &*llm_client,
+                )
+                .await
+                {
+                    Ok(count) if count > 0 => {
+                        response.push_str(&format!(", summarized {} modules", count));
+                        modules_summarized = Some(count);
+                    }
+                    Ok(_) => {} // No modules needed summarization
+                    Err(e) => {
+                        tracing::warn!("Auto-summarize failed: {}", e);
                     }
                 }
+            }
 
             Ok(Json(IndexOutput {
                 action: "project".into(),

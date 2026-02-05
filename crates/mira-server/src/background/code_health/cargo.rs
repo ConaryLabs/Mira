@@ -57,34 +57,35 @@ pub fn collect_cargo_warnings(project_path: &str) -> Result<Vec<CargoFinding>, S
     for line in stdout.lines() {
         if let Ok(msg) = serde_json::from_str::<CargoMessage>(line)
             && msg.reason == "compiler-message"
-                && let Some(compiler_msg) = msg.message
-                    && compiler_msg.level == "warning" {
-                        // Get location from first span
-                        let location = compiler_msg
-                            .spans
-                            .first()
-                            .map(|s| format!("{}:{}", s.file_name, s.line_start))
-                            .unwrap_or_default();
+            && let Some(compiler_msg) = msg.message
+            && compiler_msg.level == "warning"
+        {
+            // Get location from first span
+            let location = compiler_msg
+                .spans
+                .first()
+                .map(|s| format!("{}:{}", s.file_name, s.line_start))
+                .unwrap_or_default();
 
-                        // Deduplicate by location + message
-                        let dedup_key = format!("{}:{}", location, compiler_msg.message);
-                        if seen_warnings.contains(&dedup_key) {
-                            continue;
-                        }
-                        seen_warnings.insert(dedup_key);
+            // Deduplicate by location + message
+            let dedup_key = format!("{}:{}", location, compiler_msg.message);
+            if seen_warnings.contains(&dedup_key) {
+                continue;
+            }
+            seen_warnings.insert(dedup_key);
 
-                        let idx = findings.len();
+            let idx = findings.len();
 
-                        // Format the issue
-                        let content = if location.is_empty() {
-                            format!("[warning] {}", compiler_msg.message)
-                        } else {
-                            format!("[warning] {} at {}", compiler_msg.message, location)
-                        };
+            // Format the issue
+            let content = if location.is_empty() {
+                format!("[warning] {}", compiler_msg.message)
+            } else {
+                format!("[warning] {} at {}", compiler_msg.message, location)
+            };
 
-                        let key = format!("health:warning:{}:{}", location, idx);
-                        findings.push(CargoFinding { key, content });
-                    }
+            let key = format!("health:warning:{}:{}", location, idx);
+            findings.push(CargoFinding { key, content });
+        }
     }
 
     Ok(findings)

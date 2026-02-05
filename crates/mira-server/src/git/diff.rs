@@ -75,9 +75,10 @@ pub fn derive_stats_from_unified_diff(diff: &str) -> DiffStats {
     for line in diff.lines() {
         if line.starts_with("diff --git ") {
             if let Some(b_part) = line.split(" b/").last()
-                && seen_files.insert(b_part.to_string()) {
-                    stats.files.push(b_part.to_string());
-                }
+                && seen_files.insert(b_part.to_string())
+            {
+                stats.files.push(b_part.to_string());
+            }
         } else if line.starts_with('+') && !line.starts_with("+++") {
             stats.lines_added += 1;
         } else if line.starts_with('-') && !line.starts_with("---") {

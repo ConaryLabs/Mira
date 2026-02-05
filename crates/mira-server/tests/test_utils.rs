@@ -53,7 +53,6 @@ impl TestContext {
     pub fn pool(&self) -> &Arc<DatabasePool> {
         &self.pool
     }
-
 }
 
 #[async_trait]

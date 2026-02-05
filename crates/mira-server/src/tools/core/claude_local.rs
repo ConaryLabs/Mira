@@ -144,10 +144,7 @@ fn import_claude_local_md_sync(
         }
 
         // Store as memory with source key for tracking
-        let key = format!(
-            "claude_local:{}",
-            truncate_at_boundary(&entry_content, 50)
-        );
+        let key = format!("claude_local:{}", truncate_at_boundary(&entry_content, 50));
         let fact_type = match category.as_deref() {
             Some("preference") => "preference",
             Some("decision") => "decision",

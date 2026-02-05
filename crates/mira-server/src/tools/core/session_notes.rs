@@ -106,9 +106,10 @@ pub fn parse_session_note(path: &Path) -> Option<SessionNote> {
         if trimmed.starts_with("# ") && !trimmed.starts_with("# Session") {
             // Save previous section
             if let Some(section) = current_section.take()
-                && !section_content.trim().is_empty() {
-                    *section = Some(section_content.trim().to_string());
-                }
+                && !section_content.trim().is_empty()
+            {
+                *section = Some(section_content.trim().to_string());
+            }
             section_content.clear();
 
             // Determine new section
@@ -148,9 +149,10 @@ pub fn parse_session_note(path: &Path) -> Option<SessionNote> {
 
     // Save last section
     if let Some(section) = current_section
-        && !section_content.trim().is_empty() {
-            *section = Some(section_content.trim().to_string());
-        }
+        && !section_content.trim().is_empty()
+    {
+        *section = Some(section_content.trim().to_string());
+    }
 
     Some(note)
 }
@@ -228,7 +230,10 @@ CSS custom properties work well for theming.
 
         // Write to temp file (auto-cleaned on drop)
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let session_dir = temp_dir.path().join("test-session-id").join("session-memory");
+        let session_dir = temp_dir
+            .path()
+            .join("test-session-id")
+            .join("session-memory");
         std::fs::create_dir_all(&session_dir).unwrap();
         let summary_path = session_dir.join("summary.md");
         std::fs::write(&summary_path, content).unwrap();

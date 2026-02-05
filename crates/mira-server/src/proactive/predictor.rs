@@ -106,15 +106,17 @@ pub fn predict_next_tool(
         }
 
         if let PatternData::ToolChain { tools, .. } = &pattern.pattern_data
-            && tools.len() >= 2 && tools[0] == current_tool {
-                predictions.push(Prediction {
-                    prediction_type: PredictionType::NextTool,
-                    content: tools[1].clone(),
-                    confidence: pattern.confidence,
-                    source_pattern_id: pattern.id,
-                    context: Some(format!("Common sequence: {} -> {}", tools[0], tools[1])),
-                });
-            }
+            && tools.len() >= 2
+            && tools[0] == current_tool
+        {
+            predictions.push(Prediction {
+                prediction_type: PredictionType::NextTool,
+                content: tools[1].clone(),
+                confidence: pattern.confidence,
+                source_pattern_id: pattern.id,
+                context: Some(format!("Common sequence: {} -> {}", tools[0], tools[1])),
+            });
+        }
     }
 
     predictions.sort_by(|a, b| {

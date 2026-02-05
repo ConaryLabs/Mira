@@ -9,7 +9,7 @@ use crate::db::{
     StoreMemoryParams, delete_memory_by_key_sync, get_scan_info_sync, is_time_older_than_sync,
     store_memory_sync,
 };
-use crate::utils::{truncate_at_boundary, ResultExt};
+use crate::utils::{ResultExt, truncate_at_boundary};
 use std::sync::Arc;
 
 pub use detection::*;
@@ -341,23 +341,25 @@ pub fn needs_documentation_scan(
     // Case 2: Git changed AND rate limit passed (> 1 hour since last scan)
     if let (Some(last), Some(current)) = (&last_commit, &current_commit)
         && last != current
-            && let Some(ref scan_time) = last_scan_time
-                && is_time_older_than_sync(conn, scan_time, "-1 hour") {
-                    tracing::debug!(
-                        "Project {} needs doc scan: git changed ({} -> {}) and rate limit passed",
-                        project_id,
-                        truncate_at_boundary(last, 8),
-                        truncate_at_boundary(current, 8)
-                    );
-                    return Ok(true);
-                }
+        && let Some(ref scan_time) = last_scan_time
+        && is_time_older_than_sync(conn, scan_time, "-1 hour")
+    {
+        tracing::debug!(
+            "Project {} needs doc scan: git changed ({} -> {}) and rate limit passed",
+            project_id,
+            truncate_at_boundary(last, 8),
+            truncate_at_boundary(current, 8)
+        );
+        return Ok(true);
+    }
 
     // Case 3: Periodic refresh (> 24 hours since last scan)
     if let Some(ref scan_time) = last_scan_time
-        && is_time_older_than_sync(conn, scan_time, "-24 hours") {
-            tracing::debug!("Project {} needs doc scan: periodic refresh", project_id);
-            return Ok(true);
-        }
+        && is_time_older_than_sync(conn, scan_time, "-24 hours")
+    {
+        tracing::debug!("Project {} needs doc scan: periodic refresh", project_id);
+        return Ok(true);
+    }
 
     Ok(false)
 }

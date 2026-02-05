@@ -112,9 +112,10 @@ impl FileWatcher {
                     if let Some(ct) = change_type {
                         for path in event.paths {
                             if Self::should_process_path(&path)
-                                && let Err(e) = tx_clone.blocking_send((path, ct)) {
-                                    tracing::debug!("Channel closed, ignoring file change: {}", e);
-                                }
+                                && let Err(e) = tx_clone.blocking_send((path, ct))
+                            {
+                                tracing::debug!("Channel closed, ignoring file change: {}", e);
+                            }
                         }
                     }
                 }
@@ -258,10 +259,11 @@ impl FileWatcher {
             let mut found = None;
             for (pid, project_path) in projects.iter() {
                 if path.starts_with(project_path)
-                    && let Ok(rel) = path.strip_prefix(project_path) {
-                        found = Some((*pid, rel.to_path_buf()));
-                        break;
-                    }
+                    && let Ok(rel) = path.strip_prefix(project_path)
+                {
+                    found = Some((*pid, rel.to_path_buf()));
+                    break;
+                }
             }
             found.ok_or_else(|| format!("No project found for path {:?}", path))?
         };
@@ -319,9 +321,10 @@ impl FileWatcher {
             .await
             .str_err();
         if result.is_ok()
-            && let Some(cache) = self.fuzzy_cache.as_ref() {
-                cache.invalidate_code(Some(project_id)).await;
-            }
+            && let Some(cache) = self.fuzzy_cache.as_ref()
+        {
+            cache.invalidate_code(Some(project_id)).await;
+        }
         result
     }
 

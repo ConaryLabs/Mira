@@ -226,9 +226,10 @@ impl MiraServer {
         match result {
             Ok(r) => {
                 if let Some(structured) = r.structured_content.as_ref()
-                    && let Some(message) = structured.get("message").and_then(|v| v.as_str()) {
-                        return (true, message.to_string());
-                    }
+                    && let Some(message) = structured.get("message").and_then(|v| v.as_str())
+                {
+                    return (true, message.to_string());
+                }
                 let text = r
                     .content
                     .first()

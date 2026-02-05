@@ -158,14 +158,15 @@ where
     let mut results = Vec::new();
     for pattern in patterns {
         if let Ok(mut stmt) = conn.prepare_cached(sql)
-            && let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], &map_row) {
-                for row in rows.filter_map(|r| r.ok()) {
-                    if results.len() >= limit {
-                        break;
-                    }
-                    results.push(row);
+            && let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], &map_row)
+        {
+            for row in rows.filter_map(|r| r.ok()) {
+                if results.len() >= limit {
+                    break;
                 }
+                results.push(row);
             }
+        }
         if results.len() >= limit {
             break;
         }

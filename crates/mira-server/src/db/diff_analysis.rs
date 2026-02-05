@@ -65,7 +65,10 @@ pub struct StoreDiffAnalysisParams<'a> {
 }
 
 /// Store a new diff analysis (sync version for pool.interact())
-pub fn store_diff_analysis_sync(conn: &Connection, p: &StoreDiffAnalysisParams) -> rusqlite::Result<i64> {
+pub fn store_diff_analysis_sync(
+    conn: &Connection,
+    p: &StoreDiffAnalysisParams,
+) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO diff_analyses (
             project_id, from_commit, to_commit, analysis_type,

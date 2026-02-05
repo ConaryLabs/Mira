@@ -22,7 +22,12 @@ pub(super) fn query_tool(name: &str, desc: &str, query_desc: &str, default_limit
 }
 
 /// Helper: define a tool with a function_name + optional limit parameter.
-pub(super) fn function_name_tool(name: &str, desc: &str, fn_desc: &str, default_limit: u64) -> Tool {
+pub(super) fn function_name_tool(
+    name: &str,
+    desc: &str,
+    fn_desc: &str,
+    default_limit: u64,
+) -> Tool {
     Tool::function(
         name,
         desc,

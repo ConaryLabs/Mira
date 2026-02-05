@@ -190,9 +190,10 @@ fn count_import_dependencies(
         let target_module = file_to_module(&import_path, modules);
 
         if let (Some(src), Some(tgt)) = (source_module, target_module)
-            && src != tgt {
-                *deps.entry((src.to_string(), tgt.to_string())).or_default() += 1;
-            }
+            && src != tgt
+        {
+            *deps.entry((src.to_string(), tgt.to_string())).or_default() += 1;
+        }
     }
 
     Ok(deps)
@@ -233,9 +234,10 @@ fn count_call_dependencies(
         let target_module = file_to_module(&callee_file, modules);
 
         if let (Some(src), Some(tgt)) = (source_module, target_module)
-            && src != tgt {
-                *deps.entry((src.to_string(), tgt.to_string())).or_default() += call_count;
-            }
+            && src != tgt
+        {
+            *deps.entry((src.to_string(), tgt.to_string())).or_default() += call_count;
+        }
     }
 
     Ok(deps)

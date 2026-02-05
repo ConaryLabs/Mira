@@ -50,7 +50,10 @@ pub struct StoreDiffOutcomeParams<'a> {
     pub detected_by: &'a str,
 }
 
-pub fn store_diff_outcome_sync(conn: &Connection, p: &StoreDiffOutcomeParams) -> rusqlite::Result<i64> {
+pub fn store_diff_outcome_sync(
+    conn: &Connection,
+    p: &StoreDiffOutcomeParams,
+) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO diff_outcomes (
             diff_analysis_id, project_id, outcome_type,

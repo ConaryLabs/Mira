@@ -8,8 +8,8 @@ use crate::db::{recall_semantic_sync, search_memories_sync};
 use crate::indexer;
 use crate::llm::{Tool, ToolCall};
 use crate::search::embedding_to_bytes;
-use crate::utils::{truncate, truncate_at_boundary};
 use crate::tools::core::code::{query_callees, query_callers, query_search_code};
+use crate::utils::{truncate, truncate_at_boundary};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -173,7 +173,10 @@ async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize)
                 let mut output = format!("Found {} results:\n\n", result.results.len());
                 for r in result.results {
                     let content_preview = if r.content.len() > 2000 {
-                        format!("{}\n... (truncated)", truncate_at_boundary(&r.content, 2000))
+                        format!(
+                            "{}\n... (truncated)",
+                            truncate_at_boundary(&r.content, 2000)
+                        )
                     } else {
                         r.content
                     };
@@ -381,28 +384,28 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
 
     // Try semantic recall if embeddings available
     if let Some(embeddings) = ctx.embeddings()
-        && let Ok(query_embedding) = embeddings.embed(query).await {
-            let embedding_bytes = embedding_to_bytes(&query_embedding);
+        && let Ok(query_embedding) = embeddings.embed(query).await
+    {
+        let embedding_bytes = embedding_to_bytes(&query_embedding);
 
-            // Run vector search via connection pool
-            let results: Result<Vec<(i64, String, f32)>, String> = ctx
-                .pool()
-                .run(move |conn| {
-                    recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit)
-                })
-                .await;
+        // Run vector search via connection pool
+        let results: Result<Vec<(i64, String, f32)>, String> = ctx
+            .pool()
+            .run(move |conn| recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit))
+            .await;
 
-            if let Ok(results) = results
-                && !results.is_empty() {
-                    let mut output = format!("Found {} relevant memories:\n\n", results.len());
-                    for (id, content, distance) in results {
-                        let score = 1.0 - distance;
-                        let preview = truncate(&content, 150);
-                        output.push_str(&format!("[{}] (score: {:.2}) {}\n", id, score, preview));
-                    }
-                    return output;
-                }
+        if let Ok(results) = results
+            && !results.is_empty()
+        {
+            let mut output = format!("Found {} relevant memories:\n\n", results.len());
+            for (id, content, distance) in results {
+                let score = 1.0 - distance;
+                let preview = truncate(&content, 150);
+                output.push_str(&format!("[{}] (score: {:.2}) {}\n", id, score, preview));
+            }
+            return output;
         }
+    }
 
     // Fallback to keyword search via connection pool
     let query_owned = query.to_string();

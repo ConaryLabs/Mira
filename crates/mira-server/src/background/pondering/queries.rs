@@ -59,10 +59,11 @@ pub(super) async fn get_recent_tool_history(
 pub(super) fn summarize_arguments(args: &str) -> String {
     // Parse JSON and extract just the keys/structure
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(args)
-        && let Some(obj) = value.as_object() {
-            let keys: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
-            return format!("keys: {}", keys.join(", "));
-        }
+        && let Some(obj) = value.as_object()
+    {
+        let keys: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
+        return format!("keys: {}", keys.join(", "));
+    }
     // Fallback: truncate
     truncate(args, 50)
 }

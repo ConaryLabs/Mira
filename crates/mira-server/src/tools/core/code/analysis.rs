@@ -253,31 +253,32 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
         // Show top factors for D/F tier
         let mut top_factors: Option<Vec<DebtFactor>> = None;
         if (score.tier == "D" || score.tier == "F")
-            && let Ok(factors) = serde_json::from_str::<serde_json::Value>(&score.factor_scores) {
-                let mut factor_list: Vec<(String, f64)> = Vec::new();
-                if let Some(obj) = factors.as_object() {
-                    for (name, val) in obj {
-                        if let Some(s) = val.get("score").and_then(|v| v.as_f64())
-                            && s > 20.0 {
-                                factor_list.push((name.clone(), s));
-                            }
+            && let Ok(factors) = serde_json::from_str::<serde_json::Value>(&score.factor_scores)
+        {
+            let mut factor_list: Vec<(String, f64)> = Vec::new();
+            if let Some(obj) = factors.as_object() {
+                for (name, val) in obj {
+                    if let Some(s) = val.get("score").and_then(|v| v.as_f64())
+                        && s > 20.0
+                    {
+                        factor_list.push((name.clone(), s));
                     }
                 }
-                factor_list
-                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                for (name, s) in factor_list.iter().take(3) {
-                    response.push_str(&format!("    ↳ {}: {:.0}\n", name, s));
-                }
-                if !factor_list.is_empty() {
-                    top_factors = Some(
-                        factor_list
-                            .into_iter()
-                            .take(3)
-                            .map(|(name, s)| DebtFactor { name, score: s })
-                            .collect(),
-                    );
-                }
             }
+            factor_list.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            for (name, s) in factor_list.iter().take(3) {
+                response.push_str(&format!("    ↳ {}: {:.0}\n", name, s));
+            }
+            if !factor_list.is_empty() {
+                top_factors = Some(
+                    factor_list
+                        .into_iter()
+                        .take(3)
+                        .map(|(name, s)| DebtFactor { name, score: s })
+                        .collect(),
+                );
+            }
+        }
 
         module_items.push(TechDebtModule {
             module_path: score.module_path.clone(),

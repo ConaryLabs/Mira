@@ -190,10 +190,11 @@ fn get_documentation_interventions_sync(
 
         // Skip if the doc file no longer exists on disk
         if let Some(base) = project_path
-            && !Path::new(base).join(&doc_path).exists() {
-                tracing::debug!("Skipping stale doc intervention: file gone: {}", doc_path);
-                continue;
-            }
+            && !Path::new(base).join(&doc_path).exists()
+        {
+            tracing::debug!("Skipping stale doc intervention: file gone: {}", doc_path);
+            continue;
+        }
 
         let content = if let Some(s) = summary {
             format!("`{}`: {}", doc_path, s)
@@ -238,10 +239,11 @@ fn get_documentation_interventions_sync(
         // Skip if the source file no longer exists on disk
         if let Some(base) = project_path
             && let Some(ref src) = source_path
-                && !Path::new(base).join(src).exists() {
-                    tracing::debug!("Skipping missing doc intervention: source gone: {}", src);
-                    continue;
-                }
+            && !Path::new(base).join(src).exists()
+        {
+            tracing::debug!("Skipping missing doc intervention: source gone: {}", src);
+            continue;
+        }
 
         let content = if let Some(src) = source_path {
             format!("`{}` needs documentation ({})", src, category)

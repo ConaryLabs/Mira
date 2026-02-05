@@ -100,9 +100,9 @@ fn detect_factory(symbols: &[SymbolInfo]) -> Option<PatternMatch> {
         if sym.symbol_type == "function"
             && (sym.name.starts_with("create_")
                 || (sym.name.starts_with("new_") && sym.name != "new"))
-            {
-                factory_fns.push(sym.name.clone());
-            }
+        {
+            factory_fns.push(sym.name.clone());
+        }
     }
 
     if factory_fns.len() >= 2 {

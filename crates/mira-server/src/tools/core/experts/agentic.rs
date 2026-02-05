@@ -119,37 +119,38 @@ pub async fn run_agentic_loop<C: ToolContext>(
 
             // Process tool calls if any
             if let Some(ref tool_calls) = result.tool_calls
-                && !tool_calls.is_empty() {
-                    // Add assistant message (drop reasoning to avoid unbounded growth)
-                    let mut assistant_msg = Message::assistant(result.content.clone(), None);
-                    assistant_msg.tool_calls = Some(tool_calls.clone());
-                    messages.push(assistant_msg);
+                && !tool_calls.is_empty()
+            {
+                // Add assistant message (drop reasoning to avoid unbounded growth)
+                let mut assistant_msg = Message::assistant(result.content.clone(), None);
+                assistant_msg.tool_calls = Some(tool_calls.clone());
+                messages.push(assistant_msg);
 
-                    if handler.parallel_execution() {
-                        // Execute tools in parallel
-                        let tool_futures = tool_calls.iter().map(|tc| async {
-                            let result = handler.handle_tool_call(tc).await;
-                            handler.on_tool_executed(tc, &result).await;
-                            (tc.id.clone(), result)
-                        });
+                if handler.parallel_execution() {
+                    // Execute tools in parallel
+                    let tool_futures = tool_calls.iter().map(|tc| async {
+                        let result = handler.handle_tool_call(tc).await;
+                        handler.on_tool_executed(tc, &result).await;
+                        (tc.id.clone(), result)
+                    });
 
-                        let tool_results = futures::future::join_all(tool_futures).await;
-                        for (id, result) in tool_results {
-                            total_tool_calls += 1;
-                            messages.push(Message::tool_result(&id, result));
-                        }
-                    } else {
-                        // Execute tools sequentially
-                        for tc in tool_calls {
-                            total_tool_calls += 1;
-                            let tool_result = handler.handle_tool_call(tc).await;
-                            handler.on_tool_executed(tc, &tool_result).await;
-                            messages.push(Message::tool_result(&tc.id, tool_result));
-                        }
+                    let tool_results = futures::future::join_all(tool_futures).await;
+                    for (id, result) in tool_results {
+                        total_tool_calls += 1;
+                        messages.push(Message::tool_result(&id, result));
                     }
-
-                    continue;
+                } else {
+                    // Execute tools sequentially
+                    for tc in tool_calls {
+                        total_tool_calls += 1;
+                        let tool_result = handler.handle_tool_call(tc).await;
+                        handler.on_tool_executed(tc, &tool_result).await;
+                        messages.push(Message::tool_result(&tc.id, tool_result));
+                    }
                 }
+
+                continue;
+            }
 
             // No tool calls — handle decoupled strategy (actor + thinker)
             if strategy.is_decoupled() {

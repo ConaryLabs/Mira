@@ -111,75 +111,80 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
 
     // Time since last chat
     if let Ok(Some(last_chat_time)) = get_last_chat_time_sync(conn)
-        && let Ok(parsed) = DateTime::parse_from_rfc3339(&last_chat_time) {
-            let now = Utc::now();
-            let duration = now.signed_duration_since(parsed);
-            let hours = duration.num_hours();
-            let minutes = duration.num_minutes() % 60;
-            let time_ago = if hours > 0 {
-                format!("{} hours, {} minutes ago", hours, minutes)
-            } else {
-                format!("{} minutes ago", minutes)
-            };
-            recap_parts.push(format!("Last chat: {}", time_ago));
-        }
+        && let Ok(parsed) = DateTime::parse_from_rfc3339(&last_chat_time)
+    {
+        let now = Utc::now();
+        let duration = now.signed_duration_since(parsed);
+        let hours = duration.num_hours();
+        let minutes = duration.num_minutes() % 60;
+        let time_ago = if hours > 0 {
+            format!("{} hours, {} minutes ago", hours, minutes)
+        } else {
+            format!("{} minutes ago", minutes)
+        };
+        recap_parts.push(format!("Last chat: {}", time_ago));
+    }
 
     // Recent sessions (excluding current)
     if let Some(pid) = project_id
-        && let Ok(sessions) = get_recent_sessions_sync(conn, pid, 2) {
-            let recent: Vec<_> = sessions.iter().filter(|s| s.status != "active").collect();
-            if !recent.is_empty() {
-                let mut session_lines = Vec::new();
-                for sess in recent {
-                    let short_id = truncate_at_boundary(&sess.id, 8);
-                    let timestamp = truncate_at_boundary(&sess.last_activity, 16);
-                    if let Some(ref summary) = sess.summary {
-                        session_lines.push(format!("• [{}] {} - {}", short_id, timestamp, summary));
-                    } else {
-                        session_lines.push(format!("• [{}] {}", short_id, timestamp));
-                    }
+        && let Ok(sessions) = get_recent_sessions_sync(conn, pid, 2)
+    {
+        let recent: Vec<_> = sessions.iter().filter(|s| s.status != "active").collect();
+        if !recent.is_empty() {
+            let mut session_lines = Vec::new();
+            for sess in recent {
+                let short_id = truncate_at_boundary(&sess.id, 8);
+                let timestamp = truncate_at_boundary(&sess.last_activity, 16);
+                if let Some(ref summary) = sess.summary {
+                    session_lines.push(format!("• [{}] {} - {}", short_id, timestamp, summary));
+                } else {
+                    session_lines.push(format!("• [{}] {}", short_id, timestamp));
                 }
-                recap_parts.push(format!("Recent sessions:\n{}", session_lines.join("\n")));
             }
+            recap_parts.push(format!("Recent sessions:\n{}", session_lines.join("\n")));
         }
+    }
 
     // Pending tasks
     if let Ok(tasks) = get_pending_tasks_sync(conn, project_id, 3)
-        && !tasks.is_empty() {
-            let task_lines: Vec<String> = tasks
-                .iter()
-                .map(|t| format!("• [ ] {} ({})", t.title, t.priority))
-                .collect();
-            recap_parts.push(format!("Pending tasks:\n{}", task_lines.join("\n")));
-        }
+        && !tasks.is_empty()
+    {
+        let task_lines: Vec<String> = tasks
+            .iter()
+            .map(|t| format!("• [ ] {} ({})", t.title, t.priority))
+            .collect();
+        recap_parts.push(format!("Pending tasks:\n{}", task_lines.join("\n")));
+    }
 
     // Active goals
     if let Ok(goals) = get_active_goals_sync(conn, project_id, 3)
-        && !goals.is_empty() {
-            let goal_lines: Vec<String> = goals
-                .iter()
-                .map(|g| format!("• {} ({}%) - {}", g.title, g.progress_percent, g.status))
-                .collect();
-            recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
-        }
+        && !goals.is_empty()
+    {
+        let goal_lines: Vec<String> = goals
+            .iter()
+            .map(|g| format!("• {} ({}%) - {}", g.title, g.progress_percent, g.status))
+            .collect();
+        recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
+    }
 
     // Insights digest (pondering + proactive + doc gaps)
     if let Some(pid) = project_id
         && let Ok(insights) = super::insights::get_unified_insights_sync(conn, pid, None, 0.3, 7, 5)
-            && !insights.is_empty() {
-                let insight_lines: Vec<String> = insights
-                    .iter()
-                    .map(|i| {
-                        format!(
-                            "• [{}] {} ({:.0}%)",
-                            i.source,
-                            i.description,
-                            i.confidence * 100.0,
-                        )
-                    })
-                    .collect();
-                recap_parts.push(format!("Insights digest:\n{}", insight_lines.join("\n")));
-            }
+        && !insights.is_empty()
+    {
+        let insight_lines: Vec<String> = insights
+            .iter()
+            .map(|i| {
+                format!(
+                    "• [{}] {} ({:.0}%)",
+                    i.source,
+                    i.description,
+                    i.confidence * 100.0,
+                )
+            })
+            .collect();
+        recap_parts.push(format!("Insights digest:\n{}", insight_lines.join("\n")));
+    }
 
     // Return formatted recap content
     recap_parts.join("\n\n")

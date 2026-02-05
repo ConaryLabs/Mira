@@ -118,11 +118,12 @@ pub fn format_expert_response(
 
     // Add reasoning summary if available (truncated for readability)
     if let Some(reasoning) = &result.reasoning_content
-        && !reasoning.is_empty() {
-            output.push_str("<details>\n<summary>Reasoning Process</summary>\n\n");
-            output.push_str(&truncate(reasoning, 1000));
-            output.push_str("\n\n</details>\n\n");
-        }
+        && !reasoning.is_empty()
+    {
+        output.push_str("<details>\n<summary>Reasoning Process</summary>\n\n");
+        output.push_str(&truncate(reasoning, 1000));
+        output.push_str("\n\n</details>\n\n");
+    }
 
     // Add main content
     if let Some(content) = result.content {

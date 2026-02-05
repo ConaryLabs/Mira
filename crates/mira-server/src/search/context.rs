@@ -72,25 +72,24 @@ pub fn expand_context_with_conn(
     // Try to expand using symbol bounds from DB
     if let (Some(conn), Some(proj_path)) = (conn, project_path)
         && let Some((kind, name)) = parse_symbol_header(chunk_content)
-            && let Some((start_line, end_line)) =
-                lookup_symbol_bounds_sync(conn, project_id, file_path, &name)
-            {
-                let full_path = Path::new(proj_path).join(file_path);
-                if let Ok(file_content) = std::fs::read_to_string(&full_path) {
-                    let all_lines: Vec<&str> = file_content.lines().collect();
+        && let Some((start_line, end_line)) =
+            lookup_symbol_bounds_sync(conn, project_id, file_path, &name)
+    {
+        let full_path = Path::new(proj_path).join(file_path);
+        if let Ok(file_content) = std::fs::read_to_string(&full_path) {
+            let all_lines: Vec<&str> = file_content.lines().collect();
 
-                    // Convert 1-indexed lines to 0-indexed
-                    let start = (start_line.saturating_sub(1)) as usize;
-                    let end = std::cmp::min(end_line as usize, all_lines.len());
+            // Convert 1-indexed lines to 0-indexed
+            let start = (start_line.saturating_sub(1)) as usize;
+            let end = std::cmp::min(end_line as usize, all_lines.len());
 
-                    if start < all_lines.len() {
-                        let full_symbol = all_lines[start..end].join("\n");
-                        let header =
-                            format!("// {} {} (lines {}-{})", kind, name, start_line, end_line);
-                        return Some((Some(header), full_symbol));
-                    }
-                }
+            if start < all_lines.len() {
+                let full_symbol = all_lines[start..end].join("\n");
+                let header = format!("// {} {} (lines {}-{})", kind, name, start_line, end_line);
+                return Some((Some(header), full_symbol));
             }
+        }
+    }
 
     // Fallback: use original +-5 line approach
     if let Some(proj_path) = project_path {

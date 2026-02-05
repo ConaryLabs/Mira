@@ -87,22 +87,23 @@ pub fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFin
             .unwrap_or(false)
             && trimmed.contains('.')
             && let Some(pos) = trimmed.find('.')
-                && pos < 3 {
-                    // Likely a numbered item
-                    if in_finding && !current_content.is_empty() {
-                        findings.push(ParsedFinding {
-                            finding_type: default_type.to_string(),
-                            severity: current_severity.to_string(),
-                            content: current_content.trim().to_string(),
-                            suggestion: current_suggestion.take(),
-                            file_path: None,
-                            code_snippet: None,
-                        });
-                    }
-                    current_content = trimmed[pos + 1..].trim().to_string();
-                    current_severity = "medium";
-                    in_finding = true;
-                }
+            && pos < 3
+        {
+            // Likely a numbered item
+            if in_finding && !current_content.is_empty() {
+                findings.push(ParsedFinding {
+                    finding_type: default_type.to_string(),
+                    severity: current_severity.to_string(),
+                    content: current_content.trim().to_string(),
+                    suggestion: current_suggestion.take(),
+                    file_path: None,
+                    code_snippet: None,
+                });
+            }
+            current_content = trimmed[pos + 1..].trim().to_string();
+            current_severity = "medium";
+            in_finding = true;
+        }
 
         // Look for "Suggestion:" or "Fix:" lines
         if in_finding
@@ -314,7 +315,6 @@ impl FindingsStore {
 
         output
     }
-
 }
 
 #[cfg(test)]

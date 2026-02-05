@@ -289,107 +289,109 @@ pub async fn recall<C: ToolContext>(
     // Try semantic search first if embeddings available (with branch-aware + entity boosting)
     // Uses RETRIEVAL_QUERY task type for optimal search results
     if let Some(embeddings) = ctx.embeddings()
-        && let Ok(query_embedding) = embeddings.embed_for_query(&query).await {
-            let embedding_bytes = embedding_to_bytes(&query_embedding);
-            let user_id_for_query = user_id.clone();
-            let branch_for_query = current_branch.clone();
-            let entity_names_for_query = query_entity_names.clone();
+        && let Ok(query_embedding) = embeddings.embed_for_query(&query).await
+    {
+        let embedding_bytes = embedding_to_bytes(&query_embedding);
+        let user_id_for_query = user_id.clone();
+        let branch_for_query = current_branch.clone();
+        let entity_names_for_query = query_entity_names.clone();
 
-            // Run vector search via connection pool with branch + entity boosting
-            let results: Vec<(i64, String, f32, Option<String>)> = ctx
-                .pool()
-                .run(move |conn| {
-                    crate::db::recall_semantic_with_entity_boost_sync(
-                        conn,
-                        &embedding_bytes,
-                        project_id,
-                        user_id_for_query.as_deref(),
-                        branch_for_query.as_deref(),
-                        &entity_names_for_query,
-                        limit,
-                    )
-                })
-                .await?;
+        // Run vector search via connection pool with branch + entity boosting
+        let results: Vec<(i64, String, f32, Option<String>)> = ctx
+            .pool()
+            .run(move |conn| {
+                crate::db::recall_semantic_with_entity_boost_sync(
+                    conn,
+                    &embedding_bytes,
+                    project_id,
+                    user_id_for_query.as_deref(),
+                    branch_for_query.as_deref(),
+                    &entity_names_for_query,
+                    limit,
+                )
+            })
+            .await?;
 
-            if !results.is_empty() {
-                // Record memory access for evidence-based tracking
-                if let Some(ref sid) = session_id {
-                    let ids: Vec<i64> = results.iter().map(|(id, _, _, _)| *id).collect();
-                    spawn_record_access(ctx.pool().clone(), ids, sid.clone());
-                }
-
-                let items: Vec<MemoryItem> = results
-                    .iter()
-                    .map(|(id, content, distance, branch)| MemoryItem {
-                        id: *id,
-                        content: content.clone(),
-                        score: Some(1.0 - distance),
-                        fact_type: None,
-                        branch: branch.clone(),
-                    })
-                    .collect();
-                let total = items.len();
-                let mut response = format!("{}Found {} memories:\n", context_header, total);
-                for (id, content, distance, branch) in &results {
-                    let score = 1.0 - distance;
-                    let preview = truncate(content, 100);
-                    let branch_tag = branch
-                        .as_ref()
-                        .map(|b| format!(" [{}]", b))
-                        .unwrap_or_default();
-                    response.push_str(&format!(
-                        "  [{}] (score: {:.2}){} {}\n",
-                        id, score, branch_tag, preview
-                    ));
-                }
-                return Ok(Json(MemoryOutput {
-                    action: "recall".into(),
-                    message: response,
-                    data: Some(MemoryData::Recall(RecallData {
-                        memories: items,
-                        total,
-                    })),
-                }));
+        if !results.is_empty() {
+            // Record memory access for evidence-based tracking
+            if let Some(ref sid) = session_id {
+                let ids: Vec<i64> = results.iter().map(|(id, _, _, _)| *id).collect();
+                spawn_record_access(ctx.pool().clone(), ids, sid.clone());
             }
+
+            let items: Vec<MemoryItem> = results
+                .iter()
+                .map(|(id, content, distance, branch)| MemoryItem {
+                    id: *id,
+                    content: content.clone(),
+                    score: Some(1.0 - distance),
+                    fact_type: None,
+                    branch: branch.clone(),
+                })
+                .collect();
+            let total = items.len();
+            let mut response = format!("{}Found {} memories:\n", context_header, total);
+            for (id, content, distance, branch) in &results {
+                let score = 1.0 - distance;
+                let preview = truncate(content, 100);
+                let branch_tag = branch
+                    .as_ref()
+                    .map(|b| format!(" [{}]", b))
+                    .unwrap_or_default();
+                response.push_str(&format!(
+                    "  [{}] (score: {:.2}){} {}\n",
+                    id, score, branch_tag, preview
+                ));
+            }
+            return Ok(Json(MemoryOutput {
+                action: "recall".into(),
+                message: response,
+                data: Some(MemoryData::Recall(RecallData {
+                    memories: items,
+                    total,
+                })),
+            }));
         }
+    }
 
     // Fall back to fuzzy search if enabled
     if let Some(cache) = ctx.fuzzy_cache()
         && let Ok(results) = cache
             .search_memories(ctx.pool(), project_id, user_id.as_deref(), &query, limit)
             .await
-            && !results.is_empty() {
-                // Record memory access for evidence-based tracking
-                if let Some(ref sid) = session_id {
-                    let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
-                    spawn_record_access(ctx.pool().clone(), ids, sid.clone());
-                }
+        && !results.is_empty()
+    {
+        // Record memory access for evidence-based tracking
+        if let Some(ref sid) = session_id {
+            let ids: Vec<i64> = results.iter().map(|m| m.id).collect();
+            spawn_record_access(ctx.pool().clone(), ids, sid.clone());
+        }
 
-                let items: Vec<MemoryItem> = results
-                    .iter()
-                    .map(|mem| MemoryItem {
-                        id: mem.id,
-                        content: mem.content.clone(),
-                        score: None,
-                        fact_type: Some(mem.fact_type.clone()),
-                        branch: None,
-                    })
-                    .collect();
-                let total = items.len();
-                let mut response = format!("{}Found {} memories (fuzzy):\n", context_header, total);
-                for mem in &results {
-                    let preview = truncate(&mem.content, 100);
-                    response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
-                }
-                return Ok(Json(MemoryOutput {
-                    action: "recall".into(),
-                    message: response,
-                    data: Some(MemoryData::Recall(RecallData {
-                        memories: items,
-                        total,
-                    })),
-                }));
-            }
+        let items: Vec<MemoryItem> = results
+            .iter()
+            .map(|mem| MemoryItem {
+                id: mem.id,
+                content: mem.content.clone(),
+                score: None,
+                fact_type: Some(mem.fact_type.clone()),
+                branch: None,
+            })
+            .collect();
+        let total = items.len();
+        let mut response = format!("{}Found {} memories (fuzzy):\n", context_header, total);
+        for mem in &results {
+            let preview = truncate(&mem.content, 100);
+            response.push_str(&format!("  [{}] ({}) {}\n", mem.id, mem.fact_type, preview));
+        }
+        return Ok(Json(MemoryOutput {
+            action: "recall".into(),
+            message: response,
+            data: Some(MemoryData::Recall(RecallData {
+                memories: items,
+                total,
+            })),
+        }));
+    }
 
     // Fall back to SQL search via connection pool
     let query_clone = query.clone();

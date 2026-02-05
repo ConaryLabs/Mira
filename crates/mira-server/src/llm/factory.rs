@@ -109,9 +109,10 @@ impl ProviderFactory {
 
         // Fall back to default provider
         if let Some(ref provider) = self.default_provider
-            && let Some(client) = self.clients.get(provider) {
-                return Some(client.clone());
-            }
+            && let Some(client) = self.clients.get(provider)
+        {
+            return Some(client.clone());
+        }
 
         // Fall back through the chain
         for provider in &self.fallback_order {
@@ -174,14 +175,15 @@ impl ProviderFactory {
 
         // 2. Try global default if set
         if let Some(ref default) = self.default_provider
-            && let Some(client) = self.clients.get(default) {
-                info!(
-                    role = role,
-                    provider = %default,
-                    "Using global default provider"
-                );
-                return Ok(client.clone());
-            }
+            && let Some(client) = self.clients.get(default)
+        {
+            info!(
+                role = role,
+                provider = %default,
+                "Using global default provider"
+            );
+            return Ok(client.clone());
+        }
 
         // 3. Fall back through the chain
         for provider in &self.fallback_order {

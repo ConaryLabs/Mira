@@ -58,41 +58,46 @@ fn detect_project_name(path: &str) -> Option<String> {
     // Try Cargo.toml for Rust projects
     let cargo_toml = path.join("Cargo.toml");
     if cargo_toml.exists()
-        && let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-            if content.contains("[workspace]") {
-                return dir_name();
-            }
+        && let Ok(content) = std::fs::read_to_string(&cargo_toml)
+    {
+        if content.contains("[workspace]") {
+            return dir_name();
+        }
 
-            let mut in_package = false;
-            for line in content.lines() {
-                let line = line.trim();
-                if line.starts_with('[') {
-                    in_package = line == "[package]";
-                } else if in_package && line.starts_with("name")
-                    && let Some(name) = line.split('=').nth(1) {
-                        let name = name.trim().trim_matches('"').trim_matches('\'');
-                        if !name.is_empty() {
-                            return Some(name.to_string());
-                        }
-                    }
+        let mut in_package = false;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_package = line == "[package]";
+            } else if in_package
+                && line.starts_with("name")
+                && let Some(name) = line.split('=').nth(1)
+            {
+                let name = name.trim().trim_matches('"').trim_matches('\'');
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
             }
         }
+    }
 
     // Try package.json for Node projects
     let package_json = path.join("package.json");
     if package_json.exists()
-        && let Ok(content) = std::fs::read_to_string(&package_json) {
-            for line in content.lines() {
-                let line = line.trim();
-                if line.starts_with("\"name\"")
-                    && let Some(name) = line.split(':').nth(1) {
-                        let name = name.trim().trim_matches(',').trim_matches('"').trim();
-                        if !name.is_empty() {
-                            return Some(name.to_string());
-                        }
-                    }
+        && let Ok(content) = std::fs::read_to_string(&package_json)
+    {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with("\"name\"")
+                && let Some(name) = line.split(':').nth(1)
+            {
+                let name = name.trim().trim_matches(',').trim_matches('"').trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
             }
         }
+    }
 
     // Fall back to directory name
     dir_name()
@@ -202,9 +207,7 @@ pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>,
 }
 
 /// Format recent sessions for display
-fn format_recent_sessions(
-    sessions: &[SessionInfo],
-) -> String {
+fn format_recent_sessions(sessions: &[SessionInfo]) -> String {
     let mut out = String::from("\nRecent sessions:\n");
     for (sess_id, last_activity, summary, tool_count, tools) in sessions {
         let short_id = &sess_id[..8.min(sess_id.len())];
@@ -425,39 +428,39 @@ pub async fn session_start<C: ToolContext>(
     }
 
     // Load preferences, memories, health alerts, doc task counts, and interventions in a single pool call
-    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions): RecapData = ctx
-        .pool()
-        .run(move |conn| {
-            // Get preferences
-            let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
+    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions): RecapData =
+        ctx.pool()
+            .run(move |conn| {
+                // Get preferences
+                let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
 
-            // Get recent memories
-            let memories =
-                search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
+                // Get recent memories
+                let memories =
+                    search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
 
-            // Get health alerts
-            let health_alerts =
-                get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
+                // Get health alerts
+                let health_alerts =
+                    get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
 
-            // Get documentation task counts
-            let doc_task_counts =
-                count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
+                // Get documentation task counts
+                let doc_task_counts =
+                    count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
 
-            // Get pending proactive interventions
-            let config = ProactiveConfig::default();
-            let interventions_list =
-                interventions::get_pending_interventions_sync(conn, project_id, &config)
-                    .unwrap_or_default();
+                // Get pending proactive interventions
+                let config = ProactiveConfig::default();
+                let interventions_list =
+                    interventions::get_pending_interventions_sync(conn, project_id, &config)
+                        .unwrap_or_default();
 
-            Ok::<_, String>((
-                preferences,
-                memories,
-                health_alerts,
-                doc_task_counts,
-                interventions_list,
-            ))
-        })
-        .await?;
+                Ok::<_, String>((
+                    preferences,
+                    memories,
+                    health_alerts,
+                    doc_task_counts,
+                    interventions_list,
+                ))
+            })
+            .await?;
 
     response.push_str(&format_session_insights(
         &preferences,
@@ -535,10 +538,11 @@ fn gather_system_context_content() -> Option<String> {
 
     // OS info
     if let Ok(output) = Command::new("uname").args(["-s", "-r"]).output()
-        && output.status.success() {
-            let os = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            context_parts.push(format!("OS: {}", os));
-        }
+        && output.status.success()
+    {
+        let os = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        context_parts.push(format!("OS: {}", os));
+    }
 
     // Distro (Linux)
     if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
@@ -562,10 +566,11 @@ fn gather_system_context_content() -> Option<String> {
             context_parts.push(format!("User: {}", user));
         }
     } else if let Ok(output) = Command::new("whoami").output()
-        && output.status.success() {
-            let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            context_parts.push(format!("User: {}", user));
-        }
+        && output.status.success()
+    {
+        let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        context_parts.push(format!("User: {}", user));
+    }
 
     // Home directory (try env, fallback to ~)
     if let Ok(home) = std::env::var("HOME") {
@@ -573,28 +578,41 @@ fn gather_system_context_content() -> Option<String> {
             context_parts.push(format!("Home: {}", home));
         }
     } else if let Ok(output) = Command::new("sh").args(["-c", "echo ~"]).output()
-        && output.status.success() {
-            let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            context_parts.push(format!("Home: {}", home));
-        }
+        && output.status.success()
+    {
+        let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        context_parts.push(format!("Home: {}", home));
+    }
 
     // Timezone
     if let Ok(output) = Command::new("date").arg("+%Z (UTC%:z)").output()
-        && output.status.success() {
-            let tz = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            context_parts.push(format!("Timezone: {}", tz));
-        }
+        && output.status.success()
+    {
+        let tz = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        context_parts.push(format!("Timezone: {}", tz));
+    }
 
     // Available tools (check common ones via PATH scan)
-    let tools_to_check = ["git", "cargo", "rustc", "npm", "node", "python3", "docker", "systemctl", "curl", "jq"];
+    let tools_to_check = [
+        "git",
+        "cargo",
+        "rustc",
+        "npm",
+        "node",
+        "python3",
+        "docker",
+        "systemctl",
+        "curl",
+        "jq",
+    ];
     if let Ok(path_var) = std::env::var("PATH") {
         let path_dirs: Vec<&str> = path_var.split(':').collect();
         let found: Vec<&str> = tools_to_check
             .iter()
             .filter(|tool| {
-                path_dirs.iter().any(|dir| {
-                    std::path::Path::new(dir).join(tool).is_file()
-                })
+                path_dirs
+                    .iter()
+                    .any(|dir| std::path::Path::new(dir).join(tool).is_file())
             })
             .copied()
             .collect();

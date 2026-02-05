@@ -48,12 +48,13 @@ pub fn convert_message(
 
             // Add text content if present
             if let Some(ref content) = msg.content
-                && !content.is_empty() {
-                    parts.push(GeminiPart::Text {
-                        text: content.clone(),
-                        thought: false,
-                    });
-                }
+                && !content.is_empty()
+            {
+                parts.push(GeminiPart::Text {
+                    text: content.clone(),
+                    thought: false,
+                });
+            }
 
             // Add function calls if present (include thought signatures for Gemini 3)
             if let Some(ref tool_calls) = msg.tool_calls {

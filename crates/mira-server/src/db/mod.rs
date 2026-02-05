@@ -146,10 +146,9 @@ pub use project::{
     upsert_session_sync, upsert_session_with_branch_sync,
 };
 pub use reviews::{
-    Correction, ReviewFinding, bulk_update_finding_status_sync,
+    Correction, ReviewFinding, ReviewFindingParams, bulk_update_finding_status_sync,
     extract_patterns_from_findings_sync, get_finding_stats_sync, get_finding_sync,
-    ReviewFindingParams, get_findings_sync, get_relevant_corrections_sync,
-    store_review_finding_sync,
+    get_findings_sync, get_relevant_corrections_sync, store_review_finding_sync,
     update_finding_status_sync,
 };
 pub use search::{

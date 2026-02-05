@@ -126,26 +126,27 @@ pub async fn run() -> Result<()> {
                 // 1. First try pre-generated LLM suggestions (fast O(1) lookup)
                 if let Some(ref file) = current_file
                     && let Ok(pre_gen) = get_pre_generated_suggestions(conn, project_id, file)
-                        && !pre_gen.is_empty() {
-                            let context_lines: Vec<String> = pre_gen
-                                .iter()
-                                .take(2)
-                                .map(|(text, conf)| {
-                                    let conf_label = if *conf >= 0.9 {
-                                        "high confidence"
-                                    } else if *conf >= 0.7 {
-                                        "medium confidence"
-                                    } else {
-                                        "suggested"
-                                    };
-                                    format!("[Proactive] {} ({})", text, conf_label)
-                                })
-                                .collect();
+                    && !pre_gen.is_empty()
+                {
+                    let context_lines: Vec<String> = pre_gen
+                        .iter()
+                        .take(2)
+                        .map(|(text, conf)| {
+                            let conf_label = if *conf >= 0.9 {
+                                "high confidence"
+                            } else if *conf >= 0.7 {
+                                "medium confidence"
+                            } else {
+                                "suggested"
+                            };
+                            format!("[Proactive] {} ({})", text, conf_label)
+                        })
+                        .collect();
 
-                            if !context_lines.is_empty() {
-                                return Ok(Some(context_lines.join("\n")));
-                            }
-                        }
+                    if !context_lines.is_empty() {
+                        return Ok(Some(context_lines.join("\n")));
+                    }
+                }
 
                 // 2. Fallback: On-the-fly pattern matching (no LLM, simple templates)
                 let current_context = predictor::CurrentContext {

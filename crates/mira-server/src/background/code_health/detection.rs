@@ -247,29 +247,30 @@ pub fn collect_detections(project_path: &str) -> Result<DetectionOutput, String>
                 && !in_test_module
                 && !is_comment
                 && let Some((severity, pattern, description)) = check_error_pattern(trimmed)
-                    && !is_acceptable_error_swallow(trimmed) {
-                        let content_str = format!(
-                            "[{}] {} at {}:{} - {}",
-                            severity,
-                            description,
-                            file,
-                            line_num,
-                            trimmed.chars().take(80).collect::<String>()
-                        );
-                        let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
+                && !is_acceptable_error_swallow(trimmed)
+            {
+                let content_str = format!(
+                    "[{}] {} at {}:{} - {}",
+                    severity,
+                    description,
+                    file,
+                    line_num,
+                    trimmed.chars().take(80).collect::<String>()
+                );
+                let key = format!("health:error:{}:{}:{}", pattern, file, line_num);
 
-                        findings.push(DetectionFinding {
-                            key,
-                            content: content_str,
-                            category: "error_handling",
-                            confidence: if severity == "high" {
-                                CONFIDENCE_ERROR_HIGH
-                            } else {
-                                CONFIDENCE_ERROR_LOW
-                            },
-                        });
-                        r.error_handling += 1;
-                    }
+                findings.push(DetectionFinding {
+                    key,
+                    content: content_str,
+                    category: "error_handling",
+                    confidence: if severity == "high" {
+                        CONFIDENCE_ERROR_HIGH
+                    } else {
+                        CONFIDENCE_ERROR_LOW
+                    },
+                });
+                r.error_handling += 1;
+            }
         }
     }
 

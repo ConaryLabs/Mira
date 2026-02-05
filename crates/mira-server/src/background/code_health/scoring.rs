@@ -317,20 +317,21 @@ fn gather_pattern_violations(
             .flatten();
 
         if let Some(json) = patterns_json
-            && let Ok(patterns) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
-                // Low-confidence patterns contribute to debt score
-                let violation_score: f64 = patterns
-                    .iter()
-                    .filter_map(|p| p.get("confidence").and_then(|c| c.as_f64()))
-                    .filter(|&c| c < 0.6) // Low confidence = unclear pattern
-                    .map(|c| (1.0 - c) * 100.0) // Invert: lower confidence = higher score
-                    .sum::<f64>()
-                    / patterns.len().max(1) as f64;
+            && let Ok(patterns) = serde_json::from_str::<Vec<serde_json::Value>>(&json)
+        {
+            // Low-confidence patterns contribute to debt score
+            let violation_score: f64 = patterns
+                .iter()
+                .filter_map(|p| p.get("confidence").and_then(|c| c.as_f64()))
+                .filter(|&c| c < 0.6) // Low confidence = unclear pattern
+                .map(|c| (1.0 - c) * 100.0) // Invert: lower confidence = higher score
+                .sum::<f64>()
+                / patterns.len().max(1) as f64;
 
-                if violation_score > 0.0 {
-                    result.insert(module_id.clone(), violation_score.min(100.0));
-                }
+            if violation_score > 0.0 {
+                result.insert(module_id.clone(), violation_score.min(100.0));
             }
+        }
     }
 
     Ok(result)

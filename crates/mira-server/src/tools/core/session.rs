@@ -231,7 +231,10 @@ pub async fn session_history<C: ToolContext>(
             if history.is_empty() {
                 return Ok(Json(SessionOutput {
                     action: "get_history".into(),
-                    message: format!("No history for session {}", truncate_at_boundary(&target_session_id, 8)),
+                    message: format!(
+                        "No history for session {}",
+                        truncate_at_boundary(&target_session_id, 8)
+                    ),
                     data: Some(SessionData::History(SessionHistoryData {
                         session_id: target_session_id,
                         entries: vec![],

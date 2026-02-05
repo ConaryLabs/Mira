@@ -255,7 +255,10 @@ pub struct DocInventoryParams<'a> {
 }
 
 /// Add or update documentation inventory entry
-pub fn upsert_doc_inventory(conn: &rusqlite::Connection, p: &DocInventoryParams) -> Result<i64, String> {
+pub fn upsert_doc_inventory(
+    conn: &rusqlite::Connection,
+    p: &DocInventoryParams,
+) -> Result<i64, String> {
     conn.execute(
         "INSERT INTO documentation_inventory (
             project_id, doc_path, doc_type, doc_category, title,

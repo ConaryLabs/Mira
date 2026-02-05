@@ -244,37 +244,38 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
     for (file_a, file_b, _together_count) in &pairs {
         // Check: A without B
         if let Ok(Some(stats)) = query_gap_stats(conn, gap_sql, project_id, file_a, file_b)
-            && stats.total >= MIN_OBSERVATIONS {
-                let bad_rate = (stats.reverted + stats.follow_up_fix) as f64 / stats.total as f64;
-                if bad_rate >= MIN_BAD_RATE {
-                    let confidence = compute_confidence(stats.total, bad_rate);
-                    let occurrence_count = stats.total;
-                    let pattern_key = format!("co_change_gap:{}|{}", file_a, file_b);
+            && stats.total >= MIN_OBSERVATIONS
+        {
+            let bad_rate = (stats.reverted + stats.follow_up_fix) as f64 / stats.total as f64;
+            if bad_rate >= MIN_BAD_RATE {
+                let confidence = compute_confidence(stats.total, bad_rate);
+                let occurrence_count = stats.total;
+                let pattern_key = format!("co_change_gap:{}|{}", file_a, file_b);
 
-                    let pattern = BehaviorPattern {
-                        id: None,
-                        project_id,
-                        pattern_type: PatternType::ChangePattern,
-                        pattern_key,
-                        pattern_data: PatternData::ChangePattern {
-                            files: vec![file_a.clone(), file_b.clone()],
-                            module: None,
-                            pattern_subtype: "co_change_gap".to_string(),
-                            outcome_stats: stats,
-                            sample_commits: vec![],
-                        },
-                        confidence,
-                        occurrence_count,
-                    };
+                let pattern = BehaviorPattern {
+                    id: None,
+                    project_id,
+                    pattern_type: PatternType::ChangePattern,
+                    pattern_key,
+                    pattern_data: PatternData::ChangePattern {
+                        files: vec![file_a.clone(), file_b.clone()],
+                        module: None,
+                        pattern_subtype: "co_change_gap".to_string(),
+                        outcome_stats: stats,
+                        sample_commits: vec![],
+                    },
+                    confidence,
+                    occurrence_count,
+                };
 
-                    crate::proactive::patterns::upsert_pattern(conn, &pattern)?;
-                    stored += 1;
+                crate::proactive::patterns::upsert_pattern(conn, &pattern)?;
+                stored += 1;
 
-                    if stored >= MAX_PATTERNS_PER_STRATEGY {
-                        break;
-                    }
+                if stored >= MAX_PATTERNS_PER_STRATEGY {
+                    break;
                 }
             }
+        }
     }
 
     Ok(stored)

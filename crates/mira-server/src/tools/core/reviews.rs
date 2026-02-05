@@ -499,9 +499,10 @@ pub async fn finding<C: ToolContext>(
             let new_status = status.ok_or("status is required for action 'review'")?;
             // Check if bulk review (finding_ids) or single review (finding_id)
             if let Some(ids) = finding_ids
-                && !ids.is_empty() {
-                    return bulk_review_findings(ctx, ids, new_status).await;
-                }
+                && !ids.is_empty()
+            {
+                return bulk_review_findings(ctx, ids, new_status).await;
+            }
             let id = finding_id
                 .ok_or("finding_id (or finding_ids for bulk) is required for action 'review'")?;
             review_finding(ctx, id, new_status, feedback).await

@@ -117,13 +117,14 @@ pub(super) fn extract_text_from_html(html: &str) -> String {
     ];
     for sel_str in &selectors {
         if let Ok(selector) = Selector::parse(sel_str)
-            && let Some(element) = document.select(&selector).next() {
-                let text = element.text().collect::<Vec<_>>().join(" ");
-                let cleaned = clean_extracted_text(&text);
-                if !cleaned.is_empty() && cleaned.len() > 100 {
-                    return cleaned;
-                }
+            && let Some(element) = document.select(&selector).next()
+        {
+            let text = element.text().collect::<Vec<_>>().join(" ");
+            let cleaned = clean_extracted_text(&text);
+            if !cleaned.is_empty() && cleaned.len() > 100 {
+                return cleaned;
             }
+        }
     }
 
     // Fallback: get all text from body

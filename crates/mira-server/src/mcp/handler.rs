@@ -287,9 +287,11 @@ impl ServerHandler for MiraServer {
                                 Err(e) => serde_json::json!({ "error": e.message }),
                             };
                             let summary = match &tcr.result {
-                                Ok(r) => r.content.first().and_then(|c| c.as_text()).map(|t| {
-                                    truncate(&t.text, 200)
-                                }),
+                                Ok(r) => r
+                                    .content
+                                    .first()
+                                    .and_then(|c| c.as_text())
+                                    .map(|t| truncate(&t.text, 200)),
                                 Err(e) => Some(e.message.to_string()),
                             };
                             Ok(ModelTaskResult {

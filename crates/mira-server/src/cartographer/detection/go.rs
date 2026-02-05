@@ -93,9 +93,10 @@ fn find_module_name(project_path: &Path) -> String {
     let go_mod = project_path.join("go.mod");
     if go_mod.exists()
         && let Ok(content) = std::fs::read_to_string(&go_mod)
-            && let Some(name) = parse_go_mod_name(&content) {
-                return name;
-            }
+        && let Some(name) = parse_go_mod_name(&content)
+    {
+        return name;
+    }
 
     // Fall back to directory name
     project_path
@@ -139,27 +140,30 @@ pub fn find_entry_points(project_path: &Path) -> Vec<String> {
                 .unwrap_or_default()
                 .to_string_lossy();
             if name == "main.go"
-                && let Ok(rel) = path.strip_prefix(project_path) {
-                    entries.push(path_to_string(rel));
-                }
+                && let Ok(rel) = path.strip_prefix(project_path)
+            {
+                entries.push(path_to_string(rel));
+            }
         }
     }
 
     // Also check cmd/ subdirectories
     let cmd_dir = project_path.join("cmd");
     if cmd_dir.exists()
-        && let Ok(cmd_entries) = std::fs::read_dir(&cmd_dir) {
-            for entry in cmd_entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if path.is_dir() {
-                    let main_go = path.join("main.go");
-                    if main_go.exists()
-                        && let Ok(rel) = main_go.strip_prefix(project_path) {
-                            entries.push(path_to_string(rel));
-                        }
+        && let Ok(cmd_entries) = std::fs::read_dir(&cmd_dir)
+    {
+        for entry in cmd_entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                let main_go = path.join("main.go");
+                if main_go.exists()
+                    && let Ok(rel) = main_go.strip_prefix(project_path)
+                {
+                    entries.push(path_to_string(rel));
                 }
             }
         }
+    }
 
     entries.sort();
     entries.dedup();
@@ -196,9 +200,10 @@ pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "go")
-                && let Ok(content) = std::fs::read_to_string(&path) {
-                    count += content.lines().count() as u32;
-                }
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                count += content.lines().count() as u32;
+            }
         }
     }
 

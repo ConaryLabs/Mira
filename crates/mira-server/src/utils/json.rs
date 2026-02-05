@@ -22,15 +22,17 @@ pub fn parse_json_hardened<T: DeserializeOwned>(content: &str) -> Result<T, Stri
     // 2. Try stripping markdown code fences
     let stripped = strip_code_fences(trimmed);
     if stripped != trimmed
-        && let Ok(v) = serde_json::from_str::<T>(stripped) {
-            return Ok(v);
-        }
+        && let Ok(v) = serde_json::from_str::<T>(stripped)
+    {
+        return Ok(v);
+    }
 
     // 3. Try extracting first JSON object/array
     if let Some(extracted) = extract_json_block(trimmed)
-        && let Ok(v) = serde_json::from_str::<T>(extracted) {
-            return Ok(v);
-        }
+        && let Ok(v) = serde_json::from_str::<T>(extracted)
+    {
+        return Ok(v);
+    }
 
     Err(format!(
         "Failed to parse JSON from LLM output (tried direct, fence-strip, brace-extract). Content start: {}",
@@ -44,14 +46,16 @@ pub(crate) fn strip_code_fences(s: &str) -> &str {
 
     // Try ```json ... ```
     if let Some(rest) = trimmed.strip_prefix("```json")
-        && let Some(json) = rest.strip_suffix("```") {
-            return json.trim();
-        }
+        && let Some(json) = rest.strip_suffix("```")
+    {
+        return json.trim();
+    }
     // Try ``` ... ```
     if let Some(rest) = trimmed.strip_prefix("```")
-        && let Some(json) = rest.strip_suffix("```") {
-            return json.trim();
-        }
+        && let Some(json) = rest.strip_suffix("```")
+    {
+        return json.trim();
+    }
 
     trimmed
 }

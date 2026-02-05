@@ -75,7 +75,11 @@ async fn close_stale_sessions(
             })
             .await
         {
-            tracing::warn!("Failed to close session {}: {}", truncate_at_boundary(&session_id, 8), e);
+            tracing::warn!(
+                "Failed to close session {}: {}",
+                truncate_at_boundary(&session_id, 8),
+                e
+            );
             continue;
         }
 
@@ -249,17 +253,18 @@ fn generate_session_summary_fallback(tool_summary: &str) -> Option<String> {
         // Extract file paths from known path patterns in arguments
         // Look for file_path arguments (safe — no raw secrets)
         if let Some(args_start) = line.find('(')
-            && let Some(args_end) = line.rfind(')') {
-                let args = &line[args_start + 1..args_end];
-                // Extract paths that look like file paths
-                for segment in args.split(',') {
-                    let segment = segment.trim().trim_matches('"');
-                    if looks_like_file_path(segment) {
-                        let short = shorten_path(segment);
-                        *files.entry(short).or_default() += 1;
-                    }
+            && let Some(args_end) = line.rfind(')')
+        {
+            let args = &line[args_start + 1..args_end];
+            // Extract paths that look like file paths
+            for segment in args.split(',') {
+                let segment = segment.trim().trim_matches('"');
+                if looks_like_file_path(segment) {
+                    let short = shorten_path(segment);
+                    *files.entry(short).or_default() += 1;
                 }
             }
+        }
     }
 
     if total_calls == 0 {
