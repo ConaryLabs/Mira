@@ -459,32 +459,38 @@ impl McpClientManager {
 
     /// Get tools formatted for LLM consumption (as expert Tool definitions)
     /// Tool names are prefixed with mcp__{server}__{tool_name}
+    /// Tools are sorted by server name then tool name for deterministic ordering (KV cache optimization)
     pub async fn get_expert_tools(&self) -> Vec<Tool> {
-        self.for_each_connected_server(|name, server| {
-            server
-                .tools
-                .iter()
-                .map(|mcp_tool| {
-                    let prefixed_name = format!("mcp__{}__{}", name, mcp_tool.name);
-                    let description = mcp_tool
-                        .description
-                        .as_deref()
-                        .unwrap_or("No description")
-                        .to_string();
+        let mut tools: Vec<Tool> = self
+            .for_each_connected_server(|name, server| {
+                server
+                    .tools
+                    .iter()
+                    .map(|mcp_tool| {
+                        let prefixed_name = format!("mcp__{}__{}", name, mcp_tool.name);
+                        let description = mcp_tool
+                            .description
+                            .as_deref()
+                            .unwrap_or("No description")
+                            .to_string();
 
-                    // Convert MCP tool input_schema (Arc<JsonObject>) to our Tool format.
-                    // Strip $schema — Gemini's function calling API rejects unknown fields.
-                    let mut parameters = serde_json::to_value(mcp_tool.input_schema.as_ref())
-                        .unwrap_or(json!({"type": "object", "properties": {}}));
-                    if let Some(obj) = parameters.as_object_mut() {
-                        obj.remove("$schema");
-                    }
+                        // Convert MCP tool input_schema (Arc<JsonObject>) to our Tool format.
+                        // Strip $schema — Gemini's function calling API rejects unknown fields.
+                        let mut parameters = serde_json::to_value(mcp_tool.input_schema.as_ref())
+                            .unwrap_or(json!({"type": "object", "properties": {}}));
+                        if let Some(obj) = parameters.as_object_mut() {
+                            obj.remove("$schema");
+                        }
 
-                    Tool::function(prefixed_name, description, parameters)
-                })
-                .collect()
-        })
-        .await
+                        Tool::function(prefixed_name, description, parameters)
+                    })
+                    .collect()
+            })
+            .await;
+
+        // Sort by tool name (which includes server prefix) for deterministic ordering
+        tools.sort_by(|a, b| a.function.name.cmp(&b.function.name));
+        tools
     }
 
     /// Call a tool on a specific MCP server

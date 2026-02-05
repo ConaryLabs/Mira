@@ -145,6 +145,9 @@ pub async fn index<C: ToolContext>(
     }
 }
 
+/// System prompt for code summarization (stable prefix for KV cache optimization)
+const SUMMARIZE_SYSTEM_PROMPT: &str = "You are a code analysis assistant. Your task is to generate concise, accurate summaries of code modules. Focus on the primary purpose and functionality of each module. Be direct and technical.";
+
 /// Auto-summarize modules that don't have descriptions (called after indexing)
 async fn auto_summarize_modules(
     code_pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
@@ -168,9 +171,12 @@ async fn auto_summarize_modules(
         module.code_preview = cartographer::get_module_code_preview(path, &module.path);
     }
 
-    // Build prompt and call LLM
+    // Build prompt and call LLM (system prompt first for KV cache optimization)
     let prompt = cartographer::build_summary_prompt(&modules);
-    let messages = vec![Message::user(prompt)];
+    let messages = vec![
+        Message::system(SUMMARIZE_SYSTEM_PROMPT.to_string()),
+        Message::user(prompt),
+    ];
     let result = llm_client
         .chat(messages, None)
         .await
@@ -240,9 +246,12 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
     }
 
     let summaries = if let Some(llm_client) = llm_client {
-        // LLM path
+        // LLM path (system prompt first for KV cache optimization)
         let prompt = cartographer::build_summary_prompt(&modules);
-        let messages = vec![Message::user(prompt)];
+        let messages = vec![
+            Message::system(SUMMARIZE_SYSTEM_PROMPT.to_string()),
+            Message::user(prompt),
+        ];
         let result = llm_client
             .chat(messages, None)
             .await

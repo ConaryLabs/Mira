@@ -23,6 +23,7 @@ pub fn get_expert_tools() -> Vec<Tool> {
 /// Build the full expert toolset: base tools + optionally store_finding + web tools + MCP tools.
 ///
 /// Use `include_store_finding: true` for council mode (experts record findings).
+/// Tools are sorted alphabetically for deterministic ordering (KV cache optimization).
 pub async fn build_expert_toolset<C: ToolContext>(
     ctx: &C,
     include_store_finding: bool,
@@ -47,6 +48,9 @@ pub async fn build_expert_toolset<C: ToolContext>(
         );
         tools.extend(mcp_tools);
     }
+
+    // Sort all tools by name for deterministic ordering (improves KV cache hits)
+    tools.sort_by(|a, b| a.function.name.cmp(&b.function.name));
 
     debug!(total_tools = tools.len(), "Expert tool set built");
     tools

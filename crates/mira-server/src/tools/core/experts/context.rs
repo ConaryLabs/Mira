@@ -6,20 +6,27 @@ use crate::utils::truncate;
 
 /// Get MCP tools context for expert prompts
 /// Lists available MCP servers and their tools (limited to avoid token bloat)
+/// Servers and tools are sorted alphabetically for deterministic ordering (KV cache optimization)
 pub async fn get_mcp_tools_context<C: ToolContext>(ctx: &C) -> String {
     // Get available MCP tools from the context
-    let mcp_tools = ctx.list_mcp_tools().await;
+    let mut mcp_tools = ctx.list_mcp_tools().await;
 
     if mcp_tools.is_empty() {
         return String::new();
     }
+
+    // Sort servers by name for deterministic ordering
+    mcp_tools.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut context = String::from(
         "\n\n## Available MCP Tools\n\nThese tools connect to external services. Call them with the prefixed name `mcp__{server}__{tool}` and appropriate arguments.\n\n",
     );
 
     // Limit to top 5 tools per server to save tokens
-    for (server, tools) in mcp_tools {
+    for (server, mut tools) in mcp_tools {
+        // Sort tools by name within each server
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+
         context.push_str(&format!("**{}:**\n", server));
         for tool in tools.iter().take(5) {
             context.push_str(&format!(
