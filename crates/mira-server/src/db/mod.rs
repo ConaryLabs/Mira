@@ -124,6 +124,7 @@ pub use memory::{
     recall_semantic_with_entity_boost_sync,
     record_memory_access_sync,
     search_memories_sync,
+    get_memory_metadata_sync,
     store_embedding_sync,
     store_fact_embedding_sync,
     // Sync functions for pool.interact() usage

@@ -444,6 +444,33 @@ pub fn recall_semantic_with_branch_info_sync(
     Ok(boosted)
 }
 
+/// Batch-lookup fact_type and category for a set of memory IDs.
+/// Used to post-filter semantic recall results which only return (id, content, distance, branch).
+pub fn get_memory_metadata_sync(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+) -> rusqlite::Result<std::collections::HashMap<i64, (String, Option<String>)>> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+    let sql = format!(
+        "SELECT id, fact_type, category FROM memory_facts WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+    })?;
+    let mut map = std::collections::HashMap::new();
+    for row in rows.flatten() {
+        map.insert(row.0, (row.1, row.2));
+    }
+    Ok(map)
+}
+
 /// Search memories by text with scope filtering (sync version for pool.interact())
 pub fn search_memories_sync(
     conn: &rusqlite::Connection,
