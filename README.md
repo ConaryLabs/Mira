@@ -12,12 +12,11 @@ Mira transforms Claude Code from a stateless assistant into one that truly knows
 
 Think of it as giving Claude Code long-term memory, deep code understanding, and a team of expert reviewers on call.
 
-## What's New in v0.5.1
+## What's New in v0.5.2
 
-- **Tool Consolidation (12 → 10)** — Merged `analyze_diff` into `code(action="diff")` and `tasks` into `session(action="tasks")` for a leaner tool surface
-- **Codex HTTP Transport** — Run Mira as an HTTP-based MCP server for Codex and similar clients
-- **Smarter Tool Discovery** — Keyword-rich descriptions help models find the right tool via Tool Search
-- **4,500 Lines Removed** — Six rounds of Codex-audit refactoring: split monolithic modules, extracted shared patterns, deduplicated code
+- **UTF-8 Safe Truncation** — All ~35 raw string slicing sites now use boundary-safe truncation, eliminating potential panics on multi-byte characters
+- **Housecleaning** — Two rounds of clippy fixes, dead code removal, collapsed nested ifs, and structural cleanups (-544 lines net)
+- **SQLITE_LOCKED Fix** — Retry logic for shared-cache in-memory databases under concurrent access
 
 See the [CHANGELOG](CHANGELOG.md) for full version history.
 

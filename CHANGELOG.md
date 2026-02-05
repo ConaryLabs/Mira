@@ -80,6 +80,16 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-02-04
+
+### Changed
+- **UTF-8 safe truncation** — Replaced ~35 raw `&s[..N]` string slices across the codebase with `truncate_at_boundary()`, preventing panics on multi-byte UTF-8 characters. Added `truncate_at_boundary()` to utils as a zero-allocation safe boundary function.
+- **4-tier housecleaning** — Clippy fixes (collapsed nested ifs, removed unused imports and dead code), performance improvements, structural cleanups, and type refinements. Net reduction of ~465 lines.
+- **Code formatting** — Applied `cargo fmt` across all crates.
+
+### Fixed
+- **SQLITE_LOCKED retry** — Added retry logic for shared-cache in-memory databases that could fail with `SQLITE_LOCKED` under concurrent access.
+
 ## [0.5.1] - 2026-02-04
 
 ### Added
