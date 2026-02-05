@@ -11,6 +11,7 @@ mod intelligence;
 mod memory;
 mod reviews;
 mod session;
+mod session_tasks;
 mod system;
 mod vectors;
 
@@ -89,6 +90,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
 
     // Add entity tables for memory entity linking (recall boost)
     entities::migrate_entity_tables(conn)?;
+
+    // Add session_tasks tables for Claude Code task persistence bridge
+    session_tasks::migrate_session_tasks_tables(conn)?;
 
     Ok(())
 }

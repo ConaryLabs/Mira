@@ -204,6 +204,47 @@ pub async fn run() -> Result<()> {
         None
     };
 
+    // Inject pending native tasks as additionalContext
+    let task_context: Option<String> = {
+        match crate::tasks::find_current_task_list() {
+            Some(dir) => match crate::tasks::get_pending_tasks(&dir) {
+                Ok(pending) if !pending.is_empty() => {
+                    let lines: Vec<String> = pending
+                        .iter()
+                        .map(|t| {
+                            let marker = if t.status == "in_progress" {
+                                "[...]"
+                            } else {
+                                "[ ]"
+                            };
+                            format!("  {} {}", marker, t.subject)
+                        })
+                        .collect();
+                    let total =
+                        crate::tasks::count_tasks(&dir).map(|(c, r)| c + r).unwrap_or(0);
+                    let completed = total - pending.len();
+                    Some(format!(
+                        "[Mira] {} pending task(s) ({}/{} completed):\n{}",
+                        pending.len(),
+                        completed,
+                        total,
+                        lines.join("\n")
+                    ))
+                }
+                Ok(_) => None,
+                Err(e) => {
+                    eprintln!("[mira] Failed to read native tasks: {}", e);
+                    None
+                }
+            },
+            None => None,
+        }
+    };
+
+    if task_context.is_some() {
+        eprintln!("[mira] Added pending task context");
+    }
+
     // Combine reactive context with proactive predictions
     let mut final_context = result.context.clone();
     let has_proactive = if let Some(proactive_str) = proactive_context {
@@ -222,16 +263,27 @@ pub async fn run() -> Result<()> {
         false
     };
 
-    if !final_context.is_empty() {
-        eprintln!("[mira] {}", result.summary());
-        write_hook_output(&serde_json::json!({
-            "systemMessage": final_context,
-            "metadata": {
+    if !final_context.is_empty() || task_context.is_some() {
+        let mut output = serde_json::json!({});
+
+        if !final_context.is_empty() {
+            eprintln!("[mira] {}", result.summary());
+            output["systemMessage"] = serde_json::json!(final_context);
+            output["metadata"] = serde_json::json!({
                 "sources": result.sources,
                 "from_cache": result.from_cache,
                 "has_proactive": has_proactive
-            }
-        }));
+            });
+        }
+
+        if let Some(tc) = task_context {
+            output["hookSpecificOutput"] = serde_json::json!({
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": tc
+            });
+        }
+
+        write_hook_output(&output);
     } else {
         if let Some(reason) = &result.skip_reason {
             eprintln!("[mira] Context injection skipped: {}", reason);

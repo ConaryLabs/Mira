@@ -1,5 +1,5 @@
 // crates/mira-server/src/hooks/stop.rs
-// Stop hook handler - checks goal progress and saves session state
+// Stop hook handler - checks goal progress, snapshots tasks, and saves session state
 
 use crate::db::pool::DatabasePool;
 use crate::hooks::{read_hook_input, write_hook_output};
@@ -154,6 +154,9 @@ pub async fn run() -> Result<()> {
             .await;
     }
 
+    // Snapshot native Claude Code tasks
+    snapshot_tasks(&pool, project_id, &stop_input.session_id, false).await;
+
     // Auto-export ranked memories to CLAUDE.local.md
     {
         let pool_clone = pool.clone();
@@ -183,6 +186,133 @@ pub async fn run() -> Result<()> {
 
     write_hook_output(&output);
     Ok(())
+}
+
+/// Run SessionEnd hook (fires on user interrupt — always approve, just snapshot)
+pub async fn run_session_end() -> Result<()> {
+    let input = read_hook_input()?;
+    let session_id = input
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    eprintln!(
+        "[mira] SessionEnd hook triggered (session: {})",
+        truncate_at_boundary(session_id, 8),
+    );
+
+    // Open database
+    let db_path = get_db_path();
+    let pool = match DatabasePool::open(&db_path).await {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            eprintln!("[mira] SessionEnd: failed to open DB: {}", e);
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    };
+
+    // Get current project
+    let project_id = {
+        let pool_clone = pool.clone();
+        let result: Result<Option<i64>, _> = pool_clone
+            .interact(move |conn| {
+                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+                let result = if let Some(path) = path {
+                    crate::db::get_or_create_project_sync(conn, &path, None)
+                        .ok()
+                        .map(|(id, _)| id)
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>(result)
+            })
+            .await;
+        result.ok().flatten()
+    };
+
+    if let Some(project_id) = project_id {
+        snapshot_tasks(&pool, project_id, session_id, true).await;
+    }
+
+    write_hook_output(&serde_json::json!({}));
+    Ok(())
+}
+
+/// Snapshot Claude Code's native task files into Mira's database.
+/// Always approves on any error — never blocks session end due to task snapshotting failure.
+async fn snapshot_tasks(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+    session_id: &str,
+    is_session_end: bool,
+) {
+    let task_list_dir = match crate::tasks::find_current_task_list() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("[mira] No native task list found, skipping snapshot");
+            return;
+        }
+    };
+
+    let list_id = crate::tasks::task_list_id(&task_list_dir).unwrap_or_default();
+
+    let tasks = match crate::tasks::read_task_list(&task_list_dir) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[mira] Failed to read native tasks: {}", e);
+            return;
+        }
+    };
+
+    if tasks.is_empty() {
+        return;
+    }
+
+    let (completed, remaining) = tasks.iter().fold((0usize, 0usize), |(c, r), t| {
+        if t.status == "completed" {
+            (c + 1, r)
+        } else {
+            (c, r + 1)
+        }
+    });
+
+    let pool_clone = pool.clone();
+    let sid = if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id.to_string())
+    };
+
+    let result = pool_clone
+        .interact(move |conn| {
+            let count = crate::db::session_tasks::snapshot_native_tasks_sync(
+                conn,
+                project_id,
+                &list_id,
+                sid.as_deref(),
+                &tasks,
+            )?;
+            Ok::<usize, anyhow::Error>(count)
+        })
+        .await;
+
+    match result {
+        Ok(count) => {
+            let label = if is_session_end {
+                "SessionEnd"
+            } else {
+                "Stop"
+            };
+            eprintln!(
+                "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
+                label, count, completed, remaining,
+            );
+        }
+        Err(e) => {
+            eprintln!("[mira] Task snapshot failed: {}", e);
+        }
+    }
 }
 
 /// Goal info for stop hook

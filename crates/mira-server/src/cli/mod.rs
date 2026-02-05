@@ -91,6 +91,8 @@ pub enum HookAction {
     PostTool,
     /// Handle Stop hooks - check goals, save session state
     Stop,
+    /// Handle SessionEnd hooks - snapshot tasks on user interrupt
+    SessionEnd,
 }
 
 /// Get the default database path

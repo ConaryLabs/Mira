@@ -23,6 +23,7 @@ mod reviews;
 mod schema;
 mod search;
 mod session;
+pub mod session_tasks;
 mod tasks;
 #[cfg(test)]
 #[macro_use]

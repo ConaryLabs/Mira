@@ -26,6 +26,7 @@ pub mod mcp_client;
 pub mod proactive;
 pub mod project_files;
 pub mod search;
+pub mod tasks;
 pub mod tools;
 pub mod utils;
 pub use error::{MiraError, Result};

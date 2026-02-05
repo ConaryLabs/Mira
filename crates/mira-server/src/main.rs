@@ -76,6 +76,9 @@ async fn main() -> Result<()> {
             HookAction::Stop => {
                 mira::hooks::stop::run().await?;
             }
+            HookAction::SessionEnd => {
+                mira::hooks::stop::run_session_end().await?;
+            }
         },
         Some(Commands::DebugCarto { path }) => {
             cli::run_debug_carto(path).await?;
