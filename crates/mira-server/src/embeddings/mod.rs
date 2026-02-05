@@ -1,18 +1,20 @@
 // crates/mira-server/src/embeddings/mod.rs
-// Google embeddings module
+// Embedding provider module
 
 mod google;
+mod openai;
 
 pub use google::{GoogleEmbeddingModel, GoogleEmbeddings, TaskType};
+pub use self::openai::{OpenAiEmbeddingModel, OpenAiEmbeddings};
 
 use crate::config::{ApiKeys, EmbeddingsConfig};
 use crate::db::pool::DatabasePool;
 use anyhow::Result;
 use std::sync::Arc;
 
-/// Embedding client using Google Gemini embeddings
+/// Embedding client using OpenAI text-embedding-3-small
 pub struct EmbeddingClient {
-    inner: GoogleEmbeddings,
+    inner: OpenAiEmbeddings,
 }
 
 impl EmbeddingClient {
@@ -22,14 +24,13 @@ impl EmbeddingClient {
         config: &EmbeddingsConfig,
         pool: Option<Arc<DatabasePool>>,
     ) -> Option<Self> {
-        let api_key = api_keys.gemini.as_ref()?;
+        let api_key = api_keys.openai.as_ref()?;
 
         Some(Self {
-            inner: GoogleEmbeddings::with_config(
+            inner: OpenAiEmbeddings::with_config(
                 api_key.clone(),
-                GoogleEmbeddingModel::default(),
+                OpenAiEmbeddingModel::default(),
                 config.dimensions,
-                config.task_type,
                 pool,
             ),
         })
@@ -42,14 +43,13 @@ impl EmbeddingClient {
         pool: Option<Arc<DatabasePool>>,
         http_client: reqwest::Client,
     ) -> Option<Self> {
-        let api_key = api_keys.gemini.as_ref()?;
+        let api_key = api_keys.openai.as_ref()?;
 
         Some(Self {
-            inner: GoogleEmbeddings::with_http_client(
+            inner: OpenAiEmbeddings::with_http_client(
                 api_key.clone(),
-                GoogleEmbeddingModel::default(),
+                OpenAiEmbeddingModel::default(),
                 config.dimensions,
-                config.task_type,
                 pool,
                 http_client,
             ),
@@ -58,7 +58,7 @@ impl EmbeddingClient {
 
     /// Create a new embedding client from environment configuration
     ///
-    /// Checks for GEMINI_API_KEY or GOOGLE_API_KEY
+    /// Checks for OPENAI_API_KEY
     /// Note: Prefer from_config() to avoid duplicate env var reads
     pub fn from_env(pool: Option<Arc<DatabasePool>>) -> Option<Self> {
         Self::from_config(&ApiKeys::from_env(), &EmbeddingsConfig::from_env(), pool)
@@ -98,41 +98,43 @@ impl EmbeddingClient {
         self.inner.embed(text).await
     }
 
-    /// Embed text optimized for document storage (RETRIEVAL_DOCUMENT)
-    /// Use this when storing memories for later retrieval
+    /// Embed text optimized for document storage
+    /// Note: OpenAI doesn't differentiate task types — same as embed()
     pub async fn embed_for_storage(&self, text: &str) -> Result<Vec<f32>> {
-        self.inner.embed_for_storage(text).await
+        self.inner.embed(text).await
     }
 
-    /// Embed text optimized for search queries (RETRIEVAL_QUERY)
-    /// Use this when searching/recalling memories
+    /// Embed text optimized for search queries
+    /// Note: OpenAI doesn't differentiate task types — same as embed()
     pub async fn embed_for_query(&self, text: &str) -> Result<Vec<f32>> {
-        self.inner.embed_for_query(text).await
+        self.inner.embed(text).await
     }
 
-    /// Embed code content (CODE_RETRIEVAL_QUERY)
-    /// Use this for code indexing and semantic code search
+    /// Embed code content
+    /// Note: OpenAI doesn't differentiate task types — same as embed()
     pub async fn embed_code(&self, text: &str) -> Result<Vec<f32>> {
-        self.inner.embed_code(text).await
+        self.inner.embed(text).await
     }
 
-    /// Embed multiple texts in batch using the default task type
+    /// Embed multiple texts in batch
     pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         self.inner.embed_batch(texts).await
     }
 
-    /// Embed multiple texts optimized for document storage (RETRIEVAL_DOCUMENT)
+    /// Embed multiple texts optimized for document storage
+    /// Note: OpenAI doesn't differentiate task types — same as embed_batch()
     pub async fn embed_batch_for_storage(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.inner.embed_batch_for_storage(texts).await
+        self.inner.embed_batch(texts).await
     }
 
-    /// Embed multiple texts optimized for code (CODE_RETRIEVAL_QUERY)
+    /// Embed multiple texts optimized for code
+    /// Note: OpenAI doesn't differentiate task types — same as embed_batch()
     pub async fn embed_batch_code(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.inner.embed_batch_code(texts).await
+        self.inner.embed_batch(texts).await
     }
 
-    /// Get the inner Google embeddings client
-    pub fn inner(&self) -> &GoogleEmbeddings {
+    /// Get the inner OpenAI embeddings client
+    pub fn inner(&self) -> &OpenAiEmbeddings {
         &self.inner
     }
 }

@@ -11,6 +11,8 @@ pub struct ApiKeys {
     pub deepseek: Option<String>,
     /// Gemini/Google API key (GEMINI_API_KEY or GOOGLE_API_KEY)
     pub gemini: Option<String>,
+    /// OpenAI API key (OPENAI_API_KEY) — used for embeddings
+    pub openai: Option<String>,
     /// Brave Search API key (BRAVE_API_KEY)
     pub brave: Option<String>,
 }
@@ -25,17 +27,20 @@ impl ApiKeys {
             return Self {
                 deepseek: None,
                 gemini: None,
+                openai: None,
                 brave: Self::read_key("BRAVE_API_KEY"),
             };
         }
 
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
         let gemini = Self::read_key("GEMINI_API_KEY").or_else(|| Self::read_key("GOOGLE_API_KEY"));
+        let openai = Self::read_key("OPENAI_API_KEY");
         let brave = Self::read_key("BRAVE_API_KEY");
 
         let keys = Self {
             deepseek,
             gemini,
+            openai,
             brave,
         };
         keys.log_status();
@@ -61,6 +66,9 @@ impl ApiKeys {
         if self.gemini.is_some() {
             available.push("Gemini");
         }
+        if self.openai.is_some() {
+            available.push("OpenAI");
+        }
         if self.brave.is_some() {
             available.push("Brave Search");
         }
@@ -77,9 +85,9 @@ impl ApiKeys {
         self.deepseek.is_some() || self.gemini.is_some()
     }
 
-    /// Check if embeddings are available (requires Gemini key)
+    /// Check if embeddings are available (requires OpenAI key)
     pub fn has_embeddings(&self) -> bool {
-        self.gemini.is_some()
+        self.openai.is_some()
     }
 
     /// Get a summary of available providers
@@ -90,6 +98,9 @@ impl ApiKeys {
         }
         if self.gemini.is_some() {
             providers.push("Gemini");
+        }
+        if self.openai.is_some() {
+            providers.push("OpenAI");
         }
         if self.brave.is_some() {
             providers.push("Brave Search");
@@ -310,7 +321,7 @@ impl EnvConfig {
         // Check for embeddings
         if !self.api_keys.has_embeddings() {
             validation.add_warning(
-                "No embeddings API key configured. Set GEMINI_API_KEY for semantic search.",
+                "No embeddings API key configured. Set OPENAI_API_KEY for semantic search.",
             );
         }
 
@@ -372,6 +383,7 @@ mod tests {
         let keys = ApiKeys {
             deepseek: Some("test-key".to_string()),
             gemini: None,
+            openai: None,
             brave: None,
         };
         assert!(keys.has_llm_provider());
