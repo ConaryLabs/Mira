@@ -199,11 +199,13 @@ pub enum MemoryAction {
     Recall,
     /// Delete a memory by ID
     Forget,
+    /// Archive a memory (exclude from auto-export, keep for history)
+    Archive,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MemoryRequest {
-    #[schemars(description = "Action: remember, recall, forget")]
+    #[schemars(description = "Action: remember, recall, forget, archive")]
     pub action: MemoryAction,
     #[schemars(description = "Content to remember (required for remember)")]
     pub content: Option<String>,

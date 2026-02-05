@@ -36,6 +36,22 @@ const AUTO_MEMORY_DECISION_QUOTA: usize = 45; // 30%
 const AUTO_MEMORY_PATTERN_QUOTA: usize = 30; // 20%
 const AUTO_MEMORY_GENERAL_QUOTA: usize = 15; // 10%
 
+/// Patterns that indicate ephemeral/task-related content (not worth graduating)
+const AUTO_MEMORY_NOISE_PATTERNS: &[&str] = &[
+    "task #",
+    "Task #",
+    "task ID",
+    "Task ID",
+    "(ID:",
+    "created task",
+    "Created task",
+    "created goal",
+    "Created goal",
+    "Completed creation of",
+    "task breakdown",
+    "Task breakdown",
+];
+
 /// Export Mira memories to CLAUDE.local.md (MCP tool wrapper)
 pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, String> {
     let project = ctx.get_project().await;
@@ -377,7 +393,12 @@ struct AutoMemoryCandidate {
 
 /// Fetch memories with stricter thresholds for auto memory export.
 ///
-/// Filters: confidence >= 0.8, session_count >= 3, status = 'confirmed'
+/// Tiered thresholds based on age:
+/// - Fresh (≤14 days): confidence >= 0.8, session_count >= 3
+/// - Older (>14 days): confidence >= 0.9, session_count >= 5
+///
+/// Excludes: 'archived' status, 'health'/'persona' fact types
+/// Time decay: 30-day half-life (aggressive recency bias)
 fn fetch_auto_memory_candidates_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
@@ -395,7 +416,7 @@ fn fetch_auto_memory_candidates_sync(
                     WHEN category = 'context' THEN 1.0
                     ELSE 0.9
                   END
-                / (1.0 + (CAST(julianday('now') - julianday(COALESCE(updated_at, created_at)) AS REAL) / 90.0))
+                / (1.0 + (CAST(julianday('now') - julianday(COALESCE(updated_at, created_at)) AS REAL) / 30.0))
             ) AS hotness,
             confidence,
             session_count,
@@ -403,10 +424,16 @@ fn fetch_auto_memory_candidates_sync(
         FROM memory_facts
         WHERE project_id = ?1
           AND scope = 'project'
-          AND confidence >= 0.8
-          AND session_count >= 3
           AND status = 'confirmed'
           AND fact_type NOT IN ('health', 'persona')
+          -- Tiered thresholds: fresh memories (≤14 days) vs older memories
+          AND (
+              (julianday('now') - julianday(COALESCE(updated_at, created_at)) <= 14
+               AND confidence >= 0.8 AND session_count >= 3)
+              OR
+              (julianday('now') - julianday(COALESCE(updated_at, created_at)) > 14
+               AND confidence >= 0.9 AND session_count >= 5)
+          )
         ORDER BY hotness DESC
         LIMIT ?2
     "#;
@@ -454,6 +481,11 @@ fn build_auto_memory_export(candidates: &[AutoMemoryCandidate]) -> String {
     let mut general: Vec<String> = Vec::new();
 
     for mem in candidates {
+        // Skip ephemeral/task-related noise
+        if is_auto_memory_noise(&mem.content) {
+            continue;
+        }
+
         let content = truncate_content(&mem.content, AUTO_MEMORY_MAX_BYTES);
         let entry_line = format!("- {}\n", content);
         let line_count = entry_line.lines().count();
@@ -546,6 +578,13 @@ fn classify_auto_memory(mem: &AutoMemoryCandidate) -> &'static str {
             _ => "General",
         },
     }
+}
+
+/// Check if memory content matches ephemeral/task-related noise patterns
+fn is_auto_memory_noise(content: &str) -> bool {
+    AUTO_MEMORY_NOISE_PATTERNS
+        .iter()
+        .any(|pattern| content.contains(pattern))
 }
 
 /// Write high-confidence memories to Claude Code's auto memory directory.
@@ -1104,6 +1143,35 @@ mod tests {
         // Default to General
         let general = make_auto_memory_candidate("test", "general", Some("other"), 1.0);
         assert_eq!(classify_auto_memory(&general), "General");
+    }
+
+    #[test]
+    fn test_is_auto_memory_noise() {
+        // Should match noise patterns
+        assert!(is_auto_memory_noise("Created task #42 for refactoring"));
+        assert!(is_auto_memory_noise("Task ID: 123 completed"));
+        assert!(is_auto_memory_noise("Created goal for milestone"));
+        assert!(is_auto_memory_noise("Completed creation of task breakdown"));
+        assert!(is_auto_memory_noise("Task breakdown for database pooling"));
+
+        // Should NOT match - these are real insights
+        assert!(!is_auto_memory_noise("DatabasePool must be used for all access"));
+        assert!(!is_auto_memory_noise("User prefers concise responses"));
+        assert!(!is_auto_memory_noise("Using builder pattern for Config"));
+    }
+
+    #[test]
+    fn test_build_auto_memory_filters_noise() {
+        let candidates = vec![
+            make_auto_memory_candidate("Real insight about architecture", "decision", None, 5.0),
+            make_auto_memory_candidate("Created task #42 for refactoring", "completion", None, 5.0),
+            make_auto_memory_candidate("User prefers tabs", "preference", None, 5.0),
+        ];
+        let result = build_auto_memory_export(&candidates);
+
+        assert!(result.contains("Real insight"));
+        assert!(result.contains("User prefers tabs"));
+        assert!(!result.contains("Created task #42")); // Filtered out
     }
 
     #[test]

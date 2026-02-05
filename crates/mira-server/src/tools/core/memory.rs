@@ -114,6 +114,10 @@ pub async fn handle_memory<C: ToolContext>(
             let id = req.id.ok_or("id is required for action 'forget'")?;
             forget(ctx, id).await
         }
+        MemoryAction::Archive => {
+            let id = req.id.ok_or("id is required for action 'archive'")?;
+            archive(ctx, id).await
+        }
     }
 }
 
@@ -554,6 +558,45 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOu
     } else {
         Ok(Json(MemoryOutput {
             action: "forget".into(),
+            message: format!("Memory {} not found.", id),
+            data: None,
+        }))
+    }
+}
+
+/// Archive a memory (sets status to 'archived', excluding it from auto-export)
+pub async fn archive<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOutput>, String> {
+    let id: i64 = id.parse().map_err(|_| "Invalid ID format".to_string())?;
+    if id <= 0 {
+        return Err("Invalid memory ID: must be positive".to_string());
+    }
+
+    let archived = ctx
+        .pool()
+        .run(move |conn| {
+            let rows = conn
+                .execute(
+                    "UPDATE memory_facts SET status = 'archived', updated_at = datetime('now') WHERE id = ?",
+                    [id],
+                )
+                .map_err(|e| format!("Failed to archive memory: {}", e))?;
+            Ok::<bool, String>(rows > 0)
+        })
+        .await?;
+
+    if archived {
+        if let Some(cache) = ctx.fuzzy_cache() {
+            let project_id = ctx.project_id().await;
+            cache.invalidate_memory(project_id).await;
+        }
+        Ok(Json(MemoryOutput {
+            action: "archive".into(),
+            message: format!("Memory {} archived. It will no longer appear in auto-exports.", id),
+            data: None,
+        }))
+    } else {
+        Ok(Json(MemoryOutput {
+            action: "archive".into(),
             message: format!("Memory {} not found.", id),
             data: None,
         }))
