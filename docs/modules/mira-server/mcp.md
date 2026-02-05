@@ -12,7 +12,7 @@ Built on the **`rmcp`** library (Rust MCP). Implements the `ServerHandler` trait
 |------|---------|
 | `mod.rs` | `MiraServer` struct and tool registrations |
 | `requests.rs` | Request type definitions (action enums, parameter structs) |
-| `extraction.rs` | Request parameter extraction logic |
+| `extraction.rs` | Tool outcome extraction and memory capture |
 
 ## Key Type: MiraServer
 

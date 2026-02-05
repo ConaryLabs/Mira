@@ -12,29 +12,30 @@ The crate follows a modular design with clear separation between protocol handli
 
 | Module | Purpose |
 |--------|---------|
-| `mcp` | MCP protocol server implementation |
-| `tools` | MCP tool handlers (remember, recall, search, etc.) |
-| `db` | Database layer with SQLite + sqlite-vec |
-| `llm` | LLM provider abstraction (DeepSeek, Gemini) |
-| `indexer` | Code indexing and symbol extraction |
-| `cartographer` | Codebase mapping and module detection |
-| `search` | Semantic code search and memory recall |
-| `embeddings` | Vector embedding generation |
 | `background` | Background workers (embeddings, summaries, health checks) |
-| `experts` | Expert consultation system |
-| `hooks` | Claude Code lifecycle hooks |
-| `proactive` | Proactive analysis and suggestions |
+| `cartographer` | Codebase mapping and module detection |
+| `cli` | CLI subcommands (binary entrypoint) |
 | `config` | Configuration management |
 | `context` | Session context and state |
 | `cross_project` | Cross-project pattern sharing |
-| `identity` | User and team identity |
-| `git` | Git repository analysis |
-| `http` | HTTP client utilities |
-| `project_files` | Project file discovery and filtering |
-| `mcp_client` | MCP client for accessing host environment tools from experts |
-| `proxy` | MCP proxy/routing |
-| `cli` | CLI subcommands |
+| `db` | Database layer with SQLite + sqlite-vec |
+| `elicitation` | Elicitation (interactive user input) support |
+| `embeddings` | Vector embedding generation |
+| `entities` | Entity extraction and linking |
 | `error` | Error types (`MiraError`) |
+| `fuzzy` | Fuzzy search fallback cache |
+| `git` | Git repository analysis |
+| `hooks` | Claude Code lifecycle hooks |
+| `http` | HTTP client utilities |
+| `identity` | User and team identity |
+| `indexer` | Code indexing and symbol extraction |
+| `llm` | LLM provider abstraction (DeepSeek, Gemini) |
+| `mcp` | MCP protocol server implementation |
+| `mcp_client` | MCP client for accessing host environment tools from experts |
+| `project_files` | Project file discovery and filtering |
+| `proactive` | Proactive analysis and suggestions |
+| `search` | Semantic code search and memory recall |
+| `tools` | MCP tool handlers (remember, recall, search, etc.) |
 | `utils` | Shared utilities |
 
 ## Key Exports

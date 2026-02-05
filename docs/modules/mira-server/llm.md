@@ -29,7 +29,7 @@ LLM provider abstraction layer. Provides a unified interface for inference acros
 | `factory` | `ProviderFactory` for client instantiation |
 | `deepseek` | DeepSeek API client |
 | `gemini` | Gemini API client |
-| `openai_compat` | Shared OpenAI-compatible request/response format (used by DeepSeek, GLM) |
+| `openai_compat` | Shared OpenAI-compatible request/response format (used by DeepSeek) |
 | `pricing` | Usage tracking and cost calculation |
 | `prompt` | `PromptBuilder` for message construction |
 | `types` | `Message`, `Tool`, `FunctionCall`, `ChatResult`, `Usage` |

@@ -1,6 +1,6 @@
 # code
 
-Code intelligence. Actions: `search` (semantic), `symbols` (file structure), `callers`/`callees` (call graph), `dependencies` (module graph), `patterns` (architectural detection), `tech_debt` (per-module scores).
+Code intelligence. Actions: `search` (semantic), `symbols` (file structure), `callers`/`callees` (call graph), `dependencies` (module graph), `patterns` (architectural detection), `tech_debt` (per-module scores), `diff` (semantic git diff analysis).
 
 ## Usage
 
@@ -18,13 +18,16 @@ Code intelligence. Actions: `search` (semantic), `symbols` (file structure), `ca
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | `search`, `symbols`, `callers`, `callees`, `dependencies`, `patterns`, `tech_debt` |
+| action | String | Yes | `search`, `symbols`, `callers`, `callees`, `dependencies`, `patterns`, `tech_debt`, `diff` |
 | query | String | For search | Natural language query or identifier name |
 | file_path | String | For symbols | Path to the file to analyze |
 | function_name | String | For callers/callees | Function name to trace |
 | symbol_type | String | No | Filter symbols by type (e.g. `function`, `struct`) |
 | language | String | No | Language filter |
 | limit | Integer | No | Max results (default varies by action) |
+| from_ref | String | No | Starting git ref for `diff` (commit, branch, tag). Default: `HEAD~1` or staged/working changes if present |
+| to_ref | String | No | Ending git ref for `diff`. Default: `HEAD` |
+| include_impact | Boolean | No | Include impact analysis in `diff` (find affected callers). Default: `true` |
 
 ## Actions
 
@@ -42,7 +45,7 @@ Runs semantic (vector) and keyword (FTS5) searches in parallel, merges and dedup
 - **Symbol matching**: Exact (0.95), substring (0.85), partial (0.55–0.75)
 - **Tree-guided scope**: Top 3 matching modules get 1.3x boost
 - **Intent reranking**: Documentation (1.2x), implementation (1.15x), examples (1.25x)
-- **Graceful degradation**: Falls back to keyword-only when embeddings unavailable
+- **Graceful degradation**: Falls back to keyword + fuzzy search when embeddings are unavailable (fuzzy optional)
 
 ### `symbols` — Get symbols from a file
 
@@ -100,9 +103,21 @@ Computes tech debt scores per module based on complexity, test coverage gaps, an
 
 Returns: Ranked list of modules by tech debt score.
 
+### `diff` — Semantic git diff analysis
+
+Analyzes git changes for change types, impact, and risk. Uses LLM-powered analysis with heuristic fallback.
+
+```json
+{ "action": "diff", "from_ref": "HEAD~1", "to_ref": "HEAD" }
+```
+
+**Behavior:**
+- If no refs are provided, Mira analyzes staged changes first, then working tree changes, otherwise `HEAD~1..HEAD`.
+- Impact analysis uses the call graph (if indexed) to surface affected callers.
+
 ## Dependencies
 
-- **Embeddings** (`GEMINI_API_KEY`) — Required for semantic search, optional for keyword-only
+- **Embeddings** (`GEMINI_API_KEY`) — Required for semantic search; without them Mira uses keyword + fuzzy fallback
 - **Code index** — Run `index(action="project")` first for FTS5 and symbol data
 - **Cartographer** — Module tree for scope narrowing (populated by background workers)
 

@@ -318,7 +318,7 @@ Semantic analysis of git diffs and commits.
 | status | TEXT | `complete` or `partial` |
 | created_at | TEXT | Timestamp |
 
-Used by the `analyze_diff` tool to cache semantic analysis of git changes.
+Used by `code(action="diff")` to cache semantic analysis of git changes.
 
 ---
 

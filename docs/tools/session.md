@@ -1,6 +1,6 @@
 # session
 
-Session management. Actions: `history` (session/tool logs), `recap` (quick overview), `usage` (LLM analytics), `insights` (unified digest).
+Session management. Actions: `history` (session/tool logs), `recap` (quick overview), `usage` (LLM analytics), `insights` (unified digest), `tasks` (async task management fallback).
 
 ## Usage
 
@@ -17,10 +17,12 @@ Session management. Actions: `history` (session/tool logs), `recap` (quick overv
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | `history`, `recap`, `usage`, or `insights` |
+| action | String | Yes | `history`, `recap`, `usage`, `insights`, or `tasks` |
 | history_action | String | For history | `current`, `list_sessions`, or `get_history` |
 | usage_action | String | For usage | `summary`, `stats`, or `list` |
+| tasks_action | String | For tasks | `list`, `get`, or `cancel` |
 | session_id | String | No | Session ID for `get_history` |
+| task_id | String | For tasks | Task ID for `get` or `cancel` |
 | group_by | String | No | For usage stats: `role`, `provider`, `model`, `provider_model` |
 | since_days | Integer | No | Filter to last N days (default: 30) |
 | limit | Integer | No | Max results |
@@ -83,9 +85,28 @@ Merges pondering insights, proactive suggestions, and documentation gaps into a 
 { "action": "insights", "insight_source": "pondering", "min_confidence": 0.5 }
 ```
 
+### `tasks` — Async task management (fallback)
+
+Use when the client does not support MCP native tasks. Uses the `tasks_action` sub-parameter.
+
+**`list`** — Show running and completed tasks:
+```json
+{ "action": "tasks", "tasks_action": "list" }
+```
+
+**`get`** — Get a specific task result:
+```json
+{ "action": "tasks", "tasks_action": "get", "task_id": "abc123" }
+```
+
+**`cancel`** — Cancel a running task:
+```json
+{ "action": "tasks", "tasks_action": "cancel", "task_id": "abc123" }
+```
+
 ## Errors
 
-- **Invalid action**: Must be `history`, `recap`, `usage`, or `insights`
+- **Invalid action**: Must be `history`, `recap`, `usage`, `insights`, or `tasks`
 - **No active session**: No session has been started yet
 - **No active project**: Some actions require an active project context
 

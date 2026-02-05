@@ -21,10 +21,10 @@ The MCP layer calls into these functions after deserializing request parameters.
 | `goals.rs` | `goal` | `create`, `bulk_create`, `list`, `get`, `update`, `delete`, `add_milestone`, `complete_milestone`, `delete_milestone`, `progress` |
 | `documentation.rs` | `documentation` | `list`, `get`, `complete`, `skip`, `inventory`, `scan`, `export_claude_local` |
 | `reviews.rs` | `finding` | `list`, `get`, `review`, `stats`, `patterns`, `extract` |
-| `diff.rs` | `analyze_diff` | (standalone) |
+| `diff.rs` | `code` (`action="diff"`) | Semantic diff analysis |
 | `experts/` | `expert` | `consult`, `configure` |
 | `session.rs` | `session` | `history`, `recap`, `usage`, `insights` |
 | `session.rs` | `reply_to_mira` | (standalone) |
-| `tasks.rs` | `tasks` | `list`, `get`, `cancel` |
+| `tasks.rs` | `session` (`action="tasks"`) | `list`, `get`, `cancel` (fallback for clients without native MCP tasks) |
 | `teams.rs` | — | Team management (internal, not exposed as MCP tool) |
 | `cross_project.rs` | — | Cross-project patterns (internal, not exposed as MCP tool) |

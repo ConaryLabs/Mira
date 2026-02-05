@@ -382,7 +382,7 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira exposes 11 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
+Mira exposes 10 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
 The server supports MCP Sampling (zero-key expert consultation), MCP Elicitation (interactive
 setup), and MCP Tasks (async long-running operations).
@@ -452,6 +452,8 @@ Mira integrates with Claude Code via hooks that trigger at key moments:
 | `UserPromptSubmit` | Injects proactive context into prompts |
 | `PostToolUse` | Tracks behavior for pattern mining |
 | `PreCompact` | Preserves context before summarization |
+| `Stop` | Saves session state and checks goal progress |
+| `Permission` | Handles permission-related flows |
 
 Hooks are auto-configured by the installer.
 

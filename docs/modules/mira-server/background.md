@@ -5,7 +5,7 @@ Background workers for idle-time processing. Split into two lanes based on laten
 ## Lanes
 
 ### Fast Lane
-Handles embedding generation and incremental indexing. Woken immediately via `FastLaneNotify.wake()` when new work arrives (e.g., after storing a memory).
+Handles embedding generation and incremental indexing. Woken immediately via `FastLaneNotify.wake()` when new work arrives (e.g., after file watcher updates queue new embeddings).
 
 ### Slow Lane
 Handles LLM-powered tasks: session summaries, pondering/insights, code health analysis, and proactive suggestions. Runs on a longer polling interval.

@@ -1,6 +1,6 @@
 # reply_to_mira
 
-Send a response back to Mira during agent collaboration. Used when Mira's frontend sends a question or task to Claude through the WebSocket connection and expects a reply.
+Send a response back to Mira during agent collaboration. Used when Mira sends a question or task to Claude through the MCP connection and expects a reply.
 
 ## Usage
 
@@ -25,8 +25,7 @@ Send a response back to Mira during agent collaboration. Used when Mira's fronte
 
 ## Returns
 
-- **WebSocket mode**: `Response sent to Mira`
-- **CLI/offline mode**: `(Reply not sent - no frontend connected) Content: {content}`
+- **Connected**: `Response sent to Mira`
 - **No pending request**: `(Reply not sent - no pending request) Content: {content}`
 
 ## Examples

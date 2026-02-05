@@ -170,7 +170,8 @@ The quick install script automatically configures hooks. For manual installs, ad
     "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
     "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
     "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],
-    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}]
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
+    "Permission": [{"matcher": "", "hooks": [{"type": "command", "command": "mira hook permission", "timeout": 5000}]}]
   }
 }
 ```

@@ -1,28 +1,11 @@
-# experts
+# experts (deprecated)
 
-Legacy expert orchestration module. Contains complexity assessment and collaboration mode abstractions that were superseded by the council architecture in `tools/core/experts`.
+There is no top-level `experts` module in the current `mira-server` crate. The active expert system lives under `tools/core/experts/`.
 
-## Key Types
+## Current Implementation
 
-- `ExpertRole` — Role enum: Architect, CodeReviewer, Security, PlanReviewer, ScopeAnalyst
-- `ComplexityAssessment` — Analyzes problem complexity to determine approach
-- `CollaborationMode` — Parallel, Sequential, Hierarchical, or Single expert mode (not actively used by `expert(action="consult")`)
+See `docs/modules/mira-server/tools/core/experts.md` for the live expert architecture, including council mode, agentic loops, findings storage, and reasoning strategy.
 
-## Sub-modules
+## Historical Note
 
-| Module | Purpose |
-|--------|---------|
-| `adaptation` | Expert behavior adaptation based on feedback |
-| `collaboration` | Multi-expert collaboration mode selection |
-| `consultation` | Consultation orchestration |
-| `patterns` | Pattern learning from expert interactions |
-
-## Relationship to tools/core/experts
-
-The active expert implementation lives in `tools/core/experts/`, which provides:
-- **Council mode** — Coordinator-driven multi-expert consultation with planning, review, and delta rounds
-- **Single expert mode** — Agentic tool-using loop
-- **ReasoningStrategy** — Decoupled chat/reasoner client pairing
-- **FindingsStore** — Structured finding collection and review
-
-This module provides auxiliary evolutionary/adaptive abstractions.
+Older versions had a separate expert orchestration module with collaboration modes and adaptation logic. That code has been retired in favor of the unified `tools/core/experts` implementation.

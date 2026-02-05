@@ -65,22 +65,20 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 12 action-based tools:
+The plugin bundles the Mira MCP server with 10 action-based tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
 | `memory` | remember, recall, forget | Persistent semantic memory |
-| `code` | search, symbols, callers, callees, dependencies, patterns, tech_debt | Code intelligence |
+| `code` | search, symbols, callers, callees, dependencies, patterns, tech_debt, diff | Code intelligence + semantic diff analysis |
 | `project` | start, set, get | Project/session management |
-| `session` | history, recap, usage, insights | Session history and analytics |
+| `session` | history, recap, usage, insights, tasks | Session history, analytics, and async task management |
 | `expert` | consult, configure | Expert consultation (architect, security, code_reviewer, plan_reviewer, scope_analyst) |
 | `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
 | `finding` | list, get, review, stats, patterns, extract | Code review findings |
 | `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
 | `index` | project, file, status, compact, summarize, health | Code indexing and health |
-| `analyze_diff` | — | Semantic git diff analysis |
 | `reply_to_mira` | — | Send a response back during collaboration |
-| `tasks` | list, get, cancel | Async background operations |
 
 All tools return structured JSON via MCP outputSchema.
 

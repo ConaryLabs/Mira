@@ -12,10 +12,10 @@ Implementation layer for all MCP tool handlers. Each file contains the business 
 | `goals.rs` | `goal` — create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, progress |
 | `documentation.rs` | `documentation` — list, get, complete, skip, inventory, scan, export_claude_local |
 | `reviews.rs` | `finding` — list, get, review, stats, patterns, extract |
-| `diff.rs` | `analyze_diff` — semantic diff analysis |
+| `diff.rs` | `code` (`action="diff"`) — semantic diff analysis |
 | `experts/` | `expert` — consult, configure (includes council mode, role definitions, finding parsing) |
 | `session.rs` | `session` — history, recap, usage, insights; `reply_to_mira` |
-| `tasks.rs` | `tasks` — list, get, cancel (async background operations) |
+| `tasks.rs` | `session` (`action="tasks"`) — list, get, cancel (fallback for clients without native MCP tasks) |
 | `teams.rs` | Team management (internal, not exposed as MCP tool) |
 | `cross_project.rs` | Cross-project patterns (internal, not exposed as MCP tool) |
 | `claude_local.rs` | CLAUDE.local.md export (called via `documentation(action="export_claude_local")`) |

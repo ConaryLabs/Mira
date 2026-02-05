@@ -1,6 +1,8 @@
 # WsEvent
 
-WebSocket event types for real-time communication between Mira's server and frontend. Used to stream tool executions and agent collaboration messages.
+> **Legacy:** These types exist in code but are **not used in MCP mode**. Mira communicates with Claude Code via MCP over stdio and hooks. The WebSocket broadcaster is retained for potential future transport layers but is currently inactive.
+
+Event types originally designed for real-time communication. Used internally for agent collaboration message typing.
 
 **Crate:** `mira-types`
 **Source:** `crates/mira-types/src/lib.rs`

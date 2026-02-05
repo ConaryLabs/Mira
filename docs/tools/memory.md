@@ -23,8 +23,8 @@ Manage persistent memories. Actions: `remember` (store), `recall` (search), `for
 | action | String | Yes | `remember`, `recall`, or `forget` |
 | content | String | For remember | The factual content to store |
 | key | String | No | Unique key for upsert (remember) |
-| fact_type | String | No | `preference`, `decision`, `context`, or `general` (default: `general`) |
-| category | String | No | Organizational category for grouping |
+| fact_type | String | No | For `remember`: `preference`, `decision`, `context`, or `general` (default: `general`) |
+| category | String | No | For `remember`: Organizational category for grouping |
 | confidence | Float | No | 0.0–1.0 (default: 0.5 — evidence-based system starts low) |
 | scope | String | No | `personal`, `project` (default), or `team` |
 | query | String | For recall | Search query for semantic similarity |
@@ -55,7 +55,7 @@ Returns: `Memory stored successfully with ID: 123` or `Memory updated successful
 
 ### `recall` — Search memories
 
-Searches memories using semantic similarity with optional filters.
+Searches memories using semantic similarity with keyword/fuzzy fallback.
 
 ```json
 {
@@ -63,7 +63,6 @@ Searches memories using semantic similarity with optional filters.
   "arguments": {
     "action": "recall",
     "query": "authentication decisions",
-    "category": "architecture",
     "limit": 5
   }
 }

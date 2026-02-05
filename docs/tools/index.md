@@ -1,6 +1,6 @@
 # index
 
-Index code and git history. Actions: `project` (full index), `file` (single file), `status` (stats), `compact` (vacuum storage), `summarize` (module summaries), `health` (code health scan).
+Index codebase. Actions: `project` (full index), `file` (single file), `status` (stats), `compact` (vacuum storage), `summarize` (module summaries), `health` (code health scan).
 
 ## Usage
 

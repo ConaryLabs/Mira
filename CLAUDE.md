@@ -66,7 +66,10 @@ mira debug-carto     # Debug cartographer module detection
 
 API keys are in `~/.mira/.env` (optional with MCP Sampling):
 - `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)
-- `GEMINI_API_KEY` - Embeddings (Google gemini-embedding-001)
+- `GEMINI_API_KEY` / `GOOGLE_API_KEY` - Embeddings (Google gemini-embedding-001)
+
+Optional: `BRAVE_API_KEY` (web search), `DEFAULT_LLM_PROVIDER`, `MIRA_DISABLE_LLM`, `MIRA_USER_ID`.
+See `.env.example` for all options.
 
 If no keys are configured, experts use MCP Sampling to route through the host client.
 

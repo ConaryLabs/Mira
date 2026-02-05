@@ -1,13 +1,16 @@
 # analyze_diff
 
+> **Note:** This is not a standalone MCP tool. Access diff analysis via `code(action="diff", ...)`.
+
 Analyze git diffs semantically. Identifies change types, impact, and risks using LLM-powered analysis with heuristic fallback.
 
 ## Usage
 
 ```json
 {
-  "name": "analyze_diff",
+  "name": "code",
   "arguments": {
+    "action": "diff",
     "from_ref": "HEAD~1",
     "to_ref": "HEAD"
   }
@@ -27,7 +30,7 @@ Analyze git diffs semantically. Identifies change types, impact, and risks using
 1. **Change Classification** — Categorizes each change (NewFunction, ModifiedFunction, DeletedFunction, etc.)
 2. **Impact Analysis** — Traverses the call graph to find affected callers
 3. **Risk Assessment** — Flags breaking changes, security-relevant modifications
-4. **Caching** — Results are stored in `diff_analyses` table for reuse
+4. **Caching** — Commit-to-commit analyses are cached in `diff_analyses`. Staged/working tree analyses are not cached. If an analysis was cached heuristically, Mira will re-run it when an LLM becomes available.
 
 ## Graceful Degradation
 
@@ -39,17 +42,17 @@ Analyze git diffs semantically. Identifies change types, impact, and risks using
 
 **Analyze the last commit:**
 ```json
-{ "from_ref": "HEAD~1", "to_ref": "HEAD" }
+{ "action": "diff", "from_ref": "HEAD~1", "to_ref": "HEAD" }
 ```
 
 **Analyze staged changes:**
 ```json
-{}
+{ "action": "diff" }
 ```
 
 **Compare branches without impact analysis:**
 ```json
-{ "from_ref": "main", "to_ref": "feature-branch", "include_impact": false }
+{ "action": "diff", "from_ref": "main", "to_ref": "feature-branch", "include_impact": false }
 ```
 
 ## See Also

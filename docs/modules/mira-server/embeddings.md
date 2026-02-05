@@ -1,6 +1,6 @@
 # embeddings
 
-Pending embeddings queue operations for background processing. Manages the queue of text chunks awaiting vector embedding generation.
+Pending embeddings queue operations for background processing. Manages the queue of code chunks awaiting vector embedding generation.
 
 ## Key Type
 
@@ -12,4 +12,6 @@ Pending embeddings queue operations for background processing. Manages the queue
 
 ## Usage
 
-When memories are stored or code is indexed, chunks are added to the pending embeddings queue. The background fast lane worker picks them up, generates vector embeddings via the Gemini embedding API, and stores them in sqlite-vec for semantic search.
+The pending queue is primarily used for **incremental updates** (e.g., file watcher events after edits). The fast lane worker batches these chunks, generates embeddings via Gemini, and stores them in sqlite-vec for semantic search.
+
+Full project indexing embeds chunks inline when an embeddings client is available, and memory embeddings are generated at write time.
