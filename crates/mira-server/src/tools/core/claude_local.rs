@@ -8,7 +8,7 @@ use crate::db::{
 use crate::tools::core::ToolContext;
 use crate::utils::{ResultExt, truncate_at_boundary};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Total byte budget for CLAUDE.local.md content (~2K tokens)
@@ -19,6 +19,22 @@ const MAX_MEMORY_BYTES: usize = 500;
 
 /// Max ranked memories to fetch from DB (more than budget allows, gives room for packing)
 const RANKED_FETCH_LIMIT: usize = 200;
+
+// ============================================================================
+// Auto Memory Constants (stricter thresholds for hot cache)
+// ============================================================================
+
+/// Line budget for auto memory export (Claude Code truncates after 200 lines)
+const AUTO_MEMORY_LINE_BUDGET: usize = 150;
+
+/// Max bytes per memory entry in auto memory (shorter for line budget)
+const AUTO_MEMORY_MAX_BYTES: usize = 400;
+
+/// Category line quotas within AUTO_MEMORY_LINE_BUDGET
+const AUTO_MEMORY_PREF_QUOTA: usize = 60; // 40%
+const AUTO_MEMORY_DECISION_QUOTA: usize = 45; // 30%
+const AUTO_MEMORY_PATTERN_QUOTA: usize = 30; // 20%
+const AUTO_MEMORY_GENERAL_QUOTA: usize = 15; // 10%
 
 /// Export Mira memories to CLAUDE.local.md (MCP tool wrapper)
 pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, String> {
@@ -314,6 +330,273 @@ pub fn write_claude_local_md_sync(
     let claude_local_path = Path::new(project_path).join("CLAUDE.local.md");
     std::fs::write(&claude_local_path, &content)
         .map_err(|e| format!("Failed to write CLAUDE.local.md: {}", e))?;
+
+    // Count entries (lines starting with "- ")
+    let count = content.lines().filter(|l| l.starts_with("- ")).count();
+    Ok(count)
+}
+
+// ============================================================================
+// Auto Memory Integration (Claude Code's ~/.claude/projects/<path>/memory/)
+// ============================================================================
+
+/// Get the auto memory directory path for a project.
+///
+/// Claude Code uses: `~/.claude/projects/-home-peter-Mira/memory/`
+/// The path is sanitized by replacing `/` with `-`.
+pub fn get_auto_memory_dir(project_path: &str) -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    // Claude Code replaces / with - in path
+    // /home/peter/Mira -> -home-peter-Mira
+    let sanitized = project_path.replace('/', "-");
+    home.join(".claude/projects")
+        .join(&sanitized)
+        .join("memory")
+}
+
+/// Check if auto memory feature is available (directory exists).
+///
+/// Non-invasive detection: only returns true if Claude Code has created the directory.
+/// We never create it ourselves.
+pub fn auto_memory_dir_exists(project_path: &str) -> bool {
+    get_auto_memory_dir(project_path).exists()
+}
+
+/// Extended RankedMemory with additional fields for stricter filtering.
+/// Some fields are fetched for potential debugging/logging but not directly read.
+#[allow(dead_code)]
+struct AutoMemoryCandidate {
+    content: String,
+    fact_type: String,
+    category: Option<String>,
+    hotness: f64,
+    confidence: f64,
+    session_count: i64,
+    status: String,
+}
+
+/// Fetch memories with stricter thresholds for auto memory export.
+///
+/// Filters: confidence >= 0.8, session_count >= 3, status = 'confirmed'
+fn fetch_auto_memory_candidates_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    limit: usize,
+) -> Result<Vec<AutoMemoryCandidate>, String> {
+    let sql = r#"
+        SELECT content, fact_type, category,
+            (
+                session_count
+                * confidence
+                * CASE
+                    WHEN category = 'preference' THEN 1.4
+                    WHEN category = 'decision' THEN 1.3
+                    WHEN category IN ('pattern', 'convention') THEN 1.1
+                    WHEN category = 'context' THEN 1.0
+                    ELSE 0.9
+                  END
+                / (1.0 + (CAST(julianday('now') - julianday(COALESCE(updated_at, created_at)) AS REAL) / 90.0))
+            ) AS hotness,
+            confidence,
+            session_count,
+            status
+        FROM memory_facts
+        WHERE project_id = ?1
+          AND scope = 'project'
+          AND confidence >= 0.8
+          AND session_count >= 3
+          AND status = 'confirmed'
+          AND fact_type NOT IN ('health', 'persona')
+        ORDER BY hotness DESC
+        LIMIT ?2
+    "#;
+
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| format!("Failed to prepare auto memory query: {}", e))?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![project_id, limit as i64], |row| {
+            Ok(AutoMemoryCandidate {
+                content: row.get(0)?,
+                fact_type: row.get(1)?,
+                category: row.get(2)?,
+                hotness: row.get(3)?,
+                confidence: row.get(4)?,
+                session_count: row.get(5)?,
+                status: row.get(6)?,
+            })
+        })
+        .map_err(|e| format!("Failed to execute auto memory query: {}", e))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to collect auto memory results: {}", e))
+}
+
+/// Build line-budgeted export for auto memory with category quotas.
+fn build_auto_memory_export(candidates: &[AutoMemoryCandidate]) -> String {
+    if candidates.is_empty() {
+        return String::new();
+    }
+
+    let header = "# Mira Memory Cache\n\n<!-- Auto-generated from Mira. High-confidence memories only. -->\n\n";
+
+    // Track line counts per category
+    let mut pref_lines = 0usize;
+    let mut decision_lines = 0usize;
+    let mut pattern_lines = 0usize;
+    let mut general_lines = 0usize;
+
+    // Collect entries per section
+    let mut preferences: Vec<String> = Vec::new();
+    let mut decisions: Vec<String> = Vec::new();
+    let mut patterns: Vec<String> = Vec::new();
+    let mut general: Vec<String> = Vec::new();
+
+    for mem in candidates {
+        let content = truncate_content(&mem.content, AUTO_MEMORY_MAX_BYTES);
+        let entry_line = format!("- {}\n", content);
+        let line_count = entry_line.lines().count();
+
+        // Classify and check quota
+        let section = classify_auto_memory(mem);
+
+        match section {
+            "Preferences" if pref_lines + line_count <= AUTO_MEMORY_PREF_QUOTA => {
+                pref_lines += line_count;
+                preferences.push(entry_line);
+            }
+            "Decisions" if decision_lines + line_count <= AUTO_MEMORY_DECISION_QUOTA => {
+                decision_lines += line_count;
+                decisions.push(entry_line);
+            }
+            "Patterns" if pattern_lines + line_count <= AUTO_MEMORY_PATTERN_QUOTA => {
+                pattern_lines += line_count;
+                patterns.push(entry_line);
+            }
+            "General" if general_lines + line_count <= AUTO_MEMORY_GENERAL_QUOTA => {
+                general_lines += line_count;
+                general.push(entry_line);
+            }
+            _ => {
+                // Quota exceeded for this category, skip
+            }
+        }
+
+        // Check total line budget
+        let total = pref_lines + decision_lines + pattern_lines + general_lines;
+        if total >= AUTO_MEMORY_LINE_BUDGET {
+            break;
+        }
+    }
+
+    // Check if we have any content
+    if preferences.is_empty() && decisions.is_empty() && patterns.is_empty() && general.is_empty() {
+        return String::new();
+    }
+
+    // Build output in section order
+    let mut output = String::from(header);
+
+    if !preferences.is_empty() {
+        output.push_str("## Preferences\n\n");
+        for entry in &preferences {
+            output.push_str(entry);
+        }
+        output.push('\n');
+    }
+
+    if !decisions.is_empty() {
+        output.push_str("## Decisions\n\n");
+        for entry in &decisions {
+            output.push_str(entry);
+        }
+        output.push('\n');
+    }
+
+    if !patterns.is_empty() {
+        output.push_str("## Patterns\n\n");
+        for entry in &patterns {
+            output.push_str(entry);
+        }
+        output.push('\n');
+    }
+
+    if !general.is_empty() {
+        output.push_str("## General\n\n");
+        for entry in &general {
+            output.push_str(entry);
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+/// Classify an auto memory candidate into a section bucket
+fn classify_auto_memory(mem: &AutoMemoryCandidate) -> &'static str {
+    match mem.fact_type.as_str() {
+        "preference" => "Preferences",
+        "decision" => "Decisions",
+        "pattern" | "convention" => "Patterns",
+        _ => match mem.category.as_deref() {
+            Some("preference") => "Preferences",
+            Some("decision") => "Decisions",
+            Some("pattern") | Some("convention") => "Patterns",
+            _ => "General",
+        },
+    }
+}
+
+/// Write high-confidence memories to Claude Code's auto memory directory.
+///
+/// Only writes if the directory exists (feature detection).
+/// Writes to MEMORY.mira.md to avoid conflicts with user's MEMORY.md.
+/// Uses atomic writes (temp file + rename).
+///
+/// Returns the number of memories exported, or 0 if:
+/// - Auto memory directory doesn't exist
+/// - No memories meet the stricter thresholds
+pub fn write_auto_memory_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    project_path: &str,
+) -> Result<usize, String> {
+    let dir = get_auto_memory_dir(project_path);
+
+    // Feature detection: only write if directory exists
+    if !dir.exists() {
+        return Ok(0);
+    }
+
+    // Fetch candidates with stricter thresholds
+    let candidates = fetch_auto_memory_candidates_sync(conn, project_id, RANKED_FETCH_LIMIT)?;
+
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    let content = build_auto_memory_export(&candidates);
+    if content.is_empty() {
+        return Ok(0);
+    }
+
+    // Write to MEMORY.mira.md (Mira-owned), not MEMORY.md (user-owned)
+    let memory_path = dir.join("MEMORY.mira.md");
+    let temp_path = dir.join(".MEMORY.mira.md.tmp");
+
+    // Atomic write: temp file + rename
+    if let Err(e) = std::fs::write(&temp_path, &content) {
+        // Clean up temp file on error
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Failed to write temp file: {}", e));
+    }
+
+    if let Err(e) = std::fs::rename(&temp_path, &memory_path) {
+        // Clean up temp file on rename failure
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Failed to rename temp file: {}", e));
+    }
 
     // Count entries (lines starting with "- ")
     let count = content.lines().filter(|l| l.starts_with("- ")).count();
@@ -649,5 +932,197 @@ mod tests {
         assert!(result.ends_with("..."));
         assert!(result.is_char_boundary(result.len()));
         assert!(result.len() <= 500);
+    }
+
+    // ============================================================================
+    // Auto Memory tests
+    // ============================================================================
+
+    #[test]
+    fn test_get_auto_memory_dir() {
+        // Test path calculation: slashes become dashes
+        let dir = get_auto_memory_dir("/home/peter/Mira");
+        let path_str = dir.to_string_lossy();
+
+        // Should contain the sanitized path
+        assert!(path_str.contains("-home-peter-Mira"));
+        assert!(path_str.contains(".claude/projects"));
+        assert!(path_str.ends_with("memory"));
+    }
+
+    #[test]
+    fn test_get_auto_memory_dir_various_paths() {
+        // Root path
+        let dir = get_auto_memory_dir("/");
+        assert!(dir.to_string_lossy().contains("/-/memory"));
+
+        // Nested path
+        let dir = get_auto_memory_dir("/usr/local/src/myproject");
+        assert!(dir.to_string_lossy().contains("-usr-local-src-myproject"));
+
+        // Path with trailing slash (shouldn't happen but handle gracefully)
+        let dir = get_auto_memory_dir("/home/user/project/");
+        assert!(dir.to_string_lossy().contains("-home-user-project-"));
+    }
+
+    #[test]
+    fn test_auto_memory_dir_exists_nonexistent() {
+        // A path that definitely doesn't have an auto memory dir
+        assert!(!auto_memory_dir_exists("/nonexistent/path/that/does/not/exist"));
+    }
+
+    fn make_auto_memory_candidate(
+        content: &str,
+        fact_type: &str,
+        category: Option<&str>,
+        hotness: f64,
+    ) -> AutoMemoryCandidate {
+        AutoMemoryCandidate {
+            content: content.to_string(),
+            fact_type: fact_type.to_string(),
+            category: category.map(|s| s.to_string()),
+            hotness,
+            confidence: 0.9,
+            session_count: 5,
+            status: "confirmed".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_build_auto_memory_export_empty() {
+        let result = build_auto_memory_export(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_build_auto_memory_export_basic_sections() {
+        let candidates = vec![
+            make_auto_memory_candidate("User prefers tabs", "preference", Some("preference"), 10.0),
+            make_auto_memory_candidate("Using SQLite", "decision", Some("decision"), 8.0),
+            make_auto_memory_candidate("Builder pattern", "pattern", Some("pattern"), 6.0),
+            make_auto_memory_candidate("General fact", "general", Some("general"), 4.0),
+        ];
+        let result = build_auto_memory_export(&candidates);
+
+        assert!(result.contains("# Mira Memory Cache"));
+        assert!(result.contains("## Preferences"));
+        assert!(result.contains("- User prefers tabs"));
+        assert!(result.contains("## Decisions"));
+        assert!(result.contains("- Using SQLite"));
+        assert!(result.contains("## Patterns"));
+        assert!(result.contains("- Builder pattern"));
+        assert!(result.contains("## General"));
+        assert!(result.contains("- General fact"));
+    }
+
+    #[test]
+    fn test_build_auto_memory_line_budget() {
+        // Create many candidates that would exceed the line budget
+        let candidates: Vec<AutoMemoryCandidate> = (0..200)
+            .map(|i| {
+                make_auto_memory_candidate(
+                    &format!("Memory item number {} with some content", i),
+                    "general",
+                    Some("general"),
+                    200.0 - i as f64,
+                )
+            })
+            .collect();
+
+        let result = build_auto_memory_export(&candidates);
+
+        // Count total lines (excluding empty lines and headers)
+        let entry_count = result.lines().filter(|l| l.starts_with("- ")).count();
+
+        // Should be limited by the general quota (15 lines)
+        assert!(entry_count <= AUTO_MEMORY_GENERAL_QUOTA);
+    }
+
+    #[test]
+    fn test_build_auto_memory_category_quotas() {
+        // Create many preferences to test quota enforcement
+        let mut candidates: Vec<AutoMemoryCandidate> = (0..100)
+            .map(|i| {
+                make_auto_memory_candidate(
+                    &format!("Preference {}", i),
+                    "preference",
+                    Some("preference"),
+                    100.0 - i as f64,
+                )
+            })
+            .collect();
+
+        // Add some decisions too
+        candidates.extend((0..50).map(|i| {
+            make_auto_memory_candidate(
+                &format!("Decision {}", i),
+                "decision",
+                Some("decision"),
+                50.0 - i as f64,
+            )
+        }));
+
+        let result = build_auto_memory_export(&candidates);
+
+        // Count entries per section
+        let pref_count = result
+            .lines()
+            .filter(|l| l.starts_with("- Preference"))
+            .count();
+        let decision_count = result
+            .lines()
+            .filter(|l| l.starts_with("- Decision"))
+            .count();
+
+        // Should be limited by quotas
+        assert!(pref_count <= AUTO_MEMORY_PREF_QUOTA);
+        assert!(decision_count <= AUTO_MEMORY_DECISION_QUOTA);
+    }
+
+    #[test]
+    fn test_classify_auto_memory() {
+        // Test fact_type classification
+        let pref = make_auto_memory_candidate("test", "preference", None, 1.0);
+        assert_eq!(classify_auto_memory(&pref), "Preferences");
+
+        let decision = make_auto_memory_candidate("test", "decision", None, 1.0);
+        assert_eq!(classify_auto_memory(&decision), "Decisions");
+
+        let pattern = make_auto_memory_candidate("test", "pattern", None, 1.0);
+        assert_eq!(classify_auto_memory(&pattern), "Patterns");
+
+        let convention = make_auto_memory_candidate("test", "convention", None, 1.0);
+        assert_eq!(classify_auto_memory(&convention), "Patterns");
+
+        // Test category fallback
+        let cat_pref = make_auto_memory_candidate("test", "general", Some("preference"), 1.0);
+        assert_eq!(classify_auto_memory(&cat_pref), "Preferences");
+
+        let cat_decision = make_auto_memory_candidate("test", "general", Some("decision"), 1.0);
+        assert_eq!(classify_auto_memory(&cat_decision), "Decisions");
+
+        // Default to General
+        let general = make_auto_memory_candidate("test", "general", Some("other"), 1.0);
+        assert_eq!(classify_auto_memory(&general), "General");
+    }
+
+    #[test]
+    fn test_auto_memory_truncates_long_content() {
+        let long_content = "x".repeat(600);
+        let candidates = vec![make_auto_memory_candidate(
+            &long_content,
+            "general",
+            None,
+            5.0,
+        )];
+        let result = build_auto_memory_export(&candidates);
+
+        // Find the entry line and check it's truncated
+        for line in result.lines() {
+            if let Some(entry) = line.strip_prefix("- ") {
+                assert!(entry.len() <= AUTO_MEMORY_MAX_BYTES + 3); // +3 for "..."
+                assert!(entry.ends_with("..."));
+            }
+        }
     }
 }

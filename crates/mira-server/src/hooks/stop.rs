@@ -219,16 +219,16 @@ pub async fn run_session_end() -> Result<()> {
         }
     };
 
-    // Get current project
-    let project_id = {
+    // Get current project (id and path)
+    let project_info: Option<(i64, String)> = {
         let pool_clone = pool.clone();
-        let result: Result<Option<i64>, _> = pool_clone
+        let result: Result<Option<(i64, String)>, _> = pool_clone
             .interact(move |conn| {
                 let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path {
+                let result = if let Some(path) = path.clone() {
                     crate::db::get_or_create_project_sync(conn, &path, None)
                         .ok()
-                        .map(|(id, _)| id)
+                        .map(|(id, _)| (id, path))
                 } else {
                     None
                 };
@@ -238,8 +238,37 @@ pub async fn run_session_end() -> Result<()> {
         result.ok().flatten()
     };
 
-    if let Some(project_id) = project_id {
+    if let Some((project_id, project_path)) = project_info {
+        // Snapshot native Claude Code tasks
         snapshot_tasks(&pool, project_id, session_id, true).await;
+
+        // Auto-export to Claude Code's auto memory (if feature available)
+        let pool_clone = pool.clone();
+        let path_clone = project_path.clone();
+        let _ = pool_clone
+            .interact(move |conn| {
+                // Only write if auto memory directory exists (non-invasive feature detection)
+                if crate::tools::core::claude_local::auto_memory_dir_exists(&path_clone) {
+                    match crate::tools::core::claude_local::write_auto_memory_sync(
+                        conn,
+                        project_id,
+                        &path_clone,
+                    ) {
+                        Ok(count) if count > 0 => {
+                            eprintln!(
+                                "[mira] Auto-exported {} memories to MEMORY.mira.md",
+                                count
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("[mira] Auto memory export failed: {}", e);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
     }
 
     write_hook_output(&serde_json::json!({}));
