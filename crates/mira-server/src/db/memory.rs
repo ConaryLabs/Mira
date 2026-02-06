@@ -269,20 +269,6 @@ pub fn import_confirmed_memory_sync(
     Ok(conn.last_insert_rowid())
 }
 
-/// Store embedding for a memory (sync version for pool.interact())
-pub fn store_embedding_sync(
-    conn: &rusqlite::Connection,
-    fact_id: i64,
-    content: &str,
-    embedding_bytes: &[u8],
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT OR REPLACE INTO vec_memory (rowid, embedding, fact_id, content) VALUES (?, ?, ?, ?)",
-        rusqlite::params![fact_id, embedding_bytes, fact_id, content],
-    )?;
-    Ok(())
-}
-
 /// Store embedding for a fact and mark as embedded (sync version for pool.interact())
 pub fn store_fact_embedding_sync(
     conn: &rusqlite::Connection,
@@ -442,64 +428,6 @@ pub fn recall_semantic_with_branch_sync(
         .map(|(id, content, distance, branch)| {
             let boosted_distance = apply_branch_boost(distance, branch.as_deref(), current_branch);
             (id, content, boosted_distance)
-        })
-        .collect();
-
-    // Re-sort by boosted distance (ascending - lower is better)
-    boosted.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
-
-    // Truncate to requested limit
-    boosted.truncate(limit);
-
-    Ok(boosted)
-}
-
-/// Branch-aware semantic recall that also returns the branch for display
-///
-/// Returns (fact_id, content, boosted_distance, branch, team_id) tuples.
-pub fn recall_semantic_with_branch_info_sync(
-    conn: &rusqlite::Connection,
-    embedding_bytes: &[u8],
-    project_id: Option<i64>,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
-    current_branch: Option<&str>,
-    limit: usize,
-) -> rusqlite::Result<Vec<RecallRow>> {
-    // Fetch more results than needed to allow for re-ranking after boosting
-    let fetch_limit = (limit * 2).min(100);
-
-    let sql = semantic_recall_sql();
-    let mut stmt = conn.prepare(sql)?;
-
-    let results: Vec<RecallRow> = stmt
-        .query_map(
-            rusqlite::params![
-                embedding_bytes,
-                project_id,
-                fetch_limit as i64,
-                user_id,
-                team_id
-            ],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    // Apply branch boosting and re-sort
-    let mut boosted: Vec<RecallRow> = results
-        .into_iter()
-        .map(|(id, content, distance, branch, mem_team_id)| {
-            let boosted_distance = apply_branch_boost(distance, branch.as_deref(), current_branch);
-            (id, content, boosted_distance, branch, mem_team_id)
         })
         .collect();
 

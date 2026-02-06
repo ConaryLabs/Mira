@@ -2,17 +2,10 @@
 // Stop hook handler - checks goal progress, snapshots tasks, and saves session state
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{read_hook_input, write_hook_output};
+use crate::hooks::{get_db_path, read_hook_input, resolve_project_id, write_hook_output};
 use crate::utils::truncate_at_boundary;
 use anyhow::Result;
-use std::path::PathBuf;
 use std::sync::Arc;
-
-/// Get database path
-fn get_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/mira.db")
-}
 
 /// Stop hook input from Claude Code
 #[derive(Debug)]
@@ -65,25 +58,7 @@ pub async fn run() -> Result<()> {
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Get current project
-    let project_id = {
-        let pool_clone = pool.clone();
-        let result: Result<Option<i64>, _> = pool_clone
-            .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path {
-                    crate::db::get_or_create_project_sync(conn, &path, None)
-                        .ok()
-                        .map(|(id, _)| id)
-                } else {
-                    None
-                };
-                Ok::<_, anyhow::Error>(result)
-            })
-            .await;
-        result.ok().flatten()
-    };
-
-    let Some(project_id) = project_id else {
+    let Some(project_id) = resolve_project_id(&pool).await else {
         // No active project, just allow stop
         write_hook_output(&serde_json::json!({}));
         return Ok(());
@@ -234,45 +209,30 @@ pub async fn run_session_end() -> Result<()> {
             // Trigger knowledge distillation before deactivating (async, non-blocking)
             let distill_pool = pool.clone();
             let distill_team_id = membership.team_id;
-            let distill_project_id = {
-                let pool_clone = pool.clone();
-                pool_clone
-                    .interact(move |conn| {
-                        let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                        Ok::<_, anyhow::Error>(path.and_then(|p| {
-                            crate::db::get_or_create_project_sync(conn, &p, None)
-                                .ok()
-                                .map(|(id, _)| id)
-                        }))
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-            };
+            let distill_project_id = super::resolve_project_id(&pool).await;
 
-            tokio::spawn(async move {
-                match crate::background::knowledge_distillation::distill_team_session(
-                    &distill_pool,
-                    distill_team_id,
-                    distill_project_id,
-                )
-                .await
-                {
-                    Ok(Some(result)) => {
-                        eprintln!(
-                            "[mira] Distilled {} finding(s) from team '{}'",
-                            result.findings.len(),
-                            result.team_name,
-                        );
-                    }
-                    Ok(None) => {
-                        eprintln!("[mira] No findings to distill for team session");
-                    }
-                    Err(e) => {
-                        eprintln!("[mira] Knowledge distillation failed: {}", e);
-                    }
+            // Run distillation inline (not spawned) so it completes before the hook exits
+            match crate::background::knowledge_distillation::distill_team_session(
+                &distill_pool,
+                distill_team_id,
+                distill_project_id,
+            )
+            .await
+            {
+                Ok(Some(result)) => {
+                    eprintln!(
+                        "[mira] Distilled {} finding(s) from team '{}'",
+                        result.findings.len(),
+                        result.team_name,
+                    );
                 }
-            });
+                Ok(None) => {
+                    eprintln!("[mira] No findings to distill for team session");
+                }
+                Err(e) => {
+                    eprintln!("[mira] Knowledge distillation failed: {}", e);
+                }
+            }
 
             let pool_clone = pool.clone();
             let sid = session_id.to_string();
@@ -292,25 +252,11 @@ pub async fn run_session_end() -> Result<()> {
     }
 
     // Get current project (id and path)
-    let project_info: Option<(i64, String)> = {
-        let pool_clone = pool.clone();
-        let result: Result<Option<(i64, String)>, _> = pool_clone
-            .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path.clone() {
-                    crate::db::get_or_create_project_sync(conn, &path, None)
-                        .ok()
-                        .map(|(id, _)| (id, path))
-                } else {
-                    None
-                };
-                Ok::<_, anyhow::Error>(result)
-            })
-            .await;
-        result.ok().flatten()
-    };
+    let (project_id, project_path) = super::resolve_project(&pool).await;
 
-    if let Some((project_id, project_path)) = project_info {
+    if let Some(project_id) = project_id
+        && let Some(project_path) = project_path
+    {
         // Snapshot native Claude Code tasks
         snapshot_tasks(&pool, project_id, session_id, true).await;
 
@@ -426,25 +372,7 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
     }
 
     // Get files modified (Write/Edit tool calls)
-    let files_modified: Vec<String> = {
-        let sql = r#"
-            SELECT DISTINCT
-                json_extract(arguments, '$.file_path') as file_path
-            FROM tool_history
-            WHERE session_id = ?
-              AND tool_name IN ('Write', 'Edit', 'NotebookEdit')
-              AND json_extract(arguments, '$.file_path') IS NOT NULL
-            LIMIT 10
-        "#;
-        conn.prepare(sql)
-            .ok()
-            .and_then(|mut stmt| {
-                stmt.query_map([session_id], |row| row.get::<_, String>(0))
-                    .ok()
-                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    };
+    let files_modified = super::get_session_modified_files_sync(conn, session_id);
 
     // Get session duration
     let duration: Option<String> = {
@@ -577,26 +505,8 @@ fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Resul
             .unwrap_or_default()
     };
 
-    // Get files modified (Write/Edit/NotebookEdit tool calls)
-    let files_modified: Vec<String> = {
-        let sql = r#"
-            SELECT DISTINCT
-                json_extract(arguments, '$.file_path') as file_path
-            FROM tool_history
-            WHERE session_id = ?
-              AND tool_name IN ('Write', 'Edit', 'NotebookEdit')
-              AND json_extract(arguments, '$.file_path') IS NOT NULL
-            LIMIT 10
-        "#;
-        conn.prepare(sql)
-            .ok()
-            .and_then(|mut stmt| {
-                stmt.query_map(rusqlite::params![session_id], |row| row.get::<_, String>(0))
-                    .ok()
-                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default()
-    };
+    // Get files modified (Write/Edit/NotebookEdit/MultiEdit tool calls)
+    let files_modified = super::get_session_modified_files_sync(conn, session_id);
 
     let snapshot = serde_json::json!({
         "tool_count": tool_count,

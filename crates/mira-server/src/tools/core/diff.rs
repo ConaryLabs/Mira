@@ -108,19 +108,8 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     .await?;
 
     // Compute historical risk LIVE from mined patterns (never cached)
-    let historical_risk = if let Some(pid) = project_id {
-        let files = result.files.clone();
-        let files_changed = result.files_changed;
-        ctx.pool()
-            .run(move |conn| {
-                Ok::<_, String>(compute_historical_risk(conn, pid, &files, files_changed))
-            })
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
+    let historical_risk =
+        compute_historical_risk_live(ctx, project_id, &result.files, result.files_changed).await;
 
     let formatted = format_diff_analysis(&result, historical_risk.as_ref());
     Ok(Json(DiffOutput {
@@ -233,19 +222,8 @@ async fn analyze_staged_or_working<C: ToolContext>(
     };
 
     // Compute historical risk LIVE from mined patterns
-    let historical_risk = if let Some(pid) = project_id {
-        let files = result.files.clone();
-        let files_changed = result.files_changed;
-        ctx.pool()
-            .run(move |conn| {
-                Ok::<_, String>(compute_historical_risk(conn, pid, &files, files_changed))
-            })
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
+    let historical_risk =
+        compute_historical_risk_live(ctx, project_id, &result.files, result.files_changed).await;
 
     let formatted = format_diff_analysis(&result, historical_risk.as_ref());
     Ok(Json(DiffOutput {
@@ -262,6 +240,22 @@ async fn analyze_staged_or_working<C: ToolContext>(
             historical_risk: historical_risk.map(to_historical_risk_data),
         })),
     }))
+}
+
+/// Compute historical risk from mined change patterns (never cached).
+async fn compute_historical_risk_live<C: ToolContext>(
+    ctx: &C,
+    project_id: Option<i64>,
+    files: &[String],
+    files_changed: i64,
+) -> Option<HistoricalRisk> {
+    let pid = project_id?;
+    let files = files.to_vec();
+    ctx.pool()
+        .run(move |conn| Ok::<_, String>(compute_historical_risk(conn, pid, &files, files_changed)))
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Convert internal HistoricalRisk to the output HistoricalRiskData

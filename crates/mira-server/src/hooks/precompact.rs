@@ -2,9 +2,8 @@
 // PreCompact hook handler - preserves context before summarization
 
 use crate::db::pool::DatabasePool;
-use crate::db::{
-    StoreMemoryParams, get_last_active_project_sync, get_or_create_project_sync, store_memory_sync,
-};
+use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::hooks::get_db_path;
 use crate::utils::truncate_at_boundary;
 use anyhow::Result;
 use std::fs;
@@ -19,12 +18,6 @@ const MAX_IMPORTANT_LINES: usize = 10;
 const MIN_CONTENT_LEN: usize = 10;
 /// Maximum content length for extracted lines (skip code pastes)
 const MAX_CONTENT_LEN: usize = 500;
-
-/// Get database path (same as main.rs)
-fn get_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/mira.db")
-}
 
 /// Handle PreCompact hook from Claude Code
 /// Fires before context compaction (summarization) occurs
@@ -75,24 +68,7 @@ async fn save_pre_compaction_state(
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Get current project from last active
-    let project_id = {
-        let pool_clone = pool.clone();
-        pool_clone
-            .interact(move |conn| {
-                let path = get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path {
-                    get_or_create_project_sync(conn, &path, None)
-                        .ok()
-                        .map(|(id, _)| id)
-                } else {
-                    None
-                };
-                Ok::<_, anyhow::Error>(result)
-            })
-            .await
-            .ok()
-            .flatten()
-    };
+    let project_id = crate::hooks::resolve_project_id(&pool).await;
 
     // Save compaction event as a session note
     let note_content = format!(

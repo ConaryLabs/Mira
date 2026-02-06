@@ -2,8 +2,8 @@
 // Unified session management and collaboration tools
 
 use crate::db::{
-    create_session_ext_sync, get_recent_sessions_sync, get_session_history_sync,
-    get_unified_insights_sync,
+    build_session_recap_sync, create_session_ext_sync, get_recent_sessions_sync,
+    get_session_history_sync, get_unified_insights_sync,
 };
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::requests::SessionHistoryAction;
@@ -13,6 +13,7 @@ use crate::mcp::responses::{
     SessionHistoryData, SessionListData, SessionOutput, SessionSummary,
 };
 use crate::tools::core::ToolContext;
+use crate::tools::core::session_notes;
 use crate::utils::{truncate, truncate_at_boundary};
 use mira_types::{AgentRole, WsEvent};
 use uuid::Uuid;
@@ -31,7 +32,7 @@ pub async fn handle_session<C: ToolContext>(
             session_history(ctx, history_action, req.session_id, req.limit).await
         }
         SessionAction::Recap => {
-            let message = super::get_session_recap(ctx).await?;
+            let message = get_session_recap(ctx).await?;
             Ok(Json(SessionOutput {
                 action: "recap".into(),
                 message,
@@ -51,7 +52,7 @@ pub async fn handle_session<C: ToolContext>(
             }))
         }
         SessionAction::Insights => {
-            query_insights(ctx, req.insight_source, req.min_confidence, req.limit).await
+            query_insights(ctx, req.insight_source, req.min_confidence, req.since_days, req.limit).await
         }
         SessionAction::Tasks => {
             // Handled at router level (returns TasksOutput, not SessionOutput).
@@ -66,6 +67,7 @@ async fn query_insights<C: ToolContext>(
     ctx: &C,
     insight_source: Option<String>,
     min_confidence: Option<f64>,
+    since_days: Option<u32>,
     limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, String> {
     let project = ctx.get_project().await;
@@ -73,6 +75,7 @@ async fn query_insights<C: ToolContext>(
 
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.3);
+    let days_back = since_days.unwrap_or(30) as i64;
     let lim = limit.unwrap_or(20) as usize;
 
     let insights = ctx
@@ -83,7 +86,7 @@ async fn query_insights<C: ToolContext>(
                 project_id,
                 filter_source.as_deref(),
                 min_conf,
-                30,
+                days_back,
                 lim,
             )
         })
@@ -434,5 +437,31 @@ pub async fn reply_to_mira<C: ToolContext>(
                 }))
             }
         }
+    }
+}
+
+/// Get session recap for MCP clients
+/// Returns recent context, preferences, project state, and Claude Code session notes
+pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, String> {
+    let project = ctx.get_project().await;
+    let project_id = project.as_ref().map(|p| p.id);
+
+    let mut recap = ctx
+        .pool()
+        .run(move |conn| Ok::<_, String>(build_session_recap_sync(conn, project_id)))
+        .await?;
+
+    // Add Claude Code session notes if available
+    if let Some(proj) = &project {
+        let notes = session_notes::get_recent_session_notes(&proj.path, 3);
+        if !notes.is_empty() {
+            recap.push_str(&session_notes::format_session_notes(&notes));
+        }
+    }
+
+    if recap.is_empty() {
+        Ok("No session recap available.".to_string())
+    } else {
+        Ok(recap)
     }
 }

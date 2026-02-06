@@ -5,40 +5,17 @@ use crate::config::EnvConfig;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
-use crate::hooks::{read_hook_input, write_hook_output};
+use crate::hooks::{get_db_path, read_hook_input, resolve_project, write_hook_output};
 use crate::proactive::background::get_pre_generated_suggestions;
 use crate::proactive::{behavior::BehaviorTracker, predictor};
 use crate::utils::truncate_at_boundary;
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-
-/// Get database path (same as other hooks)
-fn get_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/mira.db")
-}
 
 /// Get embeddings client if available (with pool for usage tracking)
 fn get_embeddings(pool: Option<Arc<DatabasePool>>) -> Option<Arc<EmbeddingClient>> {
     EmbeddingClient::from_env(pool).map(Arc::new)
-}
-
-/// Resolve active project ID and path in a single DB call
-async fn resolve_project(pool: &Arc<DatabasePool>) -> (Option<i64>, Option<String>) {
-    pool.interact(move |conn| {
-        let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-        let result = if let Some(ref path) = path {
-            crate::db::get_or_create_project_sync(conn, path, None)
-                .ok()
-                .map(|(id, _)| id)
-        } else {
-            None
-        };
-        Ok::<_, anyhow::Error>((result, path))
-    })
-    .await
-    .unwrap_or_default()
 }
 
 /// Log user query for behavior tracking

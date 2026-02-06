@@ -176,9 +176,12 @@ pub async fn review_finding<C: ToolContext>(
         .await?
         .ok_or_else(|| format!("Finding {} not found", finding_id))?;
 
-    if finding.status != "pending" {
+    // Allow: pending -> accepted/rejected/fixed, accepted -> fixed
+    let valid_transition = finding.status == "pending"
+        || (finding.status == "accepted" && status == "fixed");
+    if !valid_transition {
         return Err(format!(
-            "Finding {} is already '{}', cannot change to '{}'",
+            "Finding {} is '{}', cannot change to '{}'",
             finding_id, finding.status, status
         ));
     }

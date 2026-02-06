@@ -4,7 +4,7 @@
 use super::ToolContext;
 use crate::db::{get_llm_usage_summary, query_llm_usage_stats};
 use crate::mcp::requests::UsageAction;
-use crate::utils::truncate;
+use crate::utils::{format_period, truncate};
 
 /// Query LLM usage statistics
 pub async fn usage<C: ToolContext>(
@@ -24,9 +24,7 @@ pub async fn usage<C: ToolContext>(
                 .run(move |conn| get_llm_usage_summary(conn, project_id, since_days))
                 .await?;
 
-            let period = since_days
-                .map(|d| format!("last {} days", d))
-                .unwrap_or_else(|| "all time".to_string());
+            let period = format_period(since_days);
 
             Ok(format!(
                 "LLM Usage Summary ({})\n\n\
@@ -59,9 +57,7 @@ pub async fn usage<C: ToolContext>(
                 return Ok("No usage data found".to_string());
             }
 
-            let period = since_days
-                .map(|d| format!("last {} days", d))
-                .unwrap_or_else(|| "all time".to_string());
+            let period = format_period(since_days);
 
             let mut output = format!("LLM Usage by {} ({})\n\n", group_by, period);
             output.push_str(&format!(
@@ -110,9 +106,7 @@ pub async fn usage<C: ToolContext>(
                 return Ok("No usage data found".to_string());
             }
 
-            let period = since_days
-                .map(|d| format!("last {} days", d))
-                .unwrap_or_else(|| "all time".to_string());
+            let period = format_period(since_days);
             let limit = limit.unwrap_or(50) as usize;
 
             let mut output = format!("Recent LLM Usage by Role ({}, limit {})\n\n", period, limit);

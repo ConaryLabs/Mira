@@ -6,6 +6,18 @@ use super::role::ExpertRole;
 use crate::mcp::requests::ExpertConfigAction;
 use crate::utils::truncate;
 
+/// Validate that a role key is a known expert role or special system role.
+fn validate_role(role_key: &str) -> Result<(), String> {
+    let is_valid = ExpertRole::from_db_key(role_key).is_some() || role_key == "background";
+    if !is_valid {
+        return Err(format!(
+            "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
+            role_key
+        ));
+    }
+    Ok(())
+}
+
 /// Configure expert system prompts and LLM providers (set, get, delete, list, providers)
 pub async fn configure_expert<C: ToolContext>(
     ctx: &C,
@@ -24,16 +36,7 @@ pub async fn configure_expert<C: ToolContext>(
     match action {
         ExpertConfigAction::Set => {
             let role_key = role.as_deref().ok_or("Role is required for 'set' action")?;
-
-            // Validate role (expert roles + special system roles like "background")
-            let is_valid_role =
-                ExpertRole::from_db_key(role_key).is_some() || role_key == "background";
-            if !is_valid_role {
-                return Err(format!(
-                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
-                    role_key
-                ));
-            }
+            validate_role(role_key)?;
 
             // Parse provider if provided
             let parsed_provider = if let Some(ref p) = provider {
@@ -86,16 +89,8 @@ pub async fn configure_expert<C: ToolContext>(
 
         ExpertConfigAction::Get => {
             let role_key = role.as_deref().ok_or("Role is required for 'get' action")?;
-
-            // Validate role (expert roles + special system roles like "background")
+            validate_role(role_key)?;
             let expert = ExpertRole::from_db_key(role_key);
-            let is_valid_role = expert.is_some() || role_key == "background";
-            if !is_valid_role {
-                return Err(format!(
-                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
-                    role_key
-                ));
-            }
 
             let role_key_clone = role_key.to_string();
             let config = ctx
@@ -128,16 +123,7 @@ pub async fn configure_expert<C: ToolContext>(
             let role_key = role
                 .as_deref()
                 .ok_or("Role is required for 'delete' action")?;
-
-            // Validate role (expert roles + special system roles like "background")
-            let is_valid_role =
-                ExpertRole::from_db_key(role_key).is_some() || role_key == "background";
-            if !is_valid_role {
-                return Err(format!(
-                    "Invalid role '{}'. Valid roles: architect, plan_reviewer, scope_analyst, code_reviewer, security, background",
-                    role_key
-                ));
-            }
+            validate_role(role_key)?;
 
             let role_key_clone = role_key.to_string();
             let deleted = ctx

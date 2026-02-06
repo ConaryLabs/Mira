@@ -220,6 +220,7 @@ pub fn update_goal_sync(
     conn: &Connection,
     id: i64,
     title: Option<&str>,
+    description: Option<&str>,
     status: Option<&str>,
     priority: Option<&str>,
     progress: Option<i64>,
@@ -228,6 +229,12 @@ pub fn update_goal_sync(
         conn.execute(
             "UPDATE goals SET title = ? WHERE id = ?",
             params![title, id],
+        )?;
+    }
+    if let Some(description) = description {
+        conn.execute(
+            "UPDATE goals SET description = ? WHERE id = ?",
+            params![description, id],
         )?;
     }
     if let Some(status) = status {

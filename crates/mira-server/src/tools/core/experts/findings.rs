@@ -6,6 +6,9 @@ use crate::db::ReviewFindingParams;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
+/// Minimum character length for a finding to be considered valid.
+pub const MIN_FINDING_LENGTH: usize = 20;
+
 /// A parsed finding from expert response
 #[derive(Debug, Clone)]
 pub struct ParsedFinding {
@@ -87,7 +90,7 @@ pub fn parse_expert_findings(response: &str, expert_role: &str) -> Vec<ParsedFin
             .unwrap_or(false)
             && trimmed.contains('.')
             && let Some(pos) = trimmed.find('.')
-            && pos < 3
+            && pos < 4
         {
             // Likely a numbered item
             if in_finding && !current_content.is_empty() {
@@ -151,7 +154,7 @@ pub async fn store_findings<C: ToolContext>(
 
     let mut stored = 0;
     for finding in findings {
-        if finding.content.len() < 10 {
+        if finding.content.len() < MIN_FINDING_LENGTH {
             continue; // Skip very short findings
         }
 

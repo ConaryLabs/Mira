@@ -9,6 +9,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::get_db_path;
+
 /// File where Claude's session_id is stored for MCP to read
 pub fn session_file_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -59,12 +61,6 @@ impl SourceInfo {
             timestamp: Utc::now().to_rfc3339(),
         }
     }
-}
-
-/// Get database path
-fn get_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/mira.db")
 }
 
 /// Handle SessionStart hook from Claude Code
@@ -142,6 +138,9 @@ pub fn run() -> Result<()> {
         eprintln!("[mira] Captured Claude task list: {}", list_id);
     }
 
+    // Create a single tokio runtime for all async DB operations in this hook
+    let rt = tokio::runtime::Runtime::new()?;
+
     // Detect team membership and register in DB
     if let Some(sid) = session_id {
         let detection = detect_team_membership(&input, Some(sid), cwd);
@@ -151,98 +150,92 @@ pub fn run() -> Result<()> {
                 det.team_name, det.role, det.member_name
             );
 
-            // Register in DB via a short-lived runtime
-            let rt_result = tokio::runtime::Runtime::new();
-            if let Ok(rt) = rt_result {
-                let db_path = get_db_path();
-                let det_team_name = det.team_name.clone();
-                let det_config_path = det.config_path.clone();
-                let det_member_name = det.member_name.clone();
-                let det_role = det.role.clone();
-                let det_agent_type = det.agent_type.clone();
-                let sid_owned = sid.to_string();
-                let cwd_owned = cwd.map(String::from);
+            // Register in DB
+            let db_path = get_db_path();
+            let det_team_name = det.team_name.clone();
+            let det_config_path = det.config_path.clone();
+            let det_member_name = det.member_name.clone();
+            let det_role = det.role.clone();
+            let det_agent_type = det.agent_type.clone();
+            let sid_owned = sid.to_string();
+            let cwd_owned = cwd.map(String::from);
 
-                let membership = rt.block_on(async {
-                    let pool = match DatabasePool::open(&db_path).await {
-                        Ok(p) => Arc::new(p),
-                        Err(_) => return None,
-                    };
+            let membership = rt.block_on(async {
+                let pool = match DatabasePool::open(&db_path).await {
+                    Ok(p) => Arc::new(p),
+                    Err(_) => return None,
+                };
 
-                    // Get project_id from cwd
-                    let project_id: Option<i64> = if let Some(ref cwd_path) = cwd_owned {
-                        let pool_c = pool.clone();
-                        let cwd_c = cwd_path.clone();
-                        pool_c
-                            .interact(move |conn| {
-                                Ok::<_, anyhow::Error>(
-                                    crate::db::get_or_create_project_sync(conn, &cwd_c, None)
-                                        .ok()
-                                        .map(|(id, _)| id),
-                                )
-                            })
-                            .await
-                            .ok()
-                            .flatten()
-                    } else {
-                        None
-                    };
-
-                    let team_name = det_team_name.clone();
-                    let config_path = det_config_path.clone();
-                    let member_name = det_member_name.clone();
-                    let role = det_role.clone();
-                    let agent_type = det_agent_type.clone();
-                    let session_id = sid_owned.clone();
-
-                    let team_id = pool
+                // Get project_id from cwd
+                let project_id: Option<i64> = if let Some(ref cwd_path) = cwd_owned {
+                    let pool_c = pool.clone();
+                    let cwd_c = cwd_path.clone();
+                    pool_c
                         .interact(move |conn| {
-                            let tid = crate::db::get_or_create_team_sync(
-                                conn,
-                                &team_name,
-                                project_id,
-                                &config_path,
-                            )?;
-                            crate::db::register_team_session_sync(
-                                conn,
-                                tid,
-                                &session_id,
-                                &member_name,
-                                &role,
-                                agent_type.as_deref(),
-                            )?;
-                            Ok::<_, anyhow::Error>(tid)
+                            Ok::<_, anyhow::Error>(
+                                crate::db::get_or_create_project_sync(conn, &cwd_c, None)
+                                    .ok()
+                                    .map(|(id, _)| id),
+                            )
                         })
                         .await
-                        .ok()?;
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
 
-                    Some(TeamMembership {
-                        team_id,
-                        team_name: det_team_name,
-                        member_name: det_member_name,
-                        role: det_role,
-                        config_path: det_config_path,
+                let team_name = det_team_name.clone();
+                let config_path = det_config_path.clone();
+                let member_name = det_member_name.clone();
+                let role = det_role.clone();
+                let agent_type = det_agent_type.clone();
+                let session_id = sid_owned.clone();
+
+                let team_id = pool
+                    .interact(move |conn| {
+                        let tid = crate::db::get_or_create_team_sync(
+                            conn,
+                            &team_name,
+                            project_id,
+                            &config_path,
+                        )?;
+                        crate::db::register_team_session_sync(
+                            conn,
+                            tid,
+                            &session_id,
+                            &member_name,
+                            &role,
+                            agent_type.as_deref(),
+                        )?;
+                        Ok::<_, anyhow::Error>(tid)
                     })
-                });
+                    .await
+                    .ok()?;
 
-                if let Some(ref m) = membership {
-                    let _ = write_team_membership(sid, m);
-                    eprintln!("[mira] Team session registered (team_id: {})", m.team_id);
-                }
+                Some(TeamMembership {
+                    team_id,
+                    team_name: det_team_name,
+                    member_name: det_member_name,
+                    role: det_role,
+                    config_path: det_config_path,
+                })
+            });
+
+            if let Some(ref m) = membership {
+                let _ = write_team_membership(sid, m);
+                eprintln!("[mira] Team session registered (team_id: {})", m.team_id);
             }
         }
     }
 
     // On resume, inject context about previous work
     if source == "resume" {
-        // Run async context injection in a blocking runtime
-        let cwd_owned = cwd.map(String::from);
+        // Run async context injection using the existing runtime
         let session_id_owned = session_id.map(String::from);
 
-        // Use tokio runtime for async DB operations
-        let rt = tokio::runtime::Runtime::new()?;
         let context = rt.block_on(async {
-            build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await
+            build_resume_context(session_id_owned.as_deref()).await
         });
 
         if let Some(ctx) = context {
@@ -262,33 +255,14 @@ pub fn run() -> Result<()> {
 }
 
 /// Build context for a resumed session
-async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Option<String> {
+async fn build_resume_context(session_id: Option<&str>) -> Option<String> {
     let db_path = get_db_path();
     let pool = match DatabasePool::open(&db_path).await {
         Ok(p) => Arc::new(p),
         Err(_) => return None,
     };
 
-    // Get project ID from cwd
-    let project_id: Option<i64> = if let Some(cwd_path) = cwd {
-        let pool_clone = pool.clone();
-        let cwd_owned = cwd_path.to_string();
-        pool_clone
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(
-                    crate::db::get_or_create_project_sync(conn, &cwd_owned, None)
-                        .ok()
-                        .map(|(id, _)| id),
-                )
-            })
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
-
-    let project_id = project_id?;
+    let project_id = super::resolve_project_id(&pool).await?;
 
     let mut context_parts: Vec<String> = Vec::new();
 
@@ -353,7 +327,7 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
         let prev_id = prev_session.id.clone();
         let modified_files: Vec<String> = pool_clone
             .interact(move |conn| {
-                Ok::<_, anyhow::Error>(get_session_modified_files_sync(conn, &prev_id))
+                Ok::<_, anyhow::Error>(super::get_session_modified_files_sync(conn, &prev_id))
             })
             .await
             .unwrap_or_default();
@@ -466,27 +440,7 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
     ))
 }
 
-/// Get files modified in a session (from Write/Edit/NotebookEdit tool calls)
-fn get_session_modified_files_sync(conn: &rusqlite::Connection, session_id: &str) -> Vec<String> {
-    let sql = r#"
-        SELECT DISTINCT
-            json_extract(arguments, '$.file_path') as file_path
-        FROM tool_history
-        WHERE session_id = ?
-          AND tool_name IN ('Write', 'Edit', 'NotebookEdit')
-          AND json_extract(arguments, '$.file_path') IS NOT NULL
-        ORDER BY created_at DESC
-        LIMIT 10
-    "#;
-    conn.prepare(sql)
-        .ok()
-        .and_then(|mut stmt| {
-            stmt.query_map([session_id], |row| row.get::<_, String>(0))
-                .ok()
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        })
-        .unwrap_or_default()
-}
+// get_session_modified_files_sync is now in hooks/mod.rs
 
 /// Get session snapshot metadata stored by the stop hook
 fn get_session_snapshot_sync(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {

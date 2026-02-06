@@ -187,7 +187,6 @@ pub async fn get_project_info<C: ToolContext + ?Sized>(ctx: &C) -> ProjectInfo {
 pub mod claude_local;
 pub mod code;
 pub mod cross_project;
-pub mod dev;
 pub mod diff;
 pub mod documentation;
 pub mod experts;
@@ -208,7 +207,6 @@ pub use code::{
     query_callers, query_search_code, search_code, summarize_codebase,
 };
 pub use cross_project::cross_project;
-pub use dev::get_session_recap;
 pub use diff::{analyze_diff_tool, list_diff_analyses};
 pub use documentation::documentation;
 pub use experts::{configure_expert, handle_expert};
@@ -216,6 +214,6 @@ pub use goals::goal;
 pub use memory::{forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
 pub use reviews::finding;
-pub use session::{ensure_session, handle_session, reply_to_mira, session_history};
+pub use session::{ensure_session, get_session_recap, handle_session, reply_to_mira, session_history};
 pub use team::handle_team;
 pub use usage::usage;

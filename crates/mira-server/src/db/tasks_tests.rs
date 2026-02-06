@@ -898,7 +898,7 @@ mod tests {
         });
 
         db!(pool, |conn| {
-            update_goal_sync(conn, id, Some("New title"), None, None, None).map_err(Into::into)
+            update_goal_sync(conn, id, Some("New title"), None, None, None, None).map_err(Into::into)
         });
 
         let goal = db!(pool, |conn| get_goal_by_id_sync(conn, id)).unwrap();
@@ -923,7 +923,7 @@ mod tests {
         });
 
         db!(pool, |conn| {
-            update_goal_sync(conn, id, None, Some("in_progress"), None, None).map_err(Into::into)
+            update_goal_sync(conn, id, None, None, Some("in_progress"), None, None).map_err(Into::into)
         });
 
         let goal = db!(pool, |conn| get_goal_by_id_sync(conn, id)).unwrap();
@@ -948,7 +948,7 @@ mod tests {
         });
 
         db!(pool, |conn| {
-            update_goal_sync(conn, id, None, None, Some("urgent"), None).map_err(Into::into)
+            update_goal_sync(conn, id, None, None, None, Some("urgent"), None).map_err(Into::into)
         });
 
         let goal = db!(pool, |conn| get_goal_by_id_sync(conn, id)).unwrap();
@@ -965,7 +965,7 @@ mod tests {
         });
 
         db!(pool, |conn| {
-            update_goal_sync(conn, id, None, None, None, Some(75)).map_err(Into::into)
+            update_goal_sync(conn, id, None, None, None, None, Some(75)).map_err(Into::into)
         });
 
         let goal = db!(pool, |conn| get_goal_by_id_sync(conn, id)).unwrap();
@@ -994,6 +994,7 @@ mod tests {
                 conn,
                 id,
                 Some("New title"),
+                None,
                 Some("in_progress"),
                 Some("high"),
                 Some(50),

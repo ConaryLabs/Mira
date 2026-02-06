@@ -22,7 +22,7 @@ use crate::mcp::responses::{
 use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
 use crate::tools::core::claude_local;
-use crate::utils::ResultExt;
+use crate::utils::{ResultExt, truncate};
 
 /// Session info tuple: (session_id, last_activity, summary, tool_count, tool_names)
 type SessionInfo = (String, String, Option<String>, usize, Vec<String>);
@@ -226,7 +226,7 @@ fn format_recent_sessions(sessions: &[SessionInfo]) -> String {
         }
     }
     out.push_str(
-        "  Use session_history(action=\"get_history\", session_id=\"...\") to view details\n",
+        "  Use session(action=\"history\", history_action=\"get_history\", session_id=\"...\") to view details\n",
     );
     out
 }
@@ -258,11 +258,7 @@ fn format_session_insights(
     if !non_pref_memories.is_empty() {
         out.push_str("\nRecent context:\n");
         for mem in non_pref_memories {
-            let preview = if mem.content.len() > 80 {
-                format!("{}...", &mem.content[..80])
-            } else {
-                mem.content.clone()
-            };
+            let preview = truncate(&mem.content, 80);
             out.push_str(&format!("  - {}\n", preview));
         }
     }
@@ -271,11 +267,7 @@ fn format_session_insights(
         out.push_str("\nHealth alerts:\n");
         for alert in health_alerts {
             let category = alert.category.as_deref().unwrap_or("issue");
-            let preview = if alert.content.len() > 100 {
-                format!("{}...", &alert.content[..100])
-            } else {
-                alert.content.clone()
-            };
+            let preview = truncate(&alert.content, 100);
             out.push_str(&format!("  [{}] {}\n", category, preview));
         }
     }

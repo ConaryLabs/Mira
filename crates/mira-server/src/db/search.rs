@@ -41,7 +41,10 @@ pub fn find_callers_sync(
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
     })
-    .unwrap_or_default()
+    .unwrap_or_else(|e| {
+        tracing::warn!("find_callers_sync query failed (possible index corruption): {}", e);
+        Vec::new()
+    })
 }
 
 /// Find functions that are called by the given function
@@ -70,7 +73,10 @@ pub fn find_callees_sync(
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
     })
-    .unwrap_or_default()
+    .unwrap_or_else(|e| {
+        tracing::warn!("find_callees_sync query failed (possible index corruption): {}", e);
+        Vec::new()
+    })
 }
 
 /// Get the start and end line of a symbol
@@ -129,7 +135,10 @@ pub fn fts_search_sync(
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
     })
-    .unwrap_or_default()
+    .unwrap_or_else(|e| {
+        tracing::warn!("fts_search_sync query failed (possible FTS index corruption): {}", e);
+        Vec::new()
+    })
 }
 
 /// Result from chunk LIKE search

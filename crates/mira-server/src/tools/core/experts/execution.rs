@@ -145,17 +145,11 @@ pub async fn consult_expert<C: ToolContext>(
     let mut messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
     let handler = ExpertToolHandler { ctx };
-    let guardrails = ctx.expert_guardrails();
-    let config = AgenticLoopConfig {
-        max_turns: guardrails.max_turns,
-        timeout: Duration::from_secs(guardrails.timeout_secs),
-        llm_call_timeout: Duration::from_secs(guardrails.llm_call_timeout_secs),
-        usage_role: format!("expert:{}", expert_key),
-        max_tool_result_chars: guardrails.tool_result_max_chars,
-        max_total_tool_calls: guardrails.max_total_tool_calls,
-        max_parallel_tool_calls: guardrails.max_parallel_tool_calls,
-        context_budget: chat_client.context_budget(),
-    };
+    let config = AgenticLoopConfig::from_guardrails(
+        &ctx.expert_guardrails(),
+        format!("expert:{}", expert_key),
+        chat_client.context_budget(),
+    );
 
     let loop_result =
         run_agentic_loop(ctx, &strategy, &mut messages, tools, &config, &handler).await?;
@@ -408,17 +402,11 @@ async fn consult_expert_one_shot<C: ToolContext>(
 
     let strategy = ReasoningStrategy::Single(chat_client.clone());
     let handler = ExpertToolHandler { ctx };
-    let guardrails = ctx.expert_guardrails();
-    let config = AgenticLoopConfig {
-        max_turns: guardrails.max_turns,
-        timeout: Duration::from_secs(guardrails.timeout_secs),
-        llm_call_timeout: Duration::from_secs(guardrails.llm_call_timeout_secs),
-        usage_role: format!("expert:{}", expert_key),
-        max_tool_result_chars: guardrails.tool_result_max_chars,
-        max_total_tool_calls: guardrails.max_total_tool_calls,
-        max_parallel_tool_calls: guardrails.max_parallel_tool_calls,
-        context_budget: chat_client.context_budget(),
-    };
+    let config = AgenticLoopConfig::from_guardrails(
+        &ctx.expert_guardrails(),
+        format!("expert:{}", expert_key),
+        chat_client.context_budget(),
+    );
 
     let loop_result =
         run_agentic_loop(ctx, &strategy, &mut messages, tools, &config, &handler).await?;

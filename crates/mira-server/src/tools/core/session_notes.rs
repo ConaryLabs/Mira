@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::utils::truncate;
+use crate::utils::{sanitize_project_path, truncate};
 
 /// Claude Code session note structure
 #[derive(Debug, Default)]
@@ -35,11 +35,7 @@ fn get_claude_projects_dir() -> Option<PathBuf> {
     }
 }
 
-/// Sanitize project path to match Claude Code's directory naming
-/// /home/peter/Mira -> -home-peter-Mira
-fn sanitize_project_path(path: &str) -> String {
-    path.replace('/', "-")
-}
+// sanitize_project_path is imported from crate::utils
 
 /// Discover session notes directories for a project
 pub fn discover_session_notes(project_path: &str) -> Vec<PathBuf> {

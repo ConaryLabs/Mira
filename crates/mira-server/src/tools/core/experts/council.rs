@@ -5,7 +5,7 @@ use super::ToolContext;
 use super::agentic::{AgenticLoopConfig, ToolHandler, run_agentic_loop};
 use super::context::build_user_prompt;
 use super::execution::enrich_context_for_role;
-use super::findings::{CouncilFinding, FindingsStore};
+use super::findings::{CouncilFinding, FindingsStore, MIN_FINDING_LENGTH};
 use super::plan::{ResearchPlan, ResearchTask, ReviewResult, parse_json_with_retry};
 use super::prompts::*;
 use super::role::ExpertRole;
@@ -370,18 +370,12 @@ async fn run_expert_task<C: ToolContext>(
         findings_store,
         role_key,
     };
-    let guardrails = ctx.expert_guardrails();
     let chat_client = strategy.actor().clone();
-    let config = AgenticLoopConfig {
-        max_turns: guardrails.max_turns,
-        timeout: Duration::from_secs(guardrails.timeout_secs),
-        llm_call_timeout: Duration::from_secs(guardrails.llm_call_timeout_secs),
-        usage_role: format!("council:expert:{}", role_key),
-        max_tool_result_chars: guardrails.tool_result_max_chars,
-        max_total_tool_calls: guardrails.max_total_tool_calls,
-        max_parallel_tool_calls: guardrails.max_parallel_tool_calls,
-        context_budget: chat_client.context_budget(),
-    };
+    let config = AgenticLoopConfig::from_guardrails(
+        &ctx.expert_guardrails(),
+        format!("council:expert:{}", role_key),
+        chat_client.context_budget(),
+    );
 
     let loop_result =
         run_agentic_loop(ctx, &strategy, &mut messages, tools, &config, &handler).await?;
@@ -408,7 +402,7 @@ fn parse_response_as_findings(content: &str, role_key: &str, store: &Arc<Finding
 
     let parsed = parse_expert_findings(content, role_key);
     for finding in parsed {
-        if finding.content.len() < 20 {
+        if finding.content.len() < MIN_FINDING_LENGTH {
             continue;
         }
         store.add(CouncilFinding {

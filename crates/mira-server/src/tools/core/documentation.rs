@@ -160,13 +160,7 @@ pub async fn get_doc_task_details(
     let project_id = task_project_id;
     let project_path: String = ctx
         .pool()
-        .run(move |conn| {
-            conn.query_row(
-                "SELECT path FROM projects WHERE id = ?",
-                [project_id],
-                |row| row.get::<_, String>(0),
-            )
-        })
+        .run(move |conn| crate::db::get_project_path_sync(conn, project_id))
         .await?;
 
     // Build response with all info Claude needs

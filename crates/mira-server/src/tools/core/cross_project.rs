@@ -164,11 +164,14 @@ fn format_preferences(prefs: &SharingPreferences, stats: &cross_project::Sharing
         "  Min anonymization: {:?}\n",
         prefs.min_anonymization_level
     ));
+    let budget_pct = if prefs.privacy_epsilon_budget > 0.0 {
+        (prefs.remaining_privacy_budget() / prefs.privacy_epsilon_budget) * 100.0
+    } else {
+        0.0
+    };
     response.push_str(&format!(
         "  Privacy budget: {:.2} / {:.2} ({:.0}% remaining)\n",
-        prefs.privacy_epsilon_used,
-        prefs.privacy_epsilon_budget,
-        (prefs.remaining_privacy_budget() / prefs.privacy_epsilon_budget) * 100.0
+        prefs.privacy_epsilon_used, prefs.privacy_epsilon_budget, budget_pct
     ));
     response.push_str("\nActivity:\n");
     response.push_str(&format!("  Patterns exported: {}\n", stats.exports));

@@ -55,6 +55,23 @@ pub fn truncate_at_boundary(s: &str, max_bytes: usize) -> &str {
     }
 }
 
+/// Sanitize a project path for use as a directory name.
+///
+/// Replaces `/` with `-` to match Claude Code's directory naming convention.
+/// e.g. `/home/peter/Mira` -> `-home-peter-Mira`
+pub fn sanitize_project_path(path: &str) -> String {
+    path.replace('/', "-")
+}
+
+/// Format a `since_days` filter into a human-readable period string.
+///
+/// e.g. `Some(30)` -> `"last 30 days"`, `None` -> `"all time"`
+pub fn format_period(since_days: Option<u32>) -> String {
+    since_days
+        .map(|d| format!("last {} days", d))
+        .unwrap_or_else(|| "all time".to_string())
+}
+
 /// Truncate a string to max length with ellipsis.
 ///
 /// If the string is longer than `max_len`, it will be truncated and
@@ -138,5 +155,25 @@ mod tests {
         assert_eq!(truncate("caf\u{00e9}", 3), "caf...");
         assert_eq!(truncate("caf\u{00e9}", 4), "caf...");
         assert_eq!(truncate("caf\u{00e9}", 5), "caf\u{00e9}");
+    }
+
+    #[test]
+    fn test_sanitize_project_path() {
+        assert_eq!(
+            sanitize_project_path("/home/peter/Mira"),
+            "-home-peter-Mira"
+        );
+        assert_eq!(sanitize_project_path("/tmp/test"), "-tmp-test");
+    }
+
+    #[test]
+    fn test_format_period_some() {
+        assert_eq!(format_period(Some(30)), "last 30 days");
+        assert_eq!(format_period(Some(7)), "last 7 days");
+    }
+
+    #[test]
+    fn test_format_period_none() {
+        assert_eq!(format_period(None), "all time");
     }
 }

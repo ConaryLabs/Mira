@@ -2,16 +2,9 @@
 // SubagentStart and SubagentStop hook handlers
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
+use crate::hooks::{HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output};
 use anyhow::Result;
-use std::path::PathBuf;
 use std::sync::Arc;
-
-/// Get database path
-fn get_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/mira.db")
-}
 
 /// Maximum total characters for injected context (~500 tokens)
 const MAX_CONTEXT_CHARS: usize = 2000;
@@ -103,25 +96,7 @@ pub async fn run_start() -> Result<()> {
     };
 
     // Get current project
-    let project_id = {
-        let pool_clone = pool.clone();
-        let result: Result<Option<i64>, _> = pool_clone
-            .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path {
-                    crate::db::get_or_create_project_sync(conn, &path, None)
-                        .ok()
-                        .map(|(id, _)| id)
-                } else {
-                    None
-                };
-                Ok::<_, anyhow::Error>(result)
-            })
-            .await;
-        result.ok().flatten()
-    };
-
-    let Some(project_id) = project_id else {
+    let Some(project_id) = resolve_project_id(&pool).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -220,25 +195,7 @@ pub async fn run_stop() -> Result<()> {
     };
 
     // Get current project
-    let project_id = {
-        let pool_clone = pool.clone();
-        let result: Result<Option<i64>, _> = pool_clone
-            .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path {
-                    crate::db::get_or_create_project_sync(conn, &path, None)
-                        .ok()
-                        .map(|(id, _)| id)
-                } else {
-                    None
-                };
-                Ok::<_, anyhow::Error>(result)
-            })
-            .await;
-        result.ok().flatten()
-    };
-
-    let Some(project_id) = project_id else {
+    let Some(project_id) = resolve_project_id(&pool).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };

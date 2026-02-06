@@ -66,15 +66,24 @@ fn extract_crossref_target(query: &str) -> Option<(String, CrossRefType)> {
         }
     }
 
-    // Callee patterns
-    for pattern in ["what does ", "functions called by ", "callees of "] {
+    // Callee patterns - "callees of X" and "functions called by X" are unambiguous
+    for pattern in ["callees of ", "functions called by "] {
         if let Some(rest) = q.strip_prefix(pattern) {
-            // For "what does X call" - extract X
-            let name = rest.split_whitespace().next()?;
-            let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
-            if !name.is_empty() && q.contains(" call") {
+            let name = rest
+                .trim()
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+            if !name.is_empty() {
                 return Some((name.to_string(), CrossRefType::Callee));
             }
+        }
+    }
+
+    // "what does X call" - requires " call" suffix to disambiguate
+    if let Some(rest) = q.strip_prefix("what does ") {
+        let name = rest.split_whitespace().next()?;
+        let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+        if !name.is_empty() && q.ends_with(" call") {
+            return Some((name.to_string(), CrossRefType::Callee));
         }
     }
 
@@ -442,8 +451,10 @@ mod tests {
     #[test]
     fn test_extract_callee_callees_of() {
         let result = extract_crossref_target("callees of handler");
-        // This pattern requires " call" in the query
-        assert!(result.is_none() || result.unwrap().1 == CrossRefType::Callee);
+        assert_eq!(
+            result,
+            Some(("handler".to_string(), CrossRefType::Callee))
+        );
     }
 
     // ============================================================================

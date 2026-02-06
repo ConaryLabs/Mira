@@ -28,6 +28,26 @@ pub struct AgenticLoopConfig {
     pub context_budget: u64,
 }
 
+impl AgenticLoopConfig {
+    /// Construct from ExpertGuardrails with a usage role and context budget.
+    pub fn from_guardrails(
+        guardrails: &crate::config::ExpertGuardrails,
+        usage_role: String,
+        context_budget: u64,
+    ) -> Self {
+        Self {
+            max_turns: guardrails.max_turns,
+            timeout: Duration::from_secs(guardrails.timeout_secs),
+            llm_call_timeout: Duration::from_secs(guardrails.llm_call_timeout_secs),
+            usage_role,
+            max_tool_result_chars: guardrails.tool_result_max_chars,
+            max_total_tool_calls: guardrails.max_total_tool_calls,
+            max_parallel_tool_calls: guardrails.max_parallel_tool_calls,
+            context_budget,
+        }
+    }
+}
+
 /// Result from a completed agentic loop.
 pub struct AgenticLoopResult {
     pub result: ChatResult,

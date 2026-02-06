@@ -1,6 +1,6 @@
 //! Unified memory tools (recall, remember, forget)
 
-use crate::db::{StoreMemoryParams, store_embedding_sync, store_memory_sync};
+use crate::db::{StoreMemoryParams, store_fact_embedding_sync, store_memory_sync};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
 use crate::search::embedding_to_bytes;
@@ -315,6 +315,22 @@ pub async fn remember<C: ToolContext>(
 
     // Store embedding if available
     if let Some(embeddings) = ctx.embeddings() {
+        // Clean up stale vec_memory and reset has_embedding so background
+        // scanner (find_facts_without_embeddings_sync) will retry
+        let reset_embedding = |pool: std::sync::Arc<crate::db::pool::DatabasePool>, fact_id: i64| {
+            tokio::spawn(async move {
+                let _ = pool
+                    .run(move |conn| {
+                        conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [fact_id])?;
+                        conn.execute(
+                            "UPDATE memory_facts SET has_embedding = 0 WHERE id = ?",
+                            [fact_id],
+                        )
+                    })
+                    .await;
+            });
+        };
+
         match embeddings.embed(&content_for_later).await {
             Ok(embedding) => {
                 let embedding_bytes = embedding_to_bytes(&embedding);
@@ -322,43 +338,17 @@ pub async fn remember<C: ToolContext>(
                 let result = ctx
                     .pool()
                     .run(move |conn| {
-                        store_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
+                        store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
                     })
                     .await;
                 if let Err(e) = result {
                     tracing::warn!("Failed to store embedding: {}", e);
-                    // Clean up stale vec_memory and reset has_embedding so background
-                    // scanner (find_facts_without_embeddings_sync) will retry
-                    let pool_cleanup = ctx.pool().clone();
-                    tokio::spawn(async move {
-                        let _ = pool_cleanup
-                            .run(move |conn| {
-                                conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])?;
-                                conn.execute(
-                                    "UPDATE memory_facts SET has_embedding = 0 WHERE id = ?",
-                                    [id],
-                                )
-                            })
-                            .await;
-                    });
+                    reset_embedding(ctx.pool().clone(), id);
                 }
             }
             Err(e) => {
                 tracing::warn!("Failed to generate embedding: {}", e);
-                // Clean up stale vec_memory and reset has_embedding so background
-                // scanner (find_facts_without_embeddings_sync) will retry
-                let pool_cleanup = ctx.pool().clone();
-                tokio::spawn(async move {
-                    let _ = pool_cleanup
-                        .run(move |conn| {
-                            conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])?;
-                            conn.execute(
-                                "UPDATE memory_facts SET has_embedding = 0 WHERE id = ?",
-                                [id],
-                            )
-                        })
-                        .await;
-                });
+                reset_embedding(ctx.pool().clone(), id);
             }
         }
     }

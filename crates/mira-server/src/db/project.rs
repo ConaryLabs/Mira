@@ -41,6 +41,15 @@ pub fn update_project_name_sync(
     Ok(())
 }
 
+/// Get project path by ID - sync version for pool.interact()
+pub fn get_project_path_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<String> {
+    conn.query_row(
+        "SELECT path FROM projects WHERE id = ?",
+        [project_id],
+        |row| row.get::<_, String>(0),
+    )
+}
+
 /// Get project info by ID (name, path) - sync version for pool.interact()
 pub fn get_project_info_sync(
     conn: &Connection,
@@ -60,18 +69,15 @@ pub fn get_project_info_sync(
 }
 
 /// Create or update a session - sync version for pool.interact()
+///
+/// Delegates to `create_session_sync` in db/session.rs (identical SQL).
+/// Kept as a convenience alias for callers that import from db/project.
 pub fn upsert_session_sync(
     conn: &Connection,
     session_id: &str,
     project_id: Option<i64>,
 ) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO sessions (id, project_id, status, started_at, last_activity)
-         VALUES (?1, ?2, 'active', datetime('now'), datetime('now'))
-         ON CONFLICT(id) DO UPDATE SET last_activity = datetime('now')",
-        params![session_id, project_id],
-    )?;
-    Ok(())
+    super::session::create_session_sync(conn, session_id, project_id)
 }
 
 /// Create or update a session with branch - sync version for pool.interact()

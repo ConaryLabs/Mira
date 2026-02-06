@@ -2,16 +2,9 @@
 // PreToolUse hook handler - injects relevant context before Grep/Glob searches
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
+use crate::hooks::{HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output};
 use anyhow::Result;
-use std::path::PathBuf;
 use std::sync::Arc;
-
-/// Get database path
-fn get_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/mira.db")
-}
 
 /// PreToolUse hook input from Claude Code
 #[derive(Debug)]
@@ -97,25 +90,7 @@ pub async fn run() -> Result<()> {
     };
 
     // Get current project
-    let project_id = {
-        let pool_clone = pool.clone();
-        let result: Result<Option<i64>, _> = pool_clone
-            .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                let result = if let Some(path) = path {
-                    crate::db::get_or_create_project_sync(conn, &path, None)
-                        .ok()
-                        .map(|(id, _)| id)
-                } else {
-                    None
-                };
-                Ok::<_, anyhow::Error>(result)
-            })
-            .await;
-        result.ok().flatten()
-    };
-
-    let Some(project_id) = project_id else {
+    let Some(project_id) = resolve_project_id(&pool).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -191,9 +166,9 @@ async fn query_relevant_memories(
             let sql = r#"
                 SELECT content, fact_type, category
                 FROM memory_facts
-                WHERE project_id = ?
-                  AND (content LIKE '%' || ?1 || '%'
-                       OR category LIKE '%' || ?1 || '%')
+                WHERE project_id = ?1
+                  AND (content LIKE '%' || ?2 || '%'
+                       OR category LIKE '%' || ?2 || '%')
                 ORDER BY created_at DESC
                 LIMIT 3
             "#;

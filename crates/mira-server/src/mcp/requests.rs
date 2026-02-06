@@ -279,8 +279,6 @@ pub struct GoalRequest {
     pub status: Option<String>,
     #[schemars(description = "Priority: low/medium/high/critical")]
     pub priority: Option<String>,
-    #[schemars(description = "Success criteria")]
-    pub success_criteria: Option<String>,
     #[schemars(description = "Progress percent (0-100)")]
     pub progress_percent: Option<i32>,
     #[schemars(description = "Include finished goals")]

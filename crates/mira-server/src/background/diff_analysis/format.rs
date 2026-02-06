@@ -78,7 +78,7 @@ fn format_changes_section(changes: &[SemanticChange]) -> String {
         ("Deletions", &["DeletedFunction"]),
     ];
 
-    let mut classified = HashSet::new();
+    let mut classified: HashSet<(&str, &str, &str)> = HashSet::new();
 
     for (title, types) in groups {
         let matching: Vec<_> = changes
@@ -94,7 +94,7 @@ fn format_changes_section(changes: &[SemanticChange]) -> String {
                     "- {}: {}{}\n",
                     c.file_path, c.description, markers
                 ));
-                classified.insert(&c.description);
+                classified.insert((&c.file_path, &c.description, &c.change_type));
             }
             output.push('\n');
         }
@@ -103,7 +103,9 @@ fn format_changes_section(changes: &[SemanticChange]) -> String {
     // Other (unclassified)
     let other: Vec<_> = changes
         .iter()
-        .filter(|c| !classified.contains(&c.description))
+        .filter(|c| {
+            !classified.contains(&(c.file_path.as_str(), c.description.as_str(), c.change_type.as_str()))
+        })
         .collect();
 
     if !other.is_empty() {

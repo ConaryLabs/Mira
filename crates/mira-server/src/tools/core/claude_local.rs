@@ -362,9 +362,7 @@ pub fn write_claude_local_md_sync(
 /// The path is sanitized by replacing `/` with `-`.
 pub fn get_auto_memory_dir(project_path: &str) -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    // Claude Code replaces / with - in path
-    // /home/peter/Mira -> -home-peter-Mira
-    let sanitized = project_path.replace('/', "-");
+    let sanitized = crate::utils::sanitize_project_path(project_path);
     home.join(".claude/projects")
         .join(&sanitized)
         .join("memory")
