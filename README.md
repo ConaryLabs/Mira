@@ -44,9 +44,9 @@ Then configure providers (optional):
 ```bash
 mira setup
 ```
-This interactive wizard lets you configure API keys for enhanced features (expert consultations, semantic search).
+The setup wizard walks you through configuring API keys with live validation, auto-detects local Ollama instances and their models, and merges cleanly with any existing configuration. For CI or scripted installs, `mira setup --yes` runs non-interactively (auto-detects Ollama, skips API key prompts). Use `mira setup --check` for read-only validation of your current config.
 
-> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without any keys. Search falls back to fuzzy/keyword matching, analysis uses heuristic parsers, and expert consultation works via MCP Sampling through the host client. Add keys for enhanced capabilities: OpenAI for semantic search, DeepSeek or Zhipu for direct expert access with codebase search.
+> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without any keys. Search falls back to fuzzy/keyword matching, analysis uses heuristic parsers, and expert consultation works via MCP Sampling through the host client. Add keys later with `mira setup` for enhanced capabilities: OpenAI for semantic search, DeepSeek or Zhipu for direct expert access with codebase search.
 
 ### Manual Install
 

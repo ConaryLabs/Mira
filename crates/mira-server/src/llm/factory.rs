@@ -4,9 +4,9 @@
 use crate::config::{ApiKeys, MiraConfig};
 use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
+use crate::llm::ollama::OllamaClient;
 use crate::llm::provider::{LlmClient, Provider};
 use crate::llm::sampling::SamplingClient;
-use crate::llm::ollama::OllamaClient;
 use crate::llm::zhipu::ZhipuClient;
 use crate::tools::core::experts::strategy::ReasoningStrategy;
 use rmcp::service::{Peer, RoleServer};
@@ -225,7 +225,10 @@ impl ProviderFactory {
             return Ok(Arc::new(SamplingClient::new(peer.clone())));
         }
 
-        Err("No LLM providers available. Set DEEPSEEK_API_KEY, ZHIPU_API_KEY, or OLLAMA_HOST.".into())
+        Err(
+            "No LLM providers available. Set DEEPSEEK_API_KEY, ZHIPU_API_KEY, or OLLAMA_HOST."
+                .into(),
+        )
     }
 
     /// Get a specific provider client (if available)

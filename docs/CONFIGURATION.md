@@ -351,13 +351,47 @@ The syntax is similar to `.gitignore`. Mira also respects `.gitignore` patterns.
 
 ---
 
+## 9. Setup Wizard
+
+`mira setup` is the recommended way to configure providers. It handles API key entry, live validation, Ollama auto-detection, and `.env` file management.
+
+### Modes
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| Interactive | `mira setup` | Guided wizard: choose providers, enter keys, validate, detect Ollama |
+| Non-interactive | `mira setup --yes` | Auto-detects Ollama, skips API key prompts. Good for CI/scripted installs |
+| Check | `mira setup --check` | Read-only validation of current configuration |
+
+### What It Does
+
+1. Prompts for expert provider (DeepSeek or Zhipu) with live API key validation
+2. Prompts for embeddings provider (OpenAI) with validation
+3. Optionally configures Brave Search
+4. Auto-detects Ollama and lists available models for background tasks
+5. Merges new keys with existing `~/.mira/.env` (never overwrites unrelated keys)
+6. Sets `background_provider = "ollama"` in `~/.mira/config.toml` if Ollama is selected
+7. Backs up existing `.env` before writing
+
+### Non-Interactive Details
+
+`mira setup --yes` is designed for scripted installs. It skips all API key prompts and auto-selects the first Ollama model if available. If no Ollama is detected and no existing provider keys are configured, it reports "No providers configured" and exits cleanly.
+
+---
+
 ## Quick Reference
 
 ### Minimal Setup
 
 ```bash
-# Set required API key
-export DEEPSEEK_API_KEY="sk-..."
+mira setup          # Interactive wizard handles everything
+```
+
+Or manually:
+
+```bash
+# ~/.mira/.env
+DEEPSEEK_API_KEY=sk-...
 
 # Add to project's .mcp.json
 {
@@ -373,9 +407,7 @@ export DEEPSEEK_API_KEY="sk-..."
 ### Full Setup
 
 ```bash
-# ~/.mira/.env
-DEEPSEEK_API_KEY=sk-...
-OPENAI_API_KEY=sk-...
+mira setup          # Configure API keys and detect Ollama
 
 # Hooks are auto-configured by installer
 # Configure experts per project as needed

@@ -47,9 +47,7 @@ fn setup_summary(
     if !new_keys.is_empty() {
         return SetupSummary::NewKeysConfigured;
     }
-    let has_existing_provider = existing
-        .keys()
-        .any(|k| PROVIDER_KEYS.contains(&k.as_str()));
+    let has_existing_provider = existing.keys().any(|k| PROVIDER_KEYS.contains(&k.as_str()));
     if has_existing_provider {
         SetupSummary::ExistingUnchanged
     } else {
@@ -146,12 +144,8 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
             .interact()?;
 
         if embed_sel == 0 {
-            if let Some(key) = prompt_api_key(
-                "OpenAI",
-                "OPENAI_API_KEY",
-                existing.get("OPENAI_API_KEY"),
-            )
-            .await?
+            if let Some(key) =
+                prompt_api_key("OpenAI", "OPENAI_API_KEY", existing.get("OPENAI_API_KEY")).await?
             {
                 keys.insert("OPENAI_API_KEY".into(), key);
             }
@@ -377,7 +371,10 @@ async fn run_check() -> Result<()> {
     if config_path.exists() {
         println!("  config.toml: {} (exists)", config_path.display());
     } else {
-        println!("  config.toml: {} (not found, using defaults)", config_path.display());
+        println!(
+            "  config.toml: {} (not found, using defaults)",
+            config_path.display()
+        );
     }
 
     // MIRA_DISABLE_LLM
@@ -425,7 +422,8 @@ async fn run_check() -> Result<()> {
 // ============================================================================
 
 fn mira_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     Ok(home.join(".mira"))
 }
 
@@ -600,9 +598,7 @@ async fn validate_api_key(env_var: &str, key: &str) -> ValidationResult {
     }
 }
 
-async fn check_response(
-    resp: Result<reqwest::Response, reqwest::Error>,
-) -> ValidationResult {
+async fn check_response(resp: Result<reqwest::Response, reqwest::Error>) -> ValidationResult {
     match resp {
         Ok(r) => {
             let status = r.status();
@@ -653,7 +649,11 @@ async fn detect_ollama(host: &str) -> OllamaStatus {
     let base = host.trim_end_matches('/');
     let base = base.strip_suffix("/v1").unwrap_or(base);
     let url = format!("{}/api/tags", base);
-    let resp = client.get(&url).timeout(Duration::from_secs(5)).send().await;
+    let resp = client
+        .get(&url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
 
     match resp {
         Ok(r) if r.status().is_success() => {
@@ -751,14 +751,20 @@ mod tests {
     fn no_existing_no_new_is_no_providers() {
         let existing = BTreeMap::new();
         let new_keys = BTreeMap::new();
-        assert_eq!(setup_summary(&existing, &new_keys), SetupSummary::NoProviders);
+        assert_eq!(
+            setup_summary(&existing, &new_keys),
+            SetupSummary::NoProviders
+        );
     }
 
     #[test]
     fn non_provider_env_only_is_no_providers() {
         let existing = keys(&[("MIRA_USER_ID", "abc")]);
         let new_keys = BTreeMap::new();
-        assert_eq!(setup_summary(&existing, &new_keys), SetupSummary::NoProviders);
+        assert_eq!(
+            setup_summary(&existing, &new_keys),
+            SetupSummary::NoProviders
+        );
     }
 
     #[test]
@@ -783,10 +789,7 @@ mod tests {
 
     #[test]
     fn existing_provider_plus_non_provider_no_new_is_unchanged() {
-        let existing = keys(&[
-            ("OPENAI_API_KEY", "sk-test"),
-            ("MIRA_USER_ID", "abc"),
-        ]);
+        let existing = keys(&[("OPENAI_API_KEY", "sk-test"), ("MIRA_USER_ID", "abc")]);
         let new_keys = BTreeMap::new();
         assert_eq!(
             setup_summary(&existing, &new_keys),

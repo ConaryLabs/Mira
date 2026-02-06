@@ -80,6 +80,14 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+### Added
+- **Ollama provider** — Local LLM support for background tasks. `mira setup` auto-detects running Ollama instances and available models. Sets `background_provider = "ollama"` in `config.toml`.
+- **Setup wizard** (`mira setup`) — Interactive configuration with live API key validation, Ollama auto-detection, and safe `.env` merging. Supports `--yes` for non-interactive/CI use and `--check` for read-only validation.
+
+### Fixed
+- **`mira setup --yes` false negative** — No longer reports "No providers configured" when existing API keys are present in `~/.mira/.env`.
+- **Setup summary with non-provider keys** — `.env` files containing only non-provider keys (e.g. `MIRA_USER_ID`) no longer trigger "Existing configuration unchanged" message.
+
 ## [0.6.0] - 2026-02-06
 
 ### Added

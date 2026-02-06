@@ -161,8 +161,7 @@ mod tests {
 
     #[test]
     fn test_ollama_client_custom_model() {
-        let client =
-            OllamaClient::with_model("http://myhost:11434".into(), "mistral".into());
+        let client = OllamaClient::with_model("http://myhost:11434".into(), "mistral".into());
         assert_eq!(client.model, "mistral");
         assert_eq!(client.base_url, "http://myhost:11434");
         assert_eq!(client.model_name(), "mistral");
