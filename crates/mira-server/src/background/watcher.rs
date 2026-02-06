@@ -545,17 +545,38 @@ pub fn spawn(
         watched_projects: watched_projects.clone(),
     };
 
-    let watcher = FileWatcher {
-        pool,
-        fuzzy_cache,
-        watched_projects,
-        pending_changes: Arc::new(RwLock::new(HashMap::new())),
-        shutdown,
-        fast_lane_notify,
-    };
-
     tokio::spawn(async move {
-        watcher.run().await;
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+
+            let watcher = FileWatcher {
+                pool: pool.clone(),
+                fuzzy_cache: fuzzy_cache.clone(),
+                watched_projects: watched_projects.clone(),
+                pending_changes: Arc::new(RwLock::new(HashMap::new())),
+                shutdown: shutdown.clone(),
+                fast_lane_notify: fast_lane_notify.clone(),
+            };
+
+            let jh = tokio::spawn(async move { watcher.run().await });
+
+            match jh.await {
+                Ok(()) => break, // Normal exit (shutdown)
+                Err(e) if e.is_panic() => {
+                    tracing::error!(
+                        "File watcher panicked: {:?}. Restarting in 5s...",
+                        e
+                    );
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                Err(e) => {
+                    tracing::error!("File watcher failed: {:?}", e);
+                    break;
+                }
+            }
+        }
     });
 
     handle

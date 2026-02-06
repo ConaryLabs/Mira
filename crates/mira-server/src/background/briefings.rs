@@ -212,11 +212,17 @@ async fn generate_briefing(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Option<String> {
-    // Get git log
-    let git_log = get_git_changes(project_path, from_commit);
-
-    // Get file stats
-    let file_stats = get_files_changed(project_path, from_commit);
+    // Run blocking git calls on the blocking threadpool so they don't stall the
+    // async runtime and can be cancelled by the slow-lane task timeout.
+    let path = project_path.to_string();
+    let from = from_commit.map(|s| s.to_string());
+    let (git_log, file_stats) = tokio::task::spawn_blocking(move || {
+        let log = get_git_changes(&path, from.as_deref());
+        let stats = get_files_changed(&path, from.as_deref());
+        (log, stats)
+    })
+    .await
+    .ok()?;
 
     match client {
         Some(client) => {
