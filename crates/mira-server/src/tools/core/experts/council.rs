@@ -32,8 +32,9 @@ impl<C: ToolContext> ToolHandler for CouncilToolHandler<'_, C> {
         execute_tool_with_findings(self.ctx, tool_call, self.findings_store, self.role_key).await
     }
 
-    async fn on_tool_executed(&self, tool_call: &ToolCall, _result: &str) {
-        if tool_call.function.name == "store_finding" {
+    async fn on_tool_executed(&self, tool_call: &ToolCall, result: &str) {
+        // Only broadcast FindingAdded when the finding was actually stored successfully
+        if tool_call.function.name == "store_finding" && result.starts_with("Finding recorded") {
             self.ctx
                 .broadcast(WsEvent::Council(CouncilEvent::FindingAdded {
                     role: self.role_key.to_string(),

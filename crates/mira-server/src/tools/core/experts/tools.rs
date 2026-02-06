@@ -480,21 +480,30 @@ mod tests {
     use super::super::definitions::{WEB_FETCH_TOOL, WEB_SEARCH_TOOL};
     use super::resolve_project_path;
 
-    // --- Path containment tests ---
+    // --- Path containment tests (use env::current_dir for portability) ---
+
+    fn project_root() -> String {
+        // Works in any environment — cargo test runs from workspace root
+        std::env::current_dir()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
 
     #[test]
     fn test_resolve_project_path_relative_ok() {
-        // A relative path that exists within the project root
-        let result = resolve_project_path("Cargo.toml", Some("/home/peter/Mira"));
+        let root = project_root();
+        let result = resolve_project_path("Cargo.toml", Some(&root));
         assert!(result.is_ok(), "Should resolve: {:?}", result);
         let path = result.unwrap();
-        assert!(path.to_str().unwrap().contains("Mira/Cargo.toml"));
+        assert!(path.to_str().unwrap().ends_with("Cargo.toml"));
     }
 
     #[test]
     fn test_resolve_project_path_traversal_blocked() {
-        let result = resolve_project_path("../../etc/passwd", Some("/home/peter/Mira"));
-        // Either file not found (doesn't exist) or path outside project root
+        let root = project_root();
+        let result = resolve_project_path("../../etc/passwd", Some(&root));
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -506,7 +515,9 @@ mod tests {
 
     #[test]
     fn test_resolve_project_path_absolute_outside_blocked() {
-        let result = resolve_project_path("/etc/hosts", Some("/home/peter/Mira"));
+        let root = project_root();
+        // /tmp always exists on Unix and is outside any project root
+        let result = resolve_project_path("/tmp", Some(&root));
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -518,7 +529,9 @@ mod tests {
 
     #[test]
     fn test_resolve_project_path_absolute_inside_ok() {
-        let result = resolve_project_path("/home/peter/Mira/Cargo.toml", Some("/home/peter/Mira"));
+        let root = project_root();
+        let abs_path = format!("{}/Cargo.toml", root);
+        let result = resolve_project_path(&abs_path, Some(&root));
         assert!(result.is_ok(), "Should resolve absolute path inside root: {:?}", result);
     }
 

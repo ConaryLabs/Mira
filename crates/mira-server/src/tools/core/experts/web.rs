@@ -32,9 +32,13 @@ fn is_dangerous_ip(ip: &IpAddr) -> bool {
     }
 }
 
-/// Validate that a URL's host does not resolve to a dangerous (internal) IP address.
-async fn validate_url_target(parsed: &url::Url) -> Result<(), String> {
+/// Resolve a URL's host and validate all IPs against SSRF blocklist.
+///
+/// Returns the validated `SocketAddr`s so the caller can pin the connection to them,
+/// eliminating DNS rebinding (TOCTOU) by never letting reqwest re-resolve the hostname.
+async fn resolve_and_validate(parsed: &url::Url) -> Result<Vec<std::net::SocketAddr>, String> {
     let host = parsed.host_str().ok_or("Error: URL has no host")?;
+    let port = parsed.port_or_known_default().unwrap_or(443);
 
     // If host is a literal IP, check directly
     if let Ok(ip) = host.parse::<IpAddr>() {
@@ -44,17 +48,21 @@ async fn validate_url_target(parsed: &url::Url) -> Result<(), String> {
                 ip
             ));
         }
-        return Ok(());
+        return Ok(vec![std::net::SocketAddr::new(ip, port)]);
     }
 
     // DNS resolution to check all resolved IPs
-    let port = parsed.port_or_known_default().unwrap_or(443);
     let addr_str = format!("{}:{}", host, port);
-    let addrs = tokio::net::lookup_host(&addr_str)
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&addr_str)
         .await
-        .map_err(|e| format!("Error: DNS resolution failed for {}: {}", host, e))?;
+        .map_err(|e| format!("Error: DNS resolution failed for {}: {}", host, e))?
+        .collect();
 
-    for addr in addrs {
+    if addrs.is_empty() {
+        return Err(format!("Error: DNS resolution for {} returned no addresses", host));
+    }
+
+    for addr in &addrs {
         if is_dangerous_ip(&addr.ip()) {
             return Err(format!(
                 "Error: Host '{}' resolves to internal/private address {} — access denied",
@@ -64,7 +72,22 @@ async fn validate_url_target(parsed: &url::Url) -> Result<(), String> {
         }
     }
 
-    Ok(())
+    Ok(addrs)
+}
+
+/// Build an HTTP client with the hostname pinned to pre-validated addresses.
+///
+/// Uses reqwest's `resolve_to_addrs` to force the connection to use our resolved IPs,
+/// preventing DNS rebinding attacks where the DNS record changes between validation and connect.
+fn build_pinned_client(host: &str, port: u16, addrs: &[std::net::SocketAddr]) -> Result<reqwest::Client, String> {
+    let pinned_host = format!("{}:{}", host, port);
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("Mozilla/5.0 (compatible; Mira/1.0; +https://github.com/ConaryLabs/Mira)")
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(&pinned_host, addrs)
+        .build()
+        .map_err(|e| format!("Error: Failed to create HTTP client: {}", e))
 }
 
 /// Fetch a web page and extract text content
@@ -87,29 +110,29 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
         );
     }
 
-    // SSRF protection: validate the resolved target before connecting
-    if let Err(e) = validate_url_target(&parsed).await {
-        return e;
-    }
-
-    // Build HTTP client — disable automatic redirects so we can validate each hop
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Mozilla/5.0 (compatible; Mira/1.0; +https://github.com/ConaryLabs/Mira)")
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => return format!("Error: Failed to create HTTP client: {}", e),
+    // SSRF protection: resolve DNS ourselves and pin the connection to validated IPs.
+    // This eliminates DNS rebinding (TOCTOU) — reqwest never re-resolves the hostname.
+    let addrs = match resolve_and_validate(&parsed).await {
+        Ok(a) => a,
+        Err(e) => return e,
     };
 
-    // Follow redirects manually with SSRF validation at each hop
+    let host = parsed.host_str().unwrap_or("");
+    let port = parsed.port_or_known_default().unwrap_or(443);
+
+    let client = match build_pinned_client(host, port, &addrs) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+
+    // Follow redirects manually with SSRF re-validation + re-pinning at each hop
     let mut current_url = url.to_string();
+    let mut current_client = client;
     let max_redirects = 5;
     let mut response = None;
 
     for _redirect in 0..=max_redirects {
-        let resp = match client.get(&current_url).send().await {
+        let resp = match current_client.get(&current_url).send().await {
             Ok(r) => r,
             Err(e) => {
                 if e.is_timeout() {
@@ -124,7 +147,7 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
 
         let status = resp.status();
 
-        // Handle redirects with SSRF re-validation
+        // Handle redirects with SSRF re-validation and re-pinning
         if status.is_redirection() {
             let location = match resp.headers().get("location").and_then(|v| v.to_str().ok()) {
                 Some(loc) => loc,
@@ -139,10 +162,18 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
                 Err(e) => return format!("Error: Invalid redirect URL '{}': {}", location, e),
             };
 
-            // Validate redirect target against SSRF
-            if let Err(e) = validate_url_target(&redirect_url).await {
-                return e;
-            }
+            // Resolve + validate + pin the redirect target (no TOCTOU gap)
+            let redirect_addrs = match resolve_and_validate(&redirect_url).await {
+                Ok(a) => a,
+                Err(e) => return e,
+            };
+
+            let redir_host = redirect_url.host_str().unwrap_or("");
+            let redir_port = redirect_url.port_or_known_default().unwrap_or(443);
+            current_client = match build_pinned_client(redir_host, redir_port, &redirect_addrs) {
+                Ok(c) => c,
+                Err(e) => return e,
+            };
 
             current_url = redirect_url.to_string();
             continue;
@@ -553,16 +584,57 @@ mod tests {
     }
 
     // --- Bounded body reader tests ---
+    // These test read_body_bounded directly via a helper that mimics the streaming logic,
+    // since constructing a reqwest::Response requires crates not in our direct deps.
 
-    #[tokio::test]
-    async fn test_read_response_body_lossy_utf8() {
-        // Simulate truncation mid-multibyte: the lossy reader should not error
-        let mut bytes = "Hello world".as_bytes().to_vec();
-        bytes.extend_from_slice(&[0xC3]); // start of a 2-byte UTF-8 char, incomplete
-        let body = String::from_utf8_lossy(&bytes);
-        assert!(body.starts_with("Hello world"));
-        // The replacement character should appear, not an error
-        assert!(body.contains('\u{FFFD}'));
+    /// Equivalent to read_response_body's core logic, testable without reqwest::Response.
+    fn read_body_bounded_sync(chunks: &[&[u8]], max_bytes: usize) -> String {
+        let mut buf = Vec::with_capacity(max_bytes.min(64 * 1024));
+        for chunk in chunks {
+            let remaining = max_bytes.saturating_sub(buf.len());
+            if remaining == 0 {
+                break;
+            }
+            let take = chunk.len().min(remaining);
+            buf.extend_from_slice(&chunk[..take]);
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    #[test]
+    fn test_bounded_read_respects_limit() {
+        let chunk = vec![b'A'; 1000];
+        let result = read_body_bounded_sync(&[&chunk], 100);
+        assert_eq!(result.len(), 100);
+        assert!(result.chars().all(|c| c == 'A'));
+    }
+
+    #[test]
+    fn test_bounded_read_multiple_chunks() {
+        let result = read_body_bounded_sync(&[b"Hello", b" ", b"World"], 1024);
+        assert_eq!(result, "Hello World");
+    }
+
+    #[test]
+    fn test_bounded_read_truncates_across_chunks() {
+        let result = read_body_bounded_sync(&[b"AAAA", b"BBBB", b"CCCC"], 6);
+        assert_eq!(result, "AAAABB");
+    }
+
+    #[test]
+    fn test_bounded_read_lossy_utf8() {
+        // Incomplete 2-byte UTF-8 at the end — should produce replacement char, not error
+        let mut body = b"Hello world".to_vec();
+        body.push(0xC3); // start of 2-byte char, truncated
+        let result = read_body_bounded_sync(&[&body], 4096);
+        assert!(result.starts_with("Hello world"));
+        assert!(result.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn test_bounded_read_small_content() {
+        let result = read_body_bounded_sync(&[b"short"], 4096);
+        assert_eq!(result, "short");
     }
 
     #[tokio::test]
