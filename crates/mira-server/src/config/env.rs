@@ -113,11 +113,24 @@ impl EmbeddingsConfig {
     pub fn from_env() -> Self {
         let dimensions = std::env::var("MIRA_EMBEDDING_DIMENSIONS")
             .ok()
-            .and_then(|d| d.parse().ok());
+            .and_then(|d| d.parse::<usize>().ok());
 
-        if let Some(dims) = dimensions {
-            debug!(dimensions = dims, "Custom embedding dimensions configured");
-        }
+        let dimensions = if let Some(dims) = dimensions {
+            if dims != 1536 {
+                warn!(
+                    configured = dims,
+                    expected = 1536,
+                    "MIRA_EMBEDDING_DIMENSIONS={} does not match vec_memory table (1536). Ignoring custom value.",
+                    dims
+                );
+                None
+            } else {
+                debug!(dimensions = dims, "Custom embedding dimensions configured");
+                Some(dims)
+            }
+        } else {
+            None
+        };
 
         Self { dimensions }
     }

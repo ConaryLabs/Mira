@@ -106,12 +106,9 @@ pub fn fts_search_sync(
     project_id: Option<i64>,
     limit: usize,
 ) -> Vec<FtsSearchResult> {
-    // Prepare query for FTS (quote special chars)
-    let fts_query = query
-        .split_whitespace()
-        .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Query is passed through as-is — callers (keyword.rs:fts5_search) already
+    // escape via escape_fts_term. Re-quoting here would break FTS5 operators
+    // like prefix *, NEAR(), and OR that callers intentionally construct.
 
     conn.prepare(
         "SELECT c.file_path, c.chunk_content, bm25(code_fts, 1.0, 2.0) as score, c.start_line
@@ -122,7 +119,7 @@ pub fn fts_search_sync(
          LIMIT ?3",
     )
     .and_then(|mut stmt| {
-        stmt.query_map(params![fts_query, project_id, limit as i64], |row| {
+        stmt.query_map(params![query, project_id, limit as i64], |row| {
             Ok(FtsSearchResult {
                 file_path: row.get(0)?,
                 chunk_content: row.get(1)?,

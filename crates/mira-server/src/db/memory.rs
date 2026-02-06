@@ -104,7 +104,7 @@ pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact
 /// The caller must bind: project_id as `?{pid}`, user_id as `?{uid}`, team_id as `?{tid}`.
 pub fn scope_filter_sql(prefix: &str) -> String {
     format!(
-        "({p}project_id = ?{{pid}} OR {p}project_id IS NULL OR ?{{pid}} IS NULL)
+        "({p}project_id = ?{{pid}} OR {p}project_id IS NULL)
            AND (
              {p}scope = 'project'
              OR {p}scope IS NULL
@@ -121,7 +121,7 @@ pub fn scope_filter_sql(prefix: &str) -> String {
 /// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id, ?5 = team_id
 static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch, f.team_id
+        "SELECT v.fact_id, f.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch, f.team_id
          FROM vec_memory v
          JOIN memory_facts f ON v.fact_id = f.id
          WHERE {}
@@ -169,7 +169,7 @@ pub fn store_memory_sync(
         let existing: Option<(i64, Option<String>)> = conn
             .query_row(
                 "SELECT id, last_session_id FROM memory_facts
-                 WHERE key = ?1 AND (project_id = ?2 OR project_id IS NULL)
+                 WHERE key = ?1 AND project_id IS ?2
                    AND COALESCE(scope, 'project') = ?3
                    AND COALESCE(team_id, 0) = COALESCE(?4, 0)
                    AND (?3 != 'personal' OR COALESCE(user_id, '') = COALESCE(?5, ''))",
@@ -568,6 +568,22 @@ pub fn record_memory_access_sync(
     }
 
     Ok(())
+}
+
+/// Scope info for a memory: (project_id, scope, user_id, team_id)
+pub type MemoryScopeInfo = (Option<i64>, String, Option<String>, Option<i64>);
+
+/// Get scope/ownership info for a memory by ID (sync version for pool.interact())
+pub fn get_memory_scope_sync(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> rusqlite::Result<Option<MemoryScopeInfo>> {
+    conn.query_row(
+        "SELECT project_id, COALESCE(scope, 'project'), user_id, team_id FROM memory_facts WHERE id = ?",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .optional()
 }
 
 /// Delete a memory and its embedding (sync version for pool.interact())

@@ -327,10 +327,28 @@ pub async fn remember<C: ToolContext>(
                     .await;
                 if let Err(e) = result {
                     tracing::warn!("Failed to store embedding: {}", e);
+                    // Clean up stale vec_memory entry so recall doesn't return stale content
+                    let pool_cleanup = ctx.pool().clone();
+                    tokio::spawn(async move {
+                        let _ = pool_cleanup
+                            .run(move |conn| {
+                                conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])
+                            })
+                            .await;
+                    });
                 }
             }
             Err(e) => {
                 tracing::warn!("Failed to generate embedding: {}", e);
+                // Clean up stale vec_memory entry (may exist from a previous version of this fact)
+                let pool_cleanup = ctx.pool().clone();
+                tokio::spawn(async move {
+                    let _ = pool_cleanup
+                        .run(move |conn| {
+                            conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])
+                        })
+                        .await;
+                });
             }
         }
     }
@@ -410,7 +428,7 @@ pub async fn recall<C: ToolContext>(
     let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
 
     // Over-fetch when filters are set since some results will be filtered out
-    let limit = limit.unwrap_or(10) as usize;
+    let limit = (limit.unwrap_or(10).clamp(1, 100)) as usize;
     let fetch_limit = if has_filters { limit * 3 } else { limit };
 
     // Extract entities from query for entity-based recall boost
@@ -432,7 +450,8 @@ pub async fn recall<C: ToolContext>(
         let entity_names_for_query = query_entity_names.clone();
 
         // Run vector search via connection pool with branch + entity + team boosting
-        let results: Vec<(i64, String, f32, Option<String>, Option<i64>)> = ctx
+        // Graceful degradation: if vector search fails, fall through to fuzzy/SQL
+        let vec_result: Result<Vec<(i64, String, f32, Option<String>, Option<i64>)>, _> = ctx
             .pool()
             .run(move |conn| {
                 crate::db::recall_semantic_with_entity_boost_sync(
@@ -446,7 +465,21 @@ pub async fn recall<C: ToolContext>(
                     fetch_limit,
                 )
             })
-            .await?;
+            .await;
+
+        let results = match vec_result {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Semantic recall failed, falling back to fuzzy/SQL: {}", e);
+                vec![]
+            }
+        };
+
+        // Filter out low-quality results (distance >= 0.7 means similarity < 0.3)
+        let results: Vec<_> = results
+            .into_iter()
+            .filter(|(_, _, distance, _, _)| *distance < 0.7)
+            .collect();
 
         if !results.is_empty() {
             // Apply category/fact_type filters via batch metadata lookup
@@ -583,14 +616,67 @@ pub async fn recall<C: ToolContext>(
     ))
 }
 
+/// Verify the caller has access to a memory based on scope rules.
+///
+/// Same logic as `fuzzy::memory_visible`: project-scoped memories require matching
+/// project_id, personal requires matching user_id, team requires matching team_id.
+fn verify_memory_access(
+    scope_info: &crate::db::MemoryScopeInfo,
+    caller_project_id: Option<i64>,
+    caller_user_id: Option<&str>,
+    caller_team_id: Option<i64>,
+) -> Result<(), String> {
+    let (mem_project_id, ref scope, ref mem_user_id, mem_team_id) = *scope_info;
+
+    // Project-scoped memories require matching project_id (global memories are always accessible)
+    if mem_project_id.is_some() && mem_project_id != caller_project_id {
+        return Err("Access denied: memory belongs to a different project".to_string());
+    }
+
+    match scope.as_str() {
+        "personal" => {
+            if mem_user_id.as_deref() != caller_user_id {
+                return Err("Access denied: personal memory belongs to a different user".to_string());
+            }
+        }
+        "team" => {
+            if caller_team_id.is_none() || mem_team_id != caller_team_id {
+                return Err("Access denied: team memory belongs to a different team".to_string());
+            }
+        }
+        _ => {} // project / NULL scope — accessible if project check passed
+    }
+
+    Ok(())
+}
+
 /// Delete a memory
 pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOutput>, String> {
-    use crate::db::delete_memory_sync;
+    use crate::db::{delete_memory_sync, get_memory_scope_sync};
 
     let id: i64 = id.parse().map_err(|_| "Invalid ID format".to_string())?;
     if id <= 0 {
         return Err("Invalid memory ID: must be positive".to_string());
     }
+
+    // Verify scope/ownership before deleting
+    let scope_info = ctx
+        .pool()
+        .run(move |conn| get_memory_scope_sync(conn, id))
+        .await?;
+
+    let Some(scope_info) = scope_info else {
+        return Ok(Json(MemoryOutput {
+            action: "forget".into(),
+            message: format!("Memory {} not found.", id),
+            data: None,
+        }));
+    };
+
+    let project_id = ctx.project_id().await;
+    let user_id = ctx.get_user_identity();
+    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
+    verify_memory_access(&scope_info, project_id, user_id.as_deref(), team_id)?;
 
     // Delete from both SQL and vector table via connection pool
     let deleted = ctx
@@ -600,7 +686,6 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOu
 
     if deleted {
         if let Some(cache) = ctx.fuzzy_cache() {
-            let project_id = ctx.project_id().await;
             cache.invalidate_memory(project_id).await;
         }
         Ok(Json(MemoryOutput {
@@ -619,10 +704,31 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOu
 
 /// Archive a memory (sets status to 'archived', excluding it from auto-export)
 pub async fn archive<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOutput>, String> {
+    use crate::db::get_memory_scope_sync;
+
     let id: i64 = id.parse().map_err(|_| "Invalid ID format".to_string())?;
     if id <= 0 {
         return Err("Invalid memory ID: must be positive".to_string());
     }
+
+    // Verify scope/ownership before archiving
+    let scope_info = ctx
+        .pool()
+        .run(move |conn| get_memory_scope_sync(conn, id))
+        .await?;
+
+    let Some(scope_info) = scope_info else {
+        return Ok(Json(MemoryOutput {
+            action: "archive".into(),
+            message: format!("Memory {} not found.", id),
+            data: None,
+        }));
+    };
+
+    let project_id = ctx.project_id().await;
+    let user_id = ctx.get_user_identity();
+    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
+    verify_memory_access(&scope_info, project_id, user_id.as_deref(), team_id)?;
 
     let archived = ctx
         .pool()
@@ -639,7 +745,6 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryO
 
     if archived {
         if let Some(cache) = ctx.fuzzy_cache() {
-            let project_id = ctx.project_id().await;
             cache.invalidate_memory(project_id).await;
         }
         Ok(Json(MemoryOutput {
