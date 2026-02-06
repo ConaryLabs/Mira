@@ -18,13 +18,13 @@ pub async fn process_team_monitor(pool: &Arc<DatabasePool>) -> Result<usize, Str
     let pool_clone = pool.clone();
     pool_clone
         .interact(move |conn| {
-            let mut processed = 0;
-
-            // Get all active teams
-            let team_ids = get_active_team_ids(conn);
-            if team_ids.is_empty() {
+            // Cheap EXISTS check before doing heavier work
+            if !has_active_teams(conn) {
                 return Ok(0);
             }
+
+            let mut processed = 0;
+            let team_ids = get_active_team_ids(conn);
 
             for team_id in team_ids {
                 // 1. Clean up stale sessions
