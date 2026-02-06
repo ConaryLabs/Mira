@@ -61,7 +61,7 @@ pub fn truncate_at_boundary(s: &str, max_bytes: usize) -> &str {
 /// Handles both `/` and `\` for cross-platform compatibility.
 /// e.g. `/home/peter/Mira` -> `-home-peter-Mira`
 pub fn sanitize_project_path(path: &str) -> String {
-    path.replace('/', "-").replace('\\', "-")
+    path.replace(['/', '\\'], "-")
 }
 
 /// Format a `since_days` filter into a human-readable period string.
@@ -200,7 +200,9 @@ mod tests {
     /// Helper to extract a file name from a path string using either separator.
     /// This mirrors logic that might be used in cross-platform path handling.
     fn extract_filename(path: &str) -> &str {
-        path.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(path)
+        path.rsplit(|c| c == '/' || c == '\\')
+            .next()
+            .unwrap_or(path)
     }
 
     #[test]
