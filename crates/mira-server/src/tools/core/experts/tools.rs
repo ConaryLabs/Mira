@@ -10,7 +10,7 @@ use crate::llm::{Tool, ToolCall};
 use crate::search::embedding_to_bytes;
 use crate::tools::core::code::{query_callees, query_callers, query_search_code};
 use crate::utils::{truncate, truncate_at_boundary};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::debug;
@@ -100,7 +100,17 @@ pub async fn execute_tool_with_findings<C: ToolContext>(
     role_key: &str,
 ) -> String {
     if tool_call.function.name == "store_finding" {
-        let args: Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or(json!({}));
+        let args: Value = match serde_json::from_str(&tool_call.function.arguments) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    tool = %tool_call.function.name,
+                    error = %e,
+                    "Malformed tool-call arguments JSON"
+                );
+                return format!("Error: malformed arguments JSON: {}", e);
+            }
+        };
         return execute_store_finding(&args, findings_store, role_key);
     }
     execute_tool(ctx, tool_call).await
@@ -155,7 +165,17 @@ fn execute_store_finding(
 
 /// Execute a tool call and return the result
 pub async fn execute_tool<C: ToolContext>(ctx: &C, tool_call: &ToolCall) -> String {
-    let args: Value = serde_json::from_str(&tool_call.function.arguments).unwrap_or(json!({}));
+    let args: Value = match serde_json::from_str(&tool_call.function.arguments) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                tool = %tool_call.function.name,
+                error = %e,
+                "Malformed tool-call arguments JSON"
+            );
+            return format!("Error: malformed arguments JSON: {}", e);
+        }
+    };
 
     match tool_call.function.name.as_str() {
         "search_code" => {
@@ -458,6 +478,56 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
 #[cfg(test)]
 mod tests {
     use super::super::definitions::{WEB_FETCH_TOOL, WEB_SEARCH_TOOL};
+    use super::resolve_project_path;
+
+    // --- Path containment tests ---
+
+    #[test]
+    fn test_resolve_project_path_relative_ok() {
+        // A relative path that exists within the project root
+        let result = resolve_project_path("Cargo.toml", Some("/home/peter/Mira"));
+        assert!(result.is_ok(), "Should resolve: {:?}", result);
+        let path = result.unwrap();
+        assert!(path.to_str().unwrap().contains("Mira/Cargo.toml"));
+    }
+
+    #[test]
+    fn test_resolve_project_path_traversal_blocked() {
+        let result = resolve_project_path("../../etc/passwd", Some("/home/peter/Mira"));
+        // Either file not found (doesn't exist) or path outside project root
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("outside the project root") || err.contains("File not found"),
+            "Unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_project_path_absolute_outside_blocked() {
+        let result = resolve_project_path("/etc/hosts", Some("/home/peter/Mira"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("outside the project root") || err.contains("File not found"),
+            "Unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_project_path_absolute_inside_ok() {
+        let result = resolve_project_path("/home/peter/Mira/Cargo.toml", Some("/home/peter/Mira"));
+        assert!(result.is_ok(), "Should resolve absolute path inside root: {:?}", result);
+    }
+
+    #[test]
+    fn test_resolve_project_path_no_project() {
+        let result = resolve_project_path("file.rs", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No project context"));
+    }
 
     #[test]
     fn test_web_fetch_tool_definition() {

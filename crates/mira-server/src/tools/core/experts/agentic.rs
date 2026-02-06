@@ -100,17 +100,9 @@ pub async fn run_agentic_loop<C: ToolContext>(
                 ));
             }
 
-            // Check total tool call limit
-            if config.max_total_tool_calls > 0 && total_tool_calls >= config.max_total_tool_calls {
-                tracing::warn!(
-                    "GUARDRAIL: expert exceeded max total tool calls ({})",
-                    config.max_total_tool_calls
-                );
-                return Err(format!(
-                    "Expert exceeded maximum total tool calls ({}). Partial analysis may be available.",
-                    config.max_total_tool_calls
-                ));
-            }
+            // Check total tool call limit — allow one final tool-free LLM call to synthesize
+            let budget_exhausted =
+                config.max_total_tool_calls > 0 && total_tool_calls >= config.max_total_tool_calls;
 
             // For stateful providers, only send new tool result messages after the first call.
             let messages_to_send =
@@ -141,11 +133,22 @@ pub async fn run_agentic_loop<C: ToolContext>(
                     msgs
                 };
 
+            // When budget is exhausted, send no tools so the model produces a final text response
+            let tools_for_call = if budget_exhausted {
+                tracing::info!(
+                    "GUARDRAIL: tool budget exhausted ({}), requesting final synthesis",
+                    config.max_total_tool_calls
+                );
+                None
+            } else {
+                Some(tools.clone())
+            };
+
             let result = timeout(
                 config.llm_call_timeout,
                 chat_client.chat_stateful(
                     messages_to_send,
-                    Some(tools.clone()),
+                    tools_for_call,
                     previous_response_id.as_deref(),
                 ),
             )

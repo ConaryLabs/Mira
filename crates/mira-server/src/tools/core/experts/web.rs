@@ -20,8 +20,12 @@ fn is_dangerous_ip(ip: &IpAddr) -> bool {
             || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
         }
         IpAddr::V6(v6) => {
+            let segs = v6.segments();
             v6.is_loopback()           // ::1
             || v6.is_unspecified()     // ::
+            || v6.is_multicast()       // ff00::/8
+            || (segs[0] & 0xffc0) == 0xfe80  // fe80::/10 link-local
+            || (segs[0] & 0xfe00) == 0xfc00  // fc00::/7 ULA (unique local)
             // IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
             || v6.to_ipv4_mapped().is_some_and(|v4| is_dangerous_ip(&IpAddr::V4(v4)))
         }
@@ -224,7 +228,7 @@ async fn read_response_body(response: reqwest::Response, max_bytes: usize) -> Re
         }
     }
 
-    String::from_utf8(buf).map_err(|e| format!("Response is not valid UTF-8: {}", e))
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// Extract readable text from HTML using scraper
@@ -455,6 +459,110 @@ mod tests {
     async fn test_execute_web_fetch_bad_scheme() {
         let result = execute_web_fetch("ftp://example.com", 1000).await;
         assert!(result.contains("Only http:// and https://"));
+    }
+
+    // --- SSRF protection tests ---
+
+    #[test]
+    fn test_is_dangerous_ip_v4_loopback() {
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v4_private() {
+        for addr in ["10.0.0.1", "172.16.0.1", "192.168.1.1"] {
+            let ip: IpAddr = addr.parse().unwrap();
+            assert!(is_dangerous_ip(&ip), "{} should be dangerous", addr);
+        }
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v4_link_local() {
+        let ip: IpAddr = "169.254.1.1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v4_cgnat() {
+        let ip: IpAddr = "100.64.0.1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+        // Just outside CGNAT range
+        let ip: IpAddr = "100.128.0.1".parse().unwrap();
+        assert!(!is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v4_public() {
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(!is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v6_loopback() {
+        let ip: IpAddr = "::1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v6_link_local() {
+        let ip: IpAddr = "fe80::1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v6_ula() {
+        for addr in ["fc00::1", "fd00::1", "fdab::1"] {
+            let ip: IpAddr = addr.parse().unwrap();
+            assert!(is_dangerous_ip(&ip), "{} should be dangerous (ULA)", addr);
+        }
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v6_multicast() {
+        let ip: IpAddr = "ff02::1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v6_mapped_v4_private() {
+        // ::ffff:127.0.0.1
+        let ip: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+        // ::ffff:192.168.1.1
+        let ip: IpAddr = "::ffff:192.168.1.1".parse().unwrap();
+        assert!(is_dangerous_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_dangerous_ip_v6_public() {
+        let ip: IpAddr = "2607:f8b0:4004:800::200e".parse().unwrap();
+        assert!(!is_dangerous_ip(&ip));
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_blocks_loopback_url() {
+        let result = execute_web_fetch("http://127.0.0.1/secret", 1000).await;
+        assert!(result.contains("internal/private address"), "Should block loopback: {}", result);
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_blocks_ipv6_loopback_url() {
+        let result = execute_web_fetch("http://[::1]/secret", 1000).await;
+        assert!(result.contains("internal/private address"), "Should block IPv6 loopback: {}", result);
+    }
+
+    // --- Bounded body reader tests ---
+
+    #[tokio::test]
+    async fn test_read_response_body_lossy_utf8() {
+        // Simulate truncation mid-multibyte: the lossy reader should not error
+        let mut bytes = "Hello world".as_bytes().to_vec();
+        bytes.extend_from_slice(&[0xC3]); // start of a 2-byte UTF-8 char, incomplete
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.starts_with("Hello world"));
+        // The replacement character should appear, not an error
+        assert!(body.contains('\u{FFFD}'));
     }
 
     #[tokio::test]
