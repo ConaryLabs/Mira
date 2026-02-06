@@ -138,7 +138,11 @@ impl MiraServer {
         if let Some(ref proj) = *current_project {
             // Already have a project - check if path matches
             if proj.path == cwd {
-                return; // Already initialized to the correct project
+                drop(current_project);
+                // Project matches but team cache may have been invalidated
+                // (e.g. after set_session_id clears it). Repopulate if needed.
+                self.maybe_repopulate_team_cache().await;
+                return;
             }
             // Path mismatch - we'll re-initialize below
             tracing::info!(
@@ -169,29 +173,32 @@ impl MiraServer {
         {
             Ok(_) => {
                 tracing::info!("[mira] Auto-initialized project: {}", cwd);
-
-                // Populate team membership from DB (session-isolated, no filesystem)
-                if self.team_membership.read().await.is_none() {
-                    if let Some(sid) = read_claude_session_id() {
-                        let pool_clone = self.pool.clone();
-                        let sid_clone = sid.clone();
-                        if let Ok(Some(membership)) = pool_clone
-                            .interact(move |conn| {
-                                Ok::<_, anyhow::Error>(
-                                    crate::db::get_team_membership_for_session_sync(
-                                        conn, &sid_clone,
-                                    ),
-                                )
-                            })
-                            .await
-                        {
-                            *self.team_membership.write().await = Some(membership);
-                        }
-                    }
-                }
+                self.maybe_repopulate_team_cache().await;
             }
             Err(e) => {
                 tracing::warn!("[mira] Failed to auto-initialize project: {}", e);
+            }
+        }
+    }
+
+    /// Repopulate team membership cache from DB if it was invalidated
+    /// (e.g. after set_session_id clears it).
+    async fn maybe_repopulate_team_cache(&self) {
+        if self.team_membership.read().await.is_some() {
+            return; // Already populated
+        }
+        if let Some(sid) = read_claude_session_id() {
+            let pool_clone = self.pool.clone();
+            let sid_clone = sid.clone();
+            if let Ok(Some(membership)) = pool_clone
+                .interact(move |conn| {
+                    Ok::<_, anyhow::Error>(
+                        crate::db::get_team_membership_for_session_sync(conn, &sid_clone),
+                    )
+                })
+                .await
+            {
+                *self.team_membership.write().await = Some(membership);
             }
         }
     }

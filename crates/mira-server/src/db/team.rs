@@ -65,14 +65,19 @@ pub fn register_team_session_sync(
     role: &str,
     agent_type: Option<&str>,
 ) -> rusqlite::Result<()> {
+    // Use an explicit transaction so the deactivation + upsert are atomic.
+    // Without this, a concurrent registration could see a window where the
+    // old membership is deactivated but the new one isn't yet inserted.
+    let tx = conn.unchecked_transaction()?;
+
     // Deactivate any existing active memberships in OTHER teams
-    conn.execute(
+    tx.execute(
         "UPDATE team_sessions SET status = 'stopped'
          WHERE session_id = ?1 AND team_id != ?2 AND status = 'active'",
         params![session_id, team_id],
     )?;
 
-    conn.execute(
+    tx.execute(
         "INSERT INTO team_sessions (team_id, session_id, member_name, role, agent_type)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(team_id, session_id) DO UPDATE SET
@@ -83,6 +88,8 @@ pub fn register_team_session_sync(
            status = 'active'",
         params![team_id, session_id, member_name, role, agent_type],
     )?;
+
+    tx.commit()?;
     Ok(())
 }
 

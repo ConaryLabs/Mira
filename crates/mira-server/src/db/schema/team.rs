@@ -30,22 +30,6 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
     "#,
     )?;
 
-    // NULL-safe unique index: SQLite UNIQUE treats NULLs as distinct,
-    // so UNIQUE(name, project_id) doesn't enforce uniqueness when project_id IS NULL.
-    // This expression index uses COALESCE to normalize NULLs to 0.
-    //
-    // Before creating the index, deduplicate any legacy rows with the same
-    // (name, COALESCE(project_id,0)) so the CREATE UNIQUE INDEX doesn't fail.
-    conn.execute_batch(
-        "DELETE FROM teams WHERE id NOT IN (
-             SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
-         );",
-    )?;
-    conn.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_project
-         ON teams(name, COALESCE(project_id, 0));",
-    )?;
-
     create_table_if_missing(
         conn,
         "team_sessions",
@@ -85,6 +69,47 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_tfo_session ON team_file_ownership(team_id, session_id);
         CREATE INDEX IF NOT EXISTS idx_tfo_timestamp ON team_file_ownership(team_id, timestamp);
     "#,
+    )?;
+
+    // NULL-safe unique index: SQLite UNIQUE treats NULLs as distinct,
+    // so UNIQUE(name, project_id) doesn't enforce uniqueness when project_id IS NULL.
+    // This expression index uses COALESCE to normalize NULLs to 0.
+    //
+    // Before creating the index, deduplicate any legacy rows with the same
+    // (name, COALESCE(project_id,0)) so the CREATE UNIQUE INDEX doesn't fail.
+    // Remap dependent rows to the surviving (MIN id) row before deleting
+    // duplicates, to avoid ON DELETE CASCADE data loss.
+    conn.execute_batch(
+        // Remap team_sessions to the surviving row. Use OR IGNORE to skip
+        // rows that would violate UNIQUE(team_id, session_id) — those already
+        // exist in the target team and can safely be dropped with the duplicate.
+        "UPDATE OR IGNORE team_sessions SET team_id = (
+             SELECT MIN(t2.id) FROM teams t2
+             WHERE t2.name = (SELECT name FROM teams WHERE id = team_sessions.team_id)
+               AND COALESCE(t2.project_id, 0) = COALESCE(
+                   (SELECT project_id FROM teams WHERE id = team_sessions.team_id), 0)
+         )
+         WHERE team_id NOT IN (
+             SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+         );
+
+         UPDATE OR IGNORE team_file_ownership SET team_id = (
+             SELECT MIN(t2.id) FROM teams t2
+             WHERE t2.name = (SELECT name FROM teams WHERE id = team_file_ownership.team_id)
+               AND COALESCE(t2.project_id, 0) = COALESCE(
+                   (SELECT project_id FROM teams WHERE id = team_file_ownership.team_id), 0)
+         )
+         WHERE team_id NOT IN (
+             SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+         );
+
+         DELETE FROM teams WHERE id NOT IN (
+             SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+         );",
+    )?;
+    conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_project
+         ON teams(name, COALESCE(project_id, 0));",
     )?;
 
     // Migration: remove CHECK constraint on operation column for existing databases.

@@ -464,7 +464,8 @@ pub fn read_team_membership() -> Option<TeamMembership> {
 }
 
 /// Read team membership from DB for a specific session (session-isolated).
-/// Falls back to filesystem if DB lookup returns nothing.
+/// DB is the sole source of truth — no filesystem fallback, which could
+/// revive stale membership from crashed/partially-cleaned sessions.
 pub async fn read_team_membership_from_db(
     pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
     session_id: &str,
@@ -474,7 +475,7 @@ pub async fn read_team_membership_from_db(
     }
     let pool_clone = pool.clone();
     let sid = session_id.to_string();
-    let db_result = pool_clone
+    pool_clone
         .interact(move |conn| {
             Ok::<_, anyhow::Error>(
                 crate::db::get_team_membership_for_session_sync(conn, &sid),
@@ -482,14 +483,7 @@ pub async fn read_team_membership_from_db(
         })
         .await
         .ok()
-        .flatten();
-
-    // Fall back to filesystem only if DB has no record (bootstrapping)
-    db_result.or_else(|| {
-        let path = team_file_path_for_session(session_id);
-        let content = fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&content).ok()
-    })
+        .flatten()
 }
 
 /// Write team membership atomically (temp + rename).
