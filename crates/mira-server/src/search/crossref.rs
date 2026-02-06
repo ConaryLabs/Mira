@@ -78,11 +78,12 @@ fn extract_crossref_target(query: &str) -> Option<(String, CrossRefType)> {
         }
     }
 
-    // "what does X call" - requires " call" suffix to disambiguate
+    // "what does X call" - strip trailing punctuation, then check for " call" suffix
     if let Some(rest) = q.strip_prefix("what does ") {
         let name = rest.split_whitespace().next()?;
         let name = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
-        if !name.is_empty() && q.ends_with(" call") {
+        let q_trimmed = q.trim_end_matches(|c: char| !c.is_alphanumeric());
+        if !name.is_empty() && q_trimmed.ends_with(" call") {
             return Some((name.to_string(), CrossRefType::Callee));
         }
     }
@@ -439,6 +440,12 @@ mod tests {
     #[test]
     fn test_extract_callee_what_does_call() {
         let result = extract_crossref_target("what does process call");
+        assert_eq!(result, Some(("process".to_string(), CrossRefType::Callee)));
+    }
+
+    #[test]
+    fn test_extract_callee_what_does_call_punctuation() {
+        let result = extract_crossref_target("what does process call?");
         assert_eq!(result, Some(("process".to_string(), CrossRefType::Callee)));
     }
 

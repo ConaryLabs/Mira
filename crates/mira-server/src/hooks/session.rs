@@ -232,10 +232,11 @@ pub fn run() -> Result<()> {
     // On resume, inject context about previous work
     if source == "resume" {
         // Run async context injection using the existing runtime
+        let cwd_owned = cwd.map(String::from);
         let session_id_owned = session_id.map(String::from);
 
         let context = rt.block_on(async {
-            build_resume_context(session_id_owned.as_deref()).await
+            build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await
         });
 
         if let Some(ctx) = context {
@@ -255,14 +256,34 @@ pub fn run() -> Result<()> {
 }
 
 /// Build context for a resumed session
-async fn build_resume_context(session_id: Option<&str>) -> Option<String> {
+async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Option<String> {
     let db_path = get_db_path();
     let pool = match DatabasePool::open(&db_path).await {
         Ok(p) => Arc::new(p),
         Err(_) => return None,
     };
 
-    let project_id = super::resolve_project_id(&pool).await?;
+    // Resolve project from cwd (current working directory) to ensure we get
+    // context for the right project, not whatever was last active globally.
+    let project_id: Option<i64> = if let Some(cwd_path) = cwd {
+        let pool_clone = pool.clone();
+        let cwd_owned = cwd_path.to_string();
+        pool_clone
+            .interact(move |conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, &cwd_owned, None)
+                        .ok()
+                        .map(|(id, _)| id),
+                )
+            })
+            .await
+            .ok()
+            .flatten()
+    } else {
+        // Fallback to last active project only if no cwd available
+        super::resolve_project_id(&pool).await
+    };
+    let project_id = project_id?;
 
     let mut context_parts: Vec<String> = Vec::new();
 
