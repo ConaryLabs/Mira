@@ -516,8 +516,9 @@ mod tests {
     #[test]
     fn test_resolve_project_path_absolute_outside_blocked() {
         let root = project_root();
-        // /tmp always exists on Unix and is outside any project root
-        let result = resolve_project_path("/tmp", Some(&root));
+        // Use the system temp dir — exists on all platforms and is outside any project root
+        let temp = std::env::temp_dir();
+        let result = resolve_project_path(temp.to_str().unwrap(), Some(&root));
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(

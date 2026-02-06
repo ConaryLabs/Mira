@@ -79,13 +79,15 @@ async fn resolve_and_validate(parsed: &url::Url) -> Result<Vec<std::net::SocketA
 ///
 /// Uses reqwest's `resolve_to_addrs` to force the connection to use our resolved IPs,
 /// preventing DNS rebinding attacks where the DNS record changes between validation and connect.
-fn build_pinned_client(host: &str, port: u16, addrs: &[std::net::SocketAddr]) -> Result<reqwest::Client, String> {
-    let pinned_host = format!("{}:{}", host, port);
+fn build_pinned_client(host: &str, addrs: &[std::net::SocketAddr]) -> Result<reqwest::Client, String> {
+    // reqwest's resolve_to_addrs keys by hostname only (no port).
+    // See reqwest/src/dns/resolve.rs — lookup is `overrides.get(name.as_str())`
+    // where `name` is the bare host from the URI.
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .user_agent("Mozilla/5.0 (compatible; Mira/1.0; +https://github.com/ConaryLabs/Mira)")
         .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(&pinned_host, addrs)
+        .resolve_to_addrs(host, addrs)
         .build()
         .map_err(|e| format!("Error: Failed to create HTTP client: {}", e))
 }
@@ -118,9 +120,8 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
     };
 
     let host = parsed.host_str().unwrap_or("");
-    let port = parsed.port_or_known_default().unwrap_or(443);
 
-    let client = match build_pinned_client(host, port, &addrs) {
+    let client = match build_pinned_client(host, &addrs) {
         Ok(c) => c,
         Err(e) => return e,
     };
@@ -169,8 +170,7 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
             };
 
             let redir_host = redirect_url.host_str().unwrap_or("");
-            let redir_port = redirect_url.port_or_known_default().unwrap_or(443);
-            current_client = match build_pinned_client(redir_host, redir_port, &redirect_addrs) {
+            current_client = match build_pinned_client(redir_host, &redirect_addrs) {
                 Ok(c) => c,
                 Err(e) => return e,
             };
