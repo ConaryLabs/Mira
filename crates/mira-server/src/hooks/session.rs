@@ -262,7 +262,7 @@ pub fn run() -> Result<()> {
 }
 
 /// Build context for a resumed session
-async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> Option<String> {
+async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Option<String> {
     let db_path = get_db_path();
     let pool = match DatabasePool::open(&db_path).await {
         Ok(p) => Arc::new(p),
@@ -372,7 +372,12 @@ async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> O
     }
 
     // Add team context if in a team
-    if let Some(membership) = read_team_membership() {
+    let team_membership = if let Some(sid) = session_id {
+        read_team_membership_from_db(&pool, sid).await
+    } else {
+        read_team_membership()
+    };
+    if let Some(membership) = team_membership {
         let pool_clone = pool.clone();
         let tid = membership.team_id;
         let members: Vec<crate::db::TeamMemberInfo> = pool_clone
@@ -449,12 +454,42 @@ pub fn team_file_path_for_session(session_id: &str) -> PathBuf {
     home.join(format!(".mira/claude-team-{}.json", session_id))
 }
 
-/// Read team membership for the current session.
+/// Read team membership for the current session (filesystem-based).
+/// Prefer `read_team_membership_from_db` when a pool and session_id are available.
 pub fn read_team_membership() -> Option<TeamMembership> {
     let session_id = read_claude_session_id()?;
     let path = team_file_path_for_session(&session_id);
     let content = fs::read_to_string(&path).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+/// Read team membership from DB for a specific session (session-isolated).
+/// Falls back to filesystem if DB lookup returns nothing.
+pub async fn read_team_membership_from_db(
+    pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
+    session_id: &str,
+) -> Option<TeamMembership> {
+    if session_id.is_empty() {
+        return None;
+    }
+    let pool_clone = pool.clone();
+    let sid = session_id.to_string();
+    let db_result = pool_clone
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(
+                crate::db::get_team_membership_for_session_sync(conn, &sid),
+            )
+        })
+        .await
+        .ok()
+        .flatten();
+
+    // Fall back to filesystem only if DB has no record (bootstrapping)
+    db_result.or_else(|| {
+        let path = team_file_path_for_session(session_id);
+        let content = fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&content).ok()
+    })
 }
 
 /// Write team membership atomically (temp + rename).

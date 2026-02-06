@@ -625,12 +625,12 @@ Active teammate sessions within a team. Each Claude Code agent participating in 
 | role | TEXT | `leader` or `teammate` |
 | agent_type | TEXT | Agent type (e.g., `general-purpose`, `Explore`) |
 | joined_at | TEXT | Timestamp |
-| last_heartbeat | TEXT | Last heartbeat (stale after 5 min) |
-| status | TEXT | `active` or `disconnected` |
+| last_heartbeat | TEXT | Last heartbeat (stale after 30 min) |
+| status | TEXT | `active` or `stopped` |
 
 **Unique:** `(team_id, session_id)`. **Indexes:** `idx_ts_team_status`, `idx_ts_session`, `idx_ts_heartbeat`.
 
-Heartbeats reactivate stale sessions — if a teammate's status was `disconnected`, a new heartbeat sets it back to `active`.
+Heartbeats reactivate stale sessions — if a teammate's status was `stopped`, a new heartbeat sets it back to `active`.
 
 ### team_file_ownership
 

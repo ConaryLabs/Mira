@@ -175,6 +175,7 @@ pub use team::{
     FileConflict, TeamInfo, TeamMemberInfo, cleanup_stale_sessions_sync,
     deactivate_team_session_sync, get_active_team_members_sync, get_file_conflicts_sync,
     get_member_files_sync, get_or_create_team_sync, get_team_for_session_sync,
+    get_team_membership_for_session_sync,
     heartbeat_team_session_sync, record_file_ownership_sync, register_team_session_sync,
     validate_team_membership_sync,
 };

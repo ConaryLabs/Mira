@@ -135,7 +135,7 @@ pub async fn run() -> Result<()> {
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit"
     );
     if is_write_tool {
-    if let Some(membership) = crate::hooks::session::read_team_membership() {
+    if let Some(membership) = crate::hooks::session::read_team_membership_from_db(&pool, &post_input.session_id).await {
         let pool_clone = pool.clone();
         let sid = post_input.session_id.clone();
         let member = membership.member_name.clone();

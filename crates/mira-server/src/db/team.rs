@@ -55,6 +55,8 @@ pub fn get_or_create_team_sync(
 }
 
 /// Register a team session (UPSERT on (team_id, session_id)).
+/// Enforces single active team per session: deactivates any prior team
+/// memberships for this session before registering in the new team.
 pub fn register_team_session_sync(
     conn: &Connection,
     team_id: i64,
@@ -63,6 +65,13 @@ pub fn register_team_session_sync(
     role: &str,
     agent_type: Option<&str>,
 ) -> rusqlite::Result<()> {
+    // Deactivate any existing active memberships in OTHER teams
+    conn.execute(
+        "UPDATE team_sessions SET status = 'stopped'
+         WHERE session_id = ?1 AND team_id != ?2 AND status = 'active'",
+        params![session_id, team_id],
+    )?;
+
     conn.execute(
         "INSERT INTO team_sessions (team_id, session_id, member_name, role, agent_type)
          VALUES (?1, ?2, ?3, ?4, ?5)
@@ -92,6 +101,34 @@ pub fn get_team_for_session_sync(conn: &Connection, session_id: &str) -> Option<
                 project_id: row.get(2)?,
                 config_path: row.get(3)?,
                 status: row.get(4)?,
+            })
+        },
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+/// Get full team membership for a session (team info + member details).
+/// Preferred over filesystem-based read_team_membership() for session isolation.
+pub fn get_team_membership_for_session_sync(
+    conn: &Connection,
+    session_id: &str,
+) -> Option<crate::hooks::session::TeamMembership> {
+    conn.query_row(
+        "SELECT t.id, t.name, t.config_path, ts.member_name, ts.role
+         FROM teams t
+         JOIN team_sessions ts ON ts.team_id = t.id
+         WHERE ts.session_id = ?1 AND ts.status = 'active' AND t.status = 'active'
+         LIMIT 1",
+        params![session_id],
+        |row| {
+            Ok(crate::hooks::session::TeamMembership {
+                team_id: row.get(0)?,
+                team_name: row.get(1)?,
+                config_path: row.get(2)?,
+                member_name: row.get(3)?,
+                role: row.get(4)?,
             })
         },
     )
@@ -181,24 +218,26 @@ pub fn record_file_ownership_sync(
     Ok(())
 }
 
-/// Get file conflicts: files edited by OTHER sessions in the last 30 minutes.
+/// Get file conflicts: files edited by OTHER active sessions in the last 30 minutes.
 pub fn get_file_conflicts_sync(
     conn: &Connection,
     team_id: i64,
     session_id: &str,
 ) -> Vec<FileConflict> {
     let mut stmt = match conn.prepare(
-        "SELECT file_path, session_id, member_name, operation, timestamp
-         FROM team_file_ownership
-         WHERE team_id = ?1
-           AND session_id != ?2
-           AND timestamp > datetime('now', '-30 minutes')
-           AND file_path IN (
+        "SELECT tfo.file_path, tfo.session_id, tfo.member_name, tfo.operation, tfo.timestamp
+         FROM team_file_ownership tfo
+         JOIN team_sessions ts ON ts.team_id = tfo.team_id AND ts.session_id = tfo.session_id
+         WHERE tfo.team_id = ?1
+           AND tfo.session_id != ?2
+           AND ts.status = 'active'
+           AND tfo.timestamp > datetime('now', '-30 minutes')
+           AND tfo.file_path IN (
                SELECT DISTINCT file_path FROM team_file_ownership
                WHERE team_id = ?1 AND session_id = ?2
                  AND timestamp > datetime('now', '-30 minutes')
            )
-         ORDER BY timestamp DESC",
+         ORDER BY tfo.timestamp DESC",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),

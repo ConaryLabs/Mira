@@ -96,7 +96,9 @@ pub trait ToolContext: Send + Sync {
 
     // === Team Context ===
 
-    /// Get team membership if in a team (reads per-session cache file).
+    /// Get team membership if in a team.
+    /// Default uses filesystem (CLI/hook contexts). MCP server overrides
+    /// with in-memory cache backed by DB lookups for session isolation.
     fn get_team_membership(&self) -> Option<crate::hooks::session::TeamMembership> {
         crate::hooks::session::read_team_membership()
     }

@@ -57,6 +57,8 @@ impl ToolContext for MiraServer {
 
     async fn set_session_id(&self, session_id: String) {
         *self.session_id.write().await = Some(session_id);
+        // Invalidate cached team membership — it's keyed to the old session
+        *self.team_membership.write().await = None;
     }
 
     async fn get_branch(&self) -> Option<String> {
@@ -179,13 +181,12 @@ impl ToolContext for MiraServer {
     }
 
     fn get_team_membership(&self) -> Option<crate::hooks::session::TeamMembership> {
-        // Use per-process cached membership instead of global filesystem lookup.
-        // Falls back to filesystem if cache not yet populated (backwards compat).
+        // Use per-process cached membership only. No filesystem fallback —
+        // DB is the source of truth, populated during auto_initialize_project.
         self.team_membership
             .try_read()
             .ok()
             .and_then(|guard| guard.clone())
-            .or_else(|| crate::hooks::session::read_team_membership())
     }
 
     fn elicitation_client(&self) -> Option<crate::mcp::elicitation::ElicitationClient> {

@@ -314,8 +314,8 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
         return None;
     }
 
-    // Read cached team membership (or lazy-detect if not yet found)
-    let membership = crate::hooks::session::read_team_membership();
+    // Read team membership from DB (session-isolated), with filesystem fallback
+    let membership = crate::hooks::session::read_team_membership_from_db(pool, session_id).await;
     let membership = match membership {
         Some(m) => m,
         None => {

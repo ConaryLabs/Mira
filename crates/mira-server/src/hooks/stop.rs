@@ -221,7 +221,7 @@ pub async fn run_session_end() -> Result<()> {
 
     // Deactivate team session if we're in a team
     if !session_id.is_empty() {
-        if let Some(membership) = crate::hooks::session::read_team_membership() {
+        if let Some(membership) = crate::hooks::session::read_team_membership_from_db(&pool, session_id).await {
             let pool_clone = pool.clone();
             let sid = session_id.to_string();
             let _ = pool_clone

@@ -170,29 +170,21 @@ impl MiraServer {
             Ok(_) => {
                 tracing::info!("[mira] Auto-initialized project: {}", cwd);
 
-                // Populate team membership from DB using session_id (avoids global file race)
+                // Populate team membership from DB (session-isolated, no filesystem)
                 if self.team_membership.read().await.is_none() {
                     if let Some(sid) = read_claude_session_id() {
                         let pool_clone = self.pool.clone();
                         let sid_clone = sid.clone();
-                        if let Ok(Some(team_info)) = pool_clone
+                        if let Ok(Some(membership)) = pool_clone
                             .interact(move |conn| {
                                 Ok::<_, anyhow::Error>(
-                                    crate::db::get_team_for_session_sync(conn, &sid_clone),
+                                    crate::db::get_team_membership_for_session_sync(
+                                        conn, &sid_clone,
+                                    ),
                                 )
                             })
                             .await
                         {
-                            // Also read the per-session file for member_name/role
-                            // (DB has team info, file has member details)
-                            let membership = crate::hooks::session::read_team_membership()
-                                .unwrap_or_else(|| crate::hooks::session::TeamMembership {
-                                    team_id: team_info.id,
-                                    team_name: team_info.name,
-                                    member_name: format!("member-{}", &sid[..8.min(sid.len())]),
-                                    role: "teammate".to_string(),
-                                    config_path: team_info.config_path,
-                                });
                             *self.team_membership.write().await = Some(membership);
                         }
                     }

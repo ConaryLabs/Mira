@@ -33,6 +33,14 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
     // NULL-safe unique index: SQLite UNIQUE treats NULLs as distinct,
     // so UNIQUE(name, project_id) doesn't enforce uniqueness when project_id IS NULL.
     // This expression index uses COALESCE to normalize NULLs to 0.
+    //
+    // Before creating the index, deduplicate any legacy rows with the same
+    // (name, COALESCE(project_id,0)) so the CREATE UNIQUE INDEX doesn't fail.
+    conn.execute_batch(
+        "DELETE FROM teams WHERE id NOT IN (
+             SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+         );",
+    )?;
     conn.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_project
          ON teams(name, COALESCE(project_id, 0));",
@@ -89,21 +97,20 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
 /// Remove the CHECK(operation IN (...)) constraint from team_file_ownership.
 /// For existing DBs that already have the constraint, we recreate the table.
 fn migrate_drop_file_ownership_check(conn: &Connection) -> Result<()> {
-    // Check if the CHECK constraint exists by trying an operation outside the old list
-    let needs_migration = conn
-        .execute(
-            "INSERT INTO team_file_ownership (team_id, session_id, member_name, file_path, operation)
-             VALUES (0, '__migration_check__', '__check__', '__check__', 'MultiEdit')",
+    // Use schema introspection instead of a probe INSERT.
+    // The probe approach fails under FK enforcement (team_id=0 doesn't exist in teams),
+    // causing a false-positive that triggers table rebuild every startup.
+    let create_sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='team_file_ownership'",
             [],
+            |row| row.get(0),
         )
-        .is_err();
+        .unwrap_or_default();
+
+    let needs_migration = create_sql.contains("CHECK");
 
     if !needs_migration {
-        // Clean up the probe row
-        let _ = conn.execute(
-            "DELETE FROM team_file_ownership WHERE session_id = '__migration_check__'",
-            [],
-        );
         return Ok(());
     }
 
