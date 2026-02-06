@@ -10,6 +10,9 @@ pub mod stop;
 pub mod subagent;
 pub mod user_prompt;
 
+#[cfg(test)]
+mod session_tests;
+
 use anyhow::Result;
 use std::path::PathBuf;
 use std::time::Instant;

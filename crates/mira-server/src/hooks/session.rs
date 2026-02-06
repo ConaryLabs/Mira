@@ -256,7 +256,10 @@ pub fn run() -> Result<()> {
 }
 
 /// Build context for a resumed session
-async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Option<String> {
+pub(crate) async fn build_resume_context(
+    cwd: Option<&str>,
+    session_id: Option<&str>,
+) -> Option<String> {
     let db_path = get_db_path();
     let pool = match DatabasePool::open(&db_path).await {
         Ok(p) => Arc::new(p),
@@ -464,7 +467,10 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
 // get_session_modified_files_sync is now in hooks/mod.rs
 
 /// Get session snapshot metadata stored by the stop hook
-fn get_session_snapshot_sync(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
+pub(crate) fn get_session_snapshot_sync(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Option<String> {
     conn.query_row(
         "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
         [session_id],
@@ -474,7 +480,7 @@ fn get_session_snapshot_sync(conn: &rusqlite::Connection, session_id: &str) -> O
 }
 
 /// Build a "You were working on X" summary from snapshot data
-fn build_working_on_summary(snapshot: &serde_json::Value) -> Option<String> {
+pub(crate) fn build_working_on_summary(snapshot: &serde_json::Value) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
     // Top tools used gives a hint of what they were doing
@@ -783,64 +789,8 @@ mod tests {
     use super::*;
 
     // ============================================================================
-    // session_file_path tests
-    // ============================================================================
-
-    #[test]
-    fn test_session_file_path_not_empty() {
-        let path = session_file_path();
-        assert!(!path.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn test_session_file_path_ends_with_expected() {
-        let path = session_file_path();
-        assert!(path.ends_with("claude-session-id"));
-    }
-
-    #[test]
-    fn test_session_file_path_contains_mira() {
-        let path = session_file_path();
-        let path_str = path.to_string_lossy();
-        assert!(path_str.contains(".mira"));
-    }
-
-    // ============================================================================
-    // cwd_file_path tests
-    // ============================================================================
-
-    #[test]
-    fn test_cwd_file_path_not_empty() {
-        let path = cwd_file_path();
-        assert!(!path.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn test_cwd_file_path_ends_with_expected() {
-        let path = cwd_file_path();
-        assert!(path.ends_with("claude-cwd"));
-    }
-
-    #[test]
-    fn test_cwd_file_path_contains_mira() {
-        let path = cwd_file_path();
-        let path_str = path.to_string_lossy();
-        assert!(path_str.contains(".mira"));
-    }
-
-    // ============================================================================
     // read_claude_session_id tests
     // ============================================================================
-
-    #[test]
-    fn test_read_claude_session_id_missing_file() {
-        // Note: This test assumes the session file doesn't exist in most test environments
-        // or returns whatever is currently stored
-        let result = read_claude_session_id();
-        // Result is either Some (if file exists) or None (if not)
-        // We can't assert on the value since it depends on system state
-        assert!(result.is_none() || !result.unwrap().is_empty());
-    }
 
     #[test]
     fn test_read_claude_session_id_trims_whitespace() {

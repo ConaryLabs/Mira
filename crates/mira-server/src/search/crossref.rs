@@ -485,64 +485,60 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_is_stdlib_iterator_methods() {
-        assert!(is_stdlib_call("map"));
-        assert!(is_stdlib_call("filter"));
-        assert!(is_stdlib_call("collect"));
-        assert!(is_stdlib_call("iter"));
-        assert!(is_stdlib_call("fold"));
+    fn test_is_stdlib_matches_known_stdlib() {
+        // Exact name matches
+        for name in [
+            "map",
+            "filter",
+            "collect",
+            "iter",
+            "fold",
+            "unwrap",
+            "unwrap_or",
+            "expect",
+            "ok",
+            "is_some",
+            "is_none",
+            "new",
+            "default",
+            "clone",
+            "to_string",
+            "from",
+            "into",
+            "Ok",
+            "Err",
+            "Some",
+            "None",
+            "debug",
+            "info",
+            "warn",
+            "error",
+        ] {
+            assert!(is_stdlib_call(name), "{} should be stdlib", name);
+        }
+        // Prefixed matches
+        for name in [
+            "tracing::info",
+            "std::mem::drop",
+            "Vec::new",
+            "HashMap::new",
+        ] {
+            assert!(is_stdlib_call(name), "{} should be stdlib", name);
+        }
     }
 
     #[test]
-    fn test_is_stdlib_option_result_methods() {
-        assert!(is_stdlib_call("unwrap"));
-        assert!(is_stdlib_call("unwrap_or"));
-        assert!(is_stdlib_call("expect"));
-        assert!(is_stdlib_call("ok"));
-        assert!(is_stdlib_call("is_some"));
-        assert!(is_stdlib_call("is_none"));
-    }
-
-    #[test]
-    fn test_is_stdlib_constructors() {
-        assert!(is_stdlib_call("new"));
-        assert!(is_stdlib_call("default"));
-        assert!(is_stdlib_call("clone"));
-        assert!(is_stdlib_call("to_string"));
-        assert!(is_stdlib_call("from"));
-        assert!(is_stdlib_call("into"));
-    }
-
-    #[test]
-    fn test_is_stdlib_result_option_variants() {
-        assert!(is_stdlib_call("Ok"));
-        assert!(is_stdlib_call("Err"));
-        assert!(is_stdlib_call("Some"));
-        assert!(is_stdlib_call("None"));
-    }
-
-    #[test]
-    fn test_is_stdlib_logging() {
-        assert!(is_stdlib_call("debug"));
-        assert!(is_stdlib_call("info"));
-        assert!(is_stdlib_call("warn"));
-        assert!(is_stdlib_call("error"));
-    }
-
-    #[test]
-    fn test_is_stdlib_prefixed() {
-        assert!(is_stdlib_call("tracing::info"));
-        assert!(is_stdlib_call("std::mem::drop"));
-        assert!(is_stdlib_call("Vec::new"));
-        assert!(is_stdlib_call("HashMap::new"));
-    }
-
-    #[test]
-    fn test_is_stdlib_not_stdlib() {
-        assert!(!is_stdlib_call("process_request"));
-        assert!(!is_stdlib_call("handle_message"));
-        assert!(!is_stdlib_call("my_custom_function"));
-        assert!(!is_stdlib_call("DatabaseConnection"));
+    fn test_is_stdlib_rejects_user_code() {
+        for name in [
+            "process_request",
+            "handle_message",
+            "my_custom_function",
+            "DatabaseConnection",
+            "tracing_helper",
+            "std_parser",
+        ] {
+            assert!(!is_stdlib_call(name), "{} should NOT be stdlib", name);
+        }
     }
 
     // ============================================================================
@@ -602,5 +598,236 @@ mod tests {
         assert!(output.contains("Functions called by `main`"));
         assert!(output.contains("helper"));
         assert!(output.contains("src/utils.rs"));
+    }
+
+    // ============================================================================
+    // Integration tests - DB-backed find_callers / find_callees / crossref_search
+    // ============================================================================
+
+    use crate::db::test_support::{seed_call_edge, seed_symbol, setup_test_connection};
+
+    /// Set up a test connection with both main and code schemas.
+    /// The code_symbols and call_graph tables live in the code DB schema,
+    /// so we must create them in addition to the main migrations.
+    fn setup_connection_with_code_schema() -> Connection {
+        let conn = setup_test_connection();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS code_symbols (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                symbol_type TEXT NOT NULL,
+                start_line INTEGER,
+                end_line INTEGER,
+                signature TEXT,
+                indexed_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_symbols_name ON code_symbols(name);
+            CREATE TABLE IF NOT EXISTS call_graph (
+                id INTEGER PRIMARY KEY,
+                caller_id INTEGER REFERENCES code_symbols(id),
+                callee_name TEXT NOT NULL,
+                callee_id INTEGER REFERENCES code_symbols(id),
+                call_count INTEGER DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_calls_caller ON call_graph(caller_id);
+            CREATE INDEX IF NOT EXISTS idx_calls_callee ON call_graph(callee_id);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_find_callers_single() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let handler_id = seed_symbol(
+            &conn,
+            project_id,
+            "handler",
+            "src/api.rs",
+            "function",
+            1,
+            10,
+        );
+        seed_call_edge(&conn, handler_id, "process_request");
+
+        let results = find_callers(&conn, Some(project_id), "process_request", 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].symbol_name, "handler");
+        assert_eq!(results[0].file_path, "src/api.rs");
+        assert_eq!(results[0].ref_type, CrossRefType::Caller);
+    }
+
+    #[test]
+    fn test_find_callers_multiple() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let a_id = seed_symbol(&conn, project_id, "a", "src/a.rs", "function", 1, 5);
+        let b_id = seed_symbol(&conn, project_id, "b", "src/b.rs", "function", 1, 5);
+        let c_id = seed_symbol(&conn, project_id, "c", "src/c.rs", "function", 1, 5);
+        seed_call_edge(&conn, a_id, "target");
+        seed_call_edge(&conn, b_id, "target");
+        seed_call_edge(&conn, c_id, "target");
+
+        let results = find_callers(&conn, Some(project_id), "target", 10);
+        assert_eq!(results.len(), 3);
+        let names: Vec<&str> = results.iter().map(|r| r.symbol_name.as_str()).collect();
+        assert!(names.contains(&"a"));
+        assert!(names.contains(&"b"));
+        assert!(names.contains(&"c"));
+    }
+
+    #[test]
+    fn test_find_callers_none() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let results = find_callers(&conn, Some(project_id), "nonexistent_function", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_find_callees_single() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let main_id = seed_symbol(&conn, project_id, "main", "src/main.rs", "function", 1, 20);
+        seed_call_edge(&conn, main_id, "init");
+
+        let results = find_callees(&conn, Some(project_id), "main", 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].symbol_name, "init");
+        assert_eq!(results[0].ref_type, CrossRefType::Callee);
+    }
+
+    #[test]
+    fn test_find_callees_multiple() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let main_id = seed_symbol(&conn, project_id, "main", "src/main.rs", "function", 1, 30);
+        seed_call_edge(&conn, main_id, "init");
+        seed_call_edge(&conn, main_id, "run_server");
+        seed_call_edge(&conn, main_id, "shutdown");
+
+        let results = find_callees(&conn, Some(project_id), "main", 10);
+        assert_eq!(results.len(), 3);
+        let names: Vec<&str> = results.iter().map(|r| r.symbol_name.as_str()).collect();
+        assert!(names.contains(&"init"));
+        assert!(names.contains(&"run_server"));
+        assert!(names.contains(&"shutdown"));
+    }
+
+    #[test]
+    fn test_find_callees_filters_stdlib() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let handler_id = seed_symbol(
+            &conn,
+            project_id,
+            "handler",
+            "src/api.rs",
+            "function",
+            1,
+            15,
+        );
+        seed_call_edge(&conn, handler_id, "unwrap");
+        seed_call_edge(&conn, handler_id, "my_function");
+        seed_call_edge(&conn, handler_id, "clone");
+        seed_call_edge(&conn, handler_id, "to_string");
+
+        let results = find_callees(&conn, Some(project_id), "handler", 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].symbol_name, "my_function");
+    }
+
+    #[test]
+    fn test_crossref_search_who_calls() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let handler_id = seed_symbol(
+            &conn,
+            project_id,
+            "handler",
+            "src/api.rs",
+            "function",
+            1,
+            10,
+        );
+        seed_call_edge(&conn, handler_id, "process_request");
+
+        let result = crossref_search(&conn, "who calls process_request", Some(project_id), 10);
+        assert!(result.is_some());
+        let (target, ref_type, results) = result.unwrap();
+        assert_eq!(target, "process_request");
+        assert_eq!(ref_type, CrossRefType::Caller);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].symbol_name, "handler");
+    }
+
+    #[test]
+    fn test_crossref_search_what_does_call() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let main_id = seed_symbol(&conn, project_id, "main", "src/main.rs", "function", 1, 20);
+        seed_call_edge(&conn, main_id, "init");
+        seed_call_edge(&conn, main_id, "run_server");
+
+        let result = crossref_search(&conn, "what does main call", Some(project_id), 10);
+        assert!(result.is_some());
+        let (target, ref_type, results) = result.unwrap();
+        assert_eq!(target, "main");
+        assert_eq!(ref_type, CrossRefType::Callee);
+        assert_eq!(results.len(), 2);
+        let names: Vec<&str> = results.iter().map(|r| r.symbol_name.as_str()).collect();
+        assert!(names.contains(&"init"));
+        assert!(names.contains(&"run_server"));
+    }
+
+    #[test]
+    fn test_project_isolation() {
+        let conn = setup_connection_with_code_schema();
+        let (project_a, _) =
+            crate::db::get_or_create_project_sync(&conn, "/project/a", Some("proj_a")).unwrap();
+        let (project_b, _) =
+            crate::db::get_or_create_project_sync(&conn, "/project/b", Some("proj_b")).unwrap();
+
+        let handler_id = seed_symbol(&conn, project_a, "handler", "src/api.rs", "function", 1, 10);
+        seed_call_edge(&conn, handler_id, "process_request");
+
+        // Query with project_a should find the caller
+        let results_a = find_callers(&conn, Some(project_a), "process_request", 10);
+        assert_eq!(results_a.len(), 1);
+
+        // Query with project_b should find nothing
+        let results_b = find_callers(&conn, Some(project_b), "process_request", 10);
+        assert!(results_b.is_empty());
+    }
+
+    #[test]
+    fn test_is_stdlib_prefix_not_false_positive() {
+        // "tracing_helper" contains "tracing" but is NOT "tracing::" prefixed
+        assert!(!is_stdlib_call("tracing_helper"));
+        // Confirm actual stdlib prefix still works
+        assert!(is_stdlib_call("tracing::info"));
+        // More edge cases: names that start with stdlib type names but aren't qualified
+        assert!(!is_stdlib_call("vec_utils"));
+        assert!(!is_stdlib_call("hash_map_builder"));
+        assert!(!is_stdlib_call("string_parser"));
     }
 }
