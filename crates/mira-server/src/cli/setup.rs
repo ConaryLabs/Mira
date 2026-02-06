@@ -252,8 +252,17 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
     }
 
     // Step 6: Summary + write
+    const PROVIDER_KEYS: &[&str] = &[
+        "DEEPSEEK_API_KEY",
+        "ZHIPU_API_KEY",
+        "OPENAI_API_KEY",
+        "BRAVE_API_KEY",
+        "OLLAMA_HOST",
+    ];
+    let has_existing_provider = existing.keys().any(|k| PROVIDER_KEYS.contains(&k.as_str()));
+
     println!("\n--- Summary ---");
-    if keys.is_empty() && existing.is_empty() {
+    if keys.is_empty() && !has_existing_provider {
         println!("No providers configured. You can run `mira setup` again later.");
         return Ok(());
     }
