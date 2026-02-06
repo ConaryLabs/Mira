@@ -27,6 +27,7 @@ use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::ProviderFactory;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Notify, watch};
 
 pub use fast_lane::FastLaneWorker;
@@ -89,30 +90,86 @@ pub fn spawn_with_pools(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let notify = Arc::new(Notify::new());
 
-    // Spawn fast lane worker (embeddings → code DB)
-    let fast_lane = FastLaneWorker::new(
-        code_pool.clone(),
-        embeddings.clone(),
-        shutdown_rx.clone(),
-        notify.clone(),
-    );
-    tokio::spawn(async move {
-        fast_lane.run().await;
-    });
+    // Spawn supervised fast lane worker (restarts on panic)
+    {
+        let code_pool = code_pool.clone();
+        let embeddings = embeddings.clone();
+        let shutdown_rx = shutdown_rx.clone();
+        let notify = notify.clone();
+        tokio::spawn(async move {
+            supervise_worker("fast_lane", shutdown_rx.clone(), || {
+                let worker = FastLaneWorker::new(
+                    code_pool.clone(),
+                    embeddings.clone(),
+                    shutdown_rx.clone(),
+                    notify.clone(),
+                );
+                tokio::spawn(async move { worker.run().await })
+            })
+            .await;
+        });
+    }
 
-    // Spawn slow lane worker (LLM tasks → needs both DBs)
-    let slow_lane = SlowLaneWorker::new(
-        main_pool,
-        code_pool,
-        embeddings.clone(),
-        llm_factory,
-        shutdown_rx,
-    );
-    tokio::spawn(async move {
-        slow_lane.run().await;
-    });
+    // Spawn supervised slow lane worker (restarts on panic)
+    {
+        let code_pool = code_pool.clone();
+        let main_pool = main_pool.clone();
+        let embeddings = embeddings.clone();
+        let llm_factory = llm_factory.clone();
+        tokio::spawn(async move {
+            supervise_worker("slow_lane", shutdown_rx.clone(), || {
+                let worker = SlowLaneWorker::new(
+                    main_pool.clone(),
+                    code_pool.clone(),
+                    embeddings.clone(),
+                    llm_factory.clone(),
+                    shutdown_rx.clone(),
+                );
+                tokio::spawn(async move { worker.run().await })
+            })
+            .await;
+        });
+    }
 
     let fast_lane_notify = FastLaneNotify { notify };
 
     (shutdown_tx, fast_lane_notify)
+}
+
+/// Supervise a background worker, restarting it if it panics.
+/// Stops when the shutdown signal is received.
+async fn supervise_worker<F>(
+    name: &str,
+    shutdown: watch::Receiver<bool>,
+    spawn_fn: F,
+) where
+    F: Fn() -> tokio::task::JoinHandle<()>,
+{
+    loop {
+        if *shutdown.borrow() {
+            break;
+        }
+
+        let handle = spawn_fn();
+
+        match handle.await {
+            Ok(()) => {
+                // Normal exit (shutdown requested inside the worker)
+                break;
+            }
+            Err(e) if e.is_panic() => {
+                tracing::error!(
+                    "Background worker '{}' panicked: {:?}. Restarting in 5s...",
+                    name,
+                    e
+                );
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                // Loop will restart the worker
+            }
+            Err(e) => {
+                tracing::error!("Background worker '{}' failed: {:?}", name, e);
+                break;
+            }
+        }
+    }
 }

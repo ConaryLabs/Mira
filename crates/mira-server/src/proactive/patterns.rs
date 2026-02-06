@@ -84,7 +84,7 @@ pub fn upsert_pattern(conn: &Connection, pattern: &BehaviorPattern) -> Result<i6
         ON CONFLICT(project_id, pattern_type, pattern_key) DO UPDATE SET
             pattern_data = excluded.pattern_data,
             confidence = excluded.confidence,
-            occurrence_count = occurrence_count + 1,
+            occurrence_count = excluded.occurrence_count,
             last_triggered_at = datetime('now'),
             updated_at = datetime('now')
     "#;

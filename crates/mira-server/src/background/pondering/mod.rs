@@ -66,6 +66,11 @@ pub async fn process_pondering(
             None => heuristic::generate_insights_heuristic(&tool_history, &memories),
         };
 
+        // Always advance the timestamp after attempting pondering, even if no
+        // insights were produced. Otherwise empty/failed LLM responses cause
+        // expensive reprocessing every cycle.
+        update_last_pondering(pool, project_id).await?;
+
         // Store insights as behavior patterns
         let stored = storage::store_insights(pool, project_id, &insights).await?;
         if stored > 0 {
@@ -75,9 +80,6 @@ pub async fn process_pondering(
                 name
             );
             processed += stored;
-
-            // Update last pondering timestamp
-            update_last_pondering(pool, project_id).await?;
         }
     }
 

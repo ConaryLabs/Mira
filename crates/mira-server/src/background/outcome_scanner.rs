@@ -8,7 +8,7 @@ use crate::db::diff_outcomes::get_unscanned_diffs_sync;
 use crate::db::diff_outcomes::mark_clean_outcomes_sync;
 use crate::db::diff_outcomes::{StoreDiffOutcomeParams, store_diff_outcome_sync};
 use crate::db::pool::DatabasePool;
-use crate::db::{get_indexed_projects_sync, set_server_state_sync};
+use crate::db::{get_indexed_project_ids_sync, get_project_paths_by_ids_sync, set_server_state_sync};
 use crate::git::{CommitWithFiles, get_commits_with_files, get_git_head};
 use crate::utils::{ResultExt, truncate_at_boundary};
 use std::collections::HashMap;
@@ -27,12 +27,35 @@ const FOLLOWUP_WINDOW_HOURS: i64 = 72;
 /// Server state key prefix for tracking last scan commit per project
 const STATE_KEY_PREFIX: &str = "last_outcome_scan_";
 
-/// Scan all indexed projects for diff outcomes
-pub async fn process_outcome_scanning(pool: &Arc<DatabasePool>) -> Result<usize, String> {
-    let projects = pool
+/// Scan all indexed projects for diff outcomes.
+///
+/// Requires both pools: `code_pool` to discover which projects have been indexed
+/// (codebase_modules lives in the code DB), and `pool` for diff_analyses/outcomes
+/// (which live in the main DB).
+pub async fn process_outcome_scanning(
+    pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+) -> Result<usize, String> {
+    // Two-step project discovery for split-DB mode:
+    // 1. Get indexed project IDs from code DB (has codebase_modules)
+    let project_ids = code_pool
         .interact(|conn| {
-            get_indexed_projects_sync(conn)
-                .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
+            get_indexed_project_ids_sync(conn)
+                .map_err(|e| anyhow::anyhow!("Failed to get indexed project IDs: {}", e))
+        })
+        .await
+        .str_err()?;
+
+    if project_ids.is_empty() {
+        return Ok(0);
+    }
+
+    // 2. Resolve project paths from main DB (has projects table)
+    let ids = project_ids.clone();
+    let projects = pool
+        .interact(move |conn| {
+            get_project_paths_by_ids_sync(conn, &ids)
+                .map_err(|e| anyhow::anyhow!("Failed to get project paths: {}", e))
         })
         .await
         .str_err()?;

@@ -101,22 +101,32 @@ impl FileWatcher {
         // Create the file system watcher
         let mut watcher: RecommendedWatcher = match Watcher::new(
             move |res: Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let change_type = match event.kind {
-                        EventKind::Create(_) => Some(ChangeType::Created),
-                        EventKind::Modify(_) => Some(ChangeType::Modified),
-                        EventKind::Remove(_) => Some(ChangeType::Deleted),
-                        _ => None,
-                    };
+                match res {
+                    Ok(event) => {
+                        let change_type = match event.kind {
+                            EventKind::Create(_) => Some(ChangeType::Created),
+                            EventKind::Modify(_) => Some(ChangeType::Modified),
+                            EventKind::Remove(_) => Some(ChangeType::Deleted),
+                            _ => None,
+                        };
 
-                    if let Some(ct) = change_type {
-                        for path in event.paths {
-                            if Self::should_process_path(&path)
-                                && let Err(e) = tx_clone.blocking_send((path, ct))
-                            {
-                                tracing::debug!("Channel closed, ignoring file change: {}", e);
+                        if let Some(ct) = change_type {
+                            for path in event.paths {
+                                if Self::should_process_path(&path) {
+                                    // Use try_send to avoid blocking the notify callback
+                                    // thread when the channel is full
+                                    if let Err(e) = tx_clone.try_send((path, ct)) {
+                                        tracing::debug!(
+                                            "File change dropped (channel full or closed): {}",
+                                            e
+                                        );
+                                    }
+                                }
                             }
                         }
+                    }
+                    Err(e) => {
+                        tracing::warn!("File watcher notify error: {}", e);
                     }
                 }
             },
@@ -233,18 +243,27 @@ impl FileWatcher {
             return;
         }
 
-        // Remove processed changes
-        {
-            let mut pending = self.pending_changes.write().await;
-            for (path, _) in &ready {
-                pending.remove(path);
+        // Process each change, only removing from pending on success.
+        // Failed changes stay in the map and will be retried next cycle.
+        let mut succeeded = Vec::new();
+        for (path, change_type) in ready {
+            match self.process_file_change(&path, change_type).await {
+                Ok(()) => succeeded.push(path),
+                Err(e) => {
+                    tracing::warn!("Error processing file change {:?}: {}", path, e);
+                    // Re-stamp so it gets retried after another debounce window
+                    let mut pending = self.pending_changes.write().await;
+                    pending
+                        .entry(path)
+                        .and_modify(|(_, ts)| *ts = Instant::now());
+                }
             }
         }
 
-        // Process each change
-        for (path, change_type) in ready {
-            if let Err(e) = self.process_file_change(&path, change_type).await {
-                tracing::warn!("Error processing file change {:?}: {}", path, e);
+        if !succeeded.is_empty() {
+            let mut pending = self.pending_changes.write().await;
+            for path in &succeeded {
+                pending.remove(path);
             }
         }
     }
