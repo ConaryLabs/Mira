@@ -38,7 +38,7 @@ Mira is a Rust MCP server that gives Claude Code long-term memory, deep code und
 curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
 ```
 
-This detects your OS, downloads the binary, installs the Claude Code plugin (which auto-configures all hooks and skills), and creates a config template.
+This detects your OS, downloads the binary, installs the Claude Code plugin (which auto-configures all hooks and skills), and creates the `~/.mira/` config directory.
 
 Then configure providers (optional):
 ```bash

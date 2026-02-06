@@ -253,8 +253,12 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
 
     // Step 6: Summary + write
     println!("\n--- Summary ---");
-    if keys.is_empty() {
+    if keys.is_empty() && existing.is_empty() {
         println!("No providers configured. You can run `mira setup` again later.");
+        return Ok(());
+    }
+    if keys.is_empty() {
+        println!("No new providers configured. Existing configuration unchanged.");
         return Ok(());
     }
 
