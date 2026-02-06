@@ -116,6 +116,10 @@ pub async fn execute_tool_with_findings<C: ToolContext>(
     execute_tool(ctx, tool_call).await
 }
 
+/// Prefix prepended to store_finding results when the finding was actually stored.
+/// Used by council broadcast gating to avoid brittle free-text matching.
+pub(super) const FINDING_STORED_PREFIX: &str = "Finding recorded";
+
 /// Handle the store_finding tool call by writing to the FindingsStore.
 fn execute_store_finding(
     args: &Value,
@@ -151,7 +155,7 @@ fn execute_store_finding(
     };
 
     match store.add(finding) {
-        AddFindingResult::Added { total } => format!("Finding recorded ({} total)", total),
+        AddFindingResult::Added { total } => format!("{} ({} total)", FINDING_STORED_PREFIX, total),
         AddFindingResult::RoleLimitReached { role_count } => format!(
             "Your findings limit reached ({} stored). Focus on your most critical findings only.",
             role_count
@@ -300,42 +304,53 @@ async fn execute_read_file<C: ToolContext>(
     };
 
     match std::fs::read_to_string(&resolved) {
-        Ok(content) => {
-            let lines: Vec<&str> = content.lines().collect();
-            let start = start_line.unwrap_or(1).saturating_sub(1);
-            let mut end = end_line.unwrap_or(lines.len()).min(lines.len());
-
-            // Cap output at 2000 lines max
-            let max_lines = 2000;
-            let mut truncated = false;
-
-            if end - start > max_lines {
-                end = start + max_lines;
-                truncated = true;
-            }
-
-            if start >= lines.len() {
-                return format!(
-                    "Start line {} exceeds file length ({})",
-                    start + 1,
-                    lines.len()
-                );
-            }
-
-            let selected: Vec<String> = lines[start..end]
-                .iter()
-                .enumerate()
-                .map(|(i, line)| format!("{:4} | {}", start + i + 1, line))
-                .collect();
-
-            let mut output = format!("{}:\n{}", file_path, selected.join("\n"));
-            if truncated {
-                output.push_str("\n... (truncated, use start_line/end_line to read more)");
-            }
-            output
-        }
+        Ok(content) => format_file_lines(file_path, &content, start_line, end_line),
         Err(e) => format!("Failed to read {}: {}", file_path, e),
     }
+}
+
+/// Format file content with line numbers and bounds handling.
+/// Extracted for testability — all inputs are untrusted (LLM-generated).
+fn format_file_lines(
+    file_path: &str,
+    content: &str,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let start = start_line.unwrap_or(1).saturating_sub(1);
+    let end = end_line.unwrap_or(lines.len()).min(lines.len());
+
+    if start >= lines.len() {
+        return format!(
+            "Start line {} exceeds file length ({})",
+            start + 1,
+            lines.len()
+        );
+    }
+
+    // Clamp end to at least start (handles end_line < start_line)
+    let end = end.max(start);
+
+    // Cap output at 2000 lines max
+    let max_lines = 2000;
+    let (end, truncated) = if end - start > max_lines {
+        (start + max_lines, true)
+    } else {
+        (end, false)
+    };
+
+    let selected: Vec<String> = lines[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, line)| format!("{:4} | {}", start + i + 1, line))
+        .collect();
+
+    let mut output = format!("{}:\n{}", file_path, selected.join("\n"));
+    if truncated {
+        output.push_str("\n... (truncated, use start_line/end_line to read more)");
+    }
+    output
 }
 
 async fn execute_find_callers<C: ToolContext>(
@@ -541,6 +556,83 @@ mod tests {
         let result = resolve_project_path("file.rs", None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No project context"));
+    }
+
+    // --- store_finding prefix constant test ---
+
+    #[test]
+    fn test_finding_stored_prefix_matches_output() {
+        use super::super::findings::FindingsStore;
+        use std::sync::Arc;
+        use serde_json::json;
+
+        let store = Arc::new(FindingsStore::new());
+        let args = json!({
+            "topic": "test",
+            "content": "some finding",
+            "severity": "high"
+        });
+        let result = super::execute_store_finding(&args, &store, "code_reviewer");
+        assert!(
+            result.starts_with(super::FINDING_STORED_PREFIX),
+            "execute_store_finding output '{}' must start with FINDING_STORED_PREFIX",
+            result
+        );
+    }
+
+    #[test]
+    fn test_finding_stored_prefix_not_on_error() {
+        use super::super::findings::FindingsStore;
+        use std::sync::Arc;
+        use serde_json::json;
+
+        let store = Arc::new(FindingsStore::new());
+        // Missing required fields
+        let args = json!({ "topic": "", "content": "" });
+        let result = super::execute_store_finding(&args, &store, "code_reviewer");
+        assert!(
+            !result.starts_with(super::FINDING_STORED_PREFIX),
+            "Error result '{}' must NOT start with FINDING_STORED_PREFIX",
+            result
+        );
+    }
+
+    // --- read_file line bounds tests ---
+
+    #[test]
+    fn test_format_file_lines_end_before_start_no_panic() {
+        let content = "line1\nline2\nline3\nline4\nline5";
+        // end_line=2, start_line=4 → end < start, should not panic
+        let result = super::format_file_lines("test.rs", content, Some(4), Some(2));
+        // Clamped to empty range — produces header with no lines
+        assert!(result.starts_with("test.rs:\n"));
+        assert!(!result.contains("line"));
+    }
+
+    #[test]
+    fn test_format_file_lines_equal_start_end() {
+        let content = "line1\nline2\nline3";
+        let result = super::format_file_lines("test.rs", content, Some(2), Some(2));
+        // start=1 (0-indexed), end=2 → one line
+        assert!(result.contains("line2"));
+        assert!(!result.contains("line1"));
+        assert!(!result.contains("line3"));
+    }
+
+    #[test]
+    fn test_format_file_lines_start_exceeds_length() {
+        let content = "line1\nline2";
+        let result = super::format_file_lines("test.rs", content, Some(100), None);
+        assert!(result.contains("exceeds file length"));
+    }
+
+    #[test]
+    fn test_format_file_lines_defaults() {
+        let content = "aaa\nbbb\nccc";
+        let result = super::format_file_lines("f.rs", content, None, None);
+        assert!(result.contains("aaa"));
+        assert!(result.contains("bbb"));
+        assert!(result.contains("ccc"));
     }
 
     #[test]
