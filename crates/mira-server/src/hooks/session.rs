@@ -637,14 +637,21 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
     }
 
     if !candidates.is_empty() {
-        // Most specific project path wins; tie-break on team name for determinism
-        candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.team_name.cmp(&b.1.team_name)));
+        // Most specific project path wins; tie-break on team name, then config path
+        candidates.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.team_name.cmp(&b.1.team_name))
+                .then_with(|| a.1.config_path.cmp(&b.1.config_path))
+        });
         return Some(candidates.into_iter().next().unwrap().1);
     }
 
     if !fallback.is_empty() {
-        // Deterministic: sort by team name when no cwd to disambiguate
-        fallback.sort_by(|a, b| a.team_name.cmp(&b.team_name));
+        // Deterministic: sort by team name, then config path for full tie-break
+        fallback.sort_by(|a, b| {
+            a.team_name.cmp(&b.team_name)
+                .then_with(|| a.config_path.cmp(&b.config_path))
+        });
         return Some(fallback.into_iter().next().unwrap());
     }
 
