@@ -114,68 +114,6 @@ setup_config() {
         info "Creating config directory at $config_dir"
         mkdir -p "$config_dir"
     fi
-
-    if [ ! -f "$config_dir/.env" ]; then
-        info "Creating .env template at $config_dir/.env"
-        cat > "$config_dir/.env" << 'EOF'
-# ═══════════════════════════════════════════════════════════════════════════════
-# Mira Environment Configuration
-# ═══════════════════════════════════════════════════════════════════════════════
-# Configuration is loaded once at startup from:
-#   1. ~/.mira/.env (global)
-#   2. .env (project-level, overrides global)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# API Keys
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# DeepSeek - Primary LLM provider for experts and reasoning
-# Get from: https://platform.deepseek.com/api_keys
-DEEPSEEK_API_KEY=sk-your-deepseek-key-here
-
-# OpenAI - Required for semantic search (embeddings via text-embedding-3-small)
-# Get from: https://platform.openai.com/api-keys
-# OPENAI_API_KEY=sk-your-openai-key-here
-
-# Brave Search - Enables web search for expert consultations
-# Get from: https://brave.com/search/api/
-# BRAVE_API_KEY=your-brave-search-key-here
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LLM Provider Configuration
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Override default LLM provider (options: deepseek)
-# DEFAULT_LLM_PROVIDER=deepseek
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# User Identity
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Override user identity for multi-user memory scoping
-# By default, Mira uses git config user.email or system username
-# MIRA_USER_ID=your-unique-id
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Advanced Options
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Disable all LLM features (use heuristic fallbacks only)
-# MIRA_DISABLE_LLM=1
-
-# Override embedding dimensions (default: 1536)
-# MIRA_EMBEDDING_DIMENSIONS=1536
-
-# Override embedding task type (SEMANTIC_SIMILARITY, RETRIEVAL_DOCUMENT, etc.)
-# MIRA_EMBEDDING_TASK_TYPE=RETRIEVAL_DOCUMENT
-
-# Enable fuzzy fallback when embeddings are unavailable (default: true)
-# MIRA_FUZZY_FALLBACK=true
-
-# Override project path detection
-# MIRA_PROJECT_PATH=/path/to/project
-EOF
-    fi
 }
 
 # Configure Claude Code hooks for behavior tracking and proactive features
@@ -384,35 +322,21 @@ main() {
         setup_hooks
     fi
 
-    echo ""
     info "Installation complete!"
     echo ""
     echo "  Next steps:"
     echo ""
-    echo "    1. Add your API keys:"
+    echo "    1. Configure providers (optional):"
+    echo "       mira setup"
     echo ""
-    echo "       Open ~/.mira/.env in your editor and replace the placeholder values."
+    echo "    2. Or just start using Claude Code — Mira works without API keys."
+    echo "       Memory, code intelligence, and goal tracking are ready."
     echo ""
-    echo "       Get keys from:"
-    echo "         DeepSeek: https://platform.deepseek.com/api_keys"
-    echo "         OpenAI:   https://platform.openai.com/api-keys"
-    echo ""
-
     if [ "$plugin_ok" -eq 0 ]; then
-        echo "    2. Hooks and skills were auto-configured by the plugin."
-        echo ""
+        echo "    Plugin installed — hooks and skills auto-configured."
     else
-        echo "    2. Hooks were configured in ~/.claude/settings.json."
-        echo "       To install the plugin later (includes skills):"
-        echo "         claude plugin marketplace add $REPO"
-        echo "         claude plugin install mira@mira"
-        echo ""
+        echo "    Hooks configured in ~/.claude/settings.json."
     fi
-
-    echo "    3. Add Mira instructions to your project:"
-    echo "       See docs/CLAUDE_TEMPLATE.md for the recommended CLAUDE.md layout."
-    echo ""
-    echo "    4. Restart Claude Code (if running) to enable hooks"
     echo ""
     echo "  Verify: mira --version"
     echo ""

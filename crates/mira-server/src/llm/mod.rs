@@ -12,6 +12,7 @@ mod prompt;
 mod provider;
 pub mod sampling;
 mod types;
+mod ollama;
 mod zhipu;
 
 pub use context_budget::{
@@ -25,4 +26,5 @@ pub use pricing::{ModelPricing, chat_with_usage, get_pricing, record_llm_usage};
 pub use prompt::{EXPERT_CODE_TOOLS, EXPERT_WEB_TOOLS, PromptBuilder};
 pub use provider::{LlmClient, NormalizedUsage, Provider};
 pub use types::{ChatResult, FunctionCall, FunctionDef, Message, Tool, ToolCall, Usage};
+pub use ollama::OllamaClient;
 pub use zhipu::ZhipuClient;

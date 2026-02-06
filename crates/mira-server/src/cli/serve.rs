@@ -235,7 +235,7 @@ pub async fn run_mcp_server() -> Result<()> {
             .collect();
         info!("LLM providers available: {}", providers.join(", "));
     } else {
-        info!("No LLM providers configured (set DEEPSEEK_API_KEY or ZHIPU_API_KEY)");
+        info!("No LLM providers configured (set DEEPSEEK_API_KEY, ZHIPU_API_KEY, or OLLAMA_HOST)");
     }
 
     // Spawn background workers with separate pools

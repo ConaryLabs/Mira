@@ -10,6 +10,8 @@ pub struct ApiKeys {
     pub deepseek: Option<String>,
     /// Zhipu API key (ZHIPU_API_KEY) — GLM-4.7 via coding endpoint
     pub zhipu: Option<String>,
+    /// Ollama host URL (OLLAMA_HOST) — local LLM, no API key needed
+    pub ollama: Option<String>,
     /// OpenAI API key (OPENAI_API_KEY) — used for embeddings
     pub openai: Option<String>,
     /// Brave Search API key (BRAVE_API_KEY)
@@ -26,6 +28,7 @@ impl ApiKeys {
             return Self {
                 deepseek: None,
                 zhipu: None,
+                ollama: None,
                 openai: None,
                 brave: Self::read_key("BRAVE_API_KEY"),
             };
@@ -33,12 +36,14 @@ impl ApiKeys {
 
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
         let zhipu = Self::read_key("ZHIPU_API_KEY");
+        let ollama = Self::read_key("OLLAMA_HOST");
         let openai = Self::read_key("OPENAI_API_KEY");
         let brave = Self::read_key("BRAVE_API_KEY");
 
         let keys = Self {
             deepseek,
             zhipu,
+            ollama,
             openai,
             brave,
         };
@@ -65,6 +70,9 @@ impl ApiKeys {
         if self.zhipu.is_some() {
             available.push("Zhipu GLM");
         }
+        if self.ollama.is_some() {
+            available.push("Ollama");
+        }
         if self.openai.is_some() {
             available.push("OpenAI");
         }
@@ -81,7 +89,7 @@ impl ApiKeys {
 
     /// Check if any LLM provider is available
     pub fn has_llm_provider(&self) -> bool {
-        self.deepseek.is_some() || self.zhipu.is_some()
+        self.deepseek.is_some() || self.zhipu.is_some() || self.ollama.is_some()
     }
 
     /// Check if embeddings are available (requires OpenAI key)
@@ -97,6 +105,9 @@ impl ApiKeys {
         }
         if self.zhipu.is_some() {
             providers.push("Zhipu GLM");
+        }
+        if self.ollama.is_some() {
+            providers.push("Ollama");
         }
         if self.openai.is_some() {
             providers.push("OpenAI");
@@ -298,8 +309,9 @@ impl EnvConfig {
 
         // Check for LLM providers
         if !self.api_keys.has_llm_provider() {
-            validation
-                .add_warning("No LLM API keys configured. Set DEEPSEEK_API_KEY or ZHIPU_API_KEY.");
+            validation.add_warning(
+                "No LLM API keys configured. Set DEEPSEEK_API_KEY, ZHIPU_API_KEY, or OLLAMA_HOST.",
+            );
         }
 
         // Check for embeddings
@@ -311,10 +323,10 @@ impl EnvConfig {
 
         // Validate default provider if set
         if let Some(ref provider) = self.default_provider {
-            let valid_providers = ["deepseek", "zhipu"];
+            let valid_providers = ["deepseek", "zhipu", "ollama"];
             if !valid_providers.contains(&provider.to_lowercase().as_str()) {
                 validation.add_warning(format!(
-                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, zhipu",
+                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, zhipu, ollama",
                     provider
                 ));
             }
@@ -363,10 +375,24 @@ mod tests {
     }
 
     #[test]
+    fn test_api_keys_with_ollama() {
+        let keys = ApiKeys {
+            deepseek: None,
+            zhipu: None,
+            ollama: Some("http://localhost:11434".to_string()),
+            openai: None,
+            brave: None,
+        };
+        assert!(keys.has_llm_provider());
+        assert_eq!(keys.summary(), "Ollama");
+    }
+
+    #[test]
     fn test_api_keys_with_values() {
         let keys = ApiKeys {
             deepseek: Some("test-key".to_string()),
             zhipu: None,
+            ollama: None,
             openai: None,
             brave: None,
         };

@@ -14,7 +14,7 @@ use super::{ChatResult, Message, Tool};
 pub enum Provider {
     DeepSeek,
     Zhipu,    // Zhipu GLM-4.7 via coding endpoint
-    Ollama,   // Reserved for local sovereignty - not implemented yet
+    Ollama,   // Local LLM via Ollama
     Sampling, // MCP sampling — forwards to host client (Claude Code)
 }
 

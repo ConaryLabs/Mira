@@ -8,6 +8,7 @@ pub mod clients;
 pub mod debug;
 pub mod index;
 pub mod serve;
+pub mod setup;
 pub mod tool;
 
 // Re-export command handlers
@@ -74,6 +75,13 @@ pub enum Commands {
         /// Project path
         #[arg(short, long)]
         path: Option<PathBuf>,
+    },
+
+    /// Interactive setup wizard for API keys and providers
+    Setup {
+        /// Read-only validation mode: show current config status without modifying
+        #[arg(long)]
+        check: bool,
     },
 }
 

@@ -101,7 +101,7 @@ pub async fn consult_expert<C: ToolContext>(
         if !llm_factory.has_providers() {
             return Err(format!(
                 "Expert consultation ({}) requires an LLM provider. This tool uses AI models \
-                 to reason about code. Set DEEPSEEK_API_KEY or ZHIPU_API_KEY in ~/.mira/.env, \
+                 to reason about code. Set DEEPSEEK_API_KEY, ZHIPU_API_KEY, or OLLAMA_HOST in ~/.mira/.env, \
                  or unset MIRA_DISABLE_LLM to enable expert consultation.",
                 expert.name()
             ));

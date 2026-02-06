@@ -82,27 +82,6 @@ case "$(uname -s)" in
     Darwin*) xattr -d com.apple.quarantine "$MIRA_BIN" 2>/dev/null || true ;;
 esac
 
-# Create ~/.mira/.env with placeholder keys if missing
-if [ ! -f "${MIRA_HOME}/.env" ]; then
-    log "[mira-wrapper] Creating ${MIRA_HOME}/.env with placeholder API keys..."
-    cat > "${MIRA_HOME}/.env" << 'ENVEOF'
-# ============================================
-# MIRA API KEYS - Replace the values below
-# ============================================
-
-# DeepSeek (for expert consultations)
-# Get your key: https://platform.deepseek.com/api_keys
-DEEPSEEK_API_KEY=PASTE_YOUR_DEEPSEEK_KEY_HERE
-
-# OpenAI (for embeddings/semantic search)
-# Get your key: https://platform.openai.com/api-keys
-OPENAI_API_KEY=PASTE_YOUR_OPENAI_KEY_HERE
-
-# Brave Search (optional - enables web search for experts)
-# Get your key: https://brave.com/search/api/
-# BRAVE_API_KEY=PASTE_YOUR_BRAVE_KEY_HERE
-ENVEOF
-fi
-
 log "[mira-wrapper] Installed mira v${MIRA_VERSION} to ${MIRA_BIN}"
+log "[mira-wrapper] To configure providers, run: ${MIRA_BIN} setup"
 exec "$MIRA_BIN" "$@"

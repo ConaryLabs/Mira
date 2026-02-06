@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
         Some(Commands::Index { .. }) => Level::INFO,
         Some(Commands::DebugCarto { .. }) => Level::DEBUG,
         Some(Commands::DebugSession { .. }) => Level::DEBUG,
+        Some(Commands::Setup { .. }) => Level::WARN,
     };
 
     let subscriber = FmtSubscriber::builder()
@@ -94,6 +95,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::DebugSession { path }) => {
             cli::run_debug_session(path).await?;
+        }
+        Some(Commands::Setup { check }) => {
+            cli::setup::run(check).await?;
         }
     }
 
