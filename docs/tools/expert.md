@@ -28,7 +28,7 @@ Expert consultation and configuration. Actions: `consult` (get expert opinions),
 | config_action | String | For configure | `set`, `get`, `delete`, `list`, or `providers` |
 | role | String | Conditional | Expert role for configure (required for `set`/`get`/`delete`) |
 | prompt | String | No | Custom system prompt (for `set`) |
-| provider | String | No | LLM provider (for `set`): `deepseek` or `gemini` |
+| provider | String | No | LLM provider (for `set`): `deepseek` |
 | model | String | No | Custom model name (for `set`) |
 
 ### Available Expert Roles
@@ -64,7 +64,7 @@ Council mode pipeline:
 
 Falls back to parallel independent consultations if council fails.
 
-**MCP Sampling**: Mira implements MCP Sampling support for zero-key expert consultation via the host client, but Claude Code does not currently advertise the sampling capability. This will activate automatically if/when Anthropic enables it. For now, at least one API key (`DEEPSEEK_API_KEY` or `GEMINI_API_KEY`) is required for expert consultation.
+**MCP Sampling**: Mira implements MCP Sampling support for zero-key expert consultation via the host client, but Claude Code does not currently advertise the sampling capability. This will activate automatically if/when Anthropic enables it. For now, `DEEPSEEK_API_KEY` is required for expert consultation.
 
 **Concurrency**: Max 3 concurrent experts, 10-minute per-expert timeout, 15-minute council timeout.
 
@@ -74,7 +74,7 @@ Uses `config_action` sub-parameter:
 
 **`set`** — Configure a role:
 ```json
-{ "action": "configure", "config_action": "set", "role": "architect", "provider": "gemini" }
+{ "action": "configure", "config_action": "set", "role": "architect", "provider": "deepseek" }
 ```
 
 **`get`** — Show configuration:
@@ -99,7 +99,7 @@ Uses `config_action` sub-parameter:
 
 ## Errors
 
-- **No LLM provider**: Set `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` in `~/.mira/.env`
+- **No LLM provider**: Set `DEEPSEEK_API_KEY` in `~/.mira/.env`
 - **Invalid role**: Must be one of the valid role keys
 - **Timeout**: Consultations exceeding 15 minutes are cancelled
 

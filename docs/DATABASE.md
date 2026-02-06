@@ -268,7 +268,7 @@ Custom configuration for expert roles.
 |--------|------|-------------|
 | role | TEXT PK | `architect`, `code_reviewer`, `security`, etc. |
 | prompt | TEXT | Custom system prompt |
-| provider | TEXT | LLM provider: `deepseek`, `openai`, `gemini` |
+| provider | TEXT | LLM provider: `deepseek` |
 | model | TEXT | Custom model name (optional) |
 | updated_at | TEXT | Last modification |
 
@@ -630,7 +630,7 @@ Vector embeddings for semantic memory search.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| embedding | float[1536] | Google gemini-embedding-001 |
+| embedding | float[1536] | OpenAI text-embedding-3-small |
 | fact_id | INTEGER | Reference to memory_facts.id |
 | content | TEXT | Searchable content |
 
@@ -640,7 +640,7 @@ Vector embeddings for semantic code search.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| embedding | float[1536] | Google gemini-embedding-001 |
+| embedding | float[1536] | OpenAI text-embedding-3-small |
 | file_path | TEXT | Source file |
 | chunk_content | TEXT | Code chunk |
 | project_id | INTEGER | Project reference |
@@ -713,7 +713,7 @@ LLM API usage and cost tracking.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
-| provider | TEXT | `deepseek` or `gemini` |
+| provider | TEXT | `deepseek` |
 | model | TEXT | Model name |
 | role | TEXT | Expert role that made the call |
 | prompt_tokens | INTEGER | Input token count |
@@ -732,8 +732,8 @@ Embedding API usage tracking.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
-| provider | TEXT | `google` |
-| model | TEXT | Model name (gemini-embedding-001) |
+| provider | TEXT | `openai` |
+| model | TEXT | Model name (text-embedding-3-small) |
 | tokens | INTEGER | Token count |
 | text_count | INTEGER | Number of texts embedded |
 | cost_estimate | REAL | Estimated cost |

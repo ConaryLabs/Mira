@@ -69,7 +69,6 @@ mira debug-carto     # Debug cartographer module detection
 API keys are in `~/.mira/.env` (optional with MCP Sampling):
 - `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)
 - `OPENAI_API_KEY` - Embeddings (OpenAI text-embedding-3-small)
-- `GEMINI_API_KEY` / `GOOGLE_API_KEY` - Optional LLM provider for experts
 
 Optional: `BRAVE_API_KEY` (web search), `DEFAULT_LLM_PROVIDER`, `MIRA_DISABLE_LLM`, `MIRA_USER_ID`.
 See `.env.example` for all options.

@@ -133,24 +133,19 @@ setup_config() {
 # Get from: https://platform.deepseek.com/api_keys
 DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 
-# Gemini - Required for semantic search (embeddings)
-# Also usable as an LLM provider
-# Get from: https://aistudio.google.com/app/apikey
-GEMINI_API_KEY=your-gemini-key-here
+# OpenAI - Required for semantic search (embeddings via text-embedding-3-small)
+# Get from: https://platform.openai.com/api-keys
+# OPENAI_API_KEY=sk-your-openai-key-here
 
 # Brave Search - Enables web search for expert consultations
 # Get from: https://brave.com/search/api/
 # BRAVE_API_KEY=your-brave-search-key-here
 
-# Alternative to GEMINI_API_KEY (either works)
-# GOOGLE_API_KEY=your-google-key-here
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # LLM Provider Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Override default LLM provider (options: deepseek, gemini)
-# By default, Mira uses DeepSeek if available, then falls back to Gemini
+# Override default LLM provider (options: deepseek)
 # DEFAULT_LLM_PROVIDER=deepseek
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -400,7 +395,7 @@ main() {
     echo ""
     echo "       Get keys from:"
     echo "         DeepSeek: https://platform.deepseek.com/api_keys"
-    echo "         Gemini:   https://aistudio.google.com/app/apikey"
+    echo "         OpenAI:   https://platform.openai.com/api-keys"
     echo ""
 
     if [ "$plugin_ok" -eq 0 ]; then

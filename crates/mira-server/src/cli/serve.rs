@@ -233,7 +233,7 @@ pub async fn run_mcp_server() -> Result<()> {
             .collect();
         info!("LLM providers available: {}", providers.join(", "));
     } else {
-        info!("No LLM providers configured (set DEEPSEEK_API_KEY or GEMINI_API_KEY)");
+        info!("No LLM providers configured (set DEEPSEEK_API_KEY)");
     }
 
     // Spawn background workers with separate pools

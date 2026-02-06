@@ -70,7 +70,7 @@ pub struct ToolCall {
     #[serde(rename = "type")]
     pub call_type: String, // "function"
     pub function: FunctionCall,
-    /// Gemini 3 thought signature - must be preserved and sent back
+    /// Thought signature - must be preserved and sent back
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
 }

@@ -4,7 +4,6 @@
 use crate::config::{ApiKeys, MiraConfig};
 use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
-use crate::llm::gemini::GeminiClient;
 use crate::llm::provider::{LlmClient, Provider};
 use crate::llm::sampling::SamplingClient;
 use crate::tools::core::experts::strategy::ReasoningStrategy;
@@ -22,7 +21,6 @@ pub struct ProviderFactory {
     fallback_order: Vec<Provider>,
     // Store API keys to create custom clients on demand
     deepseek_key: Option<String>,
-    gemini_key: Option<String>,
     // MCP sampling peer — last-resort fallback when no API keys are configured
     sampling_peer: Option<Arc<RwLock<Option<Peer<RoleServer>>>>>,
 }
@@ -66,18 +64,11 @@ impl ProviderFactory {
             );
         }
 
-        // Initialize Gemini client
-        if let Some(ref key) = api_keys.gemini {
-            info!("Gemini client initialized");
-            clients.insert(Provider::Gemini, Arc::new(GeminiClient::new(key.clone())));
-        }
-
         // Log available providers
         let available: Vec<_> = clients.keys().map(|p| p.to_string()).collect();
         info!(providers = ?available, "LLM providers available");
 
-        // Default fallback order: DeepSeek -> Gemini
-        let fallback_order = vec![Provider::DeepSeek, Provider::Gemini];
+        let fallback_order = vec![Provider::DeepSeek];
 
         Self {
             clients,
@@ -85,7 +76,6 @@ impl ProviderFactory {
             background_provider,
             fallback_order,
             deepseek_key: api_keys.deepseek,
-            gemini_key: api_keys.gemini,
             sampling_peer: None,
         }
     }
@@ -138,9 +128,6 @@ impl ProviderFactory {
                 let client_opt: Option<Arc<dyn LlmClient>> = match config.provider {
                     Provider::DeepSeek => self.deepseek_key.as_ref().map(|k| {
                         Arc::new(DeepSeekClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
-                    }),
-                    Provider::Gemini => self.gemini_key.as_ref().map(|k| {
-                        Arc::new(GeminiClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
                     }),
                     _ => None,
                 };
@@ -203,7 +190,7 @@ impl ProviderFactory {
             return Ok(Arc::new(SamplingClient::new(peer.clone())));
         }
 
-        Err("No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.".into())
+        Err("No LLM providers available. Set DEEPSEEK_API_KEY.".into())
     }
 
     /// Get a specific provider client (if available)
@@ -288,9 +275,8 @@ mod tests {
             clients: HashMap::new(),
             default_provider: None,
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
+            fallback_order: vec![Provider::DeepSeek],
             deepseek_key: None,
-            gemini_key: None,
             sampling_peer: None,
         }
     }
@@ -306,14 +292,12 @@ mod tests {
     fn test_empty_factory_is_available_false() {
         let factory = empty_factory();
         assert!(!factory.is_available(Provider::DeepSeek));
-        assert!(!factory.is_available(Provider::Gemini));
     }
 
     #[test]
     fn test_empty_factory_get_provider_none() {
         let factory = empty_factory();
         assert!(factory.get_provider(Provider::DeepSeek).is_none());
-        assert!(factory.get_provider(Provider::Gemini).is_none());
     }
 
     #[test]
@@ -328,9 +312,8 @@ mod tests {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::Gemini],
+            fallback_order: vec![Provider::DeepSeek],
             deepseek_key: None,
-            gemini_key: None,
             sampling_peer: None,
         };
         assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
@@ -339,9 +322,8 @@ mod tests {
     #[test]
     fn test_fallback_order() {
         let factory = empty_factory();
-        assert_eq!(factory.fallback_order.len(), 2);
+        assert_eq!(factory.fallback_order.len(), 1);
         assert_eq!(factory.fallback_order[0], Provider::DeepSeek);
-        assert_eq!(factory.fallback_order[1], Provider::Gemini);
     }
 
     // ========================================================================
@@ -361,7 +343,6 @@ mod tests {
             background_provider: None,
             fallback_order: vec![Provider::DeepSeek],
             deepseek_key: Some(key),
-            gemini_key: None,
             sampling_peer: None,
         }
     }
@@ -435,7 +416,6 @@ mod tests {
             background_provider: None,
             fallback_order: vec![Provider::DeepSeek],
             deepseek_key: None, // No key available
-            gemini_key: None,
             sampling_peer: None,
         };
         let pool = Arc::new(

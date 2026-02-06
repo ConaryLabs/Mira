@@ -40,11 +40,11 @@ crates/
       context/       # Proactive context injection for hooks
       cross_project/ # Privacy-preserving cross-project pattern sharing
       db/            # Database operations, schema, migrations (SQLite)
-      embeddings/    # Embedding queue and Google embedding client
+      embeddings/    # Embedding queue and OpenAI embedding client
       experts/       # Evolutionary expert system (adaptation, collaboration)
       hooks/         # Claude Code lifecycle hooks (session, prompt, tool)
       indexer/       # Code parsing and symbol extraction (tree-sitter)
-      llm/           # LLM provider clients (DeepSeek, Gemini, OpenAI-compat)
+      llm/           # LLM provider clients (DeepSeek, OpenAI)
       mcp/           # MCP protocol server (rmcp-based)
       proactive/     # Proactive intelligence (behavior mining, predictions)
       project_files/ # File discovery and filtering (.miraignore, .gitignore)

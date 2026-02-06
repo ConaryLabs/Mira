@@ -13,6 +13,6 @@ Configuration and shared constants management.
 ## Key Types
 
 - `EnvConfig` - Configuration loaded from environment variables
-- `ApiKeys` - API key management (DeepSeek, Gemini)
+- `ApiKeys` - API key management (DeepSeek, OpenAI)
 - `EmbeddingsConfig` - Embedding generation settings
 - `MiraConfig` - File-based project configuration

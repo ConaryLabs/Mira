@@ -1,10 +1,9 @@
 // crates/mira-server/src/llm/mod.rs
-// LLM inference clients (DeepSeek, Gemini)
+// LLM inference clients (DeepSeek)
 
 mod context_budget;
 mod deepseek;
 mod factory;
-mod gemini;
 mod http_client;
 pub mod logging;
 pub mod openai_compat;
@@ -20,7 +19,6 @@ pub use context_budget::{
 };
 pub use deepseek::DeepSeekClient;
 pub use factory::ProviderFactory;
-pub use gemini::GeminiClient;
 pub use http_client::LlmHttpClient;
 pub use pricing::{ModelPricing, chat_with_usage, get_pricing, record_llm_usage};
 pub use prompt::{EXPERT_CODE_TOOLS, EXPERT_WEB_TOOLS, PromptBuilder};

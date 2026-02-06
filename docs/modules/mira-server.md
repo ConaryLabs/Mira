@@ -29,7 +29,7 @@ The crate follows a modular design with clear separation between protocol handli
 | `http` | HTTP client utilities |
 | `identity` | User and team identity |
 | `indexer` | Code indexing and symbol extraction |
-| `llm` | LLM provider abstraction (DeepSeek, Gemini) |
+| `llm` | LLM provider abstraction (DeepSeek) |
 | `mcp` | MCP protocol server implementation |
 | `mcp_client` | MCP client for accessing host environment tools from experts |
 | `project_files` | Project file discovery and filtering |

@@ -8,8 +8,6 @@ use tracing::{debug, info, warn};
 pub struct ApiKeys {
     /// DeepSeek API key (DEEPSEEK_API_KEY)
     pub deepseek: Option<String>,
-    /// Gemini/Google API key (GEMINI_API_KEY or GOOGLE_API_KEY)
-    pub gemini: Option<String>,
     /// OpenAI API key (OPENAI_API_KEY) — used for embeddings
     pub openai: Option<String>,
     /// Brave Search API key (BRAVE_API_KEY)
@@ -25,20 +23,17 @@ impl ApiKeys {
             info!("MIRA_DISABLE_LLM is set — LLM providers disabled, using fallbacks");
             return Self {
                 deepseek: None,
-                gemini: None,
                 openai: None,
                 brave: Self::read_key("BRAVE_API_KEY"),
             };
         }
 
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
-        let gemini = Self::read_key("GEMINI_API_KEY").or_else(|| Self::read_key("GOOGLE_API_KEY"));
         let openai = Self::read_key("OPENAI_API_KEY");
         let brave = Self::read_key("BRAVE_API_KEY");
 
         let keys = Self {
             deepseek,
-            gemini,
             openai,
             brave,
         };
@@ -62,9 +57,6 @@ impl ApiKeys {
         if self.deepseek.is_some() {
             available.push("DeepSeek");
         }
-        if self.gemini.is_some() {
-            available.push("Gemini");
-        }
         if self.openai.is_some() {
             available.push("OpenAI");
         }
@@ -81,7 +73,7 @@ impl ApiKeys {
 
     /// Check if any LLM provider is available
     pub fn has_llm_provider(&self) -> bool {
-        self.deepseek.is_some() || self.gemini.is_some()
+        self.deepseek.is_some()
     }
 
     /// Check if embeddings are available (requires OpenAI key)
@@ -94,9 +86,6 @@ impl ApiKeys {
         let mut providers = Vec::new();
         if self.deepseek.is_some() {
             providers.push("DeepSeek");
-        }
-        if self.gemini.is_some() {
-            providers.push("Gemini");
         }
         if self.openai.is_some() {
             providers.push("OpenAI");
@@ -286,7 +275,7 @@ impl EnvConfig {
         // Check for LLM providers
         if !self.api_keys.has_llm_provider() {
             validation
-                .add_warning("No LLM API keys configured. Set DEEPSEEK_API_KEY or GEMINI_API_KEY.");
+                .add_warning("No LLM API keys configured. Set DEEPSEEK_API_KEY.");
         }
 
         // Check for embeddings
@@ -298,10 +287,10 @@ impl EnvConfig {
 
         // Validate default provider if set
         if let Some(ref provider) = self.default_provider {
-            let valid_providers = ["deepseek", "gemini"];
+            let valid_providers = ["deepseek"];
             if !valid_providers.contains(&provider.to_lowercase().as_str()) {
                 validation.add_warning(format!(
-                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, gemini",
+                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek",
                     provider
                 ));
             }
@@ -353,7 +342,6 @@ mod tests {
     fn test_api_keys_with_values() {
         let keys = ApiKeys {
             deepseek: Some("test-key".to_string()),
-            gemini: None,
             openai: None,
             brave: None,
         };

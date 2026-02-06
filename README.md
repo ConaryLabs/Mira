@@ -18,7 +18,7 @@ Mira is a Rust MCP server that gives Claude Code long-term memory, deep code und
 
 **Builds intelligence in the background.** A background engine continuously generates module summaries, detects capabilities, summarizes git changes since your last session, scores tech debt, and surfaces insights — all without you asking.
 
-**Provides expert second opinions.** On-demand consultation from specialized AI reviewers (architect, security, code reviewer, scope analyst, plan reviewer) that have full access to search your codebase before answering. Powered by DeepSeek Reasoner and Gemini. Mira also implements MCP Sampling support, which would allow expert consultation without API keys by routing through the host client — but Claude Code doesn't advertise the sampling capability yet, so this will activate automatically if/when Anthropic enables it.
+**Provides expert second opinions.** On-demand consultation from specialized AI reviewers (architect, security, code reviewer, scope analyst, plan reviewer) that have full access to search your codebase before answering. Powered by DeepSeek Reasoner. Mira also implements MCP Sampling support, which would allow expert consultation without API keys by routing through the host client — but Claude Code doesn't advertise the sampling capability yet, so this will activate automatically if/when Anthropic enables it.
 
 **Tracks goals across sessions.** Weighted milestones that persist across conversations, so multi-session work doesn't lose its thread.
 
@@ -37,10 +37,10 @@ This detects your OS, downloads the binary, installs the Claude Code plugin (whi
 Then add your API keys to `~/.mira/.env`:
 ```bash
 DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
-GEMINI_API_KEY=your-key-here    # https://aistudio.google.com/app/apikey
+OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys
 ```
 
-> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without them. Search falls back to fuzzy/keyword matching and analysis uses heuristic parsers. Expert consultation requires at least one LLM key (DeepSeek or Gemini). Keys unlock dedicated providers for faster, higher-quality results across all features.
+> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without them. Search falls back to fuzzy/keyword matching and analysis uses heuristic parsers. Expert consultation requires a DeepSeek key. OpenAI key enables semantic search via embeddings.
 
 ### Manual Install
 
@@ -160,7 +160,7 @@ The **MCP server** (cargo install / build from source) provides the core tools. 
 ```
 Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
                                   |
-                                  +--->  Google (embeddings)
+                                  +--->  OpenAI (embeddings)
                                   +--->  DeepSeek (intelligence)
 ```
 
@@ -182,7 +182,7 @@ All data stored locally in `~/.mira/`. No cloud storage, no external databases. 
 
 ### Semantic search not working
 
-Ensure `GEMINI_API_KEY` is set in `~/.mira/.env`. Gemini provides the embeddings for semantic search.
+Ensure `OPENAI_API_KEY` is set in `~/.mira/.env`. OpenAI provides the embeddings for semantic search.
 
 ### MCP connection issues
 

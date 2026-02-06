@@ -55,7 +55,7 @@ session(action="tasks", tasks_action="cancel", task_id="abc123")  # Cancel task
 expert(action="consult", roles=["architect"], context="...", question="...")
 expert(action="consult", roles=["code_reviewer", "security"], context="...")
 expert(action="configure", config_action="list")
-expert(action="configure", config_action="set", role="architect", provider="gemini")
+expert(action="configure", config_action="set", role="architect", provider="deepseek")
 expert(action="configure", config_action="get", role="architect")
 expert(action="configure", config_action="delete", role="architect")
 expert(action="configure", config_action="providers")

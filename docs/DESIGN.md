@@ -92,8 +92,8 @@ Key components:
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
-| LLM Factory | `llm/factory.rs` | DeepSeek, Gemini providers |
-| Embeddings | `embeddings/mod.rs` | Embedding queue and Google client (gemini-embedding-001) |
+| LLM Factory | `llm/factory.rs` | DeepSeek provider |
+| Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small) |
 | MCP Sampling | `llm/sampling.rs` | Expert consultation via host client (awaiting Claude Code support) |
 | Elicitation | `elicitation.rs` | Interactive API key setup flow |
 | Async Tasks | `tools/core/tasks.rs` | Background task management |
@@ -194,17 +194,16 @@ during indexing.
 
 ### What We Chose
 
-Mira's intelligence features use a **Provider Factory** that supports DeepSeek
-and Gemini, with a **Reasoning Strategy** layer that manages how models are
-paired for expert consultations.
+Mira's intelligence features use a **Provider Factory** that supports DeepSeek,
+with a **Reasoning Strategy** layer that manages how models are paired for
+expert consultations.
 
-### Why Multi-Provider
+### Why This Architecture
 
 **1) Different tasks benefit from different models**
 - Extended reasoning tasks (architects, security) → DeepSeek Reasoner (synthesis)
 - Tool-calling loops (agentic exploration) → DeepSeek Chat
-- Cost-sensitive tasks → Gemini
-- Embeddings → Google gemini-embedding-001
+- Embeddings → OpenAI text-embedding-3-small
 
 **2) Decoupled Reasoning Strategy**
 - **Single mode**: One model handles both tool loops and synthesis
@@ -212,9 +211,8 @@ paired for expert consultations.
 - The split prevents OOM from unbounded `reasoning_content` accumulation during long agentic loops
 - Factory auto-detects when to use Decoupled mode (DeepSeek Reasoner as primary)
 
-**3) Resilience and choice**
-- No single-provider lock-in
-- If one provider is down, switch to another
+**3) Resilience and extensibility**
+- Trait-based abstraction allows adding new providers
 - Users can optimize for cost, speed, or quality
 
 **4) Tool access across providers**
@@ -225,7 +223,7 @@ paired for expert consultations.
 
 Via tool:
 ```
-expert(action="configure", config_action="set", role="architect", provider="gemini")
+expert(action="configure", config_action="set", role="architect", provider="deepseek")
 expert(action="configure", config_action="providers")  # List available providers
 ```
 
@@ -244,7 +242,7 @@ rather than failing:
 - **Diff analysis** falls back to heuristic parsing (regex-based function detection, security keyword scanning)
 - **Module summaries** fall back to metadata extraction (file counts, language distribution, symbol names)
 - **Pondering/insights** fall back to tool history analysis (usage distribution, friction detection)
-- **Expert consultation** requires at least one LLM key (MCP Sampling support is implemented but Claude Code doesn't advertise the capability yet)
+- **Expert consultation** requires an LLM key (MCP Sampling support is implemented but Claude Code doesn't advertise the capability yet)
 
 Heuristic results are prefixed with `[heuristic]` and cached separately, so LLM re-analysis
 can upgrade them when a provider becomes available.
@@ -409,7 +407,7 @@ The schema is "product-shaped," not purely technical:
 
 ### Embeddings and Search
 
-Embeddings are optional (Google gemini-embedding-001). Semantic search happens
+Embeddings are optional (OpenAI text-embedding-3-small). Semantic search happens
 in two areas:
 1. **Memory recall** - `vec_memory` queried with cosine distance
 2. **Code search** - Hybrid semantic + keyword search via `vec_code` and `code_fts`
@@ -495,7 +493,7 @@ Managed via `cross_project` tool with `enable_sharing`, `sync`, and `get_stats` 
 
 ### API Keys
 
-Keys read from environment variables (`DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, etc.)
+Keys read from environment variables (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, etc.)
 and `.env` files (global `~/.mira/.env` and project-local).
 
 ### Attack Surface
@@ -520,7 +518,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
 | Storage | SQLite local files | Horizontal scaling |
-| Intelligence | DeepSeek + Gemini | Requires at least one API key |
+| Intelligence | DeepSeek | Requires at least one API key |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |
 | Data | Local-first | Built-in sync |

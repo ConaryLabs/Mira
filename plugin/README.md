@@ -27,7 +27,7 @@ After the first launch, add your API keys to `~/.mira/.env`:
 
 ```bash
 DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
-GEMINI_API_KEY=your-key-here    # https://aistudio.google.com/app/apikey
+OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys
 ```
 
 > **No API keys?** Expert consultation works without keys via MCP Sampling (uses the host client). All other tools work with heuristic fallbacks.

@@ -13,24 +13,20 @@ Mira uses environment variables for API keys and configuration. These can be set
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, capabilities, documentation (default provider) |
-| `GEMINI_API_KEY` | Recommended | For embeddings (semantic search) and as alternative expert provider |
-| `GOOGLE_API_KEY` | Optional | Alternative to `GEMINI_API_KEY` (used as fallback if `GEMINI_API_KEY` is not set) |
+| `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |
 | `BRAVE_API_KEY` | Optional | Enables web search for expert consultations |
-| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `gemini` |
+| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` |
 | `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |
 
-*API keys are optional for core features. Mira's memory, code intelligence, and goal tracking work without any keys. Diff analysis, module summaries, and background insights use heuristic fallbacks (pattern-based parsing, metadata extraction, tool history analysis). Expert consultation requires at least one LLM key (`DEEPSEEK_API_KEY` or `GEMINI_API_KEY`). Semantic search requires `GEMINI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it.*
+*API keys are optional for core features. Mira's memory, code intelligence, and goal tracking work without any keys. Diff analysis, module summaries, and background insights use heuristic fallbacks (pattern-based parsing, metadata extraction, tool history analysis). Expert consultation requires `DEEPSEEK_API_KEY`. Semantic search requires `OPENAI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it.*
 
 ### Embeddings Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MIRA_EMBEDDING_DIMENSIONS` | Output dimensions for Google embeddings | 1536 |
-| `MIRA_EMBEDDING_TASK_TYPE` | Task type for embeddings (see below) | `SEMANTIC_SIMILARITY` |
-
-**Embedding Task Types:** `SEMANTIC_SIMILARITY` (default), `RETRIEVAL_DOCUMENT`, `RETRIEVAL_QUERY`, `CODE_RETRIEVAL_QUERY`, `CLASSIFICATION`, `CLUSTERING`, `QUESTION_ANSWERING`, `FACT_VERIFICATION`
+| `MIRA_EMBEDDING_DIMENSIONS` | Output dimensions for OpenAI embeddings | 1536 |
 
 ### Environment File Loading
 
@@ -88,7 +84,7 @@ Configure Mira as an MCP server in `.mcp.json`:
       "args": ["serve"],
       "env": {
         "DEEPSEEK_API_KEY": "sk-...",
-        "GEMINI_API_KEY": "..."
+        "OPENAI_API_KEY": "sk-..."
       }
     }
   }
@@ -253,8 +249,8 @@ expert(
   action="configure",
   config_action="set",
   role="architect",
-  provider="gemini",
-  model="gemini-2.5-pro"
+  provider="deepseek",
+  model="deepseek-reasoner"
 )
 ```
 
@@ -283,7 +279,6 @@ expert(action="configure", config_action="delete", role="architect")
 | Provider | Default Model | Best For |
 |----------|---------------|----------|
 | `deepseek` | `deepseek-reasoner` | Extended reasoning, multi-step analysis |
-| `gemini` | `gemini-3-pro-preview` | Cost-effective, good reasoning |
 
 Use `expert(action="configure", config_action="providers")` to see available providers and their configured models.
 
@@ -324,7 +319,6 @@ background_provider = "deepseek"
 | Provider | Config Value | API Key Env Var | Default Model |
 |----------|--------------|-----------------|---------------|
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
-| Gemini | `gemini` | `GEMINI_API_KEY` | `gemini-3-pro-preview` |
 
 If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available.
 
@@ -378,7 +372,7 @@ export DEEPSEEK_API_KEY="sk-..."
 ```bash
 # ~/.mira/.env
 DEEPSEEK_API_KEY=sk-...
-GEMINI_API_KEY=...
+OPENAI_API_KEY=sk-...
 
 # Hooks are auto-configured by installer
 # Configure experts per project as needed

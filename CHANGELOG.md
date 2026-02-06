@@ -30,7 +30,7 @@ Pivoted from web chat to Claude Code integration.
 - **HTTP/SSE transport** - Remote access via streaming
 - **Daemon consolidation** - Merged mira, mira-chat, and daemon into single binary
 - **Code intelligence hooks** - PreToolUse context injection
-- **LLM migration** - GPT 5.1 to Gemini 3 Pro
+- **LLM migration** - GPT 5.1 to DeepSeek Reasoner
 
 ### Era 5: Restructuring (November 2025)
 Architecture overhaul and codebase cleanup.
@@ -125,7 +125,7 @@ Where it all began - a personal AI assistant with memory.
 ## [0.5.0] - 2026-02-03
 
 ### Added
-- **MCP Sampling** — Zero-key expert consultation via host client. Experts now use the MCP sampling protocol to consult through the host LLM, eliminating the need for `DEEPSEEK_API_KEY` or `GEMINI_API_KEY` for expert consultations.
+- **MCP Sampling** — Zero-key expert consultation via host client. Experts now use the MCP sampling protocol to consult through the host LLM, eliminating the need for `DEEPSEEK_API_KEY` for expert consultations.
 - **MCP Elicitation** — Interactive API key setup flow. On first run, Mira walks users through configuring API keys via the MCP elicitation protocol instead of requiring manual `.env` file editing.
 - **MCP Tasks** — Async long-running operations (SEP-1686). Tools like `index(action="project")` and `index(action="health")` now run in the background with progress tracking via `tasks(action="list|get|cancel")`.
 - **MCP outputSchema** — Structured JSON responses for all 11 tools. Every tool now returns typed, parseable JSON instead of free-form text, enabling programmatic consumption of results.
@@ -152,7 +152,7 @@ Where it all began - a personal AI assistant with memory.
 - **`MIRA_DISABLE_LLM` environment variable** - Explicitly disable all LLM calls to force heuristic fallbacks across the board.
 
 ### Changed
-- **Code chunks decoupled from embeddings** - Code search indexing no longer requires embeddings. Chunks are stored and searchable via keyword/fuzzy search even without `GEMINI_API_KEY`.
+- **Code chunks decoupled from embeddings** - Code search indexing no longer requires embeddings. Chunks are stored and searchable via keyword/fuzzy search even without `OPENAI_API_KEY`.
 - **Keyword search stays fresh without embeddings** - FTS results no longer go stale when the embedding pipeline is unavailable.
 - **Expert consultation error improved** - Clear error message with setup instructions when no LLM provider is configured, instead of a generic failure.
 - **Documentation updated** - All tool docs, CONFIGURATION, DESIGN, README, and background module docs updated to reflect graceful degradation behavior.
@@ -327,7 +327,7 @@ Where it all began - a personal AI assistant with memory.
 - Improved semantic code search with CODE_RETRIEVAL_QUERY task type
 
 ### Removed
-- GLM/ZhipuAI provider (simplified to DeepSeek + Gemini only)
+- GLM/ZhipuAI provider (simplified to DeepSeek + OpenAI only)
 - Legacy Database struct (fully migrated to DatabasePool)
 
 ### Fixed

@@ -27,4 +27,4 @@ The `LlmFactory` creates two separate DeepSeek clients when the primary model is
 
 This split is managed by `ReasoningStrategy::Decoupled` in `tools/core/experts/strategy.rs`. It prevents OOM from unbounded `reasoning_content` accumulation during long multi-turn tool loops, where the reasoner model would append internal chain-of-thought to every response.
 
-When no reasoner model is detected (e.g., using Gemini), a `ReasoningStrategy::Single` is used instead.
+When no reasoner model is detected, a `ReasoningStrategy::Single` is used instead.

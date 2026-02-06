@@ -1,9 +1,9 @@
 // crates/mira-server/src/llm/context_budget.rs
-// Token budget management for non-stateful providers (DeepSeek, Gemini)
+// Token budget management for non-stateful providers (DeepSeek)
 
 use crate::llm::Message;
 
-/// Token budget for non-stateful providers (DeepSeek, Gemini)
+/// Token budget for non-stateful providers (DeepSeek)
 /// DeepSeek limit: 131072, we use 110000 as safe margin
 pub const CONTEXT_BUDGET: u64 = 110_000;
 

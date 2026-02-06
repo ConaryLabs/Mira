@@ -39,7 +39,7 @@ pub async fn configure_expert<C: ToolContext>(
             let parsed_provider = if let Some(ref p) = provider {
                 Some(Provider::from_str(p).ok_or_else(|| {
                     format!(
-                        "Invalid provider '{}'. Valid providers: deepseek, gemini",
+                        "Invalid provider '{}'. Valid providers: deepseek",
                         p
                     )
                 })?)
@@ -188,7 +188,7 @@ pub async fn configure_expert<C: ToolContext>(
 
             if available.is_empty() {
                 Ok(
-                    "No LLM providers available. Set DEEPSEEK_API_KEY or GEMINI_API_KEY."
+                    "No LLM providers available. Set DEEPSEEK_API_KEY."
                         .to_string(),
                 )
             } else {

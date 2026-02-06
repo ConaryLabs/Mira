@@ -10,7 +10,7 @@ expert(action="consult", roles=["code_reviewer", "security"], context="...")  # 
 Configure experts with:
 ```
 expert(action="configure", config_action="list")
-expert(action="configure", config_action="set", role="architect", provider="gemini", model="gemini-3-pro")
+expert(action="configure", config_action="set", role="architect", provider="deepseek", model="deepseek-reasoner")
 ```
 
 ## Available Roles

@@ -104,7 +104,7 @@ This allows tracing execution paths and understanding dependencies without readi
 
 ### Semantic Search
 
-Code chunks and memories are embedded into vector space using Google's gemini-embedding-001 model. This enables **semantic search** — finding code by meaning rather than exact keywords.
+Code chunks and memories are embedded into vector space using OpenAI's text-embedding-3-small model. This enables **semantic search** — finding code by meaning rather than exact keywords.
 
 ```
 "authentication middleware" → finds auth-related code
@@ -178,7 +178,6 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 Experts can be backed by different LLM providers via `expert(action="configure")` or `~/.mira/config.toml`:
 - **MCP Sampling** — Implemented but awaiting Claude Code support; will route through the host client when enabled
 - **DeepSeek** (default with key) — Optimized for extended reasoning
-- **Gemini** — Google's models, cost-effective for simpler tasks
 
 Each expert role can use a different provider based on the task requirements.
 

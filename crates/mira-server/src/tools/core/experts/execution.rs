@@ -8,7 +8,7 @@ use super::role::ExpertRole;
 use super::tools::{build_expert_toolset, execute_tool};
 use super::ToolContext;
 use crate::llm::{
-    DeepSeekClient, GeminiClient, LlmClient, Message, Provider, ToolCall, record_llm_usage,
+    DeepSeekClient, LlmClient, Message, Provider, ToolCall, record_llm_usage,
 };
 use crate::utils::ResultExt;
 use async_trait::async_trait;
@@ -102,7 +102,7 @@ pub async fn consult_expert<C: ToolContext>(
         if !llm_factory.has_providers() {
             return Err(format!(
                 "Expert consultation ({}) requires an LLM provider. This tool uses AI models \
-                 to reason about code. Set DEEPSEEK_API_KEY or GEMINI_API_KEY in ~/.mira/.env, \
+                 to reason about code. Set DEEPSEEK_API_KEY in ~/.mira/.env, \
                  or unset MIRA_DISABLE_LLM to enable expert consultation.",
                 expert.name()
             ));
@@ -177,7 +177,7 @@ pub async fn consult_expert<C: ToolContext>(
 
 /// Single-shot expert consultation via MCP sampling (no tools, no agentic loop).
 ///
-/// Used as a zero-key fallback when no DeepSeek/Gemini API keys are configured.
+/// Used as a zero-key fallback when no DeepSeek API keys are configured.
 /// The MCP host (Claude Code) handles the actual LLM call.
 async fn consult_expert_via_sampling<C: ToolContext>(
     ctx: &C,
@@ -375,7 +375,6 @@ async fn try_elicit_api_key<C: ToolContext>(ctx: &C) -> Option<Arc<dyn LlmClient
             key.clone(),
             "deepseek-chat".into(),
         )),
-        Provider::Gemini => Arc::new(GeminiClient::new(key.clone())),
         _ => return None,
     };
 

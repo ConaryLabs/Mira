@@ -488,7 +488,7 @@ impl McpClientManager {
                             .to_string();
 
                         // Convert MCP tool input_schema (Arc<JsonObject>) to our Tool format.
-                        // Strip $schema — Gemini's function calling API rejects unknown fields.
+                        // Strip $schema — some providers reject unknown fields.
                         let mut parameters = serde_json::to_value(mcp_tool.input_schema.as_ref())
                             .unwrap_or(json!({"type": "object", "properties": {}}));
                         if let Some(obj) = parameters.as_object_mut() {
@@ -733,7 +733,7 @@ mod tests {
     }
 
     // ========================================================================
-    // $schema stripping (Gemini compatibility)
+    // $schema stripping (provider compatibility)
     // ========================================================================
 
     /// Helper that mirrors the inline $schema stripping logic from get_all_tools

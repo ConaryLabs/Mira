@@ -4,8 +4,6 @@
 // Pricing last updated: 2026-01-26
 // Sources:
 // - DeepSeek: https://api-docs.deepseek.com/quick_start/pricing
-// - Gemini: https://ai.google.dev/gemini-api/docs/pricing
-// - Z.AI (GLM): https://docs.z.ai/guides/overview/pricing
 
 use super::provider::LlmClient;
 use super::types::Message;
@@ -71,7 +69,6 @@ impl ModelPricing {
 pub fn get_pricing(provider: Provider, model: &str) -> Option<ModelPricing> {
     match provider {
         Provider::DeepSeek => get_deepseek_pricing(model),
-        Provider::Gemini => get_gemini_pricing(model),
         Provider::Ollama => Some(ModelPricing::new(0.0, 0.0)), // Local, no cost
         Provider::Sampling => Some(ModelPricing::new(0.0, 0.0)), // Host-provided, no direct cost
     }
@@ -84,18 +81,6 @@ fn get_deepseek_pricing(model: &str) -> Option<ModelPricing> {
         "deepseek-reasoner" | "deepseek-chat" => Some(ModelPricing::with_cache(0.28, 0.42, 0.028)),
         // Default for unknown DeepSeek models
         _ if model.starts_with("deepseek") => Some(ModelPricing::with_cache(0.28, 0.42, 0.028)),
-        _ => None,
-    }
-}
-
-/// Gemini pricing (as of 2026-01-26)
-fn get_gemini_pricing(model: &str) -> Option<ModelPricing> {
-    match model {
-        // Gemini 3 Pro: $2.00/$12.00 (standard context <=200K)
-        // Long context pricing ($4/$18) not tracked separately yet
-        "gemini-3-pro-preview" | "gemini-3-pro" => Some(ModelPricing::new(2.00, 12.00)),
-        // Gemini 3 Flash: $0.50/$3.00
-        "gemini-3-flash" | "gemini-3-flash-preview" => Some(ModelPricing::new(0.50, 3.00)),
         _ => None,
     }
 }
@@ -192,24 +177,6 @@ mod tests {
         let cost = pricing.calculate_cost(1_000_000, 1_000_000, Some(500_000));
         // $0.014 (500K cached) + $0.14 (500K miss) + $0.42 (output) = $0.574
         assert!((cost - 0.574).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_gemini_pricing() {
-        let pricing = get_pricing(Provider::Gemini, "gemini-3-pro-preview").unwrap();
-
-        // 1M tokens each direction
-        let cost = pricing.calculate_cost(1_000_000, 1_000_000, None);
-        assert!((cost - 14.0).abs() < 0.01); // $2 input + $12 output
-    }
-
-    #[test]
-    fn test_gemini_flash_pricing() {
-        let pricing = get_pricing(Provider::Gemini, "gemini-3-flash").unwrap();
-
-        // 1M tokens each direction
-        let cost = pricing.calculate_cost(1_000_000, 1_000_000, None);
-        assert!((cost - 3.50).abs() < 0.01); // $0.50 input + $3.00 output
     }
 
     #[test]

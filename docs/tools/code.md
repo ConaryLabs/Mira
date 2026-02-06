@@ -117,7 +117,7 @@ Analyzes git changes for change types, impact, and risk. Uses LLM-powered analys
 
 ## Dependencies
 
-- **Embeddings** (`GEMINI_API_KEY`) — Required for semantic search; without them Mira uses keyword + fuzzy fallback
+- **Embeddings** (`OPENAI_API_KEY`) — Required for semantic search; without them Mira uses keyword + fuzzy fallback
 - **Code index** — Run `index(action="project")` first for FTS5 and symbol data
 - **Cartographer** — Module tree for scope narrowing (populated by background workers)
 
