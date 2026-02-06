@@ -327,12 +327,14 @@ pub async fn remember<C: ToolContext>(
                     .await;
                 if let Err(e) = result {
                     tracing::warn!("Failed to store embedding: {}", e);
-                    // Clean up stale vec_memory entry so recall doesn't return stale content
+                    // Clean up stale vec_memory and reset has_embedding so background
+                    // scanner (find_facts_without_embeddings_sync) will retry
                     let pool_cleanup = ctx.pool().clone();
                     tokio::spawn(async move {
                         let _ = pool_cleanup
                             .run(move |conn| {
-                                conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])
+                                conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])?;
+                                conn.execute("UPDATE memory_facts SET has_embedding = 0 WHERE id = ?", [id])
                             })
                             .await;
                     });
@@ -340,12 +342,14 @@ pub async fn remember<C: ToolContext>(
             }
             Err(e) => {
                 tracing::warn!("Failed to generate embedding: {}", e);
-                // Clean up stale vec_memory entry (may exist from a previous version of this fact)
+                // Clean up stale vec_memory and reset has_embedding so background
+                // scanner (find_facts_without_embeddings_sync) will retry
                 let pool_cleanup = ctx.pool().clone();
                 tokio::spawn(async move {
                     let _ = pool_cleanup
                         .run(move |conn| {
-                            conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])
+                            conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])?;
+                            conn.execute("UPDATE memory_facts SET has_embedding = 0 WHERE id = ?", [id])
                         })
                         .await;
                 });
