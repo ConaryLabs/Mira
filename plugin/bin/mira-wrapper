@@ -94,9 +94,9 @@ if [ ! -f "${MIRA_HOME}/.env" ]; then
 # Get your key: https://platform.deepseek.com/api_keys
 DEEPSEEK_API_KEY=PASTE_YOUR_DEEPSEEK_KEY_HERE
 
-# Google Gemini (for embeddings/semantic search)
-# Get your key: https://aistudio.google.com/app/apikey
-GEMINI_API_KEY=PASTE_YOUR_GEMINI_KEY_HERE
+# OpenAI (for embeddings/semantic search)
+# Get your key: https://platform.openai.com/api-keys
+OPENAI_API_KEY=PASTE_YOUR_OPENAI_KEY_HERE
 
 # Brave Search (optional - enables web search for experts)
 # Get your key: https://brave.com/search/api/
