@@ -112,6 +112,7 @@ pub fn analyze_module_dependencies(
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .map_err(|e| format!("Failed to store circular dep finding: {}", e))?;

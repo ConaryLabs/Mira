@@ -340,6 +340,7 @@ async fn persist_session<C: ToolContext>(
                         user_id: None,
                         scope: "project",
                         branch: None,
+                        team_id: None,
                     },
                 );
             }

@@ -129,6 +129,60 @@ pub async fn run() -> Result<()> {
             .await;
     }
 
+    // Track file ownership for team intelligence
+    if let Some(membership) = crate::hooks::session::read_team_membership() {
+        let pool_clone = pool.clone();
+        let sid = post_input.session_id.clone();
+        let member = membership.member_name.clone();
+        let fp = file_path.clone();
+        let tool = post_input.tool_name.clone();
+        let team_id = membership.team_id;
+        let result = pool_clone
+            .interact(move |conn| {
+                crate::db::record_file_ownership_sync(
+                    conn, team_id, &sid, &member, &fp, &tool,
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await;
+
+        if let Err(e) = result {
+            eprintln!("[mira] File ownership tracking failed: {}", e);
+        }
+
+        // Check for conflicts with other teammates
+        let pool_clone = pool.clone();
+        let sid = post_input.session_id.clone();
+        let tid = membership.team_id;
+        let conflicts: Vec<crate::db::FileConflict> = pool_clone
+            .interact(move |conn| {
+                Ok::<_, anyhow::Error>(crate::db::get_file_conflicts_sync(conn, tid, &sid))
+            })
+            .await
+            .unwrap_or_default();
+
+        if !conflicts.is_empty() {
+            let warnings: Vec<String> = conflicts
+                .iter()
+                .take(3)
+                .map(|c| {
+                    format!(
+                        "⚠ {} also edited {} ({})",
+                        c.other_member_name, c.file_path, c.operation
+                    )
+                })
+                .collect();
+            context_parts.push(format!(
+                "[Team] File conflict warning:\n{}",
+                warnings.join("\n")
+            ));
+            eprintln!(
+                "[mira] {} file conflict(s) detected with teammates",
+                conflicts.len()
+            );
+        }
+    }
+
     // Check for related test files
     let test_hint = find_related_tests(&file_path);
     if let Some(hint) = test_hint {

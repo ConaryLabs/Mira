@@ -17,6 +17,7 @@ mod index;
 mod memory;
 mod project;
 mod session;
+pub mod team;
 mod tasks;
 
 // Re-export all domain types (preserves existing import paths)
@@ -30,6 +31,7 @@ pub use index::*;
 pub use memory::*;
 pub use project::*;
 pub use session::*;
+pub use team::*;
 pub use tasks::*;
 
 use rmcp::ErrorData;
@@ -143,6 +145,7 @@ mod tests {
         );
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
         assert!(schema_for_output::<ReplyOutput>().is_ok(), "ReplyOutput");
+        assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");
         assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");
     }
 }

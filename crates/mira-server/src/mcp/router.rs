@@ -178,6 +178,18 @@ impl MiraServer {
     }
 
     #[tool(
+        description = "Team intelligence for Claude Code Agent Teams. Actions: status (active members, files, conflicts), review (teammate's modified files). Requires an active Agent Teams session.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::TeamOutput>()
+            .expect("TeamOutput schema")
+    )]
+    async fn team(
+        &self,
+        Parameters(req): Parameters<TeamRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_team(self, req).await)
+    }
+
+    #[tool(
         description = "Manage code review findings, bugs, and learned quality patterns. Actions: list, get, review (single or bulk), stats, patterns (learned corrections), extract (derive patterns from accepted findings). Filter by status, expert role, file path, or correction type.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::FindingOutput>()
             .expect("FindingOutput schema")

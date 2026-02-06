@@ -266,13 +266,26 @@ pub async fn remember<C: ToolContext>(
         ));
     }
 
-    // Personal and team scopes require user identity for access control
-    if matches!(scope.as_str(), "personal" | "team") && user_id.is_none() {
-        return Err(format!(
-            "Cannot create {} memory: user identity not available",
-            scope
-        ));
+    // Personal scope requires user identity for access control
+    if scope == "personal" && user_id.is_none() {
+        return Err("Cannot create personal memory: user identity not available".to_string());
     }
+
+    // Team scope: strict enforcement — must be in an active team
+    let team_id: Option<i64> = if scope == "team" {
+        let membership = ctx.get_team_membership();
+        match membership {
+            Some(m) => Some(m.team_id),
+            None => {
+                return Err(
+                    "Cannot use scope='team': not in an active team. Use scope='project' instead."
+                        .to_string(),
+                );
+            }
+        }
+    } else {
+        None
+    };
 
     // Get current branch for branch-aware memory
     let branch = ctx.get_branch().await;
@@ -294,6 +307,7 @@ pub async fn remember<C: ToolContext>(
                 user_id: user_id.as_deref(),
                 scope: &scope,
                 branch: branch.as_deref(),
+                team_id,
             };
             store_memory_sync(conn, params)
         })
@@ -392,6 +406,9 @@ pub async fn recall<C: ToolContext>(
     let context_header = pi.header;
     let has_filters = category.is_some() || fact_type.is_some();
 
+    // Get team_id if in a team (for team-scoped memory visibility)
+    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
+
     // Over-fetch when filters are set since some results will be filtered out
     let limit = limit.unwrap_or(10) as usize;
     let fetch_limit = if has_filters { limit * 3 } else { limit };
@@ -414,8 +431,8 @@ pub async fn recall<C: ToolContext>(
         let branch_for_query = current_branch.clone();
         let entity_names_for_query = query_entity_names.clone();
 
-        // Run vector search via connection pool with branch + entity boosting
-        let results: Vec<(i64, String, f32, Option<String>)> = ctx
+        // Run vector search via connection pool with branch + entity + team boosting
+        let results: Vec<(i64, String, f32, Option<String>, Option<i64>)> = ctx
             .pool()
             .run(move |conn| {
                 crate::db::recall_semantic_with_entity_boost_sync(
@@ -423,6 +440,7 @@ pub async fn recall<C: ToolContext>(
                     &embedding_bytes,
                     project_id,
                     user_id_for_query.as_deref(),
+                    team_id,
                     branch_for_query.as_deref(),
                     &entity_names_for_query,
                     fetch_limit,
@@ -433,7 +451,7 @@ pub async fn recall<C: ToolContext>(
         if !results.is_empty() {
             // Apply category/fact_type filters via batch metadata lookup
             let results = if has_filters {
-                let ids: Vec<i64> = results.iter().map(|(id, _, _, _)| *id).collect();
+                let ids: Vec<i64> = results.iter().map(|(id, _, _, _, _)| *id).collect();
                 let cat = category.clone();
                 let ft = fact_type.clone();
                 let metadata = ctx
@@ -442,7 +460,7 @@ pub async fn recall<C: ToolContext>(
                     .await?;
                 results
                     .into_iter()
-                    .filter(|(id, _, _, _)| {
+                    .filter(|(id, _, _, _, _)| {
                         if let Some((mem_ft, mem_cat)) = metadata.get(id) {
                             let ft_ok = ft.as_ref().is_none_or(|f| f == mem_ft);
                             let cat_ok = cat.as_ref().is_none_or(|c| mem_cat.as_ref() == Some(c));
@@ -460,13 +478,13 @@ pub async fn recall<C: ToolContext>(
             if !results.is_empty() {
                 // Record memory access for evidence-based tracking
                 if let Some(ref sid) = session_id {
-                    let ids: Vec<i64> = results.iter().map(|(id, _, _, _)| *id).collect();
+                    let ids: Vec<i64> = results.iter().map(|(id, _, _, _, _)| *id).collect();
                     spawn_record_access(ctx.pool().clone(), ids, sid.clone());
                 }
 
                 let items: Vec<MemoryItem> = results
                     .iter()
-                    .map(|(id, content, distance, branch)| MemoryItem {
+                    .map(|(id, content, distance, branch, _team_id)| MemoryItem {
                         id: *id,
                         content: content.clone(),
                         score: Some(1.0 - distance),
@@ -476,7 +494,7 @@ pub async fn recall<C: ToolContext>(
                     .collect();
                 let total = items.len();
                 let mut response = format!("{}Found {} memories:\n", context_header, total);
-                for (id, content, distance, branch) in &results {
+                for (id, content, distance, branch, _team_id) in &results {
                     let score = 1.0 - distance;
                     let preview = truncate(content, 100);
                     let branch_tag = branch
@@ -507,6 +525,7 @@ pub async fn recall<C: ToolContext>(
                 ctx.pool(),
                 project_id,
                 user_id.as_deref(),
+                team_id,
                 &query,
                 fetch_limit,
             )

@@ -5,8 +5,8 @@ use mira_types::MemoryFact;
 use rusqlite::OptionalExtension;
 use std::sync::LazyLock;
 
-/// (fact_id, content, distance, branch)
-type RecallRow = (i64, String, f32, Option<String>);
+/// (fact_id, content, distance, branch, team_id)
+type RecallRow = (i64, String, f32, Option<String>, Option<i64>);
 
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
 #[derive(Debug, Clone)]
@@ -31,6 +31,9 @@ const SAME_BRANCH_BOOST: f32 = 0.85;
 
 /// Boost factor for memories on main/master branch (5% boost)
 const MAIN_BRANCH_BOOST: f32 = 0.95;
+
+/// Boost factor for memories from the same team (10% boost)
+const TEAM_SCOPE_BOOST: f32 = 0.90;
 
 /// Apply entity-overlap boosting to a distance score.
 ///
@@ -96,9 +99,9 @@ pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact
 
 /// Scope-filtering WHERE clause for memory queries.
 ///
-/// Returns SQL fragment with parameter placeholders for (project_id, user_id).
+/// Returns SQL fragment with parameter placeholders for (project_id, user_id, team_id).
 /// `prefix` is the table alias (e.g. "f." for JOINed queries, "" for direct).
-/// The caller must bind: project_id as the first param, user_id as the second.
+/// The caller must bind: project_id as `?{pid}`, user_id as `?{uid}`, team_id as `?{tid}`.
 pub fn scope_filter_sql(prefix: &str) -> String {
     format!(
         "({p}project_id = ?{{pid}} OR {p}project_id IS NULL OR ?{{pid}} IS NULL)
@@ -106,7 +109,7 @@ pub fn scope_filter_sql(prefix: &str) -> String {
              {p}scope = 'project'
              OR {p}scope IS NULL
              OR ({p}scope = 'personal' AND {p}user_id = ?{{uid}})
-             OR ({p}scope = 'team' AND {p}user_id = ?{{uid}})
+             OR ({p}scope = 'team' AND {p}team_id = ?{{tid}})
            )",
         p = prefix,
     )
@@ -114,11 +117,11 @@ pub fn scope_filter_sql(prefix: &str) -> String {
 
 /// Cached semantic recall query with scope filtering.
 ///
-/// Returns SQL that selects (fact_id, content, distance, branch) from vec_memory + memory_facts.
-/// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id
+/// Returns SQL that selects (fact_id, content, distance, branch, team_id) from vec_memory + memory_facts.
+/// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id, ?5 = team_id
 static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch
+        "SELECT v.fact_id, v.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch, f.team_id
          FROM vec_memory v
          JOIN memory_facts f ON v.fact_id = f.id
          WHERE {}
@@ -127,6 +130,7 @@ static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
         scope_filter_sql("f.")
             .replace("?{pid}", "?2")
             .replace("?{uid}", "?4")
+            .replace("?{tid}", "?5")
     )
 });
 
@@ -151,6 +155,7 @@ pub struct StoreMemoryParams<'a> {
     pub user_id: Option<&'a str>,
     pub scope: &'a str,
     pub branch: Option<&'a str>,
+    pub team_id: Option<i64>,
 }
 
 /// Store a memory with full scope/user support (sync version for pool.interact())
@@ -159,12 +164,15 @@ pub fn store_memory_sync(
     conn: &rusqlite::Connection,
     params: StoreMemoryParams,
 ) -> rusqlite::Result<i64> {
-    // Upsert by key if provided
+    // Upsert by key if provided — includes scope principal to prevent cross-scope overwrites
     if let Some(key) = params.key {
         let existing: Option<(i64, Option<String>)> = conn
             .query_row(
-                "SELECT id, last_session_id FROM memory_facts WHERE key = ? AND (project_id = ? OR project_id IS NULL)",
-                rusqlite::params![key, params.project_id],
+                "SELECT id, last_session_id FROM memory_facts
+                 WHERE key = ?1 AND (project_id = ?2 OR project_id IS NULL)
+                   AND COALESCE(scope, 'project') = ?3
+                   AND COALESCE(team_id, 0) = COALESCE(?4, 0)",
+                rusqlite::params![key, params.project_id, params.scope, params.team_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
@@ -213,8 +221,8 @@ pub fn store_memory_sync(
     };
     conn.execute(
         "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-         session_count, first_session_id, last_session_id, status, user_id, scope, branch)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?, ?)",
+         session_count, first_session_id, last_session_id, status, user_id, scope, branch, team_id)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?, ?, ?)",
         rusqlite::params![
             params.project_id,
             params.key,
@@ -226,7 +234,8 @@ pub fn store_memory_sync(
             params.session_id,
             params.user_id,
             params.scope,
-            params.branch
+            params.branch,
+            params.team_id
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -295,10 +304,11 @@ pub fn recall_semantic_sync(
     embedding_bytes: &[u8],
     project_id: Option<i64>,
     user_id: Option<&str>,
+    team_id: Option<i64>,
     limit: usize,
 ) -> rusqlite::Result<Vec<(i64, String, f32)>> {
     // Delegate to branch-aware version with no branch (no boosting)
-    recall_semantic_with_branch_sync(conn, embedding_bytes, project_id, user_id, None, limit)
+    recall_semantic_with_branch_sync(conn, embedding_bytes, project_id, user_id, team_id, None, limit)
 }
 
 /// Semantic search with entity boost applied.
@@ -311,6 +321,7 @@ pub fn recall_semantic_with_entity_boost_sync(
     embedding_bytes: &[u8],
     project_id: Option<i64>,
     user_id: Option<&str>,
+    team_id: Option<i64>,
     current_branch: Option<&str>,
     query_entity_names: &[String],
     limit: usize,
@@ -325,8 +336,8 @@ pub fn recall_semantic_with_entity_boost_sync(
 
     let results: Vec<RecallRow> = stmt
         .query_map(
-            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id, team_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )?
         .filter_map(|r| r.ok())
         .collect();
@@ -338,15 +349,19 @@ pub fn recall_semantic_with_entity_boost_sync(
         std::collections::HashMap::new()
     };
 
-    // Apply branch boost + entity boost, then re-sort
-    let mut boosted: Vec<(i64, String, f32, Option<String>)> = results
+    // Apply branch boost + entity boost + team boost, then re-sort
+    let mut boosted: Vec<RecallRow> = results
         .into_iter()
-        .map(|(id, content, distance, branch)| {
+        .map(|(id, content, distance, branch, mem_team_id)| {
             let mut d = apply_branch_boost(distance, branch.as_deref(), current_branch);
             if let Some(&match_count) = entity_counts.get(&id) {
                 d = apply_entity_boost(d, match_count);
             }
-            (id, content, d, branch)
+            // Team boost: memories from the same team get a 10% distance reduction
+            if team_id.is_some() && mem_team_id == team_id {
+                d *= TEAM_SCOPE_BOOST;
+            }
+            (id, content, d, branch, mem_team_id)
         })
         .collect();
 
@@ -358,7 +373,7 @@ pub fn recall_semantic_with_entity_boost_sync(
 
 /// Branch-aware semantic recall with boosting
 ///
-/// Returns (fact_id, content, boosted_distance, branch) tuples.
+/// Returns (fact_id, content, boosted_distance) tuples.
 /// When current_branch is provided, memories on the same branch get boosted,
 /// and main/master memories get a smaller boost.
 pub fn recall_semantic_with_branch_sync(
@@ -366,6 +381,7 @@ pub fn recall_semantic_with_branch_sync(
     embedding_bytes: &[u8],
     project_id: Option<i64>,
     user_id: Option<&str>,
+    team_id: Option<i64>,
     current_branch: Option<&str>,
     limit: usize,
 ) -> rusqlite::Result<Vec<(i64, String, f32)>> {
@@ -377,7 +393,7 @@ pub fn recall_semantic_with_branch_sync(
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
         .query_map(
-            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
+            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id, team_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?
         .filter_map(|r| r.ok())
@@ -403,12 +419,13 @@ pub fn recall_semantic_with_branch_sync(
 
 /// Branch-aware semantic recall that also returns the branch for display
 ///
-/// Returns (fact_id, content, boosted_distance, branch) tuples.
+/// Returns (fact_id, content, boosted_distance, branch, team_id) tuples.
 pub fn recall_semantic_with_branch_info_sync(
     conn: &rusqlite::Connection,
     embedding_bytes: &[u8],
     project_id: Option<i64>,
     user_id: Option<&str>,
+    team_id: Option<i64>,
     current_branch: Option<&str>,
     limit: usize,
 ) -> rusqlite::Result<Vec<RecallRow>> {
@@ -420,8 +437,8 @@ pub fn recall_semantic_with_branch_info_sync(
 
     let results: Vec<RecallRow> = stmt
         .query_map(
-            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id, team_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )?
         .filter_map(|r| r.ok())
         .collect();
@@ -429,9 +446,9 @@ pub fn recall_semantic_with_branch_info_sync(
     // Apply branch boosting and re-sort
     let mut boosted: Vec<RecallRow> = results
         .into_iter()
-        .map(|(id, content, distance, branch)| {
+        .map(|(id, content, distance, branch, mem_team_id)| {
             let boosted_distance = apply_branch_boost(distance, branch.as_deref(), current_branch);
-            (id, content, boosted_distance, branch)
+            (id, content, boosted_distance, branch, mem_team_id)
         })
         .collect();
 
@@ -504,11 +521,12 @@ pub fn search_memories_sync(
         scope_filter_sql("")
             .replace("?{pid}", "?1")
             .replace("?{uid}", "?4")
+            .replace("?{tid}", "?5")
     );
     let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt.query_map(
-        rusqlite::params![project_id, pattern, limit as i64, user_id],
+        rusqlite::params![project_id, pattern, limit as i64, user_id, Option::<i64>::None],
         parse_memory_fact_row,
     )?;
 

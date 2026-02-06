@@ -13,7 +13,7 @@ use tokio::sync::watch;
 
 use super::{
     briefings, code_health, documentation, entity_extraction, memory_embeddings, outcome_scanner,
-    pondering, session_summaries, summaries,
+    pondering, session_summaries, summaries, team_monitor,
 };
 
 /// Delay before first cycle to let the service start up
@@ -30,6 +30,8 @@ const DOCUMENTATION_CYCLE_INTERVAL: u64 = 3;
 const PONDERING_CYCLE_INTERVAL: u64 = 10;
 /// Run outcome scanning every Nth cycle
 const OUTCOME_SCAN_CYCLE_INTERVAL: u64 = 5;
+/// Run team monitoring every Nth cycle
+const TEAM_MONITOR_CYCLE_INTERVAL: u64 = 3;
 
 /// Slow lane worker for LLM-dependent background tasks
 pub struct SlowLaneWorker {
@@ -173,6 +175,14 @@ impl SlowLaneWorker {
             processed += Self::run_task(
                 "diff outcomes",
                 outcome_scanner::process_outcome_scanning(&self.pool),
+            )
+            .await?;
+        }
+
+        if self.cycle_count.is_multiple_of(TEAM_MONITOR_CYCLE_INTERVAL) {
+            processed += Self::run_task(
+                "team monitor",
+                team_monitor::process_team_monitor(&self.pool),
             )
             .await?;
         }

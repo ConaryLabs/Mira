@@ -302,6 +302,7 @@ pub fn store_detection_findings(
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .str_err()?;

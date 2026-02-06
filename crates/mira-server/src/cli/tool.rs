@@ -7,7 +7,7 @@ use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
     CodeAction, CodeRequest, DocumentationRequest, ExpertRequest, FindingRequest, GoalRequest,
     IndexRequest, MemoryRequest, ProjectRequest, ReplyToMiraRequest, SessionAction, SessionRequest,
-    TasksAction, TasksRequest,
+    TasksAction, TasksRequest, TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -112,6 +112,12 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             .await
             .map(|output| output.0.message)
         }
+        "team" => {
+            let req: TeamRequest = serde_json::from_str(&args)?;
+            mira::tools::handle_team(&server, req)
+                .await
+                .map(|output| output.0.message)
+        }
         "finding" => {
             let req: FindingRequest = serde_json::from_str(&args)?;
             mira::tools::finding(
@@ -153,6 +159,7 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "expert",
         "reply_to_mira",
         "documentation",
+        "team",
         "finding",
     ]
 }

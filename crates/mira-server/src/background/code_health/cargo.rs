@@ -111,6 +111,7 @@ pub fn store_cargo_findings(
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .str_err()?;

@@ -156,6 +156,7 @@ pub fn mark_health_scan_needed_sync(
             user_id: None,
             scope: "project",
             branch: None,
+            team_id: None,
         },
     )
     .str_err()?;
@@ -422,6 +423,7 @@ async fn scan_dependencies_sharded(
                             user_id: None,
                             scope: "project",
                             branch: None,
+                            team_id: None,
                         },
                     )
                     .str_err()?;
@@ -634,6 +636,7 @@ async fn scan_patterns_sharded(
                         user_id: None,
                         scope: "project",
                         branch: None,
+                        team_id: None,
                     },
                 )
                 .str_err()?;
@@ -725,6 +728,7 @@ async fn scan_unused_functions_sharded(
                         user_id: None,
                         scope: "project",
                         branch: None,
+                        team_id: None,
                     },
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))?;

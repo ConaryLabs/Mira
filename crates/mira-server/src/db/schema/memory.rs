@@ -262,11 +262,17 @@ pub fn migrate_remove_capability_data(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Drop unused teams tables (feature was never exposed via MCP router)
+/// Drop OLD teams tables (pre-team-intelligence-layer).
+///
+/// The old `teams` table lacked a `config_path` column. New tables created by
+/// `db/schema/team.rs` have a different schema (teams with config_path,
+/// team_sessions, team_file_ownership). We only drop the old ones.
 pub fn migrate_drop_teams_tables(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "DROP TABLE IF EXISTS team_members;
-         DROP TABLE IF EXISTS teams;",
-    )?;
+    if table_exists(conn, "teams") && !column_exists(conn, "teams", "config_path") {
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS team_members;
+             DROP TABLE IF EXISTS teams;",
+        )?;
+    }
     Ok(())
 }

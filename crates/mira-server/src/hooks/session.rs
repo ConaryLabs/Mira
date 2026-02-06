@@ -41,6 +41,16 @@ pub struct SourceInfo {
     pub timestamp: String,
 }
 
+/// Team membership info cached per-session to avoid cross-session clobbering.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMembership {
+    pub team_id: i64,
+    pub team_name: String,
+    pub member_name: String,
+    pub role: String,
+    pub config_path: String,
+}
+
 impl SourceInfo {
     pub fn new(session_id: Option<String>, source: &str) -> Self {
         Self {
@@ -130,6 +140,97 @@ pub fn run() -> Result<()> {
         let path = task_list_file_path();
         fs::write(&path, list_id)?;
         eprintln!("[mira] Captured Claude task list: {}", list_id);
+    }
+
+    // Detect team membership and register in DB
+    if let Some(sid) = session_id {
+        let detection = detect_team_membership(&input, Some(sid), cwd);
+        if let Some(det) = detection {
+            eprintln!(
+                "[mira] Team detected: {} (role: {}, member: {})",
+                det.team_name, det.role, det.member_name
+            );
+
+            // Register in DB via a short-lived runtime
+            let rt_result = tokio::runtime::Runtime::new();
+            if let Ok(rt) = rt_result {
+                let db_path = get_db_path();
+                let det_team_name = det.team_name.clone();
+                let det_config_path = det.config_path.clone();
+                let det_member_name = det.member_name.clone();
+                let det_role = det.role.clone();
+                let det_agent_type = det.agent_type.clone();
+                let sid_owned = sid.to_string();
+                let cwd_owned = cwd.map(String::from);
+
+                let membership = rt.block_on(async {
+                    let pool = match DatabasePool::open(&db_path).await {
+                        Ok(p) => Arc::new(p),
+                        Err(_) => return None,
+                    };
+
+                    // Get project_id from cwd
+                    let project_id: Option<i64> = if let Some(ref cwd_path) = cwd_owned {
+                        let pool_c = pool.clone();
+                        let cwd_c = cwd_path.clone();
+                        pool_c
+                            .interact(move |conn| {
+                                Ok::<_, anyhow::Error>(
+                                    crate::db::get_or_create_project_sync(conn, &cwd_c, None)
+                                        .ok()
+                                        .map(|(id, _)| id),
+                                )
+                            })
+                            .await
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
+
+                    let team_name = det_team_name.clone();
+                    let config_path = det_config_path.clone();
+                    let member_name = det_member_name.clone();
+                    let role = det_role.clone();
+                    let agent_type = det_agent_type.clone();
+                    let session_id = sid_owned.clone();
+
+                    let team_id = pool
+                        .interact(move |conn| {
+                            let tid = crate::db::get_or_create_team_sync(
+                                conn,
+                                &team_name,
+                                project_id,
+                                &config_path,
+                            )?;
+                            crate::db::register_team_session_sync(
+                                conn,
+                                tid,
+                                &session_id,
+                                &member_name,
+                                &role,
+                                agent_type.as_deref(),
+                            )?;
+                            Ok::<_, anyhow::Error>(tid)
+                        })
+                        .await
+                        .ok()?;
+
+                    Some(TeamMembership {
+                        team_id,
+                        team_name: det_team_name,
+                        member_name: det_member_name,
+                        role: det_role,
+                        config_path: det_config_path,
+                    })
+                });
+
+                if let Some(ref m) = membership {
+                    let _ = write_team_membership(sid, m);
+                    eprintln!("[mira] Team session registered (team_id: {})", m.team_id);
+                }
+            }
+        }
     }
 
     // On resume, inject context about previous work
@@ -270,6 +371,39 @@ async fn build_resume_context(cwd: Option<&str>, _session_id: Option<&str>) -> O
         context_parts.push(format!("**Active goals:**\n{}", goal_lines.join("\n")));
     }
 
+    // Add team context if in a team
+    if let Some(membership) = read_team_membership() {
+        let pool_clone = pool.clone();
+        let tid = membership.team_id;
+        let members: Vec<crate::db::TeamMemberInfo> = pool_clone
+            .interact(move |conn| {
+                Ok::<_, anyhow::Error>(crate::db::get_active_team_members_sync(conn, tid))
+            })
+            .await
+            .unwrap_or_default();
+
+        let other_members: Vec<&str> = members
+            .iter()
+            .filter(|m| m.member_name != membership.member_name)
+            .map(|m| m.member_name.as_str())
+            .collect();
+
+        let team_line = if other_members.is_empty() {
+            format!(
+                "**Team:** {} (you are {}, no other active teammates)",
+                membership.team_name, membership.member_name
+            )
+        } else {
+            format!(
+                "**Team:** {} (you are {}, active teammates: {})",
+                membership.team_name,
+                membership.member_name,
+                other_members.join(", ")
+            )
+        };
+        context_parts.push(team_line);
+    }
+
     if context_parts.is_empty() {
         return None;
     }
@@ -303,6 +437,162 @@ pub fn read_source_info() -> Option<SourceInfo> {
 pub fn read_claude_task_list_id() -> Option<String> {
     let path = task_list_file_path();
     fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEAM DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Per-session team membership file (avoids cross-session clobbering).
+pub fn team_file_path_for_session(session_id: &str) -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    home.join(format!(".mira/claude-team-{}.json", session_id))
+}
+
+/// Read team membership for the current session.
+pub fn read_team_membership() -> Option<TeamMembership> {
+    let session_id = read_claude_session_id()?;
+    let path = team_file_path_for_session(&session_id);
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Write team membership atomically (temp + rename).
+fn write_team_membership(session_id: &str, membership: &TeamMembership) -> Result<()> {
+    let path = team_file_path_for_session(session_id);
+    let json = serde_json::to_string(membership)?;
+    let temp_path = path.with_extension("tmp");
+    fs::write(&temp_path, &json)?;
+    fs::rename(&temp_path, &path)?;
+    Ok(())
+}
+
+/// Clean up per-session team file.
+pub fn cleanup_team_file(session_id: &str) {
+    let path = team_file_path_for_session(session_id);
+    let _ = fs::remove_file(&path);
+}
+
+/// Detect team membership from Claude Code's Agent Teams config files.
+///
+/// Scans `~/.claude/teams/*/config.json` for team configs that reference
+/// the current session or working directory. Also checks the SessionStart
+/// input for an `agent_type` field.
+pub fn detect_team_membership(
+    input: &serde_json::Value,
+    session_id: Option<&str>,
+    cwd: Option<&str>,
+) -> Option<TeamDetectionResult> {
+    // Primary: Check SessionStart input for agent_type (Claude Code provides this)
+    let agent_type = input.get("agent_type").and_then(|v| v.as_str());
+    let member_name = input
+        .get("agent_name")
+        .and_then(|v| v.as_str())
+        .or_else(|| input.get("member_name").and_then(|v| v.as_str()));
+
+    // If agent_type is set, this is a team member
+    if let Some(agent_type) = agent_type {
+        // Try to find the team config
+        if let Some(team_config) = scan_team_configs(cwd) {
+            let role = if agent_type == "lead" { "lead" } else { "teammate" };
+            return Some(TeamDetectionResult {
+                team_name: team_config.team_name,
+                config_path: team_config.config_path,
+                member_name: member_name
+                    .unwrap_or(agent_type)
+                    .to_string(),
+                role: role.to_string(),
+                agent_type: Some(agent_type.to_string()),
+            });
+        }
+    }
+
+    // Secondary: Scan filesystem for team configs
+    if let Some(team_config) = scan_team_configs(cwd) {
+        // Derive member name from session_id or config
+        let name = member_name
+            .map(|s| s.to_string())
+            .or_else(|| session_id.map(|s| format!("member-{}", &s[..8.min(s.len())])))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        return Some(TeamDetectionResult {
+            team_name: team_config.team_name,
+            config_path: team_config.config_path,
+            member_name: name,
+            role: "teammate".to_string(),
+            agent_type: agent_type.map(String::from),
+        });
+    }
+
+    None
+}
+
+/// Result of team detection
+pub struct TeamDetectionResult {
+    pub team_name: String,
+    pub config_path: String,
+    pub member_name: String,
+    pub role: String,
+    pub agent_type: Option<String>,
+}
+
+struct TeamConfigInfo {
+    team_name: String,
+    config_path: String,
+}
+
+/// Scan `~/.claude/teams/*/config.json` for team configs.
+fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
+    let home = dirs::home_dir()?;
+    let teams_dir = home.join(".claude/teams");
+
+    if !teams_dir.is_dir() {
+        return None;
+    }
+
+    let entries = fs::read_dir(&teams_dir).ok()?;
+    for entry in entries.flatten() {
+        let config_path = entry.path().join("config.json");
+        if !config_path.is_file() {
+            continue;
+        }
+
+        let content = fs::read_to_string(&config_path).ok()?;
+        let config: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+        // Check if the team's project path matches our cwd
+        if let Some(project_path) = config.get("project_path").and_then(|v| v.as_str()) {
+            if let Some(cwd_val) = cwd {
+                if cwd_val.starts_with(project_path) || project_path.starts_with(cwd_val) {
+                    let team_name = config
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            entry.file_name().to_string_lossy().to_string()
+                        });
+
+                    return Some(TeamConfigInfo {
+                        team_name,
+                        config_path: config_path.to_string_lossy().to_string(),
+                    });
+                }
+            }
+        }
+
+        // Also match if the team dir name matches a pattern
+        if let Some(team_name) = config.get("name").and_then(|v| v.as_str()) {
+            // If we don't have cwd, we can still match if there's only one team
+            if cwd.is_none() {
+                return Some(TeamConfigInfo {
+                    team_name: team_name.to_string(),
+                    config_path: config_path.to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

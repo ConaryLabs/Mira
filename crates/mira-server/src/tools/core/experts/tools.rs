@@ -395,7 +395,7 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
         // Run vector search via connection pool
         let results: Result<Vec<(i64, String, f32)>, String> = ctx
             .pool()
-            .run(move |conn| recall_semantic_sync(conn, &embedding_bytes, project_id, None, limit))
+            .run(move |conn| recall_semantic_sync(conn, &embedding_bytes, project_id, None, None, limit))
             .await;
 
         if let Ok(results) = results

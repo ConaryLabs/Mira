@@ -166,6 +166,7 @@ async fn extract_and_store(
                         user_id: None,
                         scope: "project",
                         branch: None,
+                        team_id: None,
                     },
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))

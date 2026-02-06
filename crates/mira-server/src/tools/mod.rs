@@ -28,6 +28,7 @@ pub use core::{
     handle_expert,
     handle_memory,
     handle_session,
+    handle_team,
     index,
     project,
     recall,

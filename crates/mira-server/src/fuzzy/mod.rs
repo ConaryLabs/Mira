@@ -39,6 +39,7 @@ struct FuzzyMemoryItem {
     category: Option<String>,
     scope: Option<String>,
     user_id: Option<String>,
+    team_id: Option<i64>,
 }
 
 struct FuzzyIndex<T> {
@@ -207,7 +208,7 @@ impl FuzzyCache {
         let items: Vec<FuzzyMemoryItem> = pool
             .run(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, project_id, content, fact_type, category, scope, user_id
+                    "SELECT id, project_id, content, fact_type, category, scope, user_id, team_id
                      FROM memory_facts
                      WHERE project_id = ? OR project_id IS NULL
                      LIMIT ?",
@@ -223,6 +224,7 @@ impl FuzzyCache {
                             category: row.get(4)?,
                             scope: row.get(5)?,
                             user_id: row.get(6)?,
+                            team_id: row.get(7)?,
                         })
                     },
                 )?;
@@ -298,6 +300,7 @@ impl FuzzyCache {
         pool: &Arc<DatabasePool>,
         project_id: Option<i64>,
         user_id: Option<&str>,
+        team_id: Option<i64>,
         query: &str,
         limit: usize,
     ) -> Result<Vec<FuzzyMemoryResult>, String> {
@@ -317,7 +320,7 @@ impl FuzzyCache {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, item)| memory_visible(item, project_id, user_id))
+            .filter(|(_, item)| memory_visible(item, project_id, user_id, team_id))
             .map(|(i, item)| CandidateKey {
                 idx: i,
                 text: &item.content,
@@ -362,14 +365,20 @@ impl<'a> AsRef<str> for CandidateKey<'a> {
     }
 }
 
-fn memory_visible(item: &FuzzyMemoryItem, project_id: Option<i64>, user_id: Option<&str>) -> bool {
-    // Match the SQL filtering in search_memories_sync
+fn memory_visible(
+    item: &FuzzyMemoryItem,
+    project_id: Option<i64>,
+    user_id: Option<&str>,
+    team_id: Option<i64>,
+) -> bool {
+    // Match the SQL filtering in scope_filter_sql
     if item.project_id.is_some() && item.project_id != project_id {
         return false;
     }
 
     match item.scope.as_deref() {
         Some("personal") => item.user_id.as_deref() == user_id,
+        Some("team") => team_id.is_some() && item.team_id == team_id,
         Some("project") | None => true,
         Some(_) => true,
     }
@@ -440,10 +449,11 @@ mod tests {
             category: None,
             scope: Some("project".into()),
             user_id: None,
+            team_id: None,
         };
-        assert!(memory_visible(&item, Some(10), None));
-        assert!(!memory_visible(&item, Some(99), None));
-        assert!(!memory_visible(&item, None, None));
+        assert!(memory_visible(&item, Some(10), None, None));
+        assert!(!memory_visible(&item, Some(99), None, None));
+        assert!(!memory_visible(&item, None, None, None));
     }
 
     #[test]
@@ -456,10 +466,11 @@ mod tests {
             category: None,
             scope: Some("personal".into()),
             user_id: Some("alice".into()),
+            team_id: None,
         };
-        assert!(memory_visible(&item, Some(10), Some("alice")));
-        assert!(!memory_visible(&item, Some(10), Some("bob")));
-        assert!(!memory_visible(&item, Some(10), None));
+        assert!(memory_visible(&item, Some(10), Some("alice"), None));
+        assert!(!memory_visible(&item, Some(10), Some("bob"), None));
+        assert!(!memory_visible(&item, Some(10), None, None));
     }
 
     #[test]
@@ -472,10 +483,31 @@ mod tests {
             category: None,
             scope: None,
             user_id: None,
+            team_id: None,
         };
         // Global memories (project_id=None) are visible to any project
-        assert!(memory_visible(&item, Some(10), None));
-        assert!(memory_visible(&item, None, None));
+        assert!(memory_visible(&item, Some(10), None, None));
+        assert!(memory_visible(&item, None, None, None));
+    }
+
+    #[test]
+    fn test_memory_visible_team_scope() {
+        let item = FuzzyMemoryItem {
+            id: 1,
+            project_id: Some(10),
+            content: "team knowledge".into(),
+            fact_type: "general".into(),
+            category: None,
+            scope: Some("team".into()),
+            user_id: None,
+            team_id: Some(42),
+        };
+        // Same team: visible
+        assert!(memory_visible(&item, Some(10), None, Some(42)));
+        // Different team: not visible
+        assert!(!memory_visible(&item, Some(10), None, Some(99)));
+        // No team: not visible
+        assert!(!memory_visible(&item, Some(10), None, None));
     }
 
     #[test]

@@ -13,6 +13,7 @@ mod reviews;
 mod session;
 mod session_tasks;
 mod system;
+pub mod team;
 pub(crate) mod vectors;
 
 // Re-export FTS functions that are used elsewhere
@@ -96,6 +97,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
 
     // Add source and resumed_from columns for session resume tracking
     session::migrate_sessions_resume(conn)?;
+
+    // Add team intelligence layer tables (after drop guard for old tables)
+    team::migrate_team_tables(conn)?;
 
     Ok(())
 }

@@ -584,6 +584,7 @@ mod tests {
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .map_err(Into::into));
@@ -602,6 +603,7 @@ mod tests {
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .map_err(Into::into));
@@ -760,6 +762,7 @@ mod tests {
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .map_err(Into::into));
@@ -789,6 +792,7 @@ mod tests {
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .map_err(Into::into));
@@ -816,6 +820,7 @@ mod tests {
                 user_id: None,
                 scope: "project",
                 branch: None,
+                team_id: None,
             },
         )
         .map_err(Into::into));

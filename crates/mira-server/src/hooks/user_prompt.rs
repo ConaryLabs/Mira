@@ -228,6 +228,9 @@ pub async fn run() -> Result<()> {
         log_behavior(&pool, project_id, session_id, user_message).await;
     }
 
+    // Team intelligence: lazy detection + heartbeat + discoveries
+    let team_context: Option<String> = get_team_context(&pool, session_id).await;
+
     // Get relevant context with metadata
     let result = manager
         .get_context_for_message(user_message, session_id)
@@ -246,8 +249,18 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] Added pending task context");
     }
 
-    // Combine reactive context with proactive predictions
+    // Add team context if available
     let mut final_context = result.context.clone();
+    if let Some(ref tc) = team_context {
+        if final_context.is_empty() {
+            final_context = tc.clone();
+        } else {
+            final_context = format!("{}\n\n{}", final_context, tc);
+        }
+        eprintln!("[mira] Added team context");
+    }
+
+    // Combine reactive context with proactive predictions
     let has_proactive = if let Some(proactive_str) = proactive_context {
         if !proactive_str.is_empty() {
             if final_context.is_empty() {
@@ -292,5 +305,176 @@ pub async fn run() -> Result<()> {
         write_hook_output(&serde_json::json!({}));
     }
 
+    Ok(())
+}
+
+/// Get team context: lazy detection, heartbeat, and recent team discoveries.
+async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<String> {
+    if session_id.is_empty() {
+        return None;
+    }
+
+    // Read cached team membership (or lazy-detect if not yet found)
+    let membership = crate::hooks::session::read_team_membership();
+    let membership = match membership {
+        Some(m) => m,
+        None => {
+            // Lazy re-detection: covers lead who creates team after their SessionStart
+            let cwd = crate::hooks::session::read_claude_cwd();
+            let input = serde_json::json!({});
+            let det = crate::hooks::session::detect_team_membership(
+                &input,
+                Some(session_id),
+                cwd.as_deref(),
+            )?;
+
+            // Register in DB
+            let pool_clone = pool.clone();
+            let team_name = det.team_name.clone();
+            let config_path = det.config_path.clone();
+            let member_name = det.member_name.clone();
+            let role = det.role.clone();
+            let agent_type = det.agent_type.clone();
+            let sid = session_id.to_string();
+            let cwd_c = cwd.clone();
+
+            let membership = pool_clone
+                .interact(move |conn| {
+                    let project_id = cwd_c
+                        .as_deref()
+                        .and_then(|c| {
+                            crate::db::get_or_create_project_sync(conn, c, None)
+                                .ok()
+                                .map(|(id, _)| id)
+                        });
+                    let tid = crate::db::get_or_create_team_sync(
+                        conn,
+                        &team_name,
+                        project_id,
+                        &config_path,
+                    )?;
+                    crate::db::register_team_session_sync(
+                        conn,
+                        tid,
+                        &sid,
+                        &member_name,
+                        &role,
+                        agent_type.as_deref(),
+                    )?;
+                    Ok::<_, anyhow::Error>(crate::hooks::session::TeamMembership {
+                        team_id: tid,
+                        team_name: team_name.clone(),
+                        member_name,
+                        role,
+                        config_path,
+                    })
+                })
+                .await
+                .ok()?;
+
+            // Cache for future calls
+            let _ = write_team_membership_pub(session_id, &membership);
+            eprintln!(
+                "[mira] Lazy team detection: {} (team_id: {})",
+                membership.team_name, membership.team_id
+            );
+            membership
+        }
+    };
+
+    // Heartbeat: update last_heartbeat for this session
+    let pool_clone = pool.clone();
+    let tid = membership.team_id;
+    let sid = session_id.to_string();
+    let _ = pool_clone
+        .interact(move |conn| {
+            crate::db::heartbeat_team_session_sync(conn, tid, &sid)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await;
+
+    // Fetch recent team-scoped memories (last 1 hour, limit 3) as discoveries
+    let pool_clone = pool.clone();
+    let tid = membership.team_id;
+    let team_name = membership.team_name.clone();
+    let member_name = membership.member_name.clone();
+    let discoveries: Vec<(String, String)> = pool_clone
+        .interact(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT content, COALESCE(category, 'general')
+                 FROM memory_facts
+                 WHERE scope = 'team' AND team_id = ?1
+                   AND created_at > datetime('now', '-1 hour')
+                 ORDER BY created_at DESC
+                 LIMIT 3",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![tid], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok::<_, anyhow::Error>(rows)
+        })
+        .await
+        .unwrap_or_default();
+
+    // Fetch active teammate count
+    let pool_clone = pool.clone();
+    let tid = membership.team_id;
+    let members: Vec<crate::db::TeamMemberInfo> = pool_clone
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(crate::db::get_active_team_members_sync(conn, tid))
+        })
+        .await
+        .unwrap_or_default();
+
+    // Build team context string
+    let mut parts: Vec<String> = Vec::new();
+
+    let other_count = members.len().saturating_sub(1);
+    if other_count > 0 {
+        let others: Vec<&str> = members
+            .iter()
+            .filter(|m| m.member_name != member_name)
+            .map(|m| m.member_name.as_str())
+            .collect();
+        parts.push(format!(
+            "[Team: {}] You are {} ({} teammate(s) active: {})",
+            team_name,
+            member_name,
+            other_count,
+            others.join(", ")
+        ));
+    }
+
+    if !discoveries.is_empty() {
+        let disc_lines: Vec<String> = discoveries
+            .iter()
+            .map(|(content, cat)| format!("  • [{}] {}", cat, content))
+            .collect();
+        parts.push(format!(
+            "[Team discoveries (last hour)]:\n{}",
+            disc_lines.join("\n")
+        ));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
+/// Write team membership (public wrapper for lazy detection).
+fn write_team_membership_pub(
+    session_id: &str,
+    membership: &crate::hooks::session::TeamMembership,
+) -> Result<()> {
+    let path = crate::hooks::session::team_file_path_for_session(session_id);
+    let json = serde_json::to_string(membership)?;
+    let temp_path = path.with_extension("tmp");
+    std::fs::write(&temp_path, &json)?;
+    std::fs::rename(&temp_path, &path)?;
     Ok(())
 }

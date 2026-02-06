@@ -219,6 +219,26 @@ pub async fn run_session_end() -> Result<()> {
         }
     };
 
+    // Deactivate team session if we're in a team
+    if !session_id.is_empty() {
+        if let Some(membership) = crate::hooks::session::read_team_membership() {
+            let pool_clone = pool.clone();
+            let sid = session_id.to_string();
+            let _ = pool_clone
+                .interact(move |conn| {
+                    crate::db::deactivate_team_session_sync(conn, &sid)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await;
+            eprintln!(
+                "[mira] Deactivated team session (team: {})",
+                membership.team_name
+            );
+        }
+        // Clean up per-session team file
+        crate::hooks::session::cleanup_team_file(session_id);
+    }
+
     // Get current project (id and path)
     let project_info: Option<(i64, String)> = {
         let pool_clone = pool.clone();

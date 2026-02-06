@@ -385,6 +385,7 @@ pub fn mark_documentation_scanned_sync(
             user_id: None,
             scope: "project",
             branch: None,
+            team_id: None,
         },
     )
     .str_err()?;

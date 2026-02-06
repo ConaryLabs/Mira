@@ -94,6 +94,13 @@ pub trait ToolContext: Send + Sync {
         crate::identity::get_current_user_identity()
     }
 
+    // === Team Context ===
+
+    /// Get team membership if in a team (reads per-session cache file).
+    fn get_team_membership(&self) -> Option<crate::hooks::session::TeamMembership> {
+        crate::hooks::session::read_team_membership()
+    }
+
     // === Event Broadcasting ===
 
     /// Broadcast a WebSocket event to connected clients (no-op if no broadcaster)
@@ -189,6 +196,7 @@ pub mod reviews;
 pub mod session;
 pub mod session_notes;
 pub mod tasks;
+pub mod team;
 pub mod usage;
 
 // Re-export handler functions used by MCP router, CLI, and tests
@@ -207,4 +215,5 @@ pub use memory::{forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
 pub use reviews::finding;
 pub use session::{ensure_session, handle_session, reply_to_mira, session_history};
+pub use team::handle_team;
 pub use usage::usage;

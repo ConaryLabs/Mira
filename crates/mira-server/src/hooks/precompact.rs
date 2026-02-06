@@ -119,6 +119,7 @@ async fn save_pre_compaction_state(
                         user_id: None,
                         scope: "project",
                         branch: None,
+                        team_id: None,
                     },
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))
@@ -204,6 +205,7 @@ async fn extract_and_save_context(
                     user_id: None,
                     scope: "project",
                     branch: None,
+                    team_id: None,
                 },
             )
             .map_err(|e| anyhow::anyhow!("{}", e))

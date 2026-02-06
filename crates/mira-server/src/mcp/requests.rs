@@ -473,6 +473,23 @@ pub struct FindingRequest {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamAction {
+    /// Get team status: members, files, conflicts
+    Status,
+    /// Review a teammate's modified files
+    Review,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TeamRequest {
+    #[schemars(description = "Action: status (team overview), review (teammate's work)")]
+    pub action: TeamAction,
+    #[schemars(description = "Teammate name (for review action, defaults to self)")]
+    pub teammate: Option<String>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeDiffRequest {
     #[schemars(
