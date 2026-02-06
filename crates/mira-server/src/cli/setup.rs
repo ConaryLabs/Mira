@@ -130,10 +130,10 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
             .default(1)
             .interact()?;
 
-        if web_sel == 0 {
-            if let Some(key) = prompt_brave_key(existing.get("BRAVE_API_KEY"))? {
-                keys.insert("BRAVE_API_KEY".into(), key);
-            }
+        if web_sel == 0
+            && let Some(key) = prompt_brave_key(existing.get("BRAVE_API_KEY"))?
+        {
+            keys.insert("BRAVE_API_KEY".into(), key);
         }
     }
 
@@ -505,7 +505,7 @@ enum ValidationResult {
 /// Validate an API key by making a test call
 async fn validate_api_key(env_var: &str, key: &str) -> ValidationResult {
     let client = reqwest::Client::new();
-    let result = match env_var {
+    match env_var {
         "DEEPSEEK_API_KEY" => {
             let resp = client
                 .post("https://api.deepseek.com/chat/completions")
@@ -551,10 +551,8 @@ async fn validate_api_key(env_var: &str, key: &str) -> ValidationResult {
                 .await;
             check_response(resp).await
         }
-        _ => return ValidationResult::Ok,
-    };
-
-    result
+        _ => ValidationResult::Ok,
+    }
 }
 
 async fn check_response(
@@ -608,7 +606,7 @@ enum OllamaStatus {
 async fn detect_ollama(host: &str) -> OllamaStatus {
     let client = reqwest::Client::new();
     let base = host.trim_end_matches('/');
-    let base = if base.ends_with("/v1") { &base[..base.len() - 3] } else { base };
+    let base = base.strip_suffix("/v1").unwrap_or(base);
     let url = format!("{}/api/tags", base);
     let resp = client.get(&url).timeout(Duration::from_secs(5)).send().await;
 
