@@ -508,11 +508,7 @@ pub(crate) fn build_working_on_summary(snapshot: &serde_json::Value) -> Option<S
         let file_names: Vec<&str> = files
             .iter()
             .filter_map(|f| f.as_str())
-            .filter_map(|p| {
-                std::path::Path::new(p)
-                    .file_name()
-                    .and_then(|f| f.to_str())
-            })
+            .filter_map(|p| std::path::Path::new(p).file_name().and_then(|f| f.to_str()))
             .take(3)
             .collect();
         if !file_names.is_empty() {

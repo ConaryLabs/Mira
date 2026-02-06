@@ -598,11 +598,7 @@ fn gather_system_context_content() -> Option<String> {
         let path_dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path_var).collect();
         let found: Vec<&str> = tools_to_check
             .iter()
-            .filter(|tool| {
-                path_dirs
-                    .iter()
-                    .any(|dir| dir.join(tool).is_file())
-            })
+            .filter(|tool| path_dirs.iter().any(|dir| dir.join(tool).is_file()))
             .copied()
             .collect();
         if !found.is_empty() {
