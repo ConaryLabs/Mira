@@ -21,6 +21,7 @@ pub mod pool;
 mod project;
 mod reviews;
 mod schema;
+pub use schema::vectors::check_embedding_provider_change;
 mod search;
 mod session;
 pub mod session_tasks;

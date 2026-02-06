@@ -172,9 +172,9 @@ async fn extract_and_store(
             })
             .await?;
 
-        // Store embedding if available (RETRIEVAL_DOCUMENT for storage)
+        // Store embedding if available
         if let Some(embeddings) = embeddings
-            && let Ok(embedding) = embeddings.embed_for_storage(&outcome.content).await
+            && let Ok(embedding) = embeddings.embed(&outcome.content).await
         {
             let embedding_bytes = embedding_to_bytes(&embedding);
             let content_for_embed = outcome.content.clone();

@@ -201,10 +201,23 @@ pub async fn run_mcp_server() -> Result<()> {
         http_client.clone(),
     );
 
-    if embeddings.is_some() {
-        info!("Semantic search enabled (Google embeddings)");
+    if let Some(ref emb) = embeddings {
+        info!("Semantic search enabled (OpenAI embeddings)");
+
+        // Check for embedding provider change and invalidate stale vectors
+        let provider_id = emb.provider_id().to_string();
+        let check_pool = pool.clone();
+        if let Err(e) = check_pool
+            .interact(move |conn| {
+                mira::db::check_embedding_provider_change(conn, &provider_id)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            warn!("Failed to check embedding provider change: {}", e);
+        }
     } else {
-        info!("Semantic search disabled (no GEMINI_API_KEY)");
+        info!("Semantic search disabled (no OPENAI_API_KEY)");
     }
 
     // Initialize LLM provider factory from centralized config

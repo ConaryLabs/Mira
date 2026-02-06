@@ -34,10 +34,8 @@ pub fn get_embeddings_from_config(
 /// Get embeddings client with database pool for usage tracking
 ///
 /// Environment variables:
-/// - MIRA_EMBEDDING_DIMENSIONS: Output dimensions (default: 768)
-/// - MIRA_EMBEDDING_TASK_TYPE: Task type (RETRIEVAL_DOCUMENT, SEMANTIC_SIMILARITY, etc.)
-/// - GEMINI_API_KEY: Required for Gemini embeddings
-/// - GOOGLE_API_KEY: Alternative to GEMINI_API_KEY
+/// - MIRA_EMBEDDING_DIMENSIONS: Output dimensions (default: 1536)
+/// - OPENAI_API_KEY: Required for OpenAI embeddings
 ///
 /// Note: Prefer get_embeddings_from_config() to avoid duplicate env reads
 pub fn get_embeddings_with_pool(

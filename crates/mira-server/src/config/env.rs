@@ -1,7 +1,6 @@
 // crates/mira-server/src/config/env.rs
 // Environment-based configuration - single source of truth for all env vars
 
-use crate::embeddings::TaskType;
 use tracing::{debug, info, warn};
 
 /// API keys loaded from environment variables
@@ -118,8 +117,6 @@ impl ApiKeys {
 pub struct EmbeddingsConfig {
     /// Custom embedding dimensions (MIRA_EMBEDDING_DIMENSIONS)
     pub dimensions: Option<usize>,
-    /// Task type for embeddings (MIRA_EMBEDDING_TASK_TYPE)
-    pub task_type: TaskType,
 }
 
 impl EmbeddingsConfig {
@@ -129,37 +126,11 @@ impl EmbeddingsConfig {
             .ok()
             .and_then(|d| d.parse().ok());
 
-        let task_type = std::env::var("MIRA_EMBEDDING_TASK_TYPE")
-            .ok()
-            .and_then(|t| Self::parse_task_type(&t))
-            .unwrap_or_default();
-
         if let Some(dims) = dimensions {
             debug!(dimensions = dims, "Custom embedding dimensions configured");
         }
 
-        Self {
-            dimensions,
-            task_type,
-        }
-    }
-
-    /// Parse task type from string
-    fn parse_task_type(s: &str) -> Option<TaskType> {
-        match s.to_uppercase().as_str() {
-            "SEMANTIC_SIMILARITY" => Some(TaskType::SemanticSimilarity),
-            "RETRIEVAL_DOCUMENT" => Some(TaskType::RetrievalDocument),
-            "RETRIEVAL_QUERY" => Some(TaskType::RetrievalQuery),
-            "CLASSIFICATION" => Some(TaskType::Classification),
-            "CLUSTERING" => Some(TaskType::Clustering),
-            "CODE_RETRIEVAL_QUERY" => Some(TaskType::CodeRetrievalQuery),
-            "QUESTION_ANSWERING" => Some(TaskType::QuestionAnswering),
-            "FACT_VERIFICATION" => Some(TaskType::FactVerification),
-            _ => {
-                warn!(value = s, "Unknown MIRA_EMBEDDING_TASK_TYPE, using default");
-                None
-            }
-        }
+        Self { dimensions }
     }
 }
 

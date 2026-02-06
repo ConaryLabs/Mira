@@ -14,6 +14,7 @@ pub mod documentation;
 mod embeddings;
 pub(crate) mod entity_extraction;
 mod fast_lane;
+pub(crate) mod memory_embeddings;
 pub(crate) mod outcome_scanner;
 mod pondering;
 pub mod session_summaries;
@@ -90,7 +91,7 @@ pub fn spawn_with_pools(
     // Spawn fast lane worker (embeddings → code DB)
     let fast_lane = FastLaneWorker::new(
         code_pool.clone(),
-        embeddings,
+        embeddings.clone(),
         shutdown_rx.clone(),
         notify.clone(),
     );
@@ -99,7 +100,13 @@ pub fn spawn_with_pools(
     });
 
     // Spawn slow lane worker (LLM tasks → needs both DBs)
-    let slow_lane = SlowLaneWorker::new(main_pool, code_pool, llm_factory, shutdown_rx);
+    let slow_lane = SlowLaneWorker::new(
+        main_pool,
+        code_pool,
+        embeddings.clone(),
+        llm_factory,
+        shutdown_rx,
+    );
     tokio::spawn(async move {
         slow_lane.run().await;
     });

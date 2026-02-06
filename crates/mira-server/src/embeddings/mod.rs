@@ -1,10 +1,8 @@
 // crates/mira-server/src/embeddings/mod.rs
 // Embedding provider module
 
-mod google;
 mod openai;
 
-pub use google::{GoogleEmbeddingModel, GoogleEmbeddings, TaskType};
 pub use self::openai::{OpenAiEmbeddingModel, OpenAiEmbeddings};
 
 use crate::config::{ApiKeys, EmbeddingsConfig};
@@ -12,12 +10,20 @@ use crate::db::pool::DatabasePool;
 use anyhow::Result;
 use std::sync::Arc;
 
+/// Configuration key for storing the active embedding provider in server_state
+pub const EMBEDDING_PROVIDER_KEY: &str = "embedding_provider";
+
 /// Embedding client using OpenAI text-embedding-3-small
 pub struct EmbeddingClient {
     inner: OpenAiEmbeddings,
 }
 
 impl EmbeddingClient {
+    /// Provider identifier for change detection
+    pub fn provider_id(&self) -> &'static str {
+        "openai"
+    }
+
     /// Create a new embedding client from pre-loaded configuration (avoids duplicate env reads)
     pub fn from_config(
         api_keys: &ApiKeys,
@@ -93,26 +99,8 @@ impl EmbeddingClient {
         self.inner.set_project_id(project_id).await;
     }
 
-    /// Embed a single text using the default task type
+    /// Embed a single text
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.inner.embed(text).await
-    }
-
-    /// Embed text optimized for document storage
-    /// Note: OpenAI doesn't differentiate task types — same as embed()
-    pub async fn embed_for_storage(&self, text: &str) -> Result<Vec<f32>> {
-        self.inner.embed(text).await
-    }
-
-    /// Embed text optimized for search queries
-    /// Note: OpenAI doesn't differentiate task types — same as embed()
-    pub async fn embed_for_query(&self, text: &str) -> Result<Vec<f32>> {
-        self.inner.embed(text).await
-    }
-
-    /// Embed code content
-    /// Note: OpenAI doesn't differentiate task types — same as embed()
-    pub async fn embed_code(&self, text: &str) -> Result<Vec<f32>> {
         self.inner.embed(text).await
     }
 
@@ -121,23 +109,8 @@ impl EmbeddingClient {
         self.inner.embed_batch(texts).await
     }
 
-    /// Embed multiple texts optimized for document storage
-    /// Note: OpenAI doesn't differentiate task types — same as embed_batch()
-    pub async fn embed_batch_for_storage(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.inner.embed_batch(texts).await
-    }
-
-    /// Embed multiple texts optimized for code
-    /// Note: OpenAI doesn't differentiate task types — same as embed_batch()
-    pub async fn embed_batch_code(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.inner.embed_batch(texts).await
-    }
-
     /// Get the inner OpenAI embeddings client
     pub fn inner(&self) -> &OpenAiEmbeddings {
         &self.inner
     }
 }
-
-/// Configuration key for storing dimensions in server_state
-pub const EMBEDDING_DIMENSIONS_KEY: &str = "embedding_dimensions";

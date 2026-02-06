@@ -5,14 +5,15 @@
 // without blocking the fast lane.
 
 use crate::db::pool::DatabasePool;
+use crate::embeddings::EmbeddingClient;
 use crate::llm::{LlmClient, ProviderFactory};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
 use super::{
-    briefings, code_health, documentation, entity_extraction, outcome_scanner, pondering,
-    session_summaries, summaries,
+    briefings, code_health, documentation, entity_extraction, memory_embeddings, outcome_scanner,
+    pondering, session_summaries, summaries,
 };
 
 /// Delay before first cycle to let the service start up
@@ -36,6 +37,8 @@ pub struct SlowLaneWorker {
     pool: Arc<DatabasePool>,
     /// Code index database pool (code_symbols, vec_code, codebase_modules, etc.)
     code_pool: Arc<DatabasePool>,
+    /// Embedding client for memory re-embedding
+    embeddings: Option<Arc<EmbeddingClient>>,
     llm_factory: Arc<ProviderFactory>,
     shutdown: watch::Receiver<bool>,
     cycle_count: u64,
@@ -45,12 +48,14 @@ impl SlowLaneWorker {
     pub fn new(
         pool: Arc<DatabasePool>,
         code_pool: Arc<DatabasePool>,
+        embeddings: Option<Arc<EmbeddingClient>>,
         llm_factory: Arc<ProviderFactory>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         Self {
             pool,
             code_pool,
+            embeddings,
             llm_factory,
             shutdown,
             cycle_count: 0,
@@ -183,6 +188,15 @@ impl SlowLaneWorker {
             entity_extraction::process_entity_backfill(&self.pool),
         )
         .await?;
+
+        // Re-embed memory facts that need embeddings (after provider change or new facts)
+        if let Some(ref emb) = self.embeddings {
+            processed += Self::run_task(
+                "memory embeddings",
+                memory_embeddings::process_memory_embeddings(&self.pool, emb),
+            )
+            .await?;
+        }
 
         Ok(processed)
     }

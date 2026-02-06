@@ -13,7 +13,7 @@ mod reviews;
 mod session;
 mod session_tasks;
 mod system;
-mod vectors;
+pub(crate) mod vectors;
 
 // Re-export FTS functions that are used elsewhere
 pub use fts::{rebuild_code_fts, rebuild_code_fts_for_project};

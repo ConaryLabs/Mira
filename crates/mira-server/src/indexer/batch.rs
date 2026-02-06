@@ -40,13 +40,12 @@ pub struct PendingFileBatch {
 }
 
 /// Helper to embed code chunks and return vectors
-/// Uses RETRIEVAL_DOCUMENT task type for storage (pairs with CODE_RETRIEVAL_QUERY for search)
 pub async fn embed_chunks(
     embeddings: &EmbeddingClient,
     pending_chunks: &[PendingChunk],
 ) -> Result<Vec<Vec<f32>>, String> {
     let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
-    embeddings.embed_batch_for_storage(&texts).await.str_err()
+    embeddings.embed_batch(&texts).await.str_err()
 }
 
 /// Helper to prepare chunk data for database storage

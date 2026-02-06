@@ -59,7 +59,6 @@ pub struct HybridSearchResult {
 }
 
 /// Semantic search using embeddings
-/// Uses CODE_RETRIEVAL_QUERY task type for optimal code search
 pub async fn semantic_search(
     pool: &Arc<DatabasePool>,
     embeddings: &Arc<EmbeddingClient>,
@@ -67,7 +66,7 @@ pub async fn semantic_search(
     project_id: Option<i64>,
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
-    let query_embedding = embeddings.embed_code(query).await?;
+    let query_embedding = embeddings.embed(query).await?;
 
     let embedding_bytes = embedding_to_bytes(&query_embedding);
 
