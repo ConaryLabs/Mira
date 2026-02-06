@@ -83,26 +83,40 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
     // For session_ids that exist in both a surviving (MIN id) and duplicate team,
     // keep the newest member_name/role/last_heartbeat so OR IGNORE doesn't
     // silently discard fresher data from the duplicate.
+    // Deterministic merge: when multiple duplicates exist for the same (name, project),
+    // use ROW_NUMBER to pick exactly one (freshest heartbeat, tie-break on team_id DESC)
+    // per (surv_team, session_id) so the UPDATE ... FROM applies a single row.
     conn.execute_batch(
         "UPDATE team_sessions SET
-             member_name = dup.member_name,
-             role = dup.role,
-             last_heartbeat = dup.last_heartbeat
+             member_name = best.member_name,
+             role = best.role,
+             last_heartbeat = best.last_heartbeat
          FROM (
-             SELECT ts_d.session_id, ts_d.member_name, ts_d.role, ts_d.last_heartbeat,
-                    (SELECT MIN(t2.id) FROM teams t2
-                     WHERE t2.name = t.name
-                       AND COALESCE(t2.project_id, 0) = COALESCE(t.project_id, 0)
-                    ) AS surv_team
-             FROM team_sessions ts_d
-             JOIN teams t ON ts_d.team_id = t.id
-             WHERE ts_d.team_id NOT IN (
-                 SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+             SELECT session_id, member_name, role, last_heartbeat, surv_team
+             FROM (
+                 SELECT d.*, ROW_NUMBER() OVER (
+                     PARTITION BY d.surv_team, d.session_id
+                     ORDER BY d.last_heartbeat DESC, d.orig_team_id DESC
+                 ) AS rn
+                 FROM (
+                     SELECT ts_d.session_id, ts_d.member_name, ts_d.role,
+                            ts_d.last_heartbeat, ts_d.team_id AS orig_team_id,
+                            (SELECT MIN(t2.id) FROM teams t2
+                             WHERE t2.name = t.name
+                               AND COALESCE(t2.project_id, 0) = COALESCE(t.project_id, 0)
+                            ) AS surv_team
+                     FROM team_sessions ts_d
+                     JOIN teams t ON ts_d.team_id = t.id
+                     WHERE ts_d.team_id NOT IN (
+                         SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+                     )
+                 ) d
              )
-         ) dup
-         WHERE team_sessions.team_id = dup.surv_team
-           AND team_sessions.session_id = dup.session_id
-           AND team_sessions.last_heartbeat < dup.last_heartbeat;",
+             WHERE rn = 1
+         ) best
+         WHERE team_sessions.team_id = best.surv_team
+           AND team_sessions.session_id = best.session_id
+           AND team_sessions.last_heartbeat < best.last_heartbeat;",
     )?;
 
     conn.execute_batch(
@@ -137,6 +151,26 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_project
          ON teams(name, COALESCE(project_id, 0));",
+    )?;
+
+    // Enforce single-active-team-per-session at the DB level.
+    // Clean up any legacy rows where a session is active in multiple teams
+    // (keep the one with the most recent heartbeat, tie-break on team_id DESC).
+    conn.execute_batch(
+        "UPDATE team_sessions SET status = 'stopped'
+         WHERE status = 'active' AND id NOT IN (
+             SELECT id FROM (
+                 SELECT id, ROW_NUMBER() OVER (
+                     PARTITION BY session_id
+                     ORDER BY last_heartbeat DESC, team_id DESC
+                 ) AS rn
+                 FROM team_sessions
+                 WHERE status = 'active'
+             )
+             WHERE rn = 1
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_ts_single_active_session
+             ON team_sessions(session_id) WHERE status = 'active';",
     )?;
 
     // Migration: remove CHECK constraint on operation column for existing databases.
@@ -538,5 +572,189 @@ mod tests {
             .unwrap();
         assert_eq!(name, "charlie", "should keep surviving row's newer data");
         assert_eq!(role, "lead", "should keep surviving row's newer role");
+    }
+
+    #[test]
+    fn test_dedupe_three_way_picks_freshest_deterministically() {
+        let conn = setup_db();
+        conn.execute_batch(
+            "CREATE TABLE teams (
+                 id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                 project_id INTEGER REFERENCES projects(id),
+                 config_path TEXT NOT NULL, status TEXT DEFAULT 'active',
+                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE team_sessions (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 role TEXT DEFAULT 'teammate', agent_type TEXT,
+                 joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 last_heartbeat TEXT DEFAULT CURRENT_TIMESTAMP,
+                 status TEXT DEFAULT 'active',
+                 UNIQUE(team_id, session_id)
+             );
+             CREATE TABLE team_file_ownership (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 file_path TEXT NOT NULL, operation TEXT NOT NULL,
+                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+             );",
+        )
+        .unwrap();
+
+        // Three duplicate teams for (delta, project 1). Survivor = team 1 (MIN id).
+        // Team 3 has the freshest heartbeat, team 5 has a middle one.
+        // Previously non-deterministic: SQLite could pick team 5's row instead of team 3's.
+        conn.execute_batch(
+            "INSERT INTO teams (id, name, project_id, config_path) VALUES (1, 'delta', 1, '/p1');
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (3, 'delta', 1, '/p2');
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (5, 'delta', 1, '/p3');
+             -- Survivor's row: oldest
+             INSERT INTO team_sessions (team_id, session_id, member_name, role, last_heartbeat)
+                 VALUES (1, 'sess-Z', 'old_name', 'teammate', '2025-01-01T00:00:00');
+             -- Duplicate team 5: middle heartbeat
+             INSERT INTO team_sessions (team_id, session_id, member_name, role, last_heartbeat)
+                 VALUES (5, 'sess-Z', 'mid_name', 'teammate', '2025-05-01T00:00:00');
+             -- Duplicate team 3: freshest heartbeat
+             INSERT INTO team_sessions (team_id, session_id, member_name, role, last_heartbeat)
+                 VALUES (3, 'sess-Z', 'newest_name', 'lead', '2025-09-01T00:00:00');",
+        )
+        .unwrap();
+
+        migrate_team_tables(&conn).unwrap();
+
+        // Must deterministically pick team 3's metadata (freshest heartbeat)
+        let (name, role, hb): (String, String, String) = conn
+            .query_row(
+                "SELECT member_name, role, last_heartbeat FROM team_sessions WHERE session_id = 'sess-Z'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "newest_name", "should pick freshest duplicate metadata");
+        assert_eq!(role, "lead", "should pick freshest duplicate role");
+        assert_eq!(hb, "2025-09-01T00:00:00", "should pick freshest heartbeat");
+
+        let sess_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM team_sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(sess_count, 1);
+        let team_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM teams", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(team_count, 1);
+    }
+
+    #[test]
+    fn test_single_active_team_constraint() {
+        let conn = setup_db();
+        migrate_team_tables(&conn).unwrap();
+
+        // Create two teams
+        conn.execute(
+            "INSERT INTO teams (id, name, project_id, config_path) VALUES (1, 'team-a', 1, '/c1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO teams (id, name, project_id, config_path) VALUES (2, 'team-b', 1, '/c2')",
+            [],
+        )
+        .unwrap();
+
+        // Register session in team-a (active)
+        conn.execute(
+            "INSERT INTO team_sessions (team_id, session_id, member_name, status)
+             VALUES (1, 'sess-1', 'alice', 'active')",
+            [],
+        )
+        .unwrap();
+
+        // Attempting a second active row for the same session should fail
+        let result = conn.execute(
+            "INSERT INTO team_sessions (team_id, session_id, member_name, status)
+             VALUES (2, 'sess-1', 'alice', 'active')",
+            [],
+        );
+        assert!(
+            result.is_err(),
+            "partial unique index should prevent duplicate active sessions"
+        );
+
+        // But a stopped session for the same session_id is fine
+        conn.execute(
+            "INSERT INTO team_sessions (team_id, session_id, member_name, status)
+             VALUES (2, 'sess-1', 'alice', 'stopped')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_single_active_team_cleanup_keeps_freshest() {
+        let conn = setup_db();
+        conn.execute_batch(
+            "CREATE TABLE teams (
+                 id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                 project_id INTEGER REFERENCES projects(id),
+                 config_path TEXT NOT NULL, status TEXT DEFAULT 'active',
+                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE team_sessions (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 role TEXT DEFAULT 'teammate', agent_type TEXT,
+                 joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 last_heartbeat TEXT DEFAULT CURRENT_TIMESTAMP,
+                 status TEXT DEFAULT 'active',
+                 UNIQUE(team_id, session_id)
+             );
+             CREATE TABLE team_file_ownership (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 file_path TEXT NOT NULL, operation TEXT NOT NULL,
+                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+             );",
+        )
+        .unwrap();
+
+        // Legacy corrupt state: session active in two different teams
+        conn.execute_batch(
+            "INSERT INTO teams (id, name, project_id, config_path) VALUES (1, 'team-x', 1, '/c1');
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (2, 'team-y', 1, '/c2');
+             INSERT INTO team_sessions (team_id, session_id, member_name, status, last_heartbeat)
+                 VALUES (1, 'sess-dup', 'alice', 'active', '2025-01-01T00:00:00');
+             INSERT INTO team_sessions (team_id, session_id, member_name, status, last_heartbeat)
+                 VALUES (2, 'sess-dup', 'alice', 'active', '2025-06-01T00:00:00');",
+        )
+        .unwrap();
+
+        migrate_team_tables(&conn).unwrap();
+
+        // Only one active membership should remain (the one with freshest heartbeat)
+        let active_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM team_sessions WHERE session_id = 'sess-dup' AND status = 'active'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_count, 1, "cleanup should leave exactly one active membership");
+
+        // The surviving active one should be in team 2 (fresher heartbeat)
+        let team_id: i64 = conn
+            .query_row(
+                "SELECT team_id FROM team_sessions WHERE session_id = 'sess-dup' AND status = 'active'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(team_id, 2, "should keep the membership with freshest heartbeat");
     }
 }
