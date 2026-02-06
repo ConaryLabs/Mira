@@ -96,8 +96,8 @@ async fn main() -> Result<()> {
         Some(Commands::DebugSession { path }) => {
             cli::run_debug_session(path).await?;
         }
-        Some(Commands::Setup { check }) => {
-            cli::setup::run(check).await?;
+        Some(Commands::Setup { check, yes }) => {
+            cli::setup::run(check, yes).await?;
         }
     }
 

@@ -40,12 +40,11 @@ curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | b
 
 This detects your OS, downloads the binary, installs the Claude Code plugin (which auto-configures all hooks and skills), and creates a config template.
 
-Then add your API keys to `~/.mira/.env`:
+Then configure providers (optional):
 ```bash
-OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys (embeddings)
-DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys (experts)
-ZHIPU_API_KEY=your-key-here     # https://z.ai (alternative expert provider)
+mira setup
 ```
+This interactive wizard lets you configure API keys for enhanced features (expert consultations, semantic search).
 
 > **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without any keys. Search falls back to fuzzy/keyword matching, analysis uses heuristic parsers, and expert consultation works via MCP Sampling through the host client. Add keys for enhanced capabilities: OpenAI for semantic search, DeepSeek or Zhipu for direct expert access with codebase search.
 

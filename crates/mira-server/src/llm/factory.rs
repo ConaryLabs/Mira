@@ -20,7 +20,8 @@ pub struct ProviderFactory {
     clients: HashMap<Provider, Arc<dyn LlmClient>>,
     default_provider: Option<Provider>,
     background_provider: Option<Provider>,
-    fallback_order: Vec<Provider>,
+    expert_fallback_order: Vec<Provider>,
+    background_fallback_order: Vec<Provider>,
     // Store API keys/hosts to create custom clients on demand
     deepseek_key: Option<String>,
     zhipu_key: Option<String>,
@@ -91,13 +92,15 @@ impl ProviderFactory {
         let available: Vec<_> = clients.keys().map(|p| p.to_string()).collect();
         info!(providers = ?available, "LLM providers available");
 
-        let fallback_order = vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama];
+        let expert_fallback_order = vec![Provider::DeepSeek, Provider::Zhipu];
+        let background_fallback_order = vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama];
 
         Self {
             clients,
             default_provider,
             background_provider,
-            fallback_order,
+            expert_fallback_order,
+            background_fallback_order,
             deepseek_key: api_keys.deepseek,
             zhipu_key: api_keys.zhipu,
             ollama_host: api_keys.ollama,
@@ -129,8 +132,8 @@ impl ProviderFactory {
             return Some(client.clone());
         }
 
-        // Fall back through the chain
-        for provider in &self.fallback_order {
+        // Fall back through the chain (includes Ollama for background tasks)
+        for provider in &self.background_fallback_order {
             if let Some(client) = self.clients.get(provider) {
                 return Some(client.clone());
             }
@@ -204,8 +207,8 @@ impl ProviderFactory {
             return Ok(client.clone());
         }
 
-        // 3. Fall back through the chain
-        for provider in &self.fallback_order {
+        // 3. Fall back through the chain (experts only: no Ollama)
+        for provider in &self.expert_fallback_order {
             if let Some(client) = self.clients.get(provider) {
                 info!(
                     role = role,
@@ -307,7 +310,8 @@ mod tests {
             clients: HashMap::new(),
             default_provider: None,
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
+            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
+            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
             deepseek_key: None,
             zhipu_key: None,
             ollama_host: None,
@@ -346,7 +350,8 @@ mod tests {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
+            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
+            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
             deepseek_key: None,
             zhipu_key: None,
             ollama_host: None,
@@ -356,12 +361,17 @@ mod tests {
     }
 
     #[test]
-    fn test_fallback_order() {
+    fn test_fallback_orders() {
         let factory = empty_factory();
-        assert_eq!(factory.fallback_order.len(), 3);
-        assert_eq!(factory.fallback_order[0], Provider::DeepSeek);
-        assert_eq!(factory.fallback_order[1], Provider::Zhipu);
-        assert_eq!(factory.fallback_order[2], Provider::Ollama);
+        // Expert fallback excludes Ollama
+        assert_eq!(factory.expert_fallback_order.len(), 2);
+        assert_eq!(factory.expert_fallback_order[0], Provider::DeepSeek);
+        assert_eq!(factory.expert_fallback_order[1], Provider::Zhipu);
+        // Background fallback includes Ollama
+        assert_eq!(factory.background_fallback_order.len(), 3);
+        assert_eq!(factory.background_fallback_order[0], Provider::DeepSeek);
+        assert_eq!(factory.background_fallback_order[1], Provider::Zhipu);
+        assert_eq!(factory.background_fallback_order[2], Provider::Ollama);
     }
 
     // ========================================================================
@@ -379,7 +389,8 @@ mod tests {
             clients,
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
+            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
+            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
             deepseek_key: Some(key),
             zhipu_key: None,
             ollama_host: None,
@@ -454,7 +465,8 @@ mod tests {
             clients,
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
+            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
+            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
             deepseek_key: None, // No key available
             zhipu_key: None,
             ollama_host: None,

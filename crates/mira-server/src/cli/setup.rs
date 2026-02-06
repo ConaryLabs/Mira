@@ -4,7 +4,7 @@
 use anyhow::Result;
 use dialoguer::{Confirm, Password, Select};
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -20,9 +20,16 @@ const BANNER: &str = r#"
 "#;
 
 /// Run the setup wizard
-pub async fn run(check: bool) -> Result<()> {
+pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
     if check {
         return run_check().await;
+    }
+
+    if !non_interactive && !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "Setup requires an interactive terminal.\n\
+             Use --yes for non-interactive mode, or run in a terminal."
+        );
     }
 
     println!("{}", BANNER);
@@ -41,10 +48,11 @@ pub async fn run(check: bool) -> Result<()> {
         .is_some()
     {
         println!("Warning: MIRA_DISABLE_LLM is set. LLM features are currently disabled.");
-        if !Confirm::new()
-            .with_prompt("Continue setup anyway?")
-            .default(true)
-            .interact()?
+        if !non_interactive
+            && !Confirm::new()
+                .with_prompt("Continue setup anyway?")
+                .default(true)
+                .interact()?
         {
             println!("Setup cancelled.");
             return Ok(());
@@ -54,72 +62,78 @@ pub async fn run(check: bool) -> Result<()> {
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
     let mut ollama_selected = false;
 
-    // Step 2: Expert provider
-    println!("\n--- Expert Provider (reasoning, code review) ---");
-    let expert_choices = &["DeepSeek (recommended)", "Zhipu GLM-4.7", "Skip"];
-    let expert_sel = Select::new()
-        .with_prompt("Choose expert provider")
-        .items(expert_choices)
-        .default(0)
-        .interact()?;
+    if non_interactive {
+        // Non-interactive: skip API key prompts, just auto-detect Ollama
+        println!("Running in non-interactive mode (--yes).");
+        println!("Skipping API key prompts. Detecting Ollama...");
+    } else {
+        // Step 2: Expert provider
+        println!("\n--- Expert Provider (reasoning, code review) ---");
+        let expert_choices = &["DeepSeek (recommended)", "Zhipu GLM-4.7", "Skip"];
+        let expert_sel = Select::new()
+            .with_prompt("Choose expert provider")
+            .items(expert_choices)
+            .default(0)
+            .interact()?;
 
-    match expert_sel {
-        0 => {
+        match expert_sel {
+            0 => {
+                if let Some(key) = prompt_api_key(
+                    "DeepSeek",
+                    "DEEPSEEK_API_KEY",
+                    existing.get("DEEPSEEK_API_KEY"),
+                )
+                .await?
+                {
+                    keys.insert("DEEPSEEK_API_KEY".into(), key);
+                }
+            }
+            1 => {
+                if let Some(key) =
+                    prompt_api_key("Zhipu", "ZHIPU_API_KEY", existing.get("ZHIPU_API_KEY")).await?
+                {
+                    keys.insert("ZHIPU_API_KEY".into(), key);
+                }
+            }
+            _ => println!("Skipping expert provider."),
+        }
+
+        // Step 3: Embeddings
+        println!("\n--- Embeddings (semantic search) ---");
+        let embed_choices = &["OpenAI (required for semantic search)", "Skip"];
+        let embed_sel = Select::new()
+            .with_prompt("Choose embeddings provider")
+            .items(embed_choices)
+            .default(0)
+            .interact()?;
+
+        if embed_sel == 0 {
             if let Some(key) = prompt_api_key(
-                "DeepSeek",
-                "DEEPSEEK_API_KEY",
-                existing.get("DEEPSEEK_API_KEY"),
+                "OpenAI",
+                "OPENAI_API_KEY",
+                existing.get("OPENAI_API_KEY"),
             )
             .await?
             {
-                keys.insert("DEEPSEEK_API_KEY".into(), key);
+                keys.insert("OPENAI_API_KEY".into(), key);
             }
+        } else {
+            println!("Skipping embeddings. Semantic search will be unavailable.");
         }
-        1 => {
-            if let Some(key) =
-                prompt_api_key("Zhipu", "ZHIPU_API_KEY", existing.get("ZHIPU_API_KEY")).await?
-            {
-                keys.insert("ZHIPU_API_KEY".into(), key);
+
+        // Step 4: Web search
+        println!("\n--- Web Search (expert consultations) ---");
+        let web_choices = &["Brave Search", "Skip"];
+        let web_sel = Select::new()
+            .with_prompt("Choose web search provider")
+            .items(web_choices)
+            .default(1)
+            .interact()?;
+
+        if web_sel == 0 {
+            if let Some(key) = prompt_brave_key(existing.get("BRAVE_API_KEY"))? {
+                keys.insert("BRAVE_API_KEY".into(), key);
             }
-        }
-        _ => println!("Skipping expert provider."),
-    }
-
-    // Step 3: Embeddings
-    println!("\n--- Embeddings (semantic search) ---");
-    let embed_choices = &["OpenAI (required for semantic search)", "Skip"];
-    let embed_sel = Select::new()
-        .with_prompt("Choose embeddings provider")
-        .items(embed_choices)
-        .default(0)
-        .interact()?;
-
-    if embed_sel == 0 {
-        if let Some(key) = prompt_api_key(
-            "OpenAI",
-            "OPENAI_API_KEY",
-            existing.get("OPENAI_API_KEY"),
-        )
-        .await?
-        {
-            keys.insert("OPENAI_API_KEY".into(), key);
-        }
-    } else {
-        println!("Skipping embeddings. Semantic search will be unavailable.");
-    }
-
-    // Step 4: Web search
-    println!("\n--- Web Search (expert consultations) ---");
-    let web_choices = &["Brave Search", "Skip"];
-    let web_sel = Select::new()
-        .with_prompt("Choose web search provider")
-        .items(web_choices)
-        .default(1)
-        .interact()?;
-
-    if web_sel == 0 {
-        if let Some(key) = prompt_brave_key(existing.get("BRAVE_API_KEY"))? {
-            keys.insert("BRAVE_API_KEY".into(), key);
         }
     }
 
@@ -131,23 +145,43 @@ pub async fn run(check: bool) -> Result<()> {
 
     match detect_ollama(&ollama_host).await {
         OllamaStatus::Available(models) => {
-            println!("Ollama detected at {} with {} model(s).", ollama_host, models.len());
+            println!(
+                "Ollama detected at {} with {} model(s).",
+                ollama_host,
+                models.len()
+            );
             if !models.is_empty() {
-                let model_names: Vec<&str> = models.iter().map(|s| s.as_str()).collect();
-                let sel = Select::new()
-                    .with_prompt("Select Ollama model for background tasks")
-                    .items(&model_names)
-                    .default(0)
-                    .interact()?;
-                keys.insert("OLLAMA_HOST".into(), ollama_host.clone());
-                keys.insert("OLLAMA_MODEL".into(), models[sel].clone());
-                ollama_selected = true;
+                if non_interactive {
+                    // Auto-select first model
+                    println!("Auto-selected model: {}", models[0]);
+                    keys.insert("OLLAMA_HOST".into(), ollama_host.clone());
+                    keys.insert("OLLAMA_MODEL".into(), models[0].clone());
+                    ollama_selected = true;
+                } else {
+                    let mut choices: Vec<&str> = models.iter().map(|s| s.as_str()).collect();
+                    choices.push("Skip Ollama");
+                    let sel = Select::new()
+                        .with_prompt("Select Ollama model for background tasks")
+                        .items(&choices)
+                        .default(0)
+                        .interact()?;
+                    if sel < models.len() {
+                        keys.insert("OLLAMA_HOST".into(), ollama_host.clone());
+                        keys.insert("OLLAMA_MODEL".into(), models[sel].clone());
+                        ollama_selected = true;
+                    } else {
+                        println!("Skipping Ollama.");
+                    }
+                }
             } else {
-                println!("Ollama is running but no models found. Pull a model with: ollama pull llama3.3");
-                if Confirm::new()
-                    .with_prompt("Save Ollama host anyway?")
-                    .default(true)
-                    .interact()?
+                println!(
+                    "Ollama is running but no models found. Pull a model with: ollama pull llama3.3"
+                );
+                if !non_interactive
+                    && Confirm::new()
+                        .with_prompt("Save Ollama host anyway?")
+                        .default(true)
+                        .interact()?
                 {
                     keys.insert("OLLAMA_HOST".into(), ollama_host.clone());
                     ollama_selected = true;
@@ -156,42 +190,60 @@ pub async fn run(check: bool) -> Result<()> {
         }
         OllamaStatus::NotAvailable => {
             println!("Ollama not detected at {}.", ollama_host);
-            println!("Install from https://ollama.com or set OLLAMA_HOST if running elsewhere.");
-            // Offer manual URL input
-            if Confirm::new()
-                .with_prompt("Enter a custom Ollama URL?")
-                .default(false)
-                .interact()?
-            {
-                let custom: String = dialoguer::Input::new()
-                    .with_prompt("Ollama URL")
-                    .default("http://localhost:11434".into())
-                    .interact_text()?;
-                match detect_ollama(&custom).await {
-                    OllamaStatus::Available(models) => {
-                        println!("Ollama detected at {} with {} model(s).", custom, models.len());
-                        keys.insert("OLLAMA_HOST".into(), custom);
-                        ollama_selected = true;
-                        if !models.is_empty() {
-                            let model_names: Vec<&str> =
-                                models.iter().map(|s| s.as_str()).collect();
-                            let sel = Select::new()
-                                .with_prompt("Select Ollama model")
-                                .items(&model_names)
-                                .default(0)
-                                .interact()?;
-                            keys.insert("OLLAMA_MODEL".into(), models[sel].clone());
+            if non_interactive {
+                println!("Skipping Ollama (not available).");
+            } else {
+                println!(
+                    "Install from https://ollama.com or set OLLAMA_HOST if running elsewhere."
+                );
+                // Offer manual URL input
+                if Confirm::new()
+                    .with_prompt("Enter a custom Ollama URL?")
+                    .default(false)
+                    .interact()?
+                {
+                    let custom: String = dialoguer::Input::new()
+                        .with_prompt("Ollama URL")
+                        .default("http://localhost:11434".into())
+                        .interact_text()?;
+                    match detect_ollama(&custom).await {
+                        OllamaStatus::Available(models) => {
+                            println!(
+                                "Ollama detected at {} with {} model(s).",
+                                custom,
+                                models.len()
+                            );
+                            if !models.is_empty() {
+                                let mut choices: Vec<&str> =
+                                    models.iter().map(|s| s.as_str()).collect();
+                                choices.push("Skip Ollama");
+                                let sel = Select::new()
+                                    .with_prompt("Select Ollama model")
+                                    .items(&choices)
+                                    .default(0)
+                                    .interact()?;
+                                if sel < models.len() {
+                                    keys.insert("OLLAMA_HOST".into(), custom);
+                                    keys.insert("OLLAMA_MODEL".into(), models[sel].clone());
+                                    ollama_selected = true;
+                                } else {
+                                    println!("Skipping Ollama.");
+                                }
+                            } else {
+                                keys.insert("OLLAMA_HOST".into(), custom);
+                                ollama_selected = true;
+                            }
                         }
-                    }
-                    OllamaStatus::NotAvailable => {
-                        println!("Could not connect to Ollama at {}.", custom);
-                        if Confirm::new()
-                            .with_prompt("Save this URL anyway?")
-                            .default(false)
-                            .interact()?
-                        {
-                            keys.insert("OLLAMA_HOST".into(), custom);
-                            ollama_selected = true;
+                        OllamaStatus::NotAvailable => {
+                            println!("Could not connect to Ollama at {}.", custom);
+                            if Confirm::new()
+                                .with_prompt("Save this URL anyway?")
+                                .default(false)
+                                .interact()?
+                            {
+                                keys.insert("OLLAMA_HOST".into(), custom);
+                                ollama_selected = true;
+                            }
                         }
                     }
                 }
@@ -208,7 +260,11 @@ pub async fn run(check: bool) -> Result<()> {
 
     for (k, v) in &keys {
         let display = if k.contains("KEY") {
-            format!("{}...{}", &v[..4.min(v.len())], &v[v.len().saturating_sub(4)..])
+            format!(
+                "{}...{}",
+                &v[..4.min(v.len())],
+                &v[v.len().saturating_sub(4)..]
+            )
         } else {
             v.clone()
         };
@@ -235,10 +291,16 @@ pub async fn run(check: bool) -> Result<()> {
     // Write config.toml if Ollama selected
     if ollama_selected {
         write_config_toml(&config_path)?;
-        println!("Updated {} with background_provider = \"ollama\"", config_path.display());
+        println!(
+            "Updated {} with background_provider = \"ollama\"",
+            config_path.display()
+        );
     }
 
-    println!("\nSetup complete! Configuration saved to {}", env_path.display());
+    println!(
+        "\nSetup complete! Configuration saved to {}",
+        env_path.display()
+    );
     println!("Restart Claude Code for changes to take effect.");
 
     Ok(())
@@ -526,11 +588,15 @@ async fn check_response(
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() > max {
-        &s[..max]
-    } else {
-        s
+    if s.len() <= max {
+        return s;
     }
+    // Find the last char boundary at or before `max`
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 enum OllamaStatus {
@@ -541,7 +607,9 @@ enum OllamaStatus {
 /// Try to detect Ollama and list available models
 async fn detect_ollama(host: &str) -> OllamaStatus {
     let client = reqwest::Client::new();
-    let url = format!("{}/api/tags", host);
+    let base = host.trim_end_matches('/');
+    let base = if base.ends_with("/v1") { &base[..base.len() - 3] } else { base };
+    let url = format!("{}/api/tags", base);
     let resp = client.get(&url).timeout(Duration::from_secs(5)).send().await;
 
     match resp {
@@ -593,17 +661,23 @@ fn write_env(
 fn write_config_toml(path: &PathBuf) -> Result<()> {
     let existing = std::fs::read_to_string(path).unwrap_or_default();
 
-    if existing.contains("background_provider") {
-        // Update existing value
+    // Check for an UNCOMMENTED background_provider line
+    let has_active_setting = existing.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.starts_with('#') && trimmed.starts_with("background_provider")
+    });
+
+    if has_active_setting {
+        // Update existing uncommented value
         let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
         for line in &mut lines {
-            if line.trim().starts_with("background_provider") {
+            if !line.trim().starts_with('#') && line.trim().starts_with("background_provider") {
                 *line = "background_provider = \"ollama\"".to_string();
             }
         }
         std::fs::write(path, lines.join("\n") + "\n")?;
     } else {
-        // Append or create
+        // Append — create [llm] section if needed
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

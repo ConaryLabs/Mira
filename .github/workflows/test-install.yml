@@ -82,12 +82,6 @@ jobs:
             FAIL=1
           fi
 
-          # Assert .env was created
-          if [ ! -f "$HOME/.mira/.env" ]; then
-            echo "::error::.env not created at ~/.mira/.env"
-            FAIL=1
-          fi
-
           # Assert stderr contains download log
           if ! echo "$STDERR" | grep -q "downloading"; then
             echo "::error::stderr missing download log on first run"
@@ -153,12 +147,6 @@ jobs:
           BIN="$HOME/.local/bin/mira"
           if [ ! -x "$BIN" ]; then
             echo "::error::Binary not found or not executable at $BIN"
-            FAIL=1
-          fi
-
-          # Assert .env was created
-          if [ ! -f "$HOME/.mira/.env" ]; then
-            echo "::error::.env not created at ~/.mira/.env"
             FAIL=1
           fi
 

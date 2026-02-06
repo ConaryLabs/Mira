@@ -27,16 +27,14 @@ Runs automatically on every `release: published` event. Can also be triggered ma
 1. `MIRA_VERSION` in wrapper matches the release tag (fast-fail gate)
 2. First run downloads binary → `~/.mira/bin/mira` exists and is executable
 3. Version file `~/.mira/bin/.mira-version` matches expected version
-4. `~/.mira/.env` is created with placeholder keys
-5. stderr contains download log
-6. `mira --version` outputs the correct version string
-7. Second run (fast path) produces no download log in stderr
+4. stderr contains download log
+5. `mira --version` outputs the correct version string
+6. Second run (fast path) produces no download log in stderr
 
 **Installer test assertions:**
 
 1. Binary installed to `$MIRA_INSTALL_DIR` and executable
-2. `~/.mira/.env` created
-3. `mira --version` outputs correct version
+2. `mira --version` outputs correct version
 
 **Manual trigger:**
 
@@ -60,9 +58,9 @@ MIRA_TEST_VERSION=0.3.6 ./scripts/test-install.sh  # override version
 
 **What each container run tests:**
 
-1. Wrapper first run — downloads binary, creates version file, creates `.env`, logs to stderr
+1. Wrapper first run — downloads binary, creates version file, logs to stderr
 2. Wrapper second run — fast path via `exec`, no re-download
-3. `install.sh` — downloads binary to custom `MIRA_INSTALL_DIR`, creates `.env`
+3. `install.sh` — downloads binary to custom `MIRA_INSTALL_DIR`
 4. Binary execution (`--version`) — soft assertion, reports WARN on incompatible libc
 
 **Known platform limitations:**

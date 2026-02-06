@@ -82,6 +82,9 @@ pub enum Commands {
         /// Read-only validation mode: show current config status without modifying
         #[arg(long)]
         check: bool,
+        /// Non-interactive mode: auto-detect Ollama, skip API key prompts, use defaults
+        #[arg(long, alias = "non-interactive")]
+        yes: bool,
     },
 }
 

@@ -139,21 +139,14 @@ else
     fail "version file not found"
 fi
 
-# 1c: .env created
-if [ -f "$HOME/.mira/.env" ]; then
-    pass ".env created"
-else
-    fail ".env not created"
-fi
-
-# 1d: stderr has download log
+# 1c: stderr has download log
 if echo "$STDERR" | grep -qi "download"; then
     pass "stderr contains download log"
 else
     fail "stderr missing download log"
 fi
 
-# 1e: --version output contains version (soft — may fail on musl/old glibc)
+# 1d: --version output contains version (soft — may fail on musl/old glibc)
 if echo "$OUTPUT" | grep -q "$VERSION"; then
     soft pass "--version output contains $VERSION"
 else
@@ -199,14 +192,7 @@ else
     fail "install.sh: binary not found at $MIRA_INSTALL_DIR/mira"
 fi
 
-# 3b: .env created
-if [ -f "$HOME/.mira/.env" ]; then
-    pass "install.sh: .env created"
-else
-    fail "install.sh: .env not created"
-fi
-
-# 3c: binary runs (soft — may fail on musl/old glibc)
+# 3b: binary runs (soft — may fail on musl/old glibc)
 INST_OUTPUT=$("$MIRA_INSTALL_DIR/mira" --version 2>/dev/null) || true
 if echo "$INST_OUTPUT" | grep -q "$VERSION"; then
     soft pass "install.sh: binary outputs version $VERSION"

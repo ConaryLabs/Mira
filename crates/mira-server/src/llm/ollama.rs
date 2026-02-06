@@ -12,6 +12,15 @@ use std::time::{Duration, Instant};
 use tracing::{Span, debug, info, instrument};
 use uuid::Uuid;
 
+/// Normalize Ollama base URL by stripping trailing slashes and /v1 suffix
+fn normalize_base_url(url: &str) -> String {
+    let mut url = url.trim_end_matches('/').to_string();
+    if url.ends_with("/v1") {
+        url.truncate(url.len() - 3);
+    }
+    url
+}
+
 /// Ollama API client (OpenAI-compatible endpoint, no auth required)
 pub struct OllamaClient {
     base_url: String,
@@ -29,7 +38,7 @@ impl OllamaClient {
     pub fn with_model(base_url: String, model: String) -> Self {
         let http = LlmHttpClient::new(Duration::from_secs(300), Duration::from_secs(30));
         Self {
-            base_url,
+            base_url: normalize_base_url(&base_url),
             model,
             http,
         }
@@ -164,5 +173,20 @@ mod tests {
         let client = OllamaClient::new("http://localhost:11434".into());
         assert_eq!(client.context_budget(), 32_000);
         assert!(client.supports_context_budget());
+    }
+
+    #[test]
+    fn test_url_normalization() {
+        let client = OllamaClient::new("http://localhost:11434/v1".into());
+        assert_eq!(client.base_url, "http://localhost:11434");
+
+        let client = OllamaClient::new("http://localhost:11434/v1/".into());
+        assert_eq!(client.base_url, "http://localhost:11434");
+
+        let client = OllamaClient::new("http://localhost:11434/".into());
+        assert_eq!(client.base_url, "http://localhost:11434");
+
+        let client = OllamaClient::new("http://localhost:11434".into());
+        assert_eq!(client.base_url, "http://localhost:11434");
     }
 }
