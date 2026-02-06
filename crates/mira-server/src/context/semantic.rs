@@ -6,6 +6,7 @@ use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::search::hybrid_search;
 use crate::utils::truncate_at_boundary;
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct SemanticInjector {
@@ -65,10 +66,9 @@ impl SemanticInjector {
                         context.push('\n');
                     }
                     // Extract filename from path
-                    let filename = search_result
-                        .file_path
-                        .split('/')
-                        .next_back()
+                    let filename = Path::new(&search_result.file_path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
                         .unwrap_or(&search_result.file_path);
                     // Truncate content appropriately
                     let content = truncate_at_boundary(&search_result.content, 200);

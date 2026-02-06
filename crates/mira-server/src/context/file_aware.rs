@@ -4,6 +4,7 @@
 use crate::db::pool::DatabasePool;
 use crate::db::search_memories_sync;
 use regex::Regex;
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct FileAwareInjector {
@@ -49,7 +50,11 @@ impl FileAwareInjector {
 
         for path in &file_paths {
             // Extract just the filename for broader matching
-            let filename = path.rsplit('/').next().unwrap_or(path).to_string();
+            let filename = Path::new(path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(path)
+                .to_string();
 
             // Search memories that mention this file
             let pool = self.pool.clone();

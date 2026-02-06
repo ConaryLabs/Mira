@@ -137,7 +137,10 @@ pub fn collect_detections(project_path: &str) -> Result<DetectionOutput, String>
             break;
         }
 
-        let skip_test_file = file.contains("/tests/") || file.ends_with("_test.rs");
+        let skip_test_file = Path::new(&file)
+            .components()
+            .any(|c| c.as_os_str() == "tests")
+            || file.ends_with("_test.rs");
 
         let full_path = Path::new(project_path).join(&file);
         let content = match fs::read_to_string(&full_path) {

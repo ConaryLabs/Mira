@@ -57,10 +57,11 @@ pub fn truncate_at_boundary(s: &str, max_bytes: usize) -> &str {
 
 /// Sanitize a project path for use as a directory name.
 ///
-/// Replaces `/` with `-` to match Claude Code's directory naming convention.
+/// Replaces path separators with `-` to match Claude Code's directory naming convention.
+/// Handles both `/` and `\` for cross-platform compatibility.
 /// e.g. `/home/peter/Mira` -> `-home-peter-Mira`
 pub fn sanitize_project_path(path: &str) -> String {
-    path.replace('/', "-")
+    path.replace('/', "-").replace('\\', "-")
 }
 
 /// Format a `since_days` filter into a human-readable period string.
@@ -164,6 +165,66 @@ mod tests {
             "-home-peter-Mira"
         );
         assert_eq!(sanitize_project_path("/tmp/test"), "-tmp-test");
+    }
+
+    #[test]
+    fn test_sanitize_project_path_backslashes() {
+        // Windows-style paths should produce the same result as forward-slash paths
+        assert_eq!(
+            sanitize_project_path("C:\\Users\\peter\\Mira"),
+            "C:-Users-peter-Mira"
+        );
+        assert_eq!(
+            sanitize_project_path("D:\\projects\\test"),
+            "D:-projects-test"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_project_path_mixed_separators() {
+        // Mixed separators (can happen with user input or path joining)
+        assert_eq!(
+            sanitize_project_path("C:\\Users/peter\\project"),
+            "C:-Users-peter-project"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_project_path_empty_and_edge_cases() {
+        assert_eq!(sanitize_project_path(""), "");
+        assert_eq!(sanitize_project_path("no-separators"), "no-separators");
+        assert_eq!(sanitize_project_path("/"), "-");
+        assert_eq!(sanitize_project_path("\\"), "-");
+    }
+
+    /// Helper to extract a file name from a path string using either separator.
+    /// This mirrors logic that might be used in cross-platform path handling.
+    fn extract_filename(path: &str) -> &str {
+        path.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(path)
+    }
+
+    #[test]
+    fn test_extract_filename_unix_paths() {
+        assert_eq!(extract_filename("/home/user/project/main.rs"), "main.rs");
+        assert_eq!(extract_filename("src/lib.rs"), "lib.rs");
+        assert_eq!(extract_filename("file.rs"), "file.rs");
+    }
+
+    #[test]
+    fn test_extract_filename_windows_paths() {
+        assert_eq!(
+            extract_filename("C:\\Users\\user\\project\\main.rs"),
+            "main.rs"
+        );
+        assert_eq!(extract_filename("src\\lib.rs"), "lib.rs");
+    }
+
+    #[test]
+    fn test_extract_filename_mixed_separators() {
+        assert_eq!(
+            extract_filename("C:\\Users/user\\project/main.rs"),
+            "main.rs"
+        );
     }
 
     #[test]

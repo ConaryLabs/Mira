@@ -411,7 +411,12 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
     if !files_modified.is_empty() {
         let file_names: Vec<&str> = files_modified
             .iter()
-            .map(|p| p.rsplit('/').next().unwrap_or(p))
+            .map(|p| {
+                std::path::Path::new(p.as_str())
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(p)
+            })
             .collect();
         if file_names.len() <= 3 {
             parts.push(format!("Modified: {}", file_names.join(", ")));

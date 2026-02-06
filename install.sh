@@ -30,13 +30,7 @@ detect_platform() {
 
     case "$(uname -m)" in
         x86_64|amd64) arch="x86_64" ;;
-        arm64|aarch64)
-            if [ "$os" = "apple-darwin" ]; then
-                arch="aarch64"
-            else
-                error "ARM64 Linux is not yet supported"
-            fi
-            ;;
+        arm64|aarch64) arch="aarch64" ;;
         *) error "Unsupported architecture: $(uname -m)" ;;
     esac
 
@@ -73,8 +67,16 @@ install_binary() {
         curl -fsSL "$url" | tar -xz -C "$tmp_dir"
     fi
 
-    # Check if we need sudo
-    if [ -w "$INSTALL_DIR" ]; then
+    # Determine binary name (mira.exe on Windows, mira elsewhere)
+    local bin_name="mira"
+    if [[ "$platform" == *"windows"* ]]; then
+        bin_name="mira.exe"
+    fi
+
+    # Install binary — skip chmod/sudo on Windows
+    if [[ "$platform" == *"windows"* ]]; then
+        mv "$tmp_dir/$bin_name" "$INSTALL_DIR/$bin_name"
+    elif [ -w "$INSTALL_DIR" ]; then
         mv "$tmp_dir/mira" "$INSTALL_DIR/mira"
         chmod +x "$INSTALL_DIR/mira"
     else
@@ -83,7 +85,7 @@ install_binary() {
         sudo chmod +x "$INSTALL_DIR/mira"
     fi
 
-    info "Installed mira to $INSTALL_DIR/mira"
+    info "Installed mira to $INSTALL_DIR/$bin_name"
 }
 
 # Install Claude Code plugin (returns 0 on success, 1 on failure)

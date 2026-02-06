@@ -595,13 +595,13 @@ fn gather_system_context_content() -> Option<String> {
         "jq",
     ];
     if let Ok(path_var) = std::env::var("PATH") {
-        let path_dirs: Vec<&str> = path_var.split(':').collect();
+        let path_dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path_var).collect();
         let found: Vec<&str> = tools_to_check
             .iter()
             .filter(|tool| {
                 path_dirs
                     .iter()
-                    .any(|dir| std::path::Path::new(dir).join(tool).is_file())
+                    .any(|dir| dir.join(tool).is_file())
             })
             .copied()
             .collect();

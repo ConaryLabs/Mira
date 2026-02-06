@@ -6,6 +6,7 @@ use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
 use anyhow::Result;
+use std::path::Path;
 use std::sync::Arc;
 
 /// PreToolUse hook input from Claude Code
@@ -140,9 +141,16 @@ fn build_search_query(input: &PreToolInput) -> String {
 
     if let Some(path) = &input.path {
         // Extract meaningful parts from path
-        let path_parts: Vec<&str> = path
-            .split('/')
-            .filter(|p| !p.is_empty() && *p != "src" && *p != "lib" && *p != ".")
+        let path_parts: Vec<String> = Path::new(path)
+            .components()
+            .filter_map(|c| {
+                let s = c.as_os_str().to_str()?;
+                if s == "src" || s == "lib" || s == "." {
+                    None
+                } else {
+                    Some(s.to_string())
+                }
+            })
             .collect();
         if let Some(last) = path_parts.last() {
             parts.push(last.to_string());

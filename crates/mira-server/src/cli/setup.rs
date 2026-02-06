@@ -326,6 +326,11 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600))?;
     }
+    #[cfg(not(unix))]
+    tracing::debug!(
+        "Skipping .env file permission restriction on non-Unix platform: {}",
+        env_path.display()
+    );
 
     // Write config.toml if Ollama selected
     if ollama_selected {

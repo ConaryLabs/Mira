@@ -9,7 +9,11 @@ MIRA_VERSION="0.6.1"
 REPO="ConaryLabs/Mira"
 MIRA_HOME="${HOME}/.mira"
 BIN_DIR="${MIRA_HOME}/bin"
-MIRA_BIN="${BIN_DIR}/mira"
+MIRA_EXE_EXT=""
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) MIRA_EXE_EXT=".exe" ;;
+esac
+MIRA_BIN="${BIN_DIR}/mira${MIRA_EXE_EXT}"
 VERSION_FILE="${BIN_DIR}/.mira-version"
 
 # --- Fast path: binary exists and version matches ---
@@ -25,20 +29,15 @@ log "[mira-wrapper] Mira v${MIRA_VERSION} not found at ${MIRA_BIN} — downloadi
 # Detect platform
 detect_platform() {
     case "$(uname -s)" in
-        Linux*)  os="unknown-linux-gnu" ;;
-        Darwin*) os="apple-darwin" ;;
+        Linux*)                    os="unknown-linux-gnu" ;;
+        Darwin*)                   os="apple-darwin" ;;
+        MINGW*|MSYS*|CYGWIN*)     os="pc-windows-msvc" ;;
         *)       log "[mira-wrapper] Unsupported OS: $(uname -s). Install manually: https://github.com/${REPO}"; exit 1 ;;
     esac
 
     case "$(uname -m)" in
         x86_64|amd64)   arch="x86_64" ;;
-        arm64|aarch64)
-            if [ "$os" = "apple-darwin" ]; then
-                arch="aarch64"
-            else
-                log "[mira-wrapper] ARM64 Linux is not yet supported."; exit 1
-            fi
-            ;;
+        arm64|aarch64)  arch="aarch64" ;;
         *) log "[mira-wrapper] Unsupported architecture: $(uname -m)"; exit 1 ;;
     esac
 
@@ -57,7 +56,14 @@ fetch() {
 }
 
 platform="$(detect_platform)"
-url="https://github.com/${REPO}/releases/download/v${MIRA_VERSION}/mira-${platform}.tar.gz"
+
+# Use .zip for Windows, .tar.gz for everything else
+case "$platform" in
+    *windows*) archive_ext="zip" ;;
+    *)         archive_ext="tar.gz" ;;
+esac
+
+url="https://github.com/${REPO}/releases/download/v${MIRA_VERSION}/mira-${platform}.${archive_ext}"
 
 log "[mira-wrapper] Platform: ${platform}"
 log "[mira-wrapper] Downloading from: ${url}"
@@ -69,12 +75,30 @@ mkdir -p "$BIN_DIR"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-fetch "$url" | tar -xz -C "$tmp_dir"
+if [ "$archive_ext" = "zip" ]; then
+    zip_file="${tmp_dir}/mira.zip"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$zip_file"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$zip_file" "$url"
+    else
+        log "[mira-wrapper] Neither curl nor wget found. Install one and retry."; exit 1
+    fi
+    unzip -qo "$zip_file" -d "$tmp_dir"
+else
+    fetch "$url" | tar -xz -C "$tmp_dir"
+fi
 
-chmod +x "${tmp_dir}/mira"
+# Determine extracted binary name
+src_bin="${tmp_dir}/mira${MIRA_EXE_EXT}"
+
+# chmod not needed on Windows
+if [ -z "$MIRA_EXE_EXT" ]; then
+    chmod +x "$src_bin"
+fi
 
 # Atomic install — safe if multiple wrapper instances race
-mv -f "${tmp_dir}/mira" "$MIRA_BIN"
+mv -f "$src_bin" "$MIRA_BIN"
 printf '%s' "$MIRA_VERSION" > "$VERSION_FILE"
 
 # Strip macOS quarantine attribute if present

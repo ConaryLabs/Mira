@@ -440,6 +440,11 @@ fn ensure_parent_directory(path: &Path) -> Result<()> {
             perms.set_mode(0o700); // rwx------
             std::fs::set_permissions(parent, perms)?;
         }
+        #[cfg(not(unix))]
+        tracing::debug!(
+            "Skipping directory permission restriction on non-Unix platform: {}",
+            parent.display()
+        );
     }
     Ok(())
 }
@@ -462,6 +467,11 @@ fn make_file_post_create_hook(path: PathBuf) -> Hook {
                         tracing::warn!("Failed to set database file permissions to 0600: {}", e);
                     }
                 }
+                #[cfg(not(unix))]
+                tracing::debug!(
+                    "Skipping DB file permission restriction on non-Unix platform: {}",
+                    path_for_perms.display()
+                );
 
                 Ok::<_, rusqlite::Error>(())
             })

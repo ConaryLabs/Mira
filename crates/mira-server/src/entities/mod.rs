@@ -36,7 +36,7 @@ impl EntityType {
 /// File paths: word chars, dots, slashes, hyphens ending in known extensions
 #[allow(clippy::expect_used)]
 static FILE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[\w./\-]+\.(rs|ts|js|py|go|toml|json|yaml|yml|md|sql|sh|css|html|tsx|jsx)")
+    Regex::new(r"[\w./\\\-]+\.(rs|ts|js|py|go|toml|json|yaml|yml|md|sql|sh|css|html|tsx|jsx)")
         .expect("valid regex")
 });
 
