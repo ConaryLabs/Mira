@@ -1,12 +1,6 @@
 # project_files
 
-Project file discovery and filtering. Provides unified interfaces for walking project files with configurable filtering, .gitignore support, and language-aware skipping.
-
-## Sub-modules
-
-| Module | Purpose |
-|--------|---------|
-| `walker` | File traversal with filtering |
+Project file discovery and filtering. A single file (`project_files.rs`) providing unified interfaces for walking project files with configurable filtering, .gitignore support, and language-aware skipping.
 
 ## Features
 

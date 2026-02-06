@@ -1,6 +1,6 @@
 # Mira Consolidated Tools Reference
 
-Mira uses 10 action-based tools. Reference for tool signatures and workflows.
+Mira uses 11 action-based tools. Reference for tool signatures and workflows.
 
 ## `project` — Project/Session Management
 
@@ -16,6 +16,7 @@ project(action="get")                                     # Show current project
 memory(action="remember", content="...", fact_type="decision", category="...")
 memory(action="recall", query="...", limit=10, category="...", fact_type="...")
 memory(action="forget", id="42")
+memory(action="archive", id="42")                         # Exclude from auto-export
 ```
 
 ## `code` — Code Intelligence
@@ -55,7 +56,7 @@ session(action="tasks", tasks_action="cancel", task_id="abc123")  # Cancel task
 expert(action="consult", roles=["architect"], context="...", question="...")
 expert(action="consult", roles=["code_reviewer", "security"], context="...")
 expert(action="configure", config_action="list")
-expert(action="configure", config_action="set", role="architect", provider="deepseek")
+expert(action="configure", config_action="set", role="architect", provider="deepseek")  # or "zhipu"
 expert(action="configure", config_action="get", role="architect")
 expert(action="configure", config_action="delete", role="architect")
 expert(action="configure", config_action="providers")
@@ -115,10 +116,16 @@ index(action="summarize")                   # Generate module summaries
 index(action="health")                      # Full code health scan (background task)
 ```
 
+## `team` — Team Intelligence
+
+```
+team(action="status")                       # Team overview: members, files, conflicts
+team(action="review", teammate="agent-1")   # Review a teammate's modified files
+team(action="distill")                      # Extract key findings into team-scoped memories
+```
+
 ## Other Tools
 
 ```
 reply_to_mira(in_reply_to="msg_id", content="...", complete=true)
-team(action="create|invite|remove|list|members", ...)
-cross_project(action="enable_sharing|disable_sharing|get_preferences|get_stats|extract_patterns|sync", ...)
 ```

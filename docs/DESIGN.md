@@ -88,11 +88,11 @@ Key components:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| MCP Server | `mcp/mod.rs` | Tool router, stdio transport, outputSchema |
+| MCP Server | `mcp/router.rs` | Tool router, stdio transport, outputSchema |
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
-| LLM Factory | `llm/factory.rs` | DeepSeek provider |
+| LLM Factory | `llm/factory.rs` | DeepSeek and Zhipu providers |
 | Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small) |
 | MCP Sampling | `llm/sampling.rs` | Expert consultation via host client (awaiting Claude Code support) |
 | Elicitation | `elicitation.rs` | Interactive API key setup flow |
@@ -314,9 +314,10 @@ Work includes:
 - Pending embeddings
 - Module summaries
 - Project briefings (git changes)
-- Capabilities inventory
 - Documentation gap detection
 - Code health checks
+- Knowledge distillation
+- Pondering (active reasoning loops)
 
 ### Why Background Work Is Critical
 
@@ -380,7 +381,7 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira exposes 10 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
+Mira exposes 11 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
 The server implements MCP Sampling (expert consultation via host client, awaiting Claude Code support),
 MCP Elicitation (interactive setup), and MCP Tasks (async long-running operations).
@@ -451,7 +452,10 @@ Mira integrates with Claude Code via hooks that trigger at key moments:
 | `PostToolUse` | Tracks behavior for pattern mining |
 | `PreCompact` | Preserves context before summarization |
 | `Stop` | Saves session state and checks goal progress |
-| `Permission` | Handles permission-related flows |
+| `SessionEnd` | Snapshots tasks on user interrupt |
+| `SubagentStart` | Injects context when subagents spawn |
+| `SubagentStop` | Captures discoveries from subagent work |
+| `PermissionRequest` | Handles permission-related flows |
 
 Hooks are auto-configured by the installer.
 
@@ -479,7 +483,7 @@ Privacy-preserving pattern sharing across projects:
 - **Opt-In**: Disabled by default, per-project preferences
 - **Anonymous Provenance**: Contribution tracking without project identification
 
-Managed via `cross_project` tool with `enable_sharing`, `sync`, and `get_stats` actions.
+Managed via the cross-project CLI commands (`mira cross-project`).
 
 ---
 
@@ -518,7 +522,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
 | Storage | SQLite local files | Horizontal scaling |
-| Intelligence | DeepSeek | Requires at least one API key |
+| Intelligence | DeepSeek / Zhipu | Full features need at least one API key |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |
 | Data | Local-first | Built-in sync |
@@ -543,7 +547,7 @@ The following were previously planned and are now complete:
 - ✓ MCP Elicitation for interactive API key setup
 - ✓ MCP Tasks for async long-running operations
 - ✓ Structured JSON responses via outputSchema
-- ✓ Tool consolidation from ~20 to 11 action-based tools
+- ✓ Tool consolidation from ~20 to 11 action-based tools (project, memory, code, goal, index, session, reply_to_mira, expert, documentation, team, finding)
 - ✓ Change Intelligence (outcome tracking, pattern mining, predictive risk)
 - ✓ Entity layer for memory recall boost
 - ✓ Dependency graphs, architectural pattern detection, tech debt scoring

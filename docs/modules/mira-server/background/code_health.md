@@ -21,3 +21,7 @@ Background worker for detecting code health issues. Combines concrete signal det
 | `detection` | Pattern-based issue detection |
 | `cargo` | Cargo check integration |
 | `analysis` | LLM-based code analysis |
+| `conventions` | Code convention detection |
+| `dependencies` | Dependency analysis |
+| `patterns` | Architectural pattern detection |
+| `scoring` | Tech debt scoring |

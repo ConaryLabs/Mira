@@ -35,4 +35,7 @@ Agentic expert sub-agents with tool access and LLM-powered reasoning. Implements
 | `findings` | `FindingsStore` and `CouncilFinding` for structured expert output |
 | `config` | Expert configuration CRUD |
 | `context` | Context preparation and learned pattern injection |
+| `definitions` | Expert role definitions and metadata |
+| `web` | Web search/fetch tools for experts |
+| `agentic` | Agentic execution loop infrastructure |
 | `tools` | Tools available to expert sub-agents (search, read, symbols, callers, recall, web, MCP) |

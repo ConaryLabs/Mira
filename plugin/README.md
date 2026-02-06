@@ -69,11 +69,11 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 10 action-based tools:
+The plugin bundles the Mira MCP server with 11 action-based tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
-| `memory` | remember, recall, forget | Persistent semantic memory |
+| `memory` | remember, recall, forget, archive | Persistent semantic memory |
 | `code` | search, symbols, callers, callees, dependencies, patterns, tech_debt, diff | Code intelligence + semantic diff analysis |
 | `project` | start, set, get | Project/session management |
 | `session` | history, recap, usage, insights, tasks | Session history, analytics, and async task management |

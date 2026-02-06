@@ -1,17 +1,27 @@
 # embeddings
 
-Pending embeddings queue operations for background processing. Manages the queue of code chunks awaiting vector embedding generation.
+OpenAI embedding client for generating vector embeddings used in semantic search.
 
-## Key Type
+## Key Types
 
-`PendingEmbedding` - Represents a queued item with `id`, `project_id`, `file_path`, `chunk_content`, and `start_line`.
+- `EmbeddingClient` — Manages embedding generation with task-type-aware dimensions
+- `OpenAiEmbeddings` — OpenAI text-embedding-3-small API client
 
-## Key Function
+## Sub-modules
 
-`get_pending_embeddings_sync()` - Fetches pending embeddings from the queue in batches for the background fast lane worker to process.
+| Module | Purpose |
+|--------|---------|
+| `openai` | OpenAI API client implementation |
 
-## Usage
+## Task-Type-Aware Embeddings
 
-The pending queue is primarily used for **incremental updates** (e.g., file watcher events after edits). The fast lane worker batches these chunks, generates embeddings via OpenAI, and stores them in sqlite-vec for semantic search.
+The module uses different embedding task types for different operations:
+- `RETRIEVAL_DOCUMENT` — For storing memories and code chunks
+- `RETRIEVAL_QUERY` — For searching memories (recall)
+- `CODE_RETRIEVAL_QUERY` — For searching code (semantic search)
 
-Full project indexing embeds chunks inline when an embeddings client is available, and memory embeddings are generated at write time.
+Key methods: `embed_for_storage()`, `embed_for_query()`, `embed_code()`.
+
+## Note
+
+Pending embedding queue operations (e.g., `PendingEmbedding`, `get_pending_embeddings_sync()`) live in `db/embeddings.rs`, not here.

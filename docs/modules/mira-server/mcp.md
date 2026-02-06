@@ -10,9 +10,15 @@ Built on the **`rmcp`** library (Rust MCP). Implements the `ServerHandler` trait
 
 | File | Purpose |
 |------|---------|
-| `mod.rs` | `MiraServer` struct and tool registrations |
+| `mod.rs` | `MiraServer` struct and server state |
+| `router.rs` | Tool registrations with `#[tool]` attribute macros |
+| `handler.rs` | MCP protocol handler implementation |
 | `requests.rs` | Request type definitions (action enums, parameter structs) |
+| `responses/` | Response type definitions (structured JSON output schemas) |
 | `extraction.rs` | Tool outcome extraction and memory capture |
+| `client.rs` | MCP client for accessing host environment tools from experts |
+| `elicitation.rs` | Interactive user input (API key setup) |
+| `tasks.rs` | Async long-running task management |
 
 ## Key Type: MiraServer
 

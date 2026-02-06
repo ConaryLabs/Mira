@@ -20,6 +20,7 @@ Standardized error types using thiserror.
 | `Llm` | LLM provider errors |
 | `Cancelled` | Operation cancelled |
 | `Config` | Configuration errors |
+| `Anyhow` | Wrapped anyhow errors |
 | `Other` | Catch-all for other errors |
 
 ## Export

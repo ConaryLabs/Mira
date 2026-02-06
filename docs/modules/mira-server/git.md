@@ -1,8 +1,16 @@
 # git
 
-Git operations using the git2 crate with caching.
+Git operations using git2 (branch detection) and git CLI (commits, diffs).
 
-## Key Functions
+## Sub-modules
+
+| Module | Purpose |
+|--------|---------|
+| `branch` | Branch detection via git2 with caching |
+| `commit` | Commit history via git CLI (`get_recent_commits`, `get_commits_with_files`, `resolve_ref`) |
+| `diff` | Diff operations via git CLI (`get_unified_diff`, `get_staged_diff`, `get_working_diff`) |
+
+## Key Functions (branch)
 
 - `get_git_branch()` - Cached branch lookup with 5-second TTL
 - `get_git_branch_uncached()` - Direct branch detection

@@ -1,6 +1,6 @@
 # memory
 
-Manage persistent memories. Actions: `remember` (store), `recall` (search), `forget` (delete).
+Manage persistent memories. Actions: `remember` (store), `recall` (search), `forget` (delete), `archive` (exclude from auto-export).
 
 ## Usage
 
@@ -20,7 +20,7 @@ Manage persistent memories. Actions: `remember` (store), `recall` (search), `for
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | `remember`, `recall`, or `forget` |
+| action | String | Yes | `remember`, `recall`, `forget`, or `archive` |
 | content | String | For remember | The factual content to store |
 | key | String | No | Unique key for upsert (remember) |
 | fact_type | String | No | `preference`, `decision`, `context`, or `general` (default: `general`). For `remember`: sets the type. For `recall`: filters results by type. |
@@ -29,7 +29,7 @@ Manage persistent memories. Actions: `remember` (store), `recall` (search), `for
 | scope | String | No | `personal`, `project` (default), or `team` |
 | query | String | For recall | Search query for semantic similarity |
 | limit | Integer | No | Max results for recall (default: 10) |
-| id | String | For forget | Memory ID to delete |
+| id | String | For forget/archive | Memory ID to delete or archive |
 
 ## Actions
 
@@ -87,9 +87,25 @@ Removes a memory from both the SQL database and vector index.
 
 Returns: `Memory 42 deleted.` or `Memory 42 not found.`
 
+### `archive` — Exclude from auto-export
+
+Archives a memory so it is excluded from CLAUDE.local.md auto-export but kept in the database for history.
+
+```json
+{
+  "name": "memory",
+  "arguments": {
+    "action": "archive",
+    "id": "42"
+  }
+}
+```
+
+Returns: Confirmation that the memory was archived.
+
 ## Errors
 
-- **Invalid action**: Must be `remember`, `recall`, or `forget`
+- **Invalid action**: Must be `remember`, `recall`, `forget`, or `archive`
 - **Missing content**: `remember` requires `content`
 - **Missing query**: `recall` requires `query`
 - **Missing id**: `forget` requires `id`

@@ -41,22 +41,25 @@ crates/
       cross_project/ # Privacy-preserving cross-project pattern sharing
       db/            # Database operations, schema, migrations (SQLite)
       embeddings/    # Embedding queue and OpenAI embedding client
-      experts/       # Evolutionary expert system (adaptation, collaboration)
+      entities/      # Lightweight entity extraction for recall boost
+      fuzzy/         # Fuzzy search fallback
+      git/           # Git operations (branch via git2, commits/diffs via CLI)
       hooks/         # Claude Code lifecycle hooks (session, prompt, tool)
       indexer/       # Code parsing and symbol extraction (tree-sitter)
-      llm/           # LLM provider clients (DeepSeek, OpenAI)
+      llm/           # LLM provider clients (DeepSeek, Zhipu, MCP Sampling)
       mcp/           # MCP protocol server (rmcp-based)
       proactive/     # Proactive intelligence (behavior mining, predictions)
-      project_files/ # File discovery and filtering (.miraignore, .gitignore)
       search/        # Semantic, keyword, and cross-reference search
-      tools/         # MCP tool implementations
+      tasks/         # Async task management
+      tools/         # MCP tool implementations (core/ has per-tool modules)
+      utils/         # Shared utilities (JSON helpers)
       error.rs       # MiraError types
-      git.rs         # Git operations with caching
       http.rs        # Shared HTTP client factory
       identity.rs    # User identity detection
-      utils.rs       # Shared utilities
-  mira-types/        # Shared WASM-compatible types
+      project_files.rs # File discovery and filtering (.miraignore, .gitignore)
+  mira-types/        # Shared types (ProjectContext, MemoryFact, AgentRole, WsEvent)
 docs/                # Documentation
+plugin/              # Claude Code plugin (hooks, skills, MCP config)
 ```
 
 ## Making Changes

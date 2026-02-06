@@ -32,9 +32,6 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 | `preference` | User preferences (e.g., "Use async-trait for traits") |
 | `decision` | Architectural or design decisions |
 | `context` | Background information about the project |
-| `health` | Code health issues detected by scanners |
-| `capability` | Discovered features or tools in the codebase |
-| `system` | Internal system markers (used internally) |
 
 ### Evidence-Based Confidence
 
@@ -138,10 +135,10 @@ The Intelligence Engine is a background worker system that proactively analyzes 
 |------|--------------|
 | **Module Summaries** | Generates human-readable descriptions of code modules |
 | **Git Briefings** | "What changed since your last session?" summaries |
-| **Capability Inventory** | Discovers features, tools, APIs in the codebase |
 | **Code Health** | Scans for complexity issues, poor error handling |
-| **Tool Extraction** | Extracts insights from tool results into memories |
 | **Embeddings** | Indexes code and memories for semantic search |
+| **Knowledge Distillation** | Extracts cross-session insights from expert findings |
+| **Pondering** | Active reasoning loops that analyze tool history and generate insights |
 
 These tasks run asynchronously during idle time, keeping Mira always up-to-date.
 
@@ -176,8 +173,9 @@ Mira employs specialized "Expert" agents to handle complex analysis tasks.
 ### Provider Configuration
 
 Experts can be backed by different LLM providers via `expert(action="configure")` or `~/.mira/config.toml`:
-- **MCP Sampling** — Implemented but awaiting Claude Code support; will route through the host client when enabled
+- **MCP Sampling** — Routes through the host client when enabled
 - **DeepSeek** (default with key) — Optimized for extended reasoning
+- **Zhipu** (alternative with key) — GLM-4.7 provider
 
 Each expert role can use a different provider based on the task requirements.
 
@@ -282,6 +280,10 @@ Mira integrates with Claude Code via **hooks** that trigger at key moments durin
 | **PostToolUse** | After file mutations (`Write\|Edit\|NotebookEdit`) | Tracks behavior for pattern mining |
 | **PreCompact** | Before context compaction | Preserves important context before summarization |
 | **Stop** | When session ends | Saves session state, auto-exports memories to CLAUDE.local.md, checks goal progress |
+| **SessionEnd** | On user interrupt | Snapshots tasks for continuity |
+| **SubagentStart** | When subagent spawns | Injects relevant context for subagent tasks |
+| **SubagentStop** | When subagent completes | Captures discoveries from subagent work |
+| **PermissionRequest** | On permission check | Auto-approve tools based on stored rules |
 
 ### Auto-Configuration
 
@@ -346,7 +348,7 @@ Mira automatically scans for missing documentation:
 
 | What | Where |
 |------|-------|
-| MCP Tools | Functions in `mcp/mod.rs` with `#[tool]` |
+| MCP Tools | Functions in `mcp/router.rs` with `#[tool]` |
 | Public APIs | Public types and functions in `lib.rs` |
 | Modules | Core architectural modules |
 

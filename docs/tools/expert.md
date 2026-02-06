@@ -28,7 +28,7 @@ Expert consultation and configuration. Actions: `consult` (get expert opinions),
 | config_action | String | For configure | `set`, `get`, `delete`, `list`, or `providers` |
 | role | String | Conditional | Expert role for configure (required for `set`/`get`/`delete`) |
 | prompt | String | No | Custom system prompt (for `set`) |
-| provider | String | No | LLM provider (for `set`): `deepseek` |
+| provider | String | No | LLM provider (for `set`): `deepseek` or `zhipu` |
 | model | String | No | Custom model name (for `set`) |
 
 ### Available Expert Roles

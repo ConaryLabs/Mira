@@ -12,10 +12,11 @@ Mira uses environment variables for API keys and configuration. These can be set
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, capabilities, documentation (default provider) |
+| `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, documentation (default provider) |
+| `ZHIPU_API_KEY` | Optional | Alternative provider: Zhipu GLM-4.7 |
 | `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |
 | `BRAVE_API_KEY` | Optional | Enables web search for expert consultations |
-| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` |
+| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `zhipu` |
 | `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |
@@ -279,6 +280,7 @@ expert(action="configure", config_action="delete", role="architect")
 | Provider | Default Model | Best For |
 |----------|---------------|----------|
 | `deepseek` | `deepseek-reasoner` | Extended reasoning, multi-step analysis |
+| `zhipu` | `glm-4.7` | Alternative provider |
 
 Use `expert(action="configure", config_action="providers")` to see available providers and their configured models.
 
@@ -319,6 +321,7 @@ background_provider = "deepseek"
 | Provider | Config Value | API Key Env Var | Default Model |
 |----------|--------------|-----------------|---------------|
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
+| Zhipu | `zhipu` | `ZHIPU_API_KEY` | `glm-4.7` |
 
 If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available.
 

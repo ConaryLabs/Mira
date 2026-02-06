@@ -39,7 +39,7 @@ Semantic memory storage with evidence-based confidence tracking.
 | scope | TEXT | `project`, `personal`, or `team` |
 | key | TEXT | Unique key for upsert operations |
 | content | TEXT | The fact/preference content |
-| fact_type | TEXT | `general`, `preference`, `decision`, `context`, `health` |
+| fact_type | TEXT | `general`, `preference`, `decision`, `context` |
 | category | TEXT | Optional grouping (e.g., `coding`, `tooling`) |
 | confidence | REAL | 0.0-1.0, starts at 0.5 for candidates |
 | has_embedding | INTEGER | 1 if fact has embedding in vec_memory |
@@ -47,6 +47,7 @@ Semantic memory storage with evidence-based confidence tracking.
 | first_session_id | TEXT | Session when first created |
 | last_session_id | TEXT | Most recent session that referenced this |
 | status | TEXT | `candidate` or `confirmed` (evidence-based promotion) |
+| has_entities | INTEGER | 1 if entities have been extracted |
 | branch | TEXT | Git branch for branch-aware context boosting |
 | created_at | TEXT | Timestamp |
 | updated_at | TEXT | Last modification |
@@ -63,9 +64,11 @@ Pattern corrections learned from reviewed findings.
 | project_id | INTEGER FK | Project scope |
 | what_was_wrong | TEXT | The incorrect pattern/behavior |
 | what_is_right | TEXT | The correct approach |
-| correction_type | TEXT | `bug`, `style`, `security`, `performance` |
+| correction_type | TEXT | Default: `pattern`. Also: `bug`, `style`, `security`, `performance` |
 | scope | TEXT | `project` or `global` |
-| confidence | REAL | 0.0-1.0 |
+| confidence | REAL | 0.0-1.0 (default: 1.0) |
+| occurrence_count | INTEGER | Times pattern observed (default: 1) |
+| acceptance_rate | REAL | Rate of acceptance (default: 1.0) |
 | created_at | TEXT | Timestamp |
 
 ---
@@ -146,6 +149,9 @@ MCP session tracking for evidence and provenance.
 | project_id | INTEGER FK | Active project |
 | status | TEXT | `active`, `completed` |
 | summary | TEXT | Session summary |
+| branch | TEXT | Git branch at session start |
+| source | TEXT | `startup` or `resume` (default: `startup`) |
+| resumed_from | TEXT | Previous session ID if resumed |
 | started_at | TEXT | Start timestamp |
 | last_activity | TEXT | Last activity |
 
@@ -268,7 +274,7 @@ Custom configuration for expert roles.
 |--------|------|-------------|
 | role | TEXT PK | `architect`, `code_reviewer`, `security`, etc. |
 | prompt | TEXT | Custom system prompt |
-| provider | TEXT | LLM provider: `deepseek` |
+| provider | TEXT | LLM provider: `deepseek` or `zhipu` |
 | model | TEXT | Custom model name (optional) |
 | updated_at | TEXT | Last modification |
 
@@ -290,6 +296,7 @@ Code review findings from expert consultations (learning loop).
 | status | TEXT | `pending`, `accepted`, `rejected`, `fixed` |
 | feedback | TEXT | User feedback on finding |
 | confidence | REAL | Expert's confidence |
+| user_id | TEXT | User identity |
 | reviewed_by | TEXT | Who reviewed |
 | session_id | TEXT | Session when found |
 | created_at | TEXT | Timestamp |
@@ -315,6 +322,7 @@ Semantic analysis of git diffs and commits.
 | files_changed | INTEGER | Number of files modified |
 | lines_added | INTEGER | Lines added |
 | lines_removed | INTEGER | Lines removed |
+| files_json | TEXT | JSON list of files from semantic changes |
 | status | TEXT | `complete` or `partial` |
 | created_at | TEXT | Timestamp |
 
@@ -743,12 +751,14 @@ LLM API usage and cost tracking.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
-| provider | TEXT | `deepseek` |
+| provider | TEXT | `deepseek`, `zhipu`, or `sampling` |
 | model | TEXT | Model name |
 | role | TEXT | Expert role that made the call |
 | prompt_tokens | INTEGER | Input token count |
 | completion_tokens | INTEGER | Output token count |
 | total_tokens | INTEGER | Total tokens |
+| cache_hit_tokens | INTEGER | Cached input tokens |
+| cache_miss_tokens | INTEGER | Non-cached input tokens |
 | cost_estimate | REAL | Estimated cost in USD |
 | duration_ms | INTEGER | Request duration |
 | project_id | INTEGER FK | Project reference |
@@ -799,6 +809,134 @@ Auto-approved tool patterns (for permission hook).
 | pattern | TEXT | Argument pattern |
 | match_type | TEXT | `prefix`, `exact`, `glob` |
 | scope | TEXT | `global` or project-specific |
+| created_at | TEXT | Timestamp |
+
+---
+
+## Additional Tables (v0.5.0+)
+
+### session_tasks *(main database)*
+
+Claude Code task persistence bridge. Snapshots tasks from Claude's native task system for cross-session continuity.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| session_id | TEXT | Claude Code session ID |
+| project_id | INTEGER FK | Project reference |
+| task_list_id | TEXT | Claude task list ID |
+| task_data | TEXT | JSON snapshot of task state |
+| created_at | TEXT | Timestamp |
+| updated_at | TEXT | Last update |
+
+### session_task_iterations *(main database)*
+
+Task iteration summaries for tracking work across session segments.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| session_task_id | INTEGER FK | Reference to session_tasks |
+| iteration_summary | TEXT | Summary of work done |
+| created_at | TEXT | Timestamp |
+
+### session_snapshots *(main database)*
+
+Session state snapshots for resume support.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| session_id | TEXT | Session reference |
+| snapshot_type | TEXT | Type of snapshot |
+| data | TEXT | JSON snapshot data |
+| created_at | TEXT | Timestamp |
+
+### diff_outcomes *(main database)*
+
+Change outcome tracking — detects whether changes were reverted or caused issues.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| diff_analysis_id | INTEGER FK | Reference to diff_analyses |
+| outcome_type | TEXT | Type of outcome detected |
+| evidence_commit | TEXT | Git commit providing evidence |
+| details | TEXT | JSON details |
+| created_at | TEXT | Timestamp |
+
+**Unique:** `(diff_analysis_id, outcome_type, evidence_commit)`
+
+### memory_entities *(main database)*
+
+Canonical entity registry for recall boost.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| name | TEXT | Entity name |
+| entity_type | TEXT | Entity type |
+| project_id | INTEGER FK | Project reference |
+| created_at | TEXT | Timestamp |
+
+### memory_entity_links *(main database)*
+
+Many-to-many between memory facts and entities.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| fact_id | INTEGER FK | Reference to memory_facts |
+| entity_id | INTEGER FK | Reference to memory_entities |
+
+### tech_debt_scores *(main database)*
+
+Per-module tech debt scoring.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| module_path | TEXT | Module path |
+| score | REAL | Debt score |
+| details | TEXT | JSON breakdown |
+| created_at | TEXT | Timestamp |
+
+### module_conventions *(main database)*
+
+Convention-aware context injection data.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER FK | Project reference |
+| module_path | TEXT | Module path |
+| conventions | TEXT | JSON conventions data |
+| created_at | TEXT | Timestamp |
+
+### code_chunks *(code database)*
+
+Canonical chunk store for indexed code.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER | Project reference |
+| file_path | TEXT | Source file |
+| chunk_content | TEXT | Code chunk content |
+| start_line | INTEGER | Starting line |
+| created_at | TEXT | Timestamp |
+
+### module_dependencies *(code database)*
+
+Cross-module dependency analysis.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| project_id | INTEGER | Project reference |
+| source_module | TEXT | Source module path |
+| target_module | TEXT | Target module path |
+| dependency_type | TEXT | Type of dependency |
 | created_at | TEXT | Timestamp |
 
 ---

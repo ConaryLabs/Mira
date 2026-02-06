@@ -1,6 +1,12 @@
 # utils
 
-Shared utility functions used across the codebase.
+Shared utility functions used across the codebase. Organized as a directory with sub-modules.
+
+## Sub-modules
+
+| Module | Purpose |
+|--------|---------|
+| `json` | JSON utility helpers |
 
 ## Key Exports
 

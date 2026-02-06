@@ -6,12 +6,6 @@ DeepSeek API client with tool calling support. Used for expert consultations and
 
 `DeepSeekClient` — Implements the `LlmClient` trait for the DeepSeek API.
 
-## Sub-modules
-
-| Module | Purpose |
-|--------|---------|
-| `client` | Client implementation |
-
 ## Features
 
 - Chat completion with system/user/assistant messages

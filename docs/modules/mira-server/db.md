@@ -24,8 +24,8 @@ Unified database layer providing sync operations for all Mira features. Built on
 | `milestones` | Goal milestone tracking |
 | `reviews` | Code review findings |
 | `documentation` | Documentation gap tracking |
-| `config` | Expert configuration storage |
-| `teams` | Team and shared memory |
+| `expert_config` | Expert configuration storage |
+| `team` | Team and shared memory |
 | `usage` | LLM/embedding usage tracking |
 | `chat` | Chat tracking |
 | `background` | Background task support |
@@ -36,4 +36,6 @@ Unified database layer providing sync operations for all Mira features. Built on
 | `insights` | Insight storage from pondering/proactive |
 | `tech_debt` | Tech debt scores per module |
 | `dependencies` | Module dependency tracking |
+| `session_tasks` | Claude Code task persistence bridge |
+| `migration_helpers` | Schema migration utilities |
 | `types` | Shared database types |

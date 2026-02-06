@@ -19,24 +19,23 @@ The crate follows a modular design with clear separation between protocol handli
 | `context` | Session context and state |
 | `cross_project` | Cross-project pattern sharing |
 | `db` | Database layer with SQLite + sqlite-vec |
-| `elicitation` | Elicitation (interactive user input) support |
-| `embeddings` | Vector embedding generation |
+| `embeddings` | OpenAI embedding client (`EmbeddingClient`) |
 | `entities` | Entity extraction and linking |
 | `error` | Error types (`MiraError`) |
 | `fuzzy` | Fuzzy search fallback cache |
-| `git` | Git repository analysis |
+| `git` | Git operations (branch via git2, commits/diffs via CLI) |
 | `hooks` | Claude Code lifecycle hooks |
 | `http` | HTTP client utilities |
 | `identity` | User and team identity |
 | `indexer` | Code indexing and symbol extraction |
-| `llm` | LLM provider abstraction (DeepSeek) |
-| `mcp` | MCP protocol server implementation |
-| `mcp_client` | MCP client for accessing host environment tools from experts |
+| `llm` | LLM provider abstraction (DeepSeek, Zhipu, MCP Sampling) |
+| `mcp` | MCP protocol server (includes router, client, elicitation, tasks) |
 | `project_files` | Project file discovery and filtering |
 | `proactive` | Proactive analysis and suggestions |
 | `search` | Semantic code search and memory recall |
+| `tasks` | Async task management |
 | `tools` | MCP tool handlers (remember, recall, search, etc.) |
-| `utils` | Shared utilities |
+| `utils` | Shared utilities (JSON helpers) |
 
 ## Key Exports
 

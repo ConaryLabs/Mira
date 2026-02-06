@@ -16,5 +16,8 @@ Database schema creation and migration system.
 | `memory` | Facts, corrections, docs, users, teams |
 | `reviews` | Findings, corrections, embeddings, diffs, LLM usage |
 | `session` | Sessions, tool history, chat |
+| `session_tasks` | Claude Code task persistence bridge |
+| `team` | Team schema migrations |
+| `entities` | Entity registry and linking tables |
 | `system` | System prompts |
 | `vectors` | sqlite-vec virtual tables for vector search |

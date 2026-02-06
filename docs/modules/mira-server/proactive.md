@@ -14,6 +14,7 @@ Proactive intelligence engine for anticipating developer needs through pattern r
 
 | Module | Purpose |
 |--------|---------|
+| `background` | Background processing sub-modules (llm, lookup, mining, storage, templates) |
 | `behavior` | Behavioral event tracking |
 | `patterns` | Pattern recognition and matching |
 | `predictor` | Prediction engine |

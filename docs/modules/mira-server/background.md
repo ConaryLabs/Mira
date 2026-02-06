@@ -22,12 +22,14 @@ Handles LLM-powered tasks: session summaries, pondering/insights, code health an
 | `code_health` | slow | Code health analysis |
 | `documentation` | slow | Documentation gap scanning |
 | `diff_analysis` | slow | Semantic diff analysis |
-| `proactive` | slow | Proactive analysis and suggestions |
 | `briefings` | slow | What's-new briefing generation |
 | `change_patterns` | slow | Change pattern mining from git history |
 | `entity_extraction` | slow | Entity extraction from memories and code |
 | `outcome_scanner` | slow | Outcome tracking for predictions |
 | `summaries` | slow | Module summary generation |
+| `memory_embeddings` | fast | Memory embedding generation |
+| `knowledge_distillation` | slow | Cross-session insight extraction from expert findings |
+| `team_monitor` | slow | Team activity monitoring |
 | `watcher` | fast | Filesystem watching for incremental updates |
 
 ## Graceful Degradation

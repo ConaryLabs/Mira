@@ -68,6 +68,7 @@ mira debug-carto     # Debug cartographer module detection
 
 API keys are in `~/.mira/.env` (optional with MCP Sampling):
 - `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)
+- `ZHIPU_API_KEY` - Alternative expert provider (GLM-4.7)
 - `OPENAI_API_KEY` - Embeddings (OpenAI text-embedding-3-small)
 
 Optional: `BRAVE_API_KEY` (web search), `DEFAULT_LLM_PROVIDER`, `MIRA_DISABLE_LLM`, `MIRA_USER_ID`.
@@ -109,8 +110,10 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | `PostToolUse` | Tracks file modifications (async, non-blocking) |
 | `PreCompact` | Preserves important context before summarization |
 | `Stop` | Session snapshot, task export for continuity |
+| `SessionEnd` | Snapshot tasks on user interrupt |
 | `SubagentStart` | Injects relevant context when subagents spawn |
 | `SubagentStop` | Captures discoveries from subagent work |
+| `PermissionRequest` | Auto-approve tools based on stored rules |
 
 **Don't:** Manually inject session info, pending tasks, or file tracking that hooks already provide.
 
