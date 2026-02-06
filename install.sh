@@ -5,7 +5,11 @@ set -e
 # Usage: curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
 
 REPO="ConaryLabs/Mira"
-INSTALL_DIR="${MIRA_INSTALL_DIR:-/usr/local/bin}"
+# Default install directory — use LOCALAPPDATA on Windows, /usr/local/bin elsewhere
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) INSTALL_DIR="${MIRA_INSTALL_DIR:-${LOCALAPPDATA}/Mira/bin}" ;;
+    *)                    INSTALL_DIR="${MIRA_INSTALL_DIR:-/usr/local/bin}" ;;
+esac
 
 # Colors
 RED='\033[0;31m'
@@ -122,7 +126,12 @@ setup_config() {
 setup_hooks() {
     local settings_dir="$HOME/.claude"
     local settings_file="$settings_dir/settings.json"
-    local mira_bin="$INSTALL_DIR/mira"
+    # Use mira.exe on Windows, mira elsewhere
+    local mira_exe="mira"
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) mira_exe="mira.exe" ;;
+    esac
+    local mira_bin="$INSTALL_DIR/$mira_exe"
 
     # Ensure directory exists
     mkdir -p "$settings_dir"

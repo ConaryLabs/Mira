@@ -17,6 +17,8 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
           - target: x86_64-apple-darwin
             os: macos-15-intel  # Intel runner for Intel builds
           - target: aarch64-apple-darwin
@@ -32,6 +34,13 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (ARM64 Linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -106,6 +115,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/mira-x86_64-unknown-linux-gnu/mira-x86_64-unknown-linux-gnu.tar.gz
+            artifacts/mira-aarch64-unknown-linux-gnu/mira-aarch64-unknown-linux-gnu.tar.gz
             artifacts/mira-x86_64-apple-darwin/mira-x86_64-apple-darwin.tar.gz
             artifacts/mira-aarch64-apple-darwin/mira-aarch64-apple-darwin.tar.gz
             artifacts/mira-x86_64-pc-windows-msvc/mira-x86_64-pc-windows-msvc.zip
