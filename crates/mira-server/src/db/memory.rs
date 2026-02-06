@@ -171,8 +171,9 @@ pub fn store_memory_sync(
                 "SELECT id, last_session_id FROM memory_facts
                  WHERE key = ?1 AND (project_id = ?2 OR project_id IS NULL)
                    AND COALESCE(scope, 'project') = ?3
-                   AND COALESCE(team_id, 0) = COALESCE(?4, 0)",
-                rusqlite::params![key, params.project_id, params.scope, params.team_id],
+                   AND COALESCE(team_id, 0) = COALESCE(?4, 0)
+                   AND (?3 != 'personal' OR COALESCE(user_id, '') = COALESCE(?5, ''))",
+                rusqlite::params![key, params.project_id, params.scope, params.team_id, params.user_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
@@ -500,6 +501,7 @@ pub fn search_memories_sync(
     project_id: Option<i64>,
     query: &str,
     user_id: Option<&str>,
+    team_id: Option<i64>,
     limit: usize,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
     // Escape SQL LIKE wildcards to prevent injection
@@ -526,7 +528,7 @@ pub fn search_memories_sync(
     let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt.query_map(
-        rusqlite::params![project_id, pattern, limit as i64, user_id, Option::<i64>::None],
+        rusqlite::params![project_id, pattern, limit as i64, user_id, team_id],
         parse_memory_fact_row,
     )?;
 

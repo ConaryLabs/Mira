@@ -557,13 +557,21 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
             continue;
         }
 
-        let content = fs::read_to_string(&config_path).ok()?;
-        let config: serde_json::Value = serde_json::from_str(&content).ok()?;
+        let content = match fs::read_to_string(&config_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let config: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
 
-        // Check if the team's project path matches our cwd
+        // Check if the team's project path matches our cwd (component-level comparison)
         if let Some(project_path) = config.get("project_path").and_then(|v| v.as_str()) {
             if let Some(cwd_val) = cwd {
-                if cwd_val.starts_with(project_path) || project_path.starts_with(cwd_val) {
+                let cwd_p = std::path::Path::new(cwd_val);
+                let proj_p = std::path::Path::new(project_path);
+                if cwd_p.starts_with(proj_p) || proj_p.starts_with(cwd_p) {
                     let team_name = config
                         .get("name")
                         .and_then(|v| v.as_str())

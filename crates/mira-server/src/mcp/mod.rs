@@ -58,6 +58,8 @@ pub struct MiraServer {
     pub fuzzy_enabled: bool,
     /// Expert agentic loop guardrails
     pub expert_guardrails: ExpertGuardrails,
+    /// Cached team membership (per-process, avoids global file race)
+    pub team_membership: Arc<RwLock<Option<crate::hooks::session::TeamMembership>>>,
     /// MCP peer for sampling/createMessage fallback (captured on first tool call)
     pub peer: Arc<RwLock<Option<rmcp::service::Peer<RoleServer>>>>,
     /// Task processor for async long-running operations (SEP-1686)
@@ -99,6 +101,7 @@ impl MiraServer {
             fuzzy_cache: Arc::new(FuzzyCache::new()),
             fuzzy_enabled,
             expert_guardrails,
+            team_membership: Arc::new(RwLock::new(None)),
             peer,
             processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
             tool_router: Self::create_tool_router(),
@@ -166,6 +169,34 @@ impl MiraServer {
         {
             Ok(_) => {
                 tracing::info!("[mira] Auto-initialized project: {}", cwd);
+
+                // Populate team membership from DB using session_id (avoids global file race)
+                if self.team_membership.read().await.is_none() {
+                    if let Some(sid) = read_claude_session_id() {
+                        let pool_clone = self.pool.clone();
+                        let sid_clone = sid.clone();
+                        if let Ok(Some(team_info)) = pool_clone
+                            .interact(move |conn| {
+                                Ok::<_, anyhow::Error>(
+                                    crate::db::get_team_for_session_sync(conn, &sid_clone),
+                                )
+                            })
+                            .await
+                        {
+                            // Also read the per-session file for member_name/role
+                            // (DB has team info, file has member details)
+                            let membership = crate::hooks::session::read_team_membership()
+                                .unwrap_or_else(|| crate::hooks::session::TeamMembership {
+                                    team_id: team_info.id,
+                                    team_name: team_info.name,
+                                    member_name: format!("member-{}", &sid[..8.min(sid.len())]),
+                                    role: "teammate".to_string(),
+                                    config_path: team_info.config_path,
+                                });
+                            *self.team_membership.write().await = Some(membership);
+                        }
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!("[mira] Failed to auto-initialize project: {}", e);

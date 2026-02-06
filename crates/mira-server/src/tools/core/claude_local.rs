@@ -159,7 +159,7 @@ fn import_claude_local_md_sync(
     }
 
     // Get existing memories and pre-normalize for O(1) duplicate checks
-    let existing = search_memories_sync(conn, Some(project_id), "", None, 1000).str_err()?;
+    let existing = search_memories_sync(conn, Some(project_id), "", None, None, 1000).str_err()?;
     let existing_normalized: HashSet<String> = existing
         .iter()
         .map(|m| m.content.split_whitespace().collect::<Vec<_>>().join(" "))

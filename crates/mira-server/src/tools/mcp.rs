@@ -178,6 +178,16 @@ impl ToolContext for MiraServer {
             .unwrap_or(false)
     }
 
+    fn get_team_membership(&self) -> Option<crate::hooks::session::TeamMembership> {
+        // Use per-process cached membership instead of global filesystem lookup.
+        // Falls back to filesystem if cache not yet populated (backwards compat).
+        self.team_membership
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .or_else(|| crate::hooks::session::read_team_membership())
+    }
+
     fn elicitation_client(&self) -> Option<crate::mcp::elicitation::ElicitationClient> {
         Some(crate::mcp::elicitation::ElicitationClient::new(
             self.peer.clone(),

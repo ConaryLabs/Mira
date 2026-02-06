@@ -4,6 +4,7 @@
 use mira_types::MemoryFact;
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::memory::scope_filter_sql;
 use super::parse_memory_fact_row;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -167,6 +168,8 @@ pub fn search_memories_text_sync(
     project_id: Option<i64>,
     query: &str,
     limit: usize,
+    user_id: Option<&str>,
+    team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
     let escaped = query
         .replace('\\', "\\\\")
@@ -174,18 +177,24 @@ pub fn search_memories_text_sync(
         .replace('_', "\\_");
     let pattern = format!("%{}%", escaped);
 
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
                 user_id, scope, team_id
          FROM memory_facts
-         WHERE (project_id = ? OR project_id IS NULL) AND content LIKE ? ESCAPE '\\'
+         WHERE {}
+           AND content LIKE ?2 ESCAPE '\\'
          ORDER BY updated_at DESC
-         LIMIT ?",
-    )?;
+         LIMIT ?3",
+        scope_filter_sql("")
+            .replace("?{pid}", "?1")
+            .replace("?{uid}", "?4")
+            .replace("?{tid}", "?5")
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt
-        .query_map(params![project_id, pattern, limit as i64], |row| {
+        .query_map(params![project_id, pattern, limit as i64, user_id, team_id], |row| {
             parse_memory_fact_row(row)
         })?
         .filter_map(|r| r.ok())
@@ -198,18 +207,26 @@ pub fn search_memories_text_sync(
 pub fn get_preferences_sync(
     conn: &Connection,
     project_id: Option<i64>,
+    user_id: Option<&str>,
+    team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
                 user_id, scope, team_id
          FROM memory_facts
-         WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
+         WHERE {}
+           AND fact_type = 'preference'
          ORDER BY category, created_at DESC",
-    )?;
+        scope_filter_sql("")
+            .replace("?{pid}", "?1")
+            .replace("?{uid}", "?2")
+            .replace("?{tid}", "?3")
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt
-        .query_map(params![project_id], parse_memory_fact_row)?
+        .query_map(params![project_id, user_id, team_id], parse_memory_fact_row)?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -221,21 +238,28 @@ pub fn get_health_alerts_sync(
     conn: &Connection,
     project_id: Option<i64>,
     limit: usize,
+    user_id: Option<&str>,
+    team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
                 user_id, scope, team_id
          FROM memory_facts
-         WHERE (project_id = ? OR project_id IS NULL)
+         WHERE {}
            AND fact_type = 'health'
            AND confidence >= 0.7
          ORDER BY confidence DESC, updated_at DESC
-         LIMIT ?",
-    )?;
+         LIMIT ?4",
+        scope_filter_sql("")
+            .replace("?{pid}", "?1")
+            .replace("?{uid}", "?2")
+            .replace("?{tid}", "?3")
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt
-        .query_map(params![project_id, limit as i64], |row| {
+        .query_map(params![project_id, user_id, team_id, limit as i64], |row| {
             parse_memory_fact_row(row)
         })?
         .filter_map(|r| r.ok())

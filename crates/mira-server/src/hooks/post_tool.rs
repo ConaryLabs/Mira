@@ -129,7 +129,12 @@ pub async fn run() -> Result<()> {
             .await;
     }
 
-    // Track file ownership for team intelligence
+    // Track file ownership for team intelligence (only for file-mutating tools)
+    let is_write_tool = matches!(
+        post_input.tool_name.as_str(),
+        "Write" | "Edit" | "NotebookEdit" | "MultiEdit"
+    );
+    if is_write_tool {
     if let Some(membership) = crate::hooks::session::read_team_membership() {
         let pool_clone = pool.clone();
         let sid = post_input.session_id.clone();
@@ -181,6 +186,7 @@ pub async fn run() -> Result<()> {
                 conflicts.len()
             );
         }
+    }
     }
 
     // Check for related test files

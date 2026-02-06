@@ -415,7 +415,7 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
     let query_owned = query.to_string();
     let result = ctx
         .pool()
-        .run(move |conn| search_memories_sync(conn, project_id, &query_owned, None, limit))
+        .run(move |conn| search_memories_sync(conn, project_id, &query_owned, None, None, limit))
         .await;
 
     match result {

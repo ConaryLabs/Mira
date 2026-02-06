@@ -555,6 +555,7 @@ pub async fn recall<C: ToolContext>(
                 project_id,
                 &query_clone,
                 user_id_clone.as_deref(),
+                team_id,
                 fetch_limit,
             )
         })

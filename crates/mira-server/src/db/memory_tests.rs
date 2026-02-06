@@ -44,6 +44,7 @@ mod tests {
             Some(project_id),
             "test",
             None,
+            None,
             10
         )
         .map_err(Into::into));
@@ -89,6 +90,7 @@ mod tests {
             conn,
             Some(project_id),
             "full",
+            None,
             None,
             10
         )
@@ -139,6 +141,7 @@ mod tests {
             Some(project_id),
             "updated",
             None,
+            None,
             10
         )
         .map_err(Into::into));
@@ -182,6 +185,7 @@ mod tests {
             conn,
             Some(project_id),
             "updated",
+            None,
             None,
             10
         )
@@ -238,6 +242,7 @@ mod tests {
             Some(project_id),
             "content",
             None,
+            None,
             10
         )
         .map_err(Into::into));
@@ -276,6 +281,7 @@ mod tests {
             Some(project_id),
             "content",
             None,
+            None,
             10
         )
         .map_err(Into::into));
@@ -310,6 +316,7 @@ mod tests {
             conn,
             Some(project_id),
             "content",
+            None,
             None,
             10
         )
@@ -410,6 +417,7 @@ mod tests {
             Some(project_id),
             "fox",
             None,
+            None,
             10
         )
         .map_err(Into::into));
@@ -439,6 +447,7 @@ mod tests {
             Some(project_id),
             "test",
             None,
+            None,
             5
         )
         .map_err(Into::into));
@@ -464,6 +473,7 @@ mod tests {
             conn,
             Some(project_id),
             "100%",
+            None,
             None,
             10
         )
@@ -546,6 +556,7 @@ mod tests {
             conn,
             Some(project_id),
             "deleted",
+            None,
             None,
             10
         )
@@ -947,6 +958,7 @@ mod tests {
             Some(project_id),
             "embed",
             None,
+            None,
             10
         )
         .map_err(Into::into));
@@ -987,6 +999,7 @@ mod tests {
             Some(project1),
             "content",
             None,
+            None,
             10
         )
         .map_err(Into::into));
@@ -997,6 +1010,7 @@ mod tests {
             conn,
             Some(project2),
             "content",
+            None,
             None,
             10
         )
@@ -1017,6 +1031,7 @@ mod tests {
             conn,
             None,
             "nonexistent",
+            None,
             None,
             10
         )

@@ -379,13 +379,19 @@ async fn load_recent_sessions<C: ToolContext>(
 
 /// Load recap data: preferences, memories, health alerts, doc counts, interventions
 async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<RecapData, String> {
+    let user_id = ctx.get_user_identity();
+    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
     ctx.pool()
         .run(move |conn| {
-            let preferences = get_preferences_sync(conn, Some(project_id)).unwrap_or_default();
-            let memories =
-                search_memories_text_sync(conn, Some(project_id), "", 10).unwrap_or_default();
-            let health_alerts =
-                get_health_alerts_sync(conn, Some(project_id), 5).unwrap_or_default();
+            let preferences = get_preferences_sync(
+                conn, Some(project_id), user_id.as_deref(), team_id,
+            ).unwrap_or_default();
+            let memories = search_memories_text_sync(
+                conn, Some(project_id), "", 10, user_id.as_deref(), team_id,
+            ).unwrap_or_default();
+            let health_alerts = get_health_alerts_sync(
+                conn, Some(project_id), 5, user_id.as_deref(), team_id,
+            ).unwrap_or_default();
             let doc_task_counts =
                 count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
             let config = ProactiveConfig::default();

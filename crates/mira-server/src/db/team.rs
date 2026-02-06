@@ -35,6 +35,7 @@ pub struct FileConflict {
 }
 
 /// Get or create a team (race-safe: INSERT OR IGNORE + SELECT).
+/// Uses COALESCE(project_id, 0) to enforce uniqueness even when project_id is NULL.
 pub fn get_or_create_team_sync(
     conn: &Connection,
     name: &str,
@@ -47,7 +48,7 @@ pub fn get_or_create_team_sync(
     )?;
 
     conn.query_row(
-        "SELECT id FROM teams WHERE name = ?1 AND (project_id = ?2 OR (?2 IS NULL AND project_id IS NULL))",
+        "SELECT id FROM teams WHERE name = ?1 AND COALESCE(project_id, 0) = COALESCE(?2, 0)",
         params![name, project_id],
         |row| row.get(0),
     )
@@ -126,14 +127,15 @@ pub fn get_active_team_members_sync(conn: &Connection, team_id: i64) -> Vec<Team
 }
 
 /// Update heartbeat for a team session.
+/// Also reactivates sessions that were marked stale by the background monitor.
 pub fn heartbeat_team_session_sync(
     conn: &Connection,
     team_id: i64,
     session_id: &str,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "UPDATE team_sessions SET last_heartbeat = CURRENT_TIMESTAMP
-         WHERE team_id = ?1 AND session_id = ?2 AND status = 'active'",
+        "UPDATE team_sessions SET last_heartbeat = CURRENT_TIMESTAMP, status = 'active'
+         WHERE team_id = ?1 AND session_id = ?2",
         params![team_id, session_id],
     )?;
     Ok(())
@@ -194,6 +196,7 @@ pub fn get_file_conflicts_sync(
            AND file_path IN (
                SELECT DISTINCT file_path FROM team_file_ownership
                WHERE team_id = ?1 AND session_id = ?2
+                 AND timestamp > datetime('now', '-30 minutes')
            )
          ORDER BY timestamp DESC",
     ) {

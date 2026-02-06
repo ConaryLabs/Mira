@@ -404,8 +404,8 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
                 "SELECT content, COALESCE(category, 'general')
                  FROM memory_facts
                  WHERE scope = 'team' AND team_id = ?1
-                   AND created_at > datetime('now', '-1 hour')
-                 ORDER BY created_at DESC
+                   AND COALESCE(updated_at, created_at) > datetime('now', '-1 hour')
+                 ORDER BY COALESCE(updated_at, created_at) DESC
                  LIMIT 3",
             )?;
             let rows = stmt

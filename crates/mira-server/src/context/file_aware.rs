@@ -55,7 +55,7 @@ impl FileAwareInjector {
             let pool = self.pool.clone();
             if let Ok(memories) = pool
                 .interact(move |conn| {
-                    search_memories_sync(conn, None, &filename, None, 3)
+                    search_memories_sync(conn, None, &filename, None, None, 3)
                         .map_err(|e| anyhow::anyhow!("{}", e))
                 })
                 .await

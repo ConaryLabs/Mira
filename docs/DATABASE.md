@@ -598,27 +598,57 @@ User identity registry.
 
 ### teams
 
-Team definitions for shared memory.
+Team registry for Claude Code Agent Teams. One row per active team.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
-| name | TEXT | Team name |
-| description | TEXT | Team description |
-| created_by | TEXT | User who created |
+| name | TEXT | Team name (from Agent Teams config) |
+| project_id | INTEGER FK | Project reference (nullable) |
+| config_path | TEXT | Path to team config JSON |
+| status | TEXT | `active` or `disbanded` |
 | created_at | TEXT | Timestamp |
+| updated_at | TEXT | Last update |
 
-### team_members
+**Indexes:** `idx_teams_status(status)`, `idx_teams_name_project(name, COALESCE(project_id, 0))` (NULL-safe uniqueness).
 
-Team membership.
+### team_sessions
+
+Active teammate sessions within a team. Each Claude Code agent participating in a team gets a row.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
-| team_id | INTEGER FK | Team reference |
-| user_identity | TEXT | Member's identity |
-| role | TEXT | `member` or `admin` |
-| joined_at | TEXT | When joined |
+| team_id | INTEGER FK | Team reference (CASCADE delete) |
+| session_id | TEXT | Claude Code session ID |
+| member_name | TEXT | Teammate name (e.g., `researcher`, `tester`) |
+| role | TEXT | `leader` or `teammate` |
+| agent_type | TEXT | Agent type (e.g., `general-purpose`, `Explore`) |
+| joined_at | TEXT | Timestamp |
+| last_heartbeat | TEXT | Last heartbeat (stale after 5 min) |
+| status | TEXT | `active` or `disconnected` |
+
+**Unique:** `(team_id, session_id)`. **Indexes:** `idx_ts_team_status`, `idx_ts_session`, `idx_ts_heartbeat`.
+
+Heartbeats reactivate stale sessions — if a teammate's status was `disconnected`, a new heartbeat sets it back to `active`.
+
+### team_file_ownership
+
+Tracks which teammate modified which files, used for conflict detection and convergence analysis.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | Auto-increment ID |
+| team_id | INTEGER FK | Team reference (CASCADE delete) |
+| session_id | TEXT | Session that made the change |
+| member_name | TEXT | Teammate who modified |
+| file_path | TEXT | Path to modified file |
+| operation | TEXT | Tool name (e.g., `Write`, `Edit`, `NotebookEdit`) |
+| timestamp | TEXT | When the modification occurred |
+
+**Indexes:** `idx_tfo_team_file`, `idx_tfo_session`, `idx_tfo_timestamp`.
+
+Only write operations (`Write`, `Edit`, `NotebookEdit`, `MultiEdit`) are recorded — filtering is done in the PostToolUse hook layer, not via database constraints.
 
 ---
 

@@ -30,6 +30,14 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
     "#,
     )?;
 
+    // NULL-safe unique index: SQLite UNIQUE treats NULLs as distinct,
+    // so UNIQUE(name, project_id) doesn't enforce uniqueness when project_id IS NULL.
+    // This expression index uses COALESCE to normalize NULLs to 0.
+    conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_project
+         ON teams(name, COALESCE(project_id, 0));",
+    )?;
+
     create_table_if_missing(
         conn,
         "team_sessions",
@@ -62,13 +70,61 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
             session_id TEXT NOT NULL,
             member_name TEXT NOT NULL,
             file_path TEXT NOT NULL,
-            operation TEXT NOT NULL CHECK(operation IN ('Write', 'Edit', 'NotebookEdit')),
+            operation TEXT NOT NULL,
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_tfo_team_file ON team_file_ownership(team_id, file_path);
         CREATE INDEX IF NOT EXISTS idx_tfo_session ON team_file_ownership(team_id, session_id);
         CREATE INDEX IF NOT EXISTS idx_tfo_timestamp ON team_file_ownership(team_id, timestamp);
     "#,
+    )?;
+
+    // Migration: remove CHECK constraint on operation column for existing databases.
+    // SQLite doesn't support ALTER TABLE DROP CONSTRAINT, so we recreate the table.
+    migrate_drop_file_ownership_check(conn)?;
+
+    Ok(())
+}
+
+/// Remove the CHECK(operation IN (...)) constraint from team_file_ownership.
+/// For existing DBs that already have the constraint, we recreate the table.
+fn migrate_drop_file_ownership_check(conn: &Connection) -> Result<()> {
+    // Check if the CHECK constraint exists by trying an operation outside the old list
+    let needs_migration = conn
+        .execute(
+            "INSERT INTO team_file_ownership (team_id, session_id, member_name, file_path, operation)
+             VALUES (0, '__migration_check__', '__check__', '__check__', 'MultiEdit')",
+            [],
+        )
+        .is_err();
+
+    if !needs_migration {
+        // Clean up the probe row
+        let _ = conn.execute(
+            "DELETE FROM team_file_ownership WHERE session_id = '__migration_check__'",
+            [],
+        );
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "BEGIN;
+         CREATE TABLE team_file_ownership_new (
+             id INTEGER PRIMARY KEY,
+             team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+             session_id TEXT NOT NULL,
+             member_name TEXT NOT NULL,
+             file_path TEXT NOT NULL,
+             operation TEXT NOT NULL,
+             timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+         );
+         INSERT INTO team_file_ownership_new SELECT * FROM team_file_ownership;
+         DROP TABLE team_file_ownership;
+         ALTER TABLE team_file_ownership_new RENAME TO team_file_ownership;
+         CREATE INDEX IF NOT EXISTS idx_tfo_team_file ON team_file_ownership(team_id, file_path);
+         CREATE INDEX IF NOT EXISTS idx_tfo_session ON team_file_ownership(team_id, session_id);
+         CREATE INDEX IF NOT EXISTS idx_tfo_timestamp ON team_file_ownership(team_id, timestamp);
+         COMMIT;"
     )?;
 
     Ok(())
@@ -185,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_ownership_operation_check() {
+    fn test_file_ownership_accepts_any_operation() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute(
             "CREATE TABLE projects (id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL)",
@@ -205,25 +261,12 @@ mod tests {
         )
         .unwrap();
 
-        // Valid operations
-        conn.execute(
-            "INSERT INTO team_file_ownership (team_id, session_id, member_name, file_path, operation) VALUES (1, 's1', 'a', '/f', 'Write')",
-            [],
-        ).unwrap();
-        conn.execute(
-            "INSERT INTO team_file_ownership (team_id, session_id, member_name, file_path, operation) VALUES (1, 's1', 'a', '/f', 'Edit')",
-            [],
-        ).unwrap();
-        conn.execute(
-            "INSERT INTO team_file_ownership (team_id, session_id, member_name, file_path, operation) VALUES (1, 's1', 'a', '/f', 'NotebookEdit')",
-            [],
-        ).unwrap();
-
-        // Invalid operation should fail
-        let result = conn.execute(
-            "INSERT INTO team_file_ownership (team_id, session_id, member_name, file_path, operation) VALUES (1, 's1', 'a', '/f', 'Read')",
-            [],
-        );
-        assert!(result.is_err());
+        // All operation names are accepted (filtering is done in the hook layer)
+        for op in &["Write", "Edit", "NotebookEdit", "MultiEdit"] {
+            conn.execute(
+                "INSERT INTO team_file_ownership (team_id, session_id, member_name, file_path, operation) VALUES (1, 's1', 'a', '/f', ?1)",
+                [op],
+            ).unwrap();
+        }
     }
 }
