@@ -340,13 +340,11 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
 
             let membership = pool_clone
                 .interact(move |conn| {
-                    let project_id = cwd_c
-                        .as_deref()
-                        .and_then(|c| {
-                            crate::db::get_or_create_project_sync(conn, c, None)
-                                .ok()
-                                .map(|(id, _)| id)
-                        });
+                    let project_id = cwd_c.as_deref().and_then(|c| {
+                        crate::db::get_or_create_project_sync(conn, c, None)
+                            .ok()
+                            .map(|(id, _)| id)
+                    });
                     let tid = crate::db::get_or_create_team_sync(
                         conn,
                         &team_name,

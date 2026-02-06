@@ -195,11 +195,7 @@ pub fn deactivate_team_session_sync(conn: &Connection, session_id: &str) -> rusq
 }
 
 /// Validate that a session is an active member of a team.
-pub fn validate_team_membership_sync(
-    conn: &Connection,
-    team_id: i64,
-    session_id: &str,
-) -> bool {
+pub fn validate_team_membership_sync(conn: &Connection, team_id: i64, session_id: &str) -> bool {
     conn.query_row(
         "SELECT 1 FROM team_sessions WHERE team_id = ?1 AND session_id = ?2 AND status = 'active'",
         params![team_id, session_id],
@@ -264,11 +260,7 @@ pub fn get_file_conflicts_sync(
 }
 
 /// Get files modified by a specific session.
-pub fn get_member_files_sync(
-    conn: &Connection,
-    team_id: i64,
-    session_id: &str,
-) -> Vec<String> {
+pub fn get_member_files_sync(conn: &Connection, team_id: i64, session_id: &str) -> Vec<String> {
     let mut stmt = match conn.prepare(
         "SELECT DISTINCT file_path FROM team_file_ownership
          WHERE team_id = ?1 AND session_id = ?2
@@ -294,10 +286,7 @@ pub fn cleanup_stale_sessions_sync(
          WHERE team_id = ?1
            AND status = 'active'
            AND last_heartbeat < datetime('now', ?2)",
-        params![
-            team_id,
-            format!("-{} minutes", stale_threshold_minutes)
-        ],
+        params![team_id, format!("-{} minutes", stale_threshold_minutes)],
     )?;
     Ok(count)
 }
@@ -452,12 +441,9 @@ mod tests {
         let team_id = get_or_create_team_sync(&conn, "t1", Some(1), "/c").unwrap();
         register_team_session_sync(&conn, team_id, "sess-a", "alice", "lead", None).unwrap();
 
-        record_file_ownership_sync(&conn, team_id, "sess-a", "alice", "src/a.rs", "Write")
-            .unwrap();
-        record_file_ownership_sync(&conn, team_id, "sess-a", "alice", "src/b.rs", "Edit")
-            .unwrap();
-        record_file_ownership_sync(&conn, team_id, "sess-a", "alice", "src/a.rs", "Edit")
-            .unwrap(); // duplicate
+        record_file_ownership_sync(&conn, team_id, "sess-a", "alice", "src/a.rs", "Write").unwrap();
+        record_file_ownership_sync(&conn, team_id, "sess-a", "alice", "src/b.rs", "Edit").unwrap();
+        record_file_ownership_sync(&conn, team_id, "sess-a", "alice", "src/a.rs", "Edit").unwrap(); // duplicate
 
         let files = get_member_files_sync(&conn, team_id, "sess-a");
         assert_eq!(files.len(), 2); // DISTINCT

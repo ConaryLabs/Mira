@@ -17,7 +17,7 @@ fn is_dangerous_ip(ip: &IpAddr) -> bool {
             || v4.is_link_local()      // 169.254.0.0/16
             || v4.is_broadcast()       // 255.255.255.255
             || v4.is_unspecified()     // 0.0.0.0
-            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
+            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
         }
         IpAddr::V6(v6) => {
             let segs = v6.segments();
@@ -59,7 +59,10 @@ async fn resolve_and_validate(parsed: &url::Url) -> Result<Vec<std::net::SocketA
         .collect();
 
     if addrs.is_empty() {
-        return Err(format!("Error: DNS resolution for {} returned no addresses", host));
+        return Err(format!(
+            "Error: DNS resolution for {} returned no addresses",
+            host
+        ));
     }
 
     for addr in &addrs {
@@ -79,7 +82,10 @@ async fn resolve_and_validate(parsed: &url::Url) -> Result<Vec<std::net::SocketA
 ///
 /// Uses reqwest's `resolve_to_addrs` to force the connection to use our resolved IPs,
 /// preventing DNS rebinding attacks where the DNS record changes between validation and connect.
-fn build_pinned_client(host: &str, addrs: &[std::net::SocketAddr]) -> Result<reqwest::Client, String> {
+fn build_pinned_client(
+    host: &str,
+    addrs: &[std::net::SocketAddr],
+) -> Result<reqwest::Client, String> {
     // reqwest's resolve_to_addrs keys by hostname only (no port).
     // See reqwest/src/dns/resolve.rs — lookup is `overrides.get(name.as_str())`
     // where `name` is the bare host from the URI.
@@ -152,7 +158,12 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
         if status.is_redirection() {
             let location = match resp.headers().get("location").and_then(|v| v.to_str().ok()) {
                 Some(loc) => loc,
-                None => return format!("Error: Redirect from {} has no Location header", current_url),
+                None => {
+                    return format!(
+                        "Error: Redirect from {} has no Location header",
+                        current_url
+                    );
+                }
             };
 
             // Resolve relative redirects against the current URL
@@ -240,7 +251,10 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
 }
 
 /// Read a response body with a maximum byte limit to prevent memory exhaustion.
-async fn read_response_body(response: reqwest::Response, max_bytes: usize) -> Result<String, String> {
+async fn read_response_body(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<String, String> {
     use futures::StreamExt;
 
     let mut stream = response.bytes_stream();
@@ -574,13 +588,21 @@ mod tests {
     #[tokio::test]
     async fn test_ssrf_blocks_loopback_url() {
         let result = execute_web_fetch("http://127.0.0.1/secret", 1000).await;
-        assert!(result.contains("internal/private address"), "Should block loopback: {}", result);
+        assert!(
+            result.contains("internal/private address"),
+            "Should block loopback: {}",
+            result
+        );
     }
 
     #[tokio::test]
     async fn test_ssrf_blocks_ipv6_loopback_url() {
         let result = execute_web_fetch("http://[::1]/secret", 1000).await;
-        assert!(result.contains("internal/private address"), "Should block IPv6 loopback: {}", result);
+        assert!(
+            result.contains("internal/private address"),
+            "Should block IPv6 loopback: {}",
+            result
+        );
     }
 
     // --- Bounded body reader tests ---

@@ -263,7 +263,11 @@ impl OpenAiEmbeddings {
             .iter()
             .map(|t| {
                 if t.len() > MAX_TEXT_CHARS {
-                    debug!("Truncating text from {} to {} chars", t.len(), MAX_TEXT_CHARS);
+                    debug!(
+                        "Truncating text from {} to {} chars",
+                        t.len(),
+                        MAX_TEXT_CHARS
+                    );
                     truncate_at_boundary(t, MAX_TEXT_CHARS)
                 } else {
                     t.as_str()
@@ -276,7 +280,10 @@ impl OpenAiEmbeddings {
             serde_json::Value::String(inputs[0].to_string())
         } else {
             serde_json::Value::Array(
-                inputs.iter().map(|s| serde_json::Value::String(s.to_string())).collect(),
+                inputs
+                    .iter()
+                    .map(|s| serde_json::Value::String(s.to_string()))
+                    .collect(),
             )
         };
 
@@ -322,14 +329,14 @@ impl OpenAiEmbeddings {
                             data.into_iter().map(|d| d.embedding).collect();
 
                         // Validate dimensions on first result
-                        if let Some(first) = embeddings.first() {
-                            if first.len() != self.dimensions {
-                                anyhow::bail!(
-                                    "Dimension mismatch: expected {}, got {}",
-                                    self.dimensions,
-                                    first.len()
-                                );
-                            }
+                        if let Some(first) = embeddings.first()
+                            && first.len() != self.dimensions
+                        {
+                            anyhow::bail!(
+                                "Dimension mismatch: expected {}, got {}",
+                                self.dimensions,
+                                first.len()
+                            );
                         }
 
                         return Ok(embeddings);

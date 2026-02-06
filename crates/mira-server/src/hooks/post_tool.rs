@@ -134,8 +134,10 @@ pub async fn run() -> Result<()> {
         post_input.tool_name.as_str(),
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit"
     );
-    if is_write_tool {
-    if let Some(membership) = crate::hooks::session::read_team_membership_from_db(&pool, &post_input.session_id).await {
+    if is_write_tool
+        && let Some(membership) =
+            crate::hooks::session::read_team_membership_from_db(&pool, &post_input.session_id).await
+    {
         let pool_clone = pool.clone();
         let sid = post_input.session_id.clone();
         let member = membership.member_name.clone();
@@ -144,10 +146,8 @@ pub async fn run() -> Result<()> {
         let team_id = membership.team_id;
         let result = pool_clone
             .interact(move |conn| {
-                crate::db::record_file_ownership_sync(
-                    conn, team_id, &sid, &member, &fp, &tool,
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))
+                crate::db::record_file_ownership_sync(conn, team_id, &sid, &member, &fp, &tool)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await;
 
@@ -186,7 +186,6 @@ pub async fn run() -> Result<()> {
                 conflicts.len()
             );
         }
-    }
     }
 
     // Check for related test files

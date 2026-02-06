@@ -50,12 +50,8 @@ pub fn migrate_vec_tables(conn: &Connection) -> Result<()> {
 /// so the background worker will re-embed all memory facts.
 ///
 /// Returns `true` if vec_memory was invalidated (re-embedding needed).
-pub fn check_embedding_provider_change(
-    conn: &Connection,
-    current_provider: &str,
-) -> Result<bool> {
-    let stored = get_server_state_sync(conn, EMBEDDING_PROVIDER_KEY)
-        .unwrap_or(None);
+pub fn check_embedding_provider_change(conn: &Connection, current_provider: &str) -> Result<bool> {
+    let stored = get_server_state_sync(conn, EMBEDDING_PROVIDER_KEY).unwrap_or(None);
 
     if stored.as_deref() == Some(current_provider) {
         return Ok(false);

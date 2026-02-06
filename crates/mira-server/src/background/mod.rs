@@ -14,13 +14,13 @@ pub mod documentation;
 mod embeddings;
 pub(crate) mod entity_extraction;
 mod fast_lane;
+pub(crate) mod knowledge_distillation;
 pub(crate) mod memory_embeddings;
 pub(crate) mod outcome_scanner;
 mod pondering;
 pub mod session_summaries;
 mod slow_lane;
 pub(crate) mod summaries;
-pub(crate) mod knowledge_distillation;
 pub(crate) mod team_monitor;
 pub mod watcher;
 
@@ -139,11 +139,8 @@ pub fn spawn_with_pools(
 
 /// Supervise a background worker, restarting it if it panics.
 /// Stops when the shutdown signal is received.
-async fn supervise_worker<F>(
-    name: &str,
-    shutdown: watch::Receiver<bool>,
-    spawn_fn: F,
-) where
+async fn supervise_worker<F>(name: &str, shutdown: watch::Receiver<bool>, spawn_fn: F)
+where
     F: Fn() -> tokio::task::JoinHandle<()>,
 {
     loop {

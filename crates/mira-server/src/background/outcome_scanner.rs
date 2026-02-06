@@ -8,7 +8,9 @@ use crate::db::diff_outcomes::get_unscanned_diffs_sync;
 use crate::db::diff_outcomes::mark_clean_outcomes_sync;
 use crate::db::diff_outcomes::{StoreDiffOutcomeParams, store_diff_outcome_sync};
 use crate::db::pool::DatabasePool;
-use crate::db::{get_indexed_project_ids_sync, get_project_paths_by_ids_sync, set_server_state_sync};
+use crate::db::{
+    get_indexed_project_ids_sync, get_project_paths_by_ids_sync, set_server_state_sync,
+};
 use crate::git::{CommitWithFiles, get_commits_with_files, get_git_head};
 use crate::utils::{ResultExt, truncate_at_boundary};
 use std::collections::HashMap;

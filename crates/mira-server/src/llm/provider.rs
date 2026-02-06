@@ -13,6 +13,7 @@ use super::{ChatResult, Message, Tool};
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     DeepSeek,
+    Zhipu,    // Zhipu GLM-4.7 via coding endpoint
     Ollama,   // Reserved for local sovereignty - not implemented yet
     Sampling, // MCP sampling — forwards to host client (Claude Code)
 }
@@ -23,6 +24,7 @@ impl Provider {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "deepseek" => Some(Self::DeepSeek),
+            "zhipu" | "glm" => Some(Self::Zhipu),
             "ollama" => Some(Self::Ollama),
             "sampling" => Some(Self::Sampling),
             _ => None,
@@ -33,6 +35,7 @@ impl Provider {
     pub fn api_key_env_var(&self) -> &'static str {
         match self {
             Self::DeepSeek => "DEEPSEEK_API_KEY",
+            Self::Zhipu => "ZHIPU_API_KEY",
             Self::Ollama => "OLLAMA_HOST", // Ollama uses host, not API key
             Self::Sampling => "N/A",       // No API key — uses MCP sampling
         }
@@ -42,6 +45,7 @@ impl Provider {
     pub fn default_model(&self) -> &'static str {
         match self {
             Self::DeepSeek => "deepseek-reasoner",
+            Self::Zhipu => "GLM-4.7",
             Self::Ollama => "llama3.3",
             Self::Sampling => "mcp-sampling",
         }
@@ -52,6 +56,7 @@ impl fmt::Display for Provider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DeepSeek => write!(f, "deepseek"),
+            Self::Zhipu => write!(f, "zhipu"),
             Self::Ollama => write!(f, "ollama"),
             Self::Sampling => write!(f, "sampling"),
         }
@@ -148,6 +153,14 @@ mod tests {
     }
 
     #[test]
+    fn test_provider_from_str_zhipu() {
+        assert_eq!(Provider::from_str("zhipu"), Some(Provider::Zhipu));
+        assert_eq!(Provider::from_str("Zhipu"), Some(Provider::Zhipu));
+        assert_eq!(Provider::from_str("glm"), Some(Provider::Zhipu));
+        assert_eq!(Provider::from_str("GLM"), Some(Provider::Zhipu));
+    }
+
+    #[test]
     fn test_provider_from_str_ollama() {
         assert_eq!(Provider::from_str("ollama"), Some(Provider::Ollama));
         assert_eq!(Provider::from_str("Ollama"), Some(Provider::Ollama));
@@ -168,6 +181,7 @@ mod tests {
     #[test]
     fn test_provider_api_key_env_var() {
         assert_eq!(Provider::DeepSeek.api_key_env_var(), "DEEPSEEK_API_KEY");
+        assert_eq!(Provider::Zhipu.api_key_env_var(), "ZHIPU_API_KEY");
         assert_eq!(Provider::Ollama.api_key_env_var(), "OLLAMA_HOST");
     }
 
@@ -178,6 +192,7 @@ mod tests {
     #[test]
     fn test_provider_default_model() {
         assert_eq!(Provider::DeepSeek.default_model(), "deepseek-reasoner");
+        assert_eq!(Provider::Zhipu.default_model(), "GLM-4.7");
         assert_eq!(Provider::Ollama.default_model(), "llama3.3");
     }
 
@@ -188,6 +203,7 @@ mod tests {
     #[test]
     fn test_provider_display() {
         assert_eq!(format!("{}", Provider::DeepSeek), "deepseek");
+        assert_eq!(format!("{}", Provider::Zhipu), "zhipu");
         assert_eq!(format!("{}", Provider::Ollama), "ollama");
     }
 

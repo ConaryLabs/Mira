@@ -113,7 +113,14 @@ impl MiraServer {
         code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
     ) -> Self {
-        Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env(), true, ExpertGuardrails::default())
+        Self::from_api_keys(
+            pool,
+            code_pool,
+            embeddings,
+            &ApiKeys::from_env(),
+            true,
+            ExpertGuardrails::default(),
+        )
     }
 
     /// Auto-initialize project from Claude's cwd if not already set or mismatched
@@ -207,9 +214,9 @@ impl MiraServer {
             let sid_clone = sid.clone();
             if let Ok(Some(membership)) = pool_clone
                 .interact(move |conn| {
-                    Ok::<_, anyhow::Error>(
-                        crate::db::get_team_membership_for_session_sync(conn, &sid_clone),
-                    )
+                    Ok::<_, anyhow::Error>(crate::db::get_team_membership_for_session_sync(
+                        conn, &sid_clone,
+                    ))
                 })
                 .await
             {

@@ -24,9 +24,9 @@ mod schema;
 pub use schema::vectors::check_embedding_provider_change;
 mod search;
 mod session;
-pub mod team;
 pub mod session_tasks;
 mod tasks;
+pub mod team;
 #[cfg(test)]
 #[macro_use]
 pub(crate) mod test_support;
@@ -107,17 +107,18 @@ pub use insights::get_unified_insights_sync;
 pub use memory::{
     MemoryScopeInfo,
     RankedMemory,
+    RecallRow,
     StoreMemoryParams,
     clear_project_persona_sync,
     count_facts_without_embeddings_sync,
     delete_memory_sync,
-    get_memory_scope_sync,
     fetch_ranked_memories_for_export_sync,
     find_facts_without_embeddings_sync,
     get_base_persona_sync,
     get_global_memories_sync,
     get_health_alerts_sync as get_health_alerts_memory_sync,
     get_memory_metadata_sync,
+    get_memory_scope_sync,
     get_memory_stats_sync,
     get_preferences_sync as get_preferences_memory_sync,
     get_project_persona_sync,
@@ -172,15 +173,14 @@ pub use tasks::{
     get_goal_by_id_sync, get_goals_sync, get_pending_tasks_sync, get_task_by_id_sync,
     get_tasks_sync, parse_goal_row, parse_task_row, update_goal_sync, update_task_sync,
 };
-pub use types::*;
 pub use team::{
     FileConflict, TeamInfo, TeamMemberInfo, cleanup_stale_sessions_sync,
     deactivate_team_session_sync, get_active_team_members_sync, get_file_conflicts_sync,
     get_member_files_sync, get_or_create_team_sync, get_team_for_session_sync,
-    get_team_membership_for_session_sync,
-    heartbeat_team_session_sync, record_file_ownership_sync, register_team_session_sync,
-    validate_team_membership_sync,
+    get_team_membership_for_session_sync, heartbeat_team_session_sync, record_file_ownership_sync,
+    register_team_session_sync, validate_team_membership_sync,
 };
+pub use types::*;
 pub use usage::{
     EmbeddingUsageRecord, LlmUsageRecord, UsageStats, get_llm_usage_summary,
     insert_embedding_usage_sync, insert_llm_usage_sync, query_llm_usage_stats,

@@ -1,16 +1,14 @@
 // crates/mira-server/src/tools/core/experts/execution.rs
 // Core expert consultation logic
 
+use super::ToolContext;
 use super::agentic::{AgenticLoopConfig, ToolHandler, run_agentic_loop};
 use super::context::{build_user_prompt, format_expert_response, get_patterns_context};
 use super::findings::{parse_expert_findings, store_findings};
 use super::role::ExpertRole;
 use super::strategy::ReasoningStrategy;
 use super::tools::{build_expert_toolset, execute_tool};
-use super::ToolContext;
-use crate::llm::{
-    DeepSeekClient, LlmClient, Message, Provider, ToolCall, record_llm_usage,
-};
+use crate::llm::{DeepSeekClient, LlmClient, Message, Provider, ToolCall, record_llm_usage};
 use crate::utils::ResultExt;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -103,7 +101,7 @@ pub async fn consult_expert<C: ToolContext>(
         if !llm_factory.has_providers() {
             return Err(format!(
                 "Expert consultation ({}) requires an LLM provider. This tool uses AI models \
-                 to reason about code. Set DEEPSEEK_API_KEY in ~/.mira/.env, \
+                 to reason about code. Set DEEPSEEK_API_KEY or ZHIPU_API_KEY in ~/.mira/.env, \
                  or unset MIRA_DISABLE_LLM to enable expert consultation.",
                 expert.name()
             ));
@@ -196,12 +194,7 @@ async fn consult_expert_via_sampling<C: ToolContext>(
     let llm_timeout = Duration::from_secs(ctx.expert_guardrails().llm_call_timeout_secs);
     let result = timeout(llm_timeout, chat_client.chat(messages, None))
         .await
-        .map_err(|_| {
-            format!(
-                "MCP sampling timed out after {}s",
-                llm_timeout.as_secs()
-            )
-        })?
+        .map_err(|_| format!("MCP sampling timed out after {}s", llm_timeout.as_secs()))?
         .map_err(|e| format!("MCP sampling failed: {}", e))?;
 
     // Record usage
@@ -436,5 +429,10 @@ async fn consult_expert_one_shot<C: ToolContext>(
 
     maybe_store_findings(ctx, &expert, expert_key, &final_result).await;
 
-    Ok(format_expert_response(expert, final_result, tool_calls, iters))
+    Ok(format_expert_response(
+        expert,
+        final_result,
+        tool_calls,
+        iters,
+    ))
 }

@@ -6,6 +6,7 @@ use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::provider::{LlmClient, Provider};
 use crate::llm::sampling::SamplingClient;
+use crate::llm::zhipu::ZhipuClient;
 use crate::tools::core::experts::strategy::ReasoningStrategy;
 use rmcp::service::{Peer, RoleServer};
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ pub struct ProviderFactory {
     fallback_order: Vec<Provider>,
     // Store API keys to create custom clients on demand
     deepseek_key: Option<String>,
+    zhipu_key: Option<String>,
     // MCP sampling peer — last-resort fallback when no API keys are configured
     sampling_peer: Option<Arc<RwLock<Option<Peer<RoleServer>>>>>,
 }
@@ -64,11 +66,17 @@ impl ProviderFactory {
             );
         }
 
+        // Initialize Zhipu GLM client
+        if let Some(ref key) = api_keys.zhipu {
+            info!("Zhipu GLM client initialized");
+            clients.insert(Provider::Zhipu, Arc::new(ZhipuClient::new(key.clone())));
+        }
+
         // Log available providers
         let available: Vec<_> = clients.keys().map(|p| p.to_string()).collect();
         info!(providers = ?available, "LLM providers available");
 
-        let fallback_order = vec![Provider::DeepSeek];
+        let fallback_order = vec![Provider::DeepSeek, Provider::Zhipu];
 
         Self {
             clients,
@@ -76,6 +84,7 @@ impl ProviderFactory {
             background_provider,
             fallback_order,
             deepseek_key: api_keys.deepseek,
+            zhipu_key: api_keys.zhipu,
             sampling_peer: None,
         }
     }
@@ -128,6 +137,9 @@ impl ProviderFactory {
                 let client_opt: Option<Arc<dyn LlmClient>> = match config.provider {
                     Provider::DeepSeek => self.deepseek_key.as_ref().map(|k| {
                         Arc::new(DeepSeekClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
+                    }),
+                    Provider::Zhipu => self.zhipu_key.as_ref().map(|k| {
+                        Arc::new(ZhipuClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
                     }),
                     _ => None,
                 };
@@ -190,7 +202,7 @@ impl ProviderFactory {
             return Ok(Arc::new(SamplingClient::new(peer.clone())));
         }
 
-        Err("No LLM providers available. Set DEEPSEEK_API_KEY.".into())
+        Err("No LLM providers available. Set DEEPSEEK_API_KEY or ZHIPU_API_KEY.".into())
     }
 
     /// Get a specific provider client (if available)
@@ -275,8 +287,9 @@ mod tests {
             clients: HashMap::new(),
             default_provider: None,
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek],
+            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
             deepseek_key: None,
+            zhipu_key: None,
             sampling_peer: None,
         }
     }
@@ -312,8 +325,9 @@ mod tests {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek],
+            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
             deepseek_key: None,
+            zhipu_key: None,
             sampling_peer: None,
         };
         assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
@@ -322,8 +336,9 @@ mod tests {
     #[test]
     fn test_fallback_order() {
         let factory = empty_factory();
-        assert_eq!(factory.fallback_order.len(), 1);
+        assert_eq!(factory.fallback_order.len(), 2);
         assert_eq!(factory.fallback_order[0], Provider::DeepSeek);
+        assert_eq!(factory.fallback_order[1], Provider::Zhipu);
     }
 
     // ========================================================================
@@ -341,8 +356,9 @@ mod tests {
             clients,
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek],
+            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
             deepseek_key: Some(key),
+            zhipu_key: None,
             sampling_peer: None,
         }
     }
@@ -414,8 +430,9 @@ mod tests {
             clients,
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            fallback_order: vec![Provider::DeepSeek],
+            fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
             deepseek_key: None, // No key available
+            zhipu_key: None,
             sampling_peer: None,
         };
         let pool = Arc::new(

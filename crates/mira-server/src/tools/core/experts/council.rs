@@ -1,6 +1,7 @@
 // crates/mira-server/src/tools/core/experts/council.rs
 // Council loop: coordinator-driven multi-expert consultation
 
+use super::ToolContext;
 use super::agentic::{AgenticLoopConfig, ToolHandler, run_agentic_loop};
 use super::context::build_user_prompt;
 use super::execution::enrich_context_for_role;
@@ -9,7 +10,6 @@ use super::plan::{ResearchPlan, ResearchTask, ReviewResult, parse_json_with_retr
 use super::prompts::*;
 use super::role::ExpertRole;
 use super::tools::{build_expert_toolset, execute_tool_with_findings};
-use super::ToolContext;
 use crate::llm::{Message, ToolCall, record_llm_usage};
 use crate::utils::ResultExt;
 use async_trait::async_trait;

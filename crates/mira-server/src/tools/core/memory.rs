@@ -334,7 +334,10 @@ pub async fn remember<C: ToolContext>(
                         let _ = pool_cleanup
                             .run(move |conn| {
                                 conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])?;
-                                conn.execute("UPDATE memory_facts SET has_embedding = 0 WHERE id = ?", [id])
+                                conn.execute(
+                                    "UPDATE memory_facts SET has_embedding = 0 WHERE id = ?",
+                                    [id],
+                                )
                             })
                             .await;
                     });
@@ -349,7 +352,10 @@ pub async fn remember<C: ToolContext>(
                     let _ = pool_cleanup
                         .run(move |conn| {
                             conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [id])?;
-                            conn.execute("UPDATE memory_facts SET has_embedding = 0 WHERE id = ?", [id])
+                            conn.execute(
+                                "UPDATE memory_facts SET has_embedding = 0 WHERE id = ?",
+                                [id],
+                            )
                         })
                         .await;
                 });
@@ -455,7 +461,7 @@ pub async fn recall<C: ToolContext>(
 
         // Run vector search via connection pool with branch + entity + team boosting
         // Graceful degradation: if vector search fails, fall through to fuzzy/SQL
-        let vec_result: Result<Vec<(i64, String, f32, Option<String>, Option<i64>)>, _> = ctx
+        let vec_result: Result<Vec<crate::db::RecallRow>, _> = ctx
             .pool()
             .run(move |conn| {
                 crate::db::recall_semantic_with_entity_boost_sync(
@@ -640,7 +646,9 @@ fn verify_memory_access(
     match scope.as_str() {
         "personal" => {
             if mem_user_id.as_deref() != caller_user_id {
-                return Err("Access denied: personal memory belongs to a different user".to_string());
+                return Err(
+                    "Access denied: personal memory belongs to a different user".to_string()
+                );
             }
         }
         "team" => {

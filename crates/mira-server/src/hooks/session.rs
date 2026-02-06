@@ -353,9 +353,7 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
         let prev_id = prev_session.id.clone();
         let modified_files: Vec<String> = pool_clone
             .interact(move |conn| {
-                Ok::<_, anyhow::Error>(
-                    get_session_modified_files_sync(conn, &prev_id)
-                )
+                Ok::<_, anyhow::Error>(get_session_modified_files_sync(conn, &prev_id))
             })
             .await
             .unwrap_or_default();
@@ -386,20 +384,18 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
         let pool_clone = pool.clone();
         let prev_id = prev_session.id.clone();
         let snapshot: Option<String> = pool_clone
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(get_session_snapshot_sync(conn, &prev_id))
-            })
+            .interact(move |conn| Ok::<_, anyhow::Error>(get_session_snapshot_sync(conn, &prev_id)))
             .await
             .ok()
             .flatten();
 
-        if let Some(snapshot_json) = snapshot {
-            if let Ok(snap) = serde_json::from_str::<serde_json::Value>(&snapshot_json) {
-                // Build "You were working on X" from snapshot data
-                if let Some(working_on) = build_working_on_summary(&snap) {
-                    // Insert at the beginning for prominence
-                    context_parts.insert(0, format!("**You were working on:** {}", working_on));
-                }
+        if let Some(snapshot_json) = snapshot
+            && let Ok(snap) = serde_json::from_str::<serde_json::Value>(&snapshot_json)
+        {
+            // Build "You were working on X" from snapshot data
+            if let Some(working_on) = build_working_on_summary(&snap) {
+                // Insert at the beginning for prominence
+                context_parts.insert(0, format!("**You were working on:** {}", working_on));
             }
         }
     }
@@ -536,10 +532,10 @@ fn build_working_on_summary(snapshot: &serde_json::Value) -> Option<String> {
 
     if parts.is_empty() {
         // Fall back to tool count
-        if let Some(count) = snapshot.get("tool_count").and_then(|v| v.as_i64()) {
-            if count > 0 {
-                return Some(format!("{} tool calls in the previous session", count));
-            }
+        if let Some(count) = snapshot.get("tool_count").and_then(|v| v.as_i64())
+            && count > 0
+        {
+            return Some(format!("{} tool calls in the previous session", count));
         }
         return None;
     }
@@ -625,9 +621,7 @@ pub async fn read_team_membership_from_db(
     let sid = session_id.to_string();
     pool_clone
         .interact(move |conn| {
-            Ok::<_, anyhow::Error>(
-                crate::db::get_team_membership_for_session_sync(conn, &sid),
-            )
+            Ok::<_, anyhow::Error>(crate::db::get_team_membership_for_session_sync(conn, &sid))
         })
         .await
         .ok()
@@ -671,13 +665,15 @@ pub fn detect_team_membership(
     if let Some(agent_type) = agent_type {
         // Try to find the team config
         if let Some(team_config) = scan_team_configs(cwd) {
-            let role = if agent_type == "lead" { "lead" } else { "teammate" };
+            let role = if agent_type == "lead" {
+                "lead"
+            } else {
+                "teammate"
+            };
             return Some(TeamDetectionResult {
                 team_name: team_config.team_name,
                 config_path: team_config.config_path,
-                member_name: member_name
-                    .unwrap_or(agent_type)
-                    .to_string(),
+                member_name: member_name.unwrap_or(agent_type).to_string(),
                 role: role.to_string(),
                 agent_type: Some(agent_type.to_string()),
             });
@@ -757,21 +753,21 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
         // Check if cwd is under the team's project path (not the reverse —
         // matching proj_p.starts_with(cwd_p) would be overly broad, e.g.
         // cwd="/home/peter" would match project="/home/peter/Mira").
-        if let Some(project_path) = config.get("project_path").and_then(|v| v.as_str()) {
-            if let Some(cwd_val) = cwd {
-                let cwd_p = std::path::Path::new(cwd_val);
-                let proj_p = std::path::Path::new(project_path);
-                if cwd_p.starts_with(proj_p) {
-                    let specificity = proj_p.components().count();
-                    candidates.push((
-                        specificity,
-                        TeamConfigInfo {
-                            team_name: team_name_val,
-                            config_path: config_path.to_string_lossy().to_string(),
-                        },
-                    ));
-                    continue;
-                }
+        if let Some(project_path) = config.get("project_path").and_then(|v| v.as_str())
+            && let Some(cwd_val) = cwd
+        {
+            let cwd_p = std::path::Path::new(cwd_val);
+            let proj_p = std::path::Path::new(project_path);
+            if cwd_p.starts_with(proj_p) {
+                let specificity = proj_p.components().count();
+                candidates.push((
+                    specificity,
+                    TeamConfigInfo {
+                        team_name: team_name_val,
+                        config_path: config_path.to_string_lossy().to_string(),
+                    },
+                ));
+                continue;
             }
         }
 
@@ -791,16 +787,17 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
                 .then_with(|| a.1.team_name.cmp(&b.1.team_name))
                 .then_with(|| a.1.config_path.cmp(&b.1.config_path))
         });
-        return Some(candidates.into_iter().next().unwrap().1);
+        return candidates.into_iter().next().map(|(_, info)| info);
     }
 
     if !fallback.is_empty() {
         // Deterministic: sort by team name, then config path for full tie-break
         fallback.sort_by(|a, b| {
-            a.team_name.cmp(&b.team_name)
+            a.team_name
+                .cmp(&b.team_name)
                 .then_with(|| a.config_path.cmp(&b.config_path))
         });
-        return Some(fallback.into_iter().next().unwrap());
+        return fallback.into_iter().next();
     }
 
     None

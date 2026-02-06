@@ -33,12 +33,12 @@ fn resolve_project_path(file_path: &str, project_root: Option<&str>) -> Result<P
 
     // Canonicalize both to resolve symlinks and ".." segments.
     // Use the candidate's parent if the file doesn't exist yet (for get_symbols).
-    let resolved = candidate.canonicalize().map_err(|_| {
-        format!("File not found: {}", file_path)
-    })?;
-    let canon_root = root.canonicalize().map_err(|_| {
-        "Error: Project root cannot be resolved".to_string()
-    })?;
+    let resolved = candidate
+        .canonicalize()
+        .map_err(|_| format!("File not found: {}", file_path))?;
+    let canon_root = root
+        .canonicalize()
+        .map_err(|_| "Error: Project root cannot be resolved".to_string())?;
 
     if !resolved.starts_with(&canon_root) {
         return Err(format!(
@@ -450,7 +450,9 @@ async fn execute_recall<C: ToolContext>(ctx: &C, query: &str, limit: usize) -> S
         // Run vector search via connection pool
         let results: Result<Vec<(i64, String, f32)>, String> = ctx
             .pool()
-            .run(move |conn| recall_semantic_sync(conn, &embedding_bytes, project_id, None, None, limit))
+            .run(move |conn| {
+                recall_semantic_sync(conn, &embedding_bytes, project_id, None, None, limit)
+            })
             .await;
 
         if let Ok(results) = results
@@ -548,7 +550,11 @@ mod tests {
         let root = project_root();
         let abs_path = format!("{}/Cargo.toml", root);
         let result = resolve_project_path(&abs_path, Some(&root));
-        assert!(result.is_ok(), "Should resolve absolute path inside root: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Should resolve absolute path inside root: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -563,8 +569,8 @@ mod tests {
     #[test]
     fn test_finding_stored_prefix_matches_output() {
         use super::super::findings::FindingsStore;
-        use std::sync::Arc;
         use serde_json::json;
+        use std::sync::Arc;
 
         let store = Arc::new(FindingsStore::new());
         let args = json!({
@@ -583,8 +589,8 @@ mod tests {
     #[test]
     fn test_finding_stored_prefix_not_on_error() {
         use super::super::findings::FindingsStore;
-        use std::sync::Arc;
         use serde_json::json;
+        use std::sync::Arc;
 
         let store = Arc::new(FindingsStore::new());
         // Missing required fields

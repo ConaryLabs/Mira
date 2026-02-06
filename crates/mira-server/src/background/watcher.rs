@@ -565,10 +565,7 @@ pub fn spawn(
             match jh.await {
                 Ok(()) => break, // Normal exit (shutdown)
                 Err(e) if e.is_panic() => {
-                    tracing::error!(
-                        "File watcher panicked: {:?}. Restarting in 5s...",
-                        e
-                    );
+                    tracing::error!("File watcher panicked: {:?}. Restarting in 5s...", e);
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
                 Err(e) => {

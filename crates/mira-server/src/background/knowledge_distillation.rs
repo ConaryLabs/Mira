@@ -46,9 +46,7 @@ pub async fn distill_team_session(
 ) -> Result<Option<DistillationResult>, String> {
     let pool_clone = pool.clone();
     pool_clone
-        .interact(move |conn| {
-            distill_team_session_sync(conn, team_id, project_id)
-        })
+        .interact(move |conn| distill_team_session_sync(conn, team_id, project_id))
         .await
         .map_err(|e| format!("Knowledge distillation failed: {}", e))
 }
@@ -103,7 +101,12 @@ pub fn distill_team_session_sync(
 
     // 7. Store distilled findings as team-scoped memories
     for finding in &findings {
-        let key = format!("distilled:{}:{}:{}", team_id, finding.category, hash_content(&finding.content));
+        let key = format!(
+            "distilled:{}:{}:{}",
+            team_id,
+            finding.category,
+            hash_content(&finding.content)
+        );
         let _ = store_memory_sync(
             conn,
             StoreMemoryParams {
@@ -201,10 +204,7 @@ fn group_memories_by_category(memories: &[RawMemory]) -> HashMap<String, Vec<&Ra
     let mut groups: HashMap<String, Vec<&RawMemory>> = HashMap::new();
 
     for mem in memories {
-        let category = mem
-            .category
-            .as_deref()
-            .unwrap_or(&mem.fact_type);
+        let category = mem.category.as_deref().unwrap_or(&mem.fact_type);
         groups.entry(category.to_string()).or_default().push(mem);
     }
 
@@ -216,14 +216,21 @@ fn distill_findings(grouped: &HashMap<String, Vec<&RawMemory>>) -> Vec<Distilled
     let mut findings = Vec::new();
 
     // Priority order for categories
-    let priority_categories = ["decision", "preference", "pattern", "convention", "context", "general"];
+    let priority_categories = [
+        "decision",
+        "preference",
+        "pattern",
+        "convention",
+        "context",
+        "general",
+    ];
 
     // Process priority categories first
     for cat in &priority_categories {
-        if let Some(memories) = grouped.get(*cat) {
-            if let Some(finding) = distill_category(cat, memories) {
-                findings.push(finding);
-            }
+        if let Some(memories) = grouped.get(*cat)
+            && let Some(finding) = distill_category(cat, memories)
+        {
+            findings.push(finding);
         }
     }
 
@@ -250,9 +257,9 @@ fn distill_category(category: &str, memories: &[&RawMemory]) -> Option<Distilled
     // Deduplicate: keep only memories with sufficiently distinct content
     let mut unique_contents: Vec<&str> = Vec::new();
     for mem in memories {
-        let dominated = unique_contents.iter().any(|existing| {
-            content_similar(existing, &mem.content)
-        });
+        let dominated = unique_contents
+            .iter()
+            .any(|existing| content_similar(existing, &mem.content));
         if !dominated {
             unique_contents.push(&mem.content);
         }
@@ -327,7 +334,10 @@ fn summarize_files(files: &[(String, String)]) -> String {
     // Group files by member
     let mut by_member: HashMap<&str, Vec<&str>> = HashMap::new();
     for (file, member) in files {
-        by_member.entry(member.as_str()).or_default().push(file.as_str());
+        by_member
+            .entry(member.as_str())
+            .or_default()
+            .push(file.as_str());
     }
 
     let mut parts: Vec<String> = Vec::new();
@@ -338,12 +348,7 @@ fn summarize_files(files: &[(String, String)]) -> String {
         } else {
             String::new()
         };
-        parts.push(format!(
-            "{}: {}{}",
-            member,
-            file_list.join(", "),
-            extra,
-        ));
+        parts.push(format!("{}: {}{}", member, file_list.join(", "), extra,));
     }
 
     format!("[Team files] {}", parts.join("; "))
@@ -386,10 +391,7 @@ pub fn format_distillation_result(result: &DistillationResult) -> String {
     }
 
     if result.total_files_touched > 0 {
-        parts.push(format!(
-            "{} files touched",
-            result.total_files_touched,
-        ));
+        parts.push(format!("{} files touched", result.total_files_touched,));
     }
 
     let summary = parts.join(". ");
@@ -522,10 +524,8 @@ mod tests {
 
         // Record file ownership and add some memories
         pool.interact(move |conn| {
-            crate::db::record_file_ownership_sync(conn, tid, "s1", "alice", "src/main.rs", "Edit")
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            crate::db::record_file_ownership_sync(conn, tid, "s2", "bob", "src/lib.rs", "Write")
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            crate::db::record_file_ownership_sync(conn, tid, "s1", "alice", "src/main.rs", "Edit")?;
+            crate::db::record_file_ownership_sync(conn, tid, "s2", "bob", "src/lib.rs", "Write")?;
             // Need at least MIN_MEMORIES_FOR_DISTILLATION memories OR files to produce a result
             store_memory_sync(
                 conn,
@@ -561,12 +561,18 @@ mod tests {
     #[test]
     fn test_content_similar_containment() {
         assert!(content_similar("hello world", "hello world foo"));
-        assert!(content_similar("use builder pattern", "use builder pattern for config"));
+        assert!(content_similar(
+            "use builder pattern",
+            "use builder pattern for config"
+        ));
     }
 
     #[test]
     fn test_content_similar_distinct() {
-        assert!(!content_similar("use builder pattern", "async database layer"));
+        assert!(!content_similar(
+            "use builder pattern",
+            "async database layer"
+        ));
         assert!(!content_similar("SQLite pooling", "React components"));
     }
 
@@ -601,13 +607,11 @@ mod tests {
     fn test_format_distillation_result() {
         let result = DistillationResult {
             team_name: "test-team".to_string(),
-            findings: vec![
-                DistilledFinding {
-                    category: "decision".to_string(),
-                    content: "Use builder pattern".to_string(),
-                    source_count: 2,
-                },
-            ],
+            findings: vec![DistilledFinding {
+                category: "decision".to_string(),
+                content: "Use builder pattern".to_string(),
+                source_count: 2,
+            }],
             total_memories_processed: 5,
             total_files_touched: 3,
         };

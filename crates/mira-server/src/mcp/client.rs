@@ -540,7 +540,12 @@ impl McpClientManager {
             }),
         )
         .await
-        .map_err(|_| format!("MCP tool call timed out after {}s", self.mcp_tool_timeout.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "MCP tool call timed out after {}s",
+                self.mcp_tool_timeout.as_secs()
+            )
+        })?
         .map_err(|e| format!("MCP tool call failed: {}", e))?;
 
         // Extract text content from the result

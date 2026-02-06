@@ -28,19 +28,16 @@ pub async fn process_team_monitor(pool: &Arc<DatabasePool>) -> Result<usize, Str
 
             for team_id in team_ids {
                 // 1. Clean up stale sessions
-                if let Ok(cleaned) = crate::db::cleanup_stale_sessions_sync(
-                    conn,
-                    team_id,
-                    STALE_THRESHOLD_MINUTES,
-                ) {
-                    if cleaned > 0 {
-                        tracing::info!(
-                            "Team monitor: cleaned {} stale session(s) for team {}",
-                            cleaned,
-                            team_id
-                        );
-                        processed += cleaned;
-                    }
+                if let Ok(cleaned) =
+                    crate::db::cleanup_stale_sessions_sync(conn, team_id, STALE_THRESHOLD_MINUTES)
+                    && cleaned > 0
+                {
+                    tracing::info!(
+                        "Team monitor: cleaned {} stale session(s) for team {}",
+                        cleaned,
+                        team_id
+                    );
+                    processed += cleaned;
                 }
 
                 // 2. Detect file conflicts across active sessions
@@ -217,7 +214,9 @@ mod tests {
                 let tid = crate::db::get_or_create_team_sync(conn, "t1", Some(pid), "/c")?;
                 crate::db::register_team_session_sync(conn, tid, "s1", "alice", "lead", None)?;
                 crate::db::register_team_session_sync(conn, tid, "s2", "bob", "teammate", None)?;
-                crate::db::record_file_ownership_sync(conn, tid, "s1", "alice", "src/a.rs", "Edit")?;
+                crate::db::record_file_ownership_sync(
+                    conn, tid, "s1", "alice", "src/a.rs", "Edit",
+                )?;
                 Ok::<_, anyhow::Error>(tid)
             })
             .await
@@ -240,10 +239,20 @@ mod tests {
                 crate::db::register_team_session_sync(conn, tid, "s1", "alice", "lead", None)?;
                 crate::db::register_team_session_sync(conn, tid, "s2", "bob", "teammate", None)?;
                 crate::db::record_file_ownership_sync(
-                    conn, tid, "s1", "alice", "src/shared.rs", "Edit",
+                    conn,
+                    tid,
+                    "s1",
+                    "alice",
+                    "src/shared.rs",
+                    "Edit",
                 )?;
                 crate::db::record_file_ownership_sync(
-                    conn, tid, "s2", "bob", "src/shared.rs", "Write",
+                    conn,
+                    tid,
+                    "s2",
+                    "bob",
+                    "src/shared.rs",
+                    "Write",
                 )?;
                 Ok::<_, anyhow::Error>(tid)
             })

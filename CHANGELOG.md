@@ -80,6 +80,29 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-02-06
+
+### Added
+- **Team intelligence layer** - Full support for Claude Code Agent Teams. Automatic team detection, file ownership tracking, conflict detection across teammates, session lifecycle management, stale session cleanup, and team-scoped memory distillation. New `team` tool with `status`, `review`, and `distill` actions.
+- **Zhipu GLM-4.7 provider** - Added GLM-4.7 as an expert LLM option via the Zhipu coding endpoint (`api.z.ai`). 200K context window, 128K max output. Configure with `ZHIPU_API_KEY` or `expert(action="configure", provider="zhipu")`.
+- **Knowledge distillation** - Background system that analyzes accumulated memories and distills cross-cutting patterns into higher-level insights.
+- **Subagent hooks** - `SubagentStart` injects relevant memories and context when subagents spawn. `SubagentStop` captures discoveries from completed subagent work.
+- **Session resume tracking** - Hooks detect `startup` vs `resume` sessions, track previous session ID, and restore "you were working on" context from session snapshots.
+- **Configurable expert guardrails** - Runtime limits for expert agentic loops via environment variables: max turns, timeouts, concurrent experts, tool call limits.
+
+### Changed
+- **Embeddings switched from Gemini to OpenAI** - Now uses `text-embedding-3-small` via `OPENAI_API_KEY`. Stale Gemini embeddings are automatically invalidated on provider change.
+- **Gemini/Google provider removed** - Cleaned out all Gemini provider code, API client, and configuration. Simplifies the provider system.
+- **Clippy clean** - Resolved all 15 warnings: collapsed nested if-statements, removed redundant closures, replaced `unwrap()` on Options with safe alternatives, exported `RecallRow` type alias to eliminate `type_complexity` warnings.
+- **Hardened background processing** - 20+ fixes from Codex reviews across expert system, memory, semantic search, and team intelligence.
+
+### Fixed
+- **Embedding retry on failure** - `has_embedding` flag now resets on embedding failure, allowing background retry.
+- **Recall filters** - `category` and `fact_type` filters in `memory(action="recall")` now work correctly.
+- **Read file panic** - Fixed panic on inverted line range in `read_file`.
+- **DNS pinning and test portability** - Corrected DNS rebinding key and made test paths portable.
+- **Team session deduplication** - Deterministic dedupe merge with single-active-team DB constraint prevents orphaned sessions.
+
 ## [0.5.3] - 2026-02-05
 
 ### Added

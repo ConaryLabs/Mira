@@ -17,8 +17,8 @@ mod index;
 mod memory;
 mod project;
 mod session;
-pub mod team;
 mod tasks;
+pub mod team;
 
 // Re-export all domain types (preserves existing import paths)
 pub use code::*;
@@ -31,8 +31,8 @@ pub use index::*;
 pub use memory::*;
 pub use project::*;
 pub use session::*;
-pub use team::*;
 pub use tasks::*;
+pub use team::*;
 
 use rmcp::ErrorData;
 use rmcp::handler::server::tool::IntoCallToolResult;

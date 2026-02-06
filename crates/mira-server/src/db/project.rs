@@ -194,9 +194,10 @@ pub fn search_memories_text_sync(
     let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt
-        .query_map(params![project_id, pattern, limit as i64, user_id, team_id], |row| {
-            parse_memory_fact_row(row)
-        })?
+        .query_map(
+            params![project_id, pattern, limit as i64, user_id, team_id],
+            parse_memory_fact_row,
+        )?
         .filter_map(|r| r.ok())
         .collect();
 

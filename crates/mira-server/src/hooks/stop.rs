@@ -149,10 +149,10 @@ pub async fn run() -> Result<()> {
                 };
 
                 // Save structured session snapshot for future resume context
-                if !session_id.is_empty() {
-                    if let Err(e) = save_session_snapshot(conn, &session_id) {
-                        eprintln!("[mira] Session snapshot failed: {}", e);
-                    }
+                if !session_id.is_empty()
+                    && let Err(e) = save_session_snapshot(conn, &session_id)
+                {
+                    eprintln!("[mira] Session snapshot failed: {}", e);
                 }
 
                 // Close the session with summary
@@ -228,7 +228,9 @@ pub async fn run_session_end() -> Result<()> {
 
     // Deactivate team session if we're in a team
     if !session_id.is_empty() {
-        if let Some(membership) = crate::hooks::session::read_team_membership_from_db(&pool, session_id).await {
+        if let Some(membership) =
+            crate::hooks::session::read_team_membership_from_db(&pool, session_id).await
+        {
             // Trigger knowledge distillation before deactivating (async, non-blocking)
             let distill_pool = pool.clone();
             let distill_team_id = membership.team_id;
@@ -237,13 +239,11 @@ pub async fn run_session_end() -> Result<()> {
                 pool_clone
                     .interact(move |conn| {
                         let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
-                        Ok::<_, anyhow::Error>(
-                            path.and_then(|p| {
-                                crate::db::get_or_create_project_sync(conn, &p, None)
-                                    .ok()
-                                    .map(|(id, _)| id)
-                            }),
-                        )
+                        Ok::<_, anyhow::Error>(path.and_then(|p| {
+                            crate::db::get_or_create_project_sync(conn, &p, None)
+                                .ok()
+                                .map(|(id, _)| id)
+                        }))
                     })
                     .await
                     .ok()
@@ -591,11 +591,9 @@ fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Resul
         conn.prepare(sql)
             .ok()
             .and_then(|mut stmt| {
-                stmt.query_map(rusqlite::params![session_id], |row| {
-                    row.get::<_, String>(0)
-                })
-                .ok()
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                stmt.query_map(rusqlite::params![session_id], |row| row.get::<_, String>(0))
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
             })
             .unwrap_or_default()
     };

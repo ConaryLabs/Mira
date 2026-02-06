@@ -6,7 +6,8 @@ use rusqlite::OptionalExtension;
 use std::sync::LazyLock;
 
 /// (fact_id, content, distance, branch, team_id)
-type RecallRow = (i64, String, f32, Option<String>, Option<i64>);
+/// (id, content, distance, category, project_id) tuple from semantic recall
+pub type RecallRow = (i64, String, f32, Option<String>, Option<i64>);
 
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
 #[derive(Debug, Clone)]
@@ -173,7 +174,13 @@ pub fn store_memory_sync(
                    AND COALESCE(scope, 'project') = ?3
                    AND COALESCE(team_id, 0) = COALESCE(?4, 0)
                    AND (?3 != 'personal' OR COALESCE(user_id, '') = COALESCE(?5, ''))",
-                rusqlite::params![key, params.project_id, params.scope, params.team_id, params.user_id],
+                rusqlite::params![
+                    key,
+                    params.project_id,
+                    params.scope,
+                    params.team_id,
+                    params.user_id
+                ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
@@ -309,7 +316,15 @@ pub fn recall_semantic_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<(i64, String, f32)>> {
     // Delegate to branch-aware version with no branch (no boosting)
-    recall_semantic_with_branch_sync(conn, embedding_bytes, project_id, user_id, team_id, None, limit)
+    recall_semantic_with_branch_sync(
+        conn,
+        embedding_bytes,
+        project_id,
+        user_id,
+        team_id,
+        None,
+        limit,
+    )
 }
 
 /// Semantic search with entity boost applied.
@@ -317,6 +332,7 @@ pub fn recall_semantic_sync(
 /// Wraps the branch-info recall to also apply entity-overlap ranking boost.
 /// `query_entity_names` are the canonical names extracted from the query.
 /// If empty, skips entity boost entirely (no extra query).
+#[allow(clippy::too_many_arguments)]
 pub fn recall_semantic_with_entity_boost_sync(
     conn: &rusqlite::Connection,
     embedding_bytes: &[u8],
@@ -337,8 +353,22 @@ pub fn recall_semantic_with_entity_boost_sync(
 
     let results: Vec<RecallRow> = stmt
         .query_map(
-            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id, team_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            rusqlite::params![
+                embedding_bytes,
+                project_id,
+                fetch_limit as i64,
+                user_id,
+                team_id
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )?
         .filter_map(|r| r.ok())
         .collect();
@@ -394,7 +424,13 @@ pub fn recall_semantic_with_branch_sync(
 
     let results: Vec<(i64, String, f32, Option<String>)> = stmt
         .query_map(
-            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id, team_id],
+            rusqlite::params![
+                embedding_bytes,
+                project_id,
+                fetch_limit as i64,
+                user_id,
+                team_id
+            ],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?
         .filter_map(|r| r.ok())
@@ -438,8 +474,22 @@ pub fn recall_semantic_with_branch_info_sync(
 
     let results: Vec<RecallRow> = stmt
         .query_map(
-            rusqlite::params![embedding_bytes, project_id, fetch_limit as i64, user_id, team_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            rusqlite::params![
+                embedding_bytes,
+                project_id,
+                fetch_limit as i64,
+                user_id,
+                team_id
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )?
         .filter_map(|r| r.ok())
         .collect();

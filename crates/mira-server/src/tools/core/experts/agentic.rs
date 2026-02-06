@@ -3,7 +3,10 @@
 
 use super::ToolContext;
 use super::strategy::ReasoningStrategy;
-use crate::llm::{ChatResult, Message, Tool, ToolCall, estimate_message_tokens, record_llm_usage, truncate_messages_to_budget};
+use crate::llm::{
+    ChatResult, Message, Tool, ToolCall, estimate_message_tokens, record_llm_usage,
+    truncate_messages_to_budget,
+};
 use crate::utils::truncate_at_boundary;
 use async_trait::async_trait;
 use std::time::Duration;
@@ -239,7 +242,8 @@ pub async fn run_agentic_loop<C: ToolContext>(
                         total_tool_calls += 1;
                         let tool_result = handler.handle_tool_call(tc).await;
                         handler.on_tool_executed(tc, &tool_result).await;
-                        let tool_result = truncate_tool_result(tool_result, config.max_tool_result_chars);
+                        let tool_result =
+                            truncate_tool_result(tool_result, config.max_tool_result_chars);
                         messages.push(Message::tool_result(&tc.id, tool_result));
                     }
                 }

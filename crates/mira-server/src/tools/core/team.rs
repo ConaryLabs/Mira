@@ -20,12 +20,10 @@ pub async fn handle_team<C: ToolContext + ?Sized>(
 }
 
 /// Get team status: members, files, conflicts.
-async fn team_status<C: ToolContext + ?Sized>(
-    ctx: &C,
-) -> Result<Json<TeamOutput>, String> {
-    let membership = ctx
-        .get_team_membership()
-        .ok_or_else(|| "Not in a team. Team tools require an active Agent Teams session.".to_string())?;
+async fn team_status<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, String> {
+    let membership = ctx.get_team_membership().ok_or_else(|| {
+        "Not in a team. Team tools require an active Agent Teams session.".to_string()
+    })?;
 
     let pool = ctx.pool().clone();
     let tid = membership.team_id;
@@ -92,10 +90,7 @@ async fn team_status<C: ToolContext + ?Sized>(
     let conflict_note = if file_conflicts.is_empty() {
         String::new()
     } else {
-        format!(
-            " {} file conflict(s) detected.",
-            file_conflicts.len()
-        )
+        format!(" {} file conflict(s) detected.", file_conflicts.len())
     };
 
     let message = format!(
@@ -121,9 +116,9 @@ async fn team_review<C: ToolContext + ?Sized>(
     ctx: &C,
     teammate: Option<String>,
 ) -> Result<Json<TeamOutput>, String> {
-    let membership = ctx
-        .get_team_membership()
-        .ok_or_else(|| "Not in a team. Team tools require an active Agent Teams session.".to_string())?;
+    let membership = ctx.get_team_membership().ok_or_else(|| {
+        "Not in a team. Team tools require an active Agent Teams session.".to_string()
+    })?;
 
     let pool = ctx.pool().clone();
     let tid = membership.team_id;
@@ -150,8 +145,7 @@ async fn team_review<C: ToolContext + ?Sized>(
                     )
                 })?;
 
-            let files =
-                crate::db::get_member_files_sync(conn, tid, &member.session_id);
+            let files = crate::db::get_member_files_sync(conn, tid, &member.session_id);
 
             Ok::<_, anyhow::Error>((member.member_name.clone(), files))
         })
@@ -159,10 +153,7 @@ async fn team_review<C: ToolContext + ?Sized>(
         .map_err(|e| format!("{}", e))?;
 
     let file_count = files.len();
-    let message = format!(
-        "{} has modified {} file(s).",
-        member_name, file_count
-    );
+    let message = format!("{} has modified {} file(s).", member_name, file_count);
 
     Ok(Json(ToolOutput {
         action: "review".to_string(),
@@ -176,25 +167,23 @@ async fn team_review<C: ToolContext + ?Sized>(
 }
 
 /// Distill key findings/decisions from team work into team-scoped memories.
-async fn team_distill<C: ToolContext + ?Sized>(
-    ctx: &C,
-) -> Result<Json<TeamOutput>, String> {
-    let membership = ctx
-        .get_team_membership()
-        .ok_or_else(|| "Not in a team. Team tools require an active Agent Teams session.".to_string())?;
+async fn team_distill<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, String> {
+    let membership = ctx.get_team_membership().ok_or_else(|| {
+        "Not in a team. Team tools require an active Agent Teams session.".to_string()
+    })?;
 
     let pool = ctx.pool().clone();
     let tid = membership.team_id;
     let project_id = ctx.project_id().await;
 
-    let result = crate::background::knowledge_distillation::distill_team_session(
-        &pool, tid, project_id,
-    )
-    .await?;
+    let result =
+        crate::background::knowledge_distillation::distill_team_session(&pool, tid, project_id)
+            .await?;
 
     match result {
         Some(result) => {
-            let message = crate::background::knowledge_distillation::format_distillation_result(&result);
+            let message =
+                crate::background::knowledge_distillation::format_distillation_result(&result);
             let findings: Vec<DistilledFindingSummary> = result
                 .findings
                 .iter()
@@ -221,8 +210,7 @@ async fn team_distill<C: ToolContext + ?Sized>(
             action: "distill".to_string(),
             message: format!(
                 "No findings to distill for team '{}'. Insufficient data (need at least {} memories or file activity).",
-                membership.team_name,
-                2,
+                membership.team_name, 2,
             ),
             data: None,
         })),

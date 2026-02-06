@@ -275,10 +275,7 @@ pub async fn run_stop() -> Result<()> {
 }
 
 /// Build a condensed summary from extracted entities
-fn build_entity_summary(
-    subagent_type: &str,
-    entities: &[crate::entities::RawEntity],
-) -> String {
+fn build_entity_summary(subagent_type: &str, entities: &[crate::entities::RawEntity]) -> String {
     use crate::entities::EntityType;
 
     let files: Vec<&str> = entities
@@ -368,10 +365,10 @@ async fn get_relevant_memories(
     task: &str,
 ) -> Vec<String> {
     // Try embedding-based recall first
-    if let Some(memories) = try_semantic_recall(pool, project_id, task).await {
-        if !memories.is_empty() {
-            return memories;
-        }
+    if let Some(memories) = try_semantic_recall(pool, project_id, task).await
+        && !memories.is_empty()
+    {
+        return memories;
     }
 
     // Fall back to keyword matching
@@ -390,11 +387,8 @@ async fn try_semantic_recall(
     use crate::search::embedding_to_bytes;
 
     // Create embedding client directly (hooks don't have ToolContext)
-    let emb = EmbeddingClient::from_config(
-        &ApiKeys::from_env(),
-        &EmbeddingsConfig::from_env(),
-        None,
-    )?;
+    let emb =
+        EmbeddingClient::from_config(&ApiKeys::from_env(), &EmbeddingsConfig::from_env(), None)?;
 
     // Embed the task description
     let query_embedding = emb.embed(task).await.ok()?;
@@ -407,20 +401,18 @@ async fn try_semantic_recall(
         .collect();
 
     let pool_clone = pool.clone();
-    let result: Vec<(i64, String, f32, Option<String>, Option<i64>)> = pool_clone
+    let result: Vec<crate::db::RecallRow> = pool_clone
         .interact(move |conn| {
-            Ok::<_, anyhow::Error>(
-                crate::db::recall_semantic_with_entity_boost_sync(
-                    conn,
-                    &embedding_bytes,
-                    Some(project_id),
-                    None,  // user_id - not available in hook context
-                    None,  // team_id
-                    None,  // current_branch
-                    &query_entity_names,
-                    5,     // fetch 5, we'll filter and take top 3
-                )?
-            )
+            Ok::<_, anyhow::Error>(crate::db::recall_semantic_with_entity_boost_sync(
+                conn,
+                &embedding_bytes,
+                Some(project_id),
+                None, // user_id - not available in hook context
+                None, // team_id
+                None, // current_branch
+                &query_entity_names,
+                5, // fetch 5, we'll filter and take top 3
+            )?)
         })
         .await
         .ok()?;

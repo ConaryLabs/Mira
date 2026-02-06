@@ -8,6 +8,8 @@ use tracing::{debug, info, warn};
 pub struct ApiKeys {
     /// DeepSeek API key (DEEPSEEK_API_KEY)
     pub deepseek: Option<String>,
+    /// Zhipu API key (ZHIPU_API_KEY) — GLM-4.7 via coding endpoint
+    pub zhipu: Option<String>,
     /// OpenAI API key (OPENAI_API_KEY) — used for embeddings
     pub openai: Option<String>,
     /// Brave Search API key (BRAVE_API_KEY)
@@ -23,17 +25,20 @@ impl ApiKeys {
             info!("MIRA_DISABLE_LLM is set — LLM providers disabled, using fallbacks");
             return Self {
                 deepseek: None,
+                zhipu: None,
                 openai: None,
                 brave: Self::read_key("BRAVE_API_KEY"),
             };
         }
 
         let deepseek = Self::read_key("DEEPSEEK_API_KEY");
+        let zhipu = Self::read_key("ZHIPU_API_KEY");
         let openai = Self::read_key("OPENAI_API_KEY");
         let brave = Self::read_key("BRAVE_API_KEY");
 
         let keys = Self {
             deepseek,
+            zhipu,
             openai,
             brave,
         };
@@ -57,6 +62,9 @@ impl ApiKeys {
         if self.deepseek.is_some() {
             available.push("DeepSeek");
         }
+        if self.zhipu.is_some() {
+            available.push("Zhipu GLM");
+        }
         if self.openai.is_some() {
             available.push("OpenAI");
         }
@@ -73,7 +81,7 @@ impl ApiKeys {
 
     /// Check if any LLM provider is available
     pub fn has_llm_provider(&self) -> bool {
-        self.deepseek.is_some()
+        self.deepseek.is_some() || self.zhipu.is_some()
     }
 
     /// Check if embeddings are available (requires OpenAI key)
@@ -86,6 +94,9 @@ impl ApiKeys {
         let mut providers = Vec::new();
         if self.deepseek.is_some() {
             providers.push("DeepSeek");
+        }
+        if self.zhipu.is_some() {
+            providers.push("Zhipu GLM");
         }
         if self.openai.is_some() {
             providers.push("OpenAI");
@@ -288,7 +299,7 @@ impl EnvConfig {
         // Check for LLM providers
         if !self.api_keys.has_llm_provider() {
             validation
-                .add_warning("No LLM API keys configured. Set DEEPSEEK_API_KEY.");
+                .add_warning("No LLM API keys configured. Set DEEPSEEK_API_KEY or ZHIPU_API_KEY.");
         }
 
         // Check for embeddings
@@ -300,10 +311,10 @@ impl EnvConfig {
 
         // Validate default provider if set
         if let Some(ref provider) = self.default_provider {
-            let valid_providers = ["deepseek"];
+            let valid_providers = ["deepseek", "zhipu"];
             if !valid_providers.contains(&provider.to_lowercase().as_str()) {
                 validation.add_warning(format!(
-                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek",
+                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, zhipu",
                     provider
                 ));
             }
@@ -355,6 +366,7 @@ mod tests {
     fn test_api_keys_with_values() {
         let keys = ApiKeys {
             deepseek: Some("test-key".to_string()),
+            zhipu: None,
             openai: None,
             brave: None,
         };

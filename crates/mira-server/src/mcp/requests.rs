@@ -419,7 +419,7 @@ pub struct ExpertRequest {
     pub role: Option<String>,
     #[schemars(description = "Custom system prompt (for configure set)")]
     pub prompt: Option<String>,
-    #[schemars(description = "LLM provider: deepseek (for configure set)")]
+    #[schemars(description = "LLM provider: deepseek/zhipu (for configure set)")]
     pub provider: Option<String>,
     #[schemars(description = "Custom model name (for configure set)")]
     pub model: Option<String>,
@@ -486,7 +486,9 @@ pub enum TeamAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TeamRequest {
-    #[schemars(description = "Action: status (team overview), review (teammate's work), distill (extract key findings)")]
+    #[schemars(
+        description = "Action: status (team overview), review (teammate's work), distill (extract key findings)"
+    )]
     pub action: TeamAction,
     #[schemars(description = "Teammate name (for review action, defaults to self)")]
     pub teammate: Option<String>,

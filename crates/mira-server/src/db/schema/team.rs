@@ -250,7 +250,7 @@ fn migrate_drop_file_ownership_check(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_tfo_team_file ON team_file_ownership(team_id, file_path);
          CREATE INDEX IF NOT EXISTS idx_tfo_session ON team_file_ownership(team_id, session_id);
          CREATE INDEX IF NOT EXISTS idx_tfo_timestamp ON team_file_ownership(team_id, timestamp);
-         COMMIT;"
+         COMMIT;",
     )?;
 
     Ok(())
@@ -311,11 +311,8 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO projects (id, path) VALUES (1, '/test')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO projects (id, path) VALUES (1, '/test')", [])
+            .unwrap();
         migrate_team_tables(&conn).unwrap();
 
         conn.execute(
@@ -340,11 +337,8 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO projects (id, path) VALUES (1, '/test')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO projects (id, path) VALUES (1, '/test')", [])
+            .unwrap();
         migrate_team_tables(&conn).unwrap();
 
         conn.execute(
@@ -374,11 +368,8 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO projects (id, path) VALUES (1, '/test')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO projects (id, path) VALUES (1, '/test')", [])
+            .unwrap();
         migrate_team_tables(&conn).unwrap();
 
         conn.execute(
@@ -404,11 +395,8 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO projects (id, path) VALUES (1, '/test')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO projects (id, path) VALUES (1, '/test')", [])
+            .unwrap();
         conn
     }
 
@@ -667,7 +655,10 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!(name, "newest_name", "should pick freshest duplicate metadata");
+        assert_eq!(
+            name, "newest_name",
+            "should pick freshest duplicate metadata"
+        );
         assert_eq!(role, "lead", "should pick freshest duplicate role");
         assert_eq!(hb, "2025-09-01T00:00:00", "should pick freshest heartbeat");
 
@@ -802,7 +793,11 @@ mod tests {
 
         // Both groups should have their session remapped to their respective survivor
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM team_sessions WHERE session_id = 'sess-shared'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM team_sessions WHERE session_id = 'sess-shared'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 2, "each group should retain its own session row");
 
@@ -927,7 +922,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(active_count, 1, "cleanup should leave exactly one active membership");
+        assert_eq!(
+            active_count, 1,
+            "cleanup should leave exactly one active membership"
+        );
 
         // The surviving active one should be in team 2 (fresher heartbeat)
         let team_id: i64 = conn
@@ -937,6 +935,9 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(team_id, 2, "should keep the membership with freshest heartbeat");
+        assert_eq!(
+            team_id, 2,
+            "should keep the membership with freshest heartbeat"
+        );
     }
 }

@@ -122,7 +122,9 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     // Initialize MCP client manager for external MCP server access (expert tools)
     let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
     let mut mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
-    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(env_config.expert.mcp_tool_timeout_secs));
+    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(
+        env_config.expert.mcp_tool_timeout_secs,
+    ));
     if mcp_manager.has_servers() {
         server.mcp_client_manager = Some(Arc::new(mcp_manager));
     }
@@ -233,7 +235,7 @@ pub async fn run_mcp_server() -> Result<()> {
             .collect();
         info!("LLM providers available: {}", providers.join(", "));
     } else {
-        info!("No LLM providers configured (set DEEPSEEK_API_KEY)");
+        info!("No LLM providers configured (set DEEPSEEK_API_KEY or ZHIPU_API_KEY)");
     }
 
     // Spawn background workers with separate pools
@@ -271,7 +273,9 @@ pub async fn run_mcp_server() -> Result<()> {
     // We initialize with CWD initially; project path will be used when available
     let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
     let mut mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
-    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(env_config.expert.mcp_tool_timeout_secs));
+    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(
+        env_config.expert.mcp_tool_timeout_secs,
+    ));
     if mcp_manager.has_servers() {
         info!("MCP client manager initialized for expert tool access");
         server.mcp_client_manager = Some(Arc::new(mcp_manager));
