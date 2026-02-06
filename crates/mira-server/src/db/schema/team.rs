@@ -119,6 +119,30 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
            AND team_sessions.last_heartbeat < best.last_heartbeat;",
     )?;
 
+    // Deduplicate orphan session rows across duplicate teams: when the same
+    // session_id appears in multiple duplicates (but not in the survivor),
+    // keep only the freshest row so the subsequent OR IGNORE remap is
+    // deterministic regardless of rowid/insert order.
+    conn.execute_batch(
+        "DELETE FROM team_sessions
+         WHERE team_id NOT IN (
+             SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+         )
+         AND id NOT IN (
+             SELECT id FROM (
+                 SELECT ts.id, ROW_NUMBER() OVER (
+                     PARTITION BY ts.session_id
+                     ORDER BY ts.last_heartbeat DESC, ts.team_id DESC
+                 ) AS rn
+                 FROM team_sessions ts
+                 WHERE ts.team_id NOT IN (
+                     SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+                 )
+             )
+             WHERE rn = 1
+         );",
+    )?;
+
     conn.execute_batch(
         // Remap team_sessions to the surviving row. Use OR IGNORE to skip
         // rows that would violate UNIQUE(team_id, session_id) — those already
@@ -646,6 +670,73 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM teams", [], |r| r.get(0))
             .unwrap();
         assert_eq!(team_count, 1);
+    }
+
+    #[test]
+    fn test_dedupe_orphan_session_in_multiple_duplicates() {
+        let conn = setup_db();
+        conn.execute_batch(
+            "CREATE TABLE teams (
+                 id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                 project_id INTEGER REFERENCES projects(id),
+                 config_path TEXT NOT NULL, status TEXT DEFAULT 'active',
+                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE team_sessions (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 role TEXT DEFAULT 'teammate', agent_type TEXT,
+                 joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 last_heartbeat TEXT DEFAULT CURRENT_TIMESTAMP,
+                 status TEXT DEFAULT 'active',
+                 UNIQUE(team_id, session_id)
+             );
+             CREATE TABLE team_file_ownership (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 file_path TEXT NOT NULL, operation TEXT NOT NULL,
+                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+             );",
+        )
+        .unwrap();
+
+        // Three duplicate teams. Survivor (team 1) has NO row for sess-orphan,
+        // but duplicate teams 3 and 5 both do. Without the orphan dedup step,
+        // OR IGNORE would keep whichever row was processed first (rowid-dependent).
+        conn.execute_batch(
+            "INSERT INTO teams (id, name, project_id, config_path) VALUES (1, 'echo', 1, '/p1');
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (3, 'echo', 1, '/p2');
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (5, 'echo', 1, '/p3');
+             -- Duplicate team 5: older
+             INSERT INTO team_sessions (team_id, session_id, member_name, role, last_heartbeat)
+                 VALUES (5, 'sess-orphan', 'stale_name', 'teammate', '2025-01-01T00:00:00');
+             -- Duplicate team 3: freshest
+             INSERT INTO team_sessions (team_id, session_id, member_name, role, last_heartbeat)
+                 VALUES (3, 'sess-orphan', 'fresh_name', 'lead', '2025-09-01T00:00:00');",
+        )
+        .unwrap();
+
+        migrate_team_tables(&conn).unwrap();
+
+        // Orphan session must land in the survivor with the freshest metadata
+        let (name, role, hb): (String, String, String) = conn
+            .query_row(
+                "SELECT member_name, role, last_heartbeat FROM team_sessions WHERE session_id = 'sess-orphan'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "fresh_name", "orphan should keep freshest metadata");
+        assert_eq!(role, "lead");
+        assert_eq!(hb, "2025-09-01T00:00:00");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM team_sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "should have exactly one session row");
     }
 
     #[test]

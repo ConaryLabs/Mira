@@ -181,11 +181,18 @@ impl MiraServer {
         }
     }
 
+    /// Invalidate cached team membership so the next access re-reads from DB.
+    /// Currently unused — team reassignment mid-session is not a supported flow
+    /// (sessions join a team at startup and stay). Exposed for future-proofing.
+    pub async fn invalidate_team_cache(&self) {
+        *self.team_membership.write().await = None;
+    }
+
     /// Repopulate team membership cache from DB if it was invalidated
     /// (e.g. after set_session_id clears it).
     async fn maybe_repopulate_team_cache(&self) {
         if self.team_membership.read().await.is_some() {
-            return; // Already populated
+            return; // Already populated; sessions don't change teams mid-session.
         }
         // Prefer in-memory session ID (set via project(..., session_id=...)),
         // fall back to filesystem hook file for standard Claude Code sessions.

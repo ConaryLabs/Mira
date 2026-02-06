@@ -571,6 +571,8 @@ struct TeamConfigInfo {
 }
 
 /// Scan `~/.claude/teams/*/config.json` for team configs.
+/// When multiple teams match, prefer the most specific project_path
+/// (longest path that is still an ancestor of cwd) for determinism.
 fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
     let home = dirs::home_dir()?;
     let teams_dir = home.join(".claude/teams");
@@ -580,6 +582,9 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
     }
 
     let entries = fs::read_dir(&teams_dir).ok()?;
+    let mut candidates: Vec<(usize, TeamConfigInfo)> = Vec::new();
+    let mut fallback: Option<TeamConfigInfo> = None;
+
     for entry in entries.flatten() {
         let config_path = entry.path().join("config.json");
         if !config_path.is_file() {
@@ -595,41 +600,49 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
             Err(_) => continue,
         };
 
-        // Check if the team's project path matches our cwd (component-level comparison)
+        let team_name_val = config
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string());
+
+        // Check if cwd is under the team's project path (not the reverse —
+        // matching proj_p.starts_with(cwd_p) would be overly broad, e.g.
+        // cwd="/home/peter" would match project="/home/peter/Mira").
         if let Some(project_path) = config.get("project_path").and_then(|v| v.as_str()) {
             if let Some(cwd_val) = cwd {
                 let cwd_p = std::path::Path::new(cwd_val);
                 let proj_p = std::path::Path::new(project_path);
-                if cwd_p.starts_with(proj_p) || proj_p.starts_with(cwd_p) {
-                    let team_name = config
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            entry.file_name().to_string_lossy().to_string()
-                        });
-
-                    return Some(TeamConfigInfo {
-                        team_name,
-                        config_path: config_path.to_string_lossy().to_string(),
-                    });
+                if cwd_p.starts_with(proj_p) {
+                    let specificity = proj_p.components().count();
+                    candidates.push((
+                        specificity,
+                        TeamConfigInfo {
+                            team_name: team_name_val,
+                            config_path: config_path.to_string_lossy().to_string(),
+                        },
+                    ));
+                    continue;
                 }
             }
         }
 
-        // Also match if the team dir name matches a pattern
-        if let Some(team_name) = config.get("name").and_then(|v| v.as_str()) {
-            // If we don't have cwd, we can still match if there's only one team
-            if cwd.is_none() {
-                return Some(TeamConfigInfo {
-                    team_name: team_name.to_string(),
-                    config_path: config_path.to_string_lossy().to_string(),
-                });
-            }
+        // If we don't have cwd, remember one fallback (but prefer cwd matches)
+        if cwd.is_none() && fallback.is_none() {
+            fallback = Some(TeamConfigInfo {
+                team_name: team_name_val,
+                config_path: config_path.to_string_lossy().to_string(),
+            });
         }
     }
 
-    None
+    if !candidates.is_empty() {
+        // Most specific project path wins; tie-break on team name for determinism
+        candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.team_name.cmp(&b.1.team_name)));
+        return Some(candidates.into_iter().next().unwrap().1);
+    }
+
+    fallback
 }
 
 #[cfg(test)]
