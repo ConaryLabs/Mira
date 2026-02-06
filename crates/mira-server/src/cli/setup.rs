@@ -19,6 +19,44 @@ const BANNER: &str = r#"
   Setup Wizard
 "#;
 
+/// Known provider keys that indicate a configured provider
+const PROVIDER_KEYS: &[&str] = &[
+    "DEEPSEEK_API_KEY",
+    "ZHIPU_API_KEY",
+    "OPENAI_API_KEY",
+    "BRAVE_API_KEY",
+    "OLLAMA_HOST",
+];
+
+/// Result of evaluating the setup summary
+#[derive(Debug, PartialEq)]
+enum SetupSummary {
+    /// No providers at all (no existing, no new)
+    NoProviders,
+    /// Existing providers found but no new keys added
+    ExistingUnchanged,
+    /// New keys were configured
+    NewKeysConfigured,
+}
+
+/// Determine the setup summary based on existing and newly collected keys
+fn setup_summary(
+    existing: &BTreeMap<String, String>,
+    new_keys: &BTreeMap<String, String>,
+) -> SetupSummary {
+    if !new_keys.is_empty() {
+        return SetupSummary::NewKeysConfigured;
+    }
+    let has_existing_provider = existing
+        .keys()
+        .any(|k| PROVIDER_KEYS.contains(&k.as_str()));
+    if has_existing_provider {
+        SetupSummary::ExistingUnchanged
+    } else {
+        SetupSummary::NoProviders
+    }
+}
+
 /// Run the setup wizard
 pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
     if check {
@@ -252,23 +290,17 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
     }
 
     // Step 6: Summary + write
-    const PROVIDER_KEYS: &[&str] = &[
-        "DEEPSEEK_API_KEY",
-        "ZHIPU_API_KEY",
-        "OPENAI_API_KEY",
-        "BRAVE_API_KEY",
-        "OLLAMA_HOST",
-    ];
-    let has_existing_provider = existing.keys().any(|k| PROVIDER_KEYS.contains(&k.as_str()));
-
     println!("\n--- Summary ---");
-    if keys.is_empty() && !has_existing_provider {
-        println!("No providers configured. You can run `mira setup` again later.");
-        return Ok(());
-    }
-    if keys.is_empty() {
-        println!("No new providers configured. Existing configuration unchanged.");
-        return Ok(());
+    match setup_summary(&existing, &keys) {
+        SetupSummary::NoProviders => {
+            println!("No providers configured. You can run `mira setup` again later.");
+            return Ok(());
+        }
+        SetupSummary::ExistingUnchanged => {
+            println!("No new providers configured. Existing configuration unchanged.");
+            return Ok(());
+        }
+        SetupSummary::NewKeysConfigured => {}
     }
 
     for (k, v) in &keys {
@@ -701,4 +733,84 @@ fn write_config_toml(path: &PathBuf) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn keys(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn no_existing_no_new_is_no_providers() {
+        let existing = BTreeMap::new();
+        let new_keys = BTreeMap::new();
+        assert_eq!(setup_summary(&existing, &new_keys), SetupSummary::NoProviders);
+    }
+
+    #[test]
+    fn non_provider_env_only_is_no_providers() {
+        let existing = keys(&[("MIRA_USER_ID", "abc")]);
+        let new_keys = BTreeMap::new();
+        assert_eq!(setup_summary(&existing, &new_keys), SetupSummary::NoProviders);
+    }
+
+    #[test]
+    fn existing_provider_no_new_is_unchanged() {
+        let existing = keys(&[("DEEPSEEK_API_KEY", "sk-test")]);
+        let new_keys = BTreeMap::new();
+        assert_eq!(
+            setup_summary(&existing, &new_keys),
+            SetupSummary::ExistingUnchanged
+        );
+    }
+
+    #[test]
+    fn existing_ollama_no_new_is_unchanged() {
+        let existing = keys(&[("OLLAMA_HOST", "http://localhost:11434")]);
+        let new_keys = BTreeMap::new();
+        assert_eq!(
+            setup_summary(&existing, &new_keys),
+            SetupSummary::ExistingUnchanged
+        );
+    }
+
+    #[test]
+    fn existing_provider_plus_non_provider_no_new_is_unchanged() {
+        let existing = keys(&[
+            ("OPENAI_API_KEY", "sk-test"),
+            ("MIRA_USER_ID", "abc"),
+        ]);
+        let new_keys = BTreeMap::new();
+        assert_eq!(
+            setup_summary(&existing, &new_keys),
+            SetupSummary::ExistingUnchanged
+        );
+    }
+
+    #[test]
+    fn new_keys_with_no_existing_is_configured() {
+        let existing = BTreeMap::new();
+        let new_keys = keys(&[("DEEPSEEK_API_KEY", "sk-new")]);
+        assert_eq!(
+            setup_summary(&existing, &new_keys),
+            SetupSummary::NewKeysConfigured
+        );
+    }
+
+    #[test]
+    fn new_keys_with_existing_is_configured() {
+        let existing = keys(&[("OPENAI_API_KEY", "sk-old")]);
+        let new_keys = keys(&[("DEEPSEEK_API_KEY", "sk-new")]);
+        assert_eq!(
+            setup_summary(&existing, &new_keys),
+            SetupSummary::NewKeysConfigured
+        );
+    }
 }
