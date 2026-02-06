@@ -898,7 +898,8 @@ mod tests {
         });
 
         db!(pool, |conn| {
-            update_goal_sync(conn, id, Some("New title"), None, None, None, None).map_err(Into::into)
+            update_goal_sync(conn, id, Some("New title"), None, None, None, None)
+                .map_err(Into::into)
         });
 
         let goal = db!(pool, |conn| get_goal_by_id_sync(conn, id)).unwrap();
@@ -923,7 +924,8 @@ mod tests {
         });
 
         db!(pool, |conn| {
-            update_goal_sync(conn, id, None, None, Some("in_progress"), None, None).map_err(Into::into)
+            update_goal_sync(conn, id, None, None, Some("in_progress"), None, None)
+                .map_err(Into::into)
         });
 
         let goal = db!(pool, |conn| get_goal_by_id_sync(conn, id)).unwrap();

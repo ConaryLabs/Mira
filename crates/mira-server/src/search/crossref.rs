@@ -458,10 +458,7 @@ mod tests {
     #[test]
     fn test_extract_callee_callees_of() {
         let result = extract_crossref_target("callees of handler");
-        assert_eq!(
-            result,
-            Some(("handler".to_string(), CrossRefType::Callee))
-        );
+        assert_eq!(result, Some(("handler".to_string(), CrossRefType::Callee)));
     }
 
     // ============================================================================

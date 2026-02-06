@@ -317,7 +317,8 @@ pub async fn remember<C: ToolContext>(
     if let Some(embeddings) = ctx.embeddings() {
         // Clean up stale vec_memory and reset has_embedding so background
         // scanner (find_facts_without_embeddings_sync) will retry
-        let reset_embedding = |pool: std::sync::Arc<crate::db::pool::DatabasePool>, fact_id: i64| {
+        let reset_embedding = |pool: std::sync::Arc<crate::db::pool::DatabasePool>,
+                               fact_id: i64| {
             tokio::spawn(async move {
                 let _ = pool
                     .run(move |conn| {

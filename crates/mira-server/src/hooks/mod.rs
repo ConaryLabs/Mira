@@ -26,9 +26,7 @@ pub async fn resolve_project(
     pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
 ) -> (Option<i64>, Option<String>) {
     pool.interact(move |conn| {
-        let path = crate::db::get_last_active_project_sync(conn)
-            .ok()
-            .flatten();
+        let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
         let result = if let Some(ref path) = path {
             crate::db::get_or_create_project_sync(conn, path, None)
                 .ok()

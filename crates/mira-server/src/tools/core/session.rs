@@ -52,7 +52,14 @@ pub async fn handle_session<C: ToolContext>(
             }))
         }
         SessionAction::Insights => {
-            query_insights(ctx, req.insight_source, req.min_confidence, req.since_days, req.limit).await
+            query_insights(
+                ctx,
+                req.insight_source,
+                req.min_confidence,
+                req.since_days,
+                req.limit,
+            )
+            .await
         }
         SessionAction::Tasks => {
             // Handled at router level (returns TasksOutput, not SessionOutput).

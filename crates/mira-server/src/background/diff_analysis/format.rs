@@ -104,7 +104,11 @@ fn format_changes_section(changes: &[SemanticChange]) -> String {
     let other: Vec<_> = changes
         .iter()
         .filter(|c| {
-            !classified.contains(&(c.file_path.as_str(), c.description.as_str(), c.change_type.as_str()))
+            !classified.contains(&(
+                c.file_path.as_str(),
+                c.description.as_str(),
+                c.change_type.as_str(),
+            ))
         })
         .collect();
 

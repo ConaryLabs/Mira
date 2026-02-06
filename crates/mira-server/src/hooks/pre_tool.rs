@@ -2,7 +2,9 @@
 // PreToolUse hook handler - injects relevant context before Grep/Glob searches
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output};
+use crate::hooks::{
+    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
+};
 use anyhow::Result;
 use std::sync::Arc;
 
