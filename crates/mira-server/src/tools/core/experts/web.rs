@@ -3,6 +3,65 @@
 
 use crate::utils::truncate_at_boundary;
 use serde_json::Value;
+use std::net::IpAddr;
+
+/// Maximum response body size (2 MB) to prevent memory exhaustion from large payloads.
+const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Check if an IP address is a private, loopback, or link-local address (SSRF targets).
+fn is_dangerous_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()           // 127.0.0.0/8
+            || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            || v4.is_link_local()      // 169.254.0.0/16
+            || v4.is_broadcast()       // 255.255.255.255
+            || v4.is_unspecified()     // 0.0.0.0
+            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()           // ::1
+            || v6.is_unspecified()     // ::
+            // IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+            || v6.to_ipv4_mapped().is_some_and(|v4| is_dangerous_ip(&IpAddr::V4(v4)))
+        }
+    }
+}
+
+/// Validate that a URL's host does not resolve to a dangerous (internal) IP address.
+async fn validate_url_target(parsed: &url::Url) -> Result<(), String> {
+    let host = parsed.host_str().ok_or("Error: URL has no host")?;
+
+    // If host is a literal IP, check directly
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_dangerous_ip(&ip) {
+            return Err(format!(
+                "Error: Access to internal/private address {} is not allowed",
+                ip
+            ));
+        }
+        return Ok(());
+    }
+
+    // DNS resolution to check all resolved IPs
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let addr_str = format!("{}:{}", host, port);
+    let addrs = tokio::net::lookup_host(&addr_str)
+        .await
+        .map_err(|e| format!("Error: DNS resolution failed for {}: {}", host, e))?;
+
+    for addr in addrs {
+        if is_dangerous_ip(&addr.ip()) {
+            return Err(format!(
+                "Error: Host '{}' resolves to internal/private address {} — access denied",
+                host,
+                addr.ip()
+            ));
+        }
+    }
+
+    Ok(())
+}
 
 /// Fetch a web page and extract text content
 pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
@@ -24,29 +83,74 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
         );
     }
 
-    // Build HTTP client with browser-like settings
+    // SSRF protection: validate the resolved target before connecting
+    if let Err(e) = validate_url_target(&parsed).await {
+        return e;
+    }
+
+    // Build HTTP client — disable automatic redirects so we can validate each hop
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .user_agent("Mozilla/5.0 (compatible; Mira/1.0; +https://github.com/ConaryLabs/Mira)")
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(c) => c,
         Err(e) => return format!("Error: Failed to create HTTP client: {}", e),
     };
 
-    // Fetch the page
-    let response = match client.get(url).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            if e.is_timeout() {
-                return format!("Error: Request timed out fetching {}", url);
+    // Follow redirects manually with SSRF validation at each hop
+    let mut current_url = url.to_string();
+    let max_redirects = 5;
+    let mut response = None;
+
+    for _redirect in 0..=max_redirects {
+        let resp = match client.get(&current_url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                if e.is_timeout() {
+                    return format!("Error: Request timed out fetching {}", url);
+                }
+                if e.is_connect() {
+                    return format!("Error: Could not connect to {}", url);
+                }
+                return format!("Error: Failed to fetch {}: {}", url, e);
             }
-            if e.is_connect() {
-                return format!("Error: Could not connect to {}", url);
+        };
+
+        let status = resp.status();
+
+        // Handle redirects with SSRF re-validation
+        if status.is_redirection() {
+            let location = match resp.headers().get("location").and_then(|v| v.to_str().ok()) {
+                Some(loc) => loc,
+                None => return format!("Error: Redirect from {} has no Location header", current_url),
+            };
+
+            // Resolve relative redirects against the current URL
+            let redirect_url = match url::Url::parse(location)
+                .or_else(|_| url::Url::parse(&current_url).and_then(|base| base.join(location)))
+            {
+                Ok(u) => u,
+                Err(e) => return format!("Error: Invalid redirect URL '{}': {}", location, e),
+            };
+
+            // Validate redirect target against SSRF
+            if let Err(e) = validate_url_target(&redirect_url).await {
+                return e;
             }
-            return format!("Error: Failed to fetch {}: {}", url, e);
+
+            current_url = redirect_url.to_string();
+            continue;
         }
+
+        response = Some(resp);
+        break;
+    }
+
+    let response = match response {
+        Some(r) => r,
+        None => return format!("Error: Too many redirects fetching {}", url),
     };
 
     let status = response.status();
@@ -72,8 +176,8 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
         );
     }
 
-    // Read body
-    let body = match response.text().await {
+    // Read body with size limit (Finding 4: bounded read to prevent memory exhaustion)
+    let body = match read_response_body(response, MAX_RESPONSE_BYTES).await {
         Ok(b) => b,
         Err(e) => return format!("Error: Failed to read response body from {}: {}", url, e),
     };
@@ -98,6 +202,29 @@ pub async fn execute_web_fetch(url: &str, max_chars: usize) -> String {
     };
 
     format!("Content from {}:\n\n{}", url, truncated)
+}
+
+/// Read a response body with a maximum byte limit to prevent memory exhaustion.
+async fn read_response_body(response: reqwest::Response, max_bytes: usize) -> Result<String, String> {
+    use futures::StreamExt;
+
+    let mut stream = response.bytes_stream();
+    let mut buf = Vec::with_capacity(max_bytes.min(64 * 1024));
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        let remaining = max_bytes.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+        if buf.len() >= max_bytes {
+            break;
+        }
+    }
+
+    String::from_utf8(buf).map_err(|e| format!("Response is not valid UTF-8: {}", e))
 }
 
 /// Extract readable text from HTML using scraper

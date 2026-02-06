@@ -5,6 +5,7 @@ use super::agentic::{AgenticLoopConfig, ToolHandler, run_agentic_loop};
 use super::context::{build_user_prompt, format_expert_response, get_patterns_context};
 use super::findings::{parse_expert_findings, store_findings};
 use super::role::ExpertRole;
+use super::strategy::ReasoningStrategy;
 use super::tools::{build_expert_toolset, execute_tool};
 use super::ToolContext;
 use crate::llm::{
@@ -388,8 +389,7 @@ async fn try_elicit_api_key<C: ToolContext>(ctx: &C) -> Option<Arc<dyn LlmClient
 
 /// Single-shot expert consultation using a one-shot LLM client (from elicitation).
 ///
-/// Similar to `consult_expert_via_sampling` but uses a real provider client,
-/// so it supports tools and the agentic loop.
+/// Uses the full agentic loop so tool calls from the model are actually executed.
 async fn consult_expert_one_shot<C: ToolContext>(
     ctx: &C,
     expert: ExpertRole,
@@ -408,36 +408,33 @@ async fn consult_expert_one_shot<C: ToolContext>(
     let enriched_context = enrich_context_for_role(ctx, &expert, expert_key, &context).await;
 
     let user_prompt = build_user_prompt(&enriched_context, question.as_deref());
-    let messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
-    // Single LLM call with tools (includes MCP tools, fixing prior omission)
+    // Build dynamic tool list and run the agentic loop (so tool calls are executed)
     let tools = build_expert_toolset(ctx, false).await;
+    let mut messages = vec![Message::system(system_prompt), Message::user(user_prompt)];
 
-    let llm_timeout = Duration::from_secs(ctx.expert_guardrails().llm_call_timeout_secs);
-    let result = timeout(llm_timeout, chat_client.chat(messages, Some(tools)))
-        .await
-        .map_err(|_| {
-            format!(
-                "One-shot expert timed out after {}s",
-                llm_timeout.as_secs()
-            )
-        })?
-        .map_err(|e| format!("One-shot expert consultation failed: {}", e))?;
+    let strategy = ReasoningStrategy::Single(chat_client.clone());
+    let handler = ExpertToolHandler { ctx };
+    let guardrails = ctx.expert_guardrails();
+    let config = AgenticLoopConfig {
+        max_turns: guardrails.max_turns,
+        timeout: Duration::from_secs(guardrails.timeout_secs),
+        llm_call_timeout: Duration::from_secs(guardrails.llm_call_timeout_secs),
+        usage_role: format!("expert:{}", expert_key),
+        max_tool_result_chars: guardrails.tool_result_max_chars,
+        max_total_tool_calls: guardrails.max_total_tool_calls,
+        max_parallel_tool_calls: guardrails.max_parallel_tool_calls,
+        context_budget: chat_client.context_budget(),
+    };
 
-    // Record usage
-    let role_for_usage = format!("expert:{}", expert_key);
-    record_llm_usage(
-        ctx.pool(),
-        provider,
-        &chat_client.model_name(),
-        &role_for_usage,
-        &result,
-        ctx.project_id().await,
-        ctx.get_session_id().await,
-    )
-    .await;
+    let loop_result =
+        run_agentic_loop(ctx, &strategy, &mut messages, tools, &config, &handler).await?;
 
-    maybe_store_findings(ctx, &expert, expert_key, &result).await;
+    let final_result = loop_result.result;
+    let tool_calls = loop_result.total_tool_calls;
+    let iters = loop_result.iterations;
 
-    Ok(format_expert_response(expert, result, 0, 1))
+    maybe_store_findings(ctx, &expert, expert_key, &final_result).await;
+
+    Ok(format_expert_response(expert, final_result, tool_calls, iters))
 }

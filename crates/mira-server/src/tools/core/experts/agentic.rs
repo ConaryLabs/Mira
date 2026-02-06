@@ -198,15 +198,25 @@ pub async fn run_agentic_loop<C: ToolContext>(
                 assistant_msg.tool_calls = Some(tool_calls.clone());
                 messages.push(assistant_msg);
 
+                // Compute remaining budget for this iteration
+                let remaining_budget = if config.max_total_tool_calls > 0 {
+                    config.max_total_tool_calls.saturating_sub(total_tool_calls)
+                } else {
+                    usize::MAX
+                };
+
+                // Cap tool calls to remaining budget
+                let capped_calls = &tool_calls[..tool_calls.len().min(remaining_budget)];
+
                 if handler.parallel_execution() {
                     // Execute tools with bounded concurrency via chunked join_all
                     let chunk_size = if config.max_parallel_tool_calls > 0 {
                         config.max_parallel_tool_calls
                     } else {
-                        tool_calls.len() // no limit
+                        capped_calls.len() // no limit
                     };
 
-                    for chunk in tool_calls.chunks(chunk_size) {
+                    for chunk in capped_calls.chunks(chunk_size) {
                         let tool_futures = chunk.iter().map(|tc| async {
                             let result = handler.handle_tool_call(tc).await;
                             handler.on_tool_executed(tc, &result).await;
@@ -222,12 +232,22 @@ pub async fn run_agentic_loop<C: ToolContext>(
                     }
                 } else {
                     // Execute tools sequentially
-                    for tc in tool_calls {
+                    for tc in capped_calls {
                         total_tool_calls += 1;
                         let tool_result = handler.handle_tool_call(tc).await;
                         handler.on_tool_executed(tc, &tool_result).await;
                         let tool_result = truncate_tool_result(tool_result, config.max_tool_result_chars);
                         messages.push(Message::tool_result(&tc.id, tool_result));
+                    }
+                }
+
+                // Return dummy tool results for any skipped calls so the LLM gets a response
+                if capped_calls.len() < tool_calls.len() {
+                    for tc in &tool_calls[capped_calls.len()..] {
+                        messages.push(Message::tool_result(
+                            &tc.id,
+                            "[GUARDRAIL: tool call skipped — budget exhausted]".to_string(),
+                        ));
                     }
                 }
 

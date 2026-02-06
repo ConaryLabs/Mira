@@ -229,7 +229,7 @@ pub fn extract_patterns_from_findings_sync(
     project_id: Option<i64>,
 ) -> rusqlite::Result<usize> {
     // Find accepted findings that could become patterns
-    let sql = "SELECT finding_type, content, suggestion, COUNT(*) as cnt
+    let sql = "SELECT finding_type, content, MAX(suggestion), COUNT(*) as cnt
                FROM review_findings
                WHERE (project_id = ? OR project_id IS NULL)
                      AND status = 'accepted'

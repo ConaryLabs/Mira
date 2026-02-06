@@ -11,9 +11,44 @@ use crate::search::embedding_to_bytes;
 use crate::tools::core::code::{query_callees, query_callers, query_search_code};
 use crate::utils::{truncate, truncate_at_boundary};
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::debug;
+
+/// Resolve a file path to an absolute path within the project root.
+/// Returns an error string if the path escapes the project root (traversal attack).
+fn resolve_project_path(file_path: &str, project_root: Option<&str>) -> Result<PathBuf, String> {
+    let Some(root) = project_root else {
+        return Err("Error: No project context available — cannot resolve file paths".to_string());
+    };
+
+    let root = Path::new(root);
+
+    // Build candidate: relative paths are joined to root, absolute paths used as-is
+    let candidate = if file_path.starts_with('/') {
+        PathBuf::from(file_path)
+    } else {
+        root.join(file_path)
+    };
+
+    // Canonicalize both to resolve symlinks and ".." segments.
+    // Use the candidate's parent if the file doesn't exist yet (for get_symbols).
+    let resolved = candidate.canonicalize().map_err(|_| {
+        format!("File not found: {}", file_path)
+    })?;
+    let canon_root = root.canonicalize().map_err(|_| {
+        "Error: Project root cannot be resolved".to_string()
+    })?;
+
+    if !resolved.starts_with(&canon_root) {
+        return Err(format!(
+            "Error: Path '{}' is outside the project root",
+            file_path
+        ));
+    }
+
+    Ok(resolved)
+}
 
 /// Define the tools available to experts
 pub fn get_expert_tools() -> Vec<Tool> {
@@ -198,24 +233,14 @@ async fn execute_search_code<C: ToolContext>(ctx: &C, query: &str, limit: usize)
 
 async fn execute_get_symbols<C: ToolContext>(ctx: &C, file_path: &str) -> String {
     let project = ctx.get_project().await;
+    let project_root = project.as_ref().map(|p| p.path.as_str());
 
-    // Build full path
-    let full_path = if let Some(ref proj) = project {
-        if file_path.starts_with('/') {
-            file_path.to_string()
-        } else {
-            format!("{}/{}", proj.path, file_path)
-        }
-    } else {
-        file_path.to_string()
+    let resolved = match resolve_project_path(file_path, project_root) {
+        Ok(p) => p,
+        Err(e) => return e,
     };
 
-    let path = Path::new(&full_path);
-    if !path.exists() {
-        return format!("File not found: {}", file_path);
-    }
-
-    match indexer::extract_symbols(path) {
+    match indexer::extract_symbols(&resolved) {
         Ok(symbols) => {
             if symbols.is_empty() {
                 format!("No symbols found in {}", file_path)
@@ -247,19 +272,14 @@ async fn execute_read_file<C: ToolContext>(
     end_line: Option<usize>,
 ) -> String {
     let project = ctx.get_project().await;
+    let project_root = project.as_ref().map(|p| p.path.as_str());
 
-    // Build full path
-    let full_path = if let Some(ref proj) = project {
-        if file_path.starts_with('/') {
-            file_path.to_string()
-        } else {
-            format!("{}/{}", proj.path, file_path)
-        }
-    } else {
-        file_path.to_string()
+    let resolved = match resolve_project_path(file_path, project_root) {
+        Ok(p) => p,
+        Err(e) => return e,
     };
 
-    match std::fs::read_to_string(&full_path) {
+    match std::fs::read_to_string(&resolved) {
         Ok(content) => {
             let lines: Vec<&str> = content.lines().collect();
             let start = start_line.unwrap_or(1).saturating_sub(1);
