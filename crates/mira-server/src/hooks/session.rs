@@ -309,8 +309,9 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
         .ok()
         .flatten();
 
-    // Get recent tool calls from previous session
+    // Get recent tool calls and modified files from previous session
     if let Some(ref prev_session) = previous_session {
+        // Fetch last 5 tool calls
         let pool_clone = pool.clone();
         let prev_id = prev_session.id.clone();
         let tool_history: Option<Vec<crate::db::ToolHistoryEntry>> = pool_clone
@@ -326,7 +327,7 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
                 .iter()
                 .rev() // Oldest first
                 .map(|h| {
-                    let status = if h.success { "✓" } else { "✗" };
+                    let status = if h.success { "ok" } else { "err" };
                     let summary = h
                         .result_summary
                         .as_deref()
@@ -338,7 +339,7 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
                             }
                         })
                         .unwrap_or_default();
-                    format!("  {} {} -> {}", status, h.tool_name, summary)
+                    format!("  [{}] {} -> {}", status, h.tool_name, summary)
                 })
                 .collect();
             context_parts.push(format!(
@@ -347,9 +348,59 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
             ));
         }
 
+        // Fetch files modified in the previous session (Write/Edit/NotebookEdit tool calls)
+        let pool_clone = pool.clone();
+        let prev_id = prev_session.id.clone();
+        let modified_files: Vec<String> = pool_clone
+            .interact(move |conn| {
+                Ok::<_, anyhow::Error>(
+                    get_session_modified_files_sync(conn, &prev_id)
+                )
+            })
+            .await
+            .unwrap_or_default();
+
+        if !modified_files.is_empty() {
+            let file_names: Vec<&str> = modified_files
+                .iter()
+                .map(|p| p.rsplit('/').next().unwrap_or(p))
+                .collect();
+            let files_str = if file_names.len() <= 5 {
+                file_names.join(", ")
+            } else {
+                format!(
+                    "{} (+{} more)",
+                    file_names[..5].join(", "),
+                    file_names.len() - 5
+                )
+            };
+            context_parts.push(format!("**Files modified last session:** {}", files_str));
+        }
+
         // Add session summary if available
         if let Some(ref summary) = prev_session.summary {
             context_parts.push(format!("**Previous session summary:** {}", summary));
+        }
+
+        // Check for a stored session snapshot (structured metadata from stop hook)
+        let pool_clone = pool.clone();
+        let prev_id = prev_session.id.clone();
+        let snapshot: Option<String> = pool_clone
+            .interact(move |conn| {
+                Ok::<_, anyhow::Error>(get_session_snapshot_sync(conn, &prev_id))
+            })
+            .await
+            .ok()
+            .flatten();
+
+        if let Some(snapshot_json) = snapshot {
+            if let Ok(snap) = serde_json::from_str::<serde_json::Value>(&snapshot_json) {
+                // Build "You were working on X" from snapshot data
+                if let Some(working_on) = build_working_on_summary(&snap) {
+                    // Insert at the beginning for prominence
+                    context_parts.insert(0, format!("**You were working on:** {}", working_on));
+                }
+            }
         }
     }
 
@@ -366,7 +417,7 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
     if let Some(goals) = goals.filter(|g| !g.is_empty()) {
         let goal_lines: Vec<String> = goals
             .iter()
-            .map(|g| format!("  • {} [{}%] - {}", g.title, g.progress_percent, g.status))
+            .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
             .collect();
         context_parts.push(format!("**Active goals:**\n{}", goal_lines.join("\n")));
     }
@@ -414,9 +465,106 @@ async fn build_resume_context(cwd: Option<&str>, session_id: Option<&str>) -> Op
     }
 
     Some(format!(
-        "🔄 **Resuming session** - Here's context from your previous work:\n\n{}",
+        "**Resuming session** - Here's context from your previous work:\n\n{}",
         context_parts.join("\n\n")
     ))
+}
+
+/// Get files modified in a session (from Write/Edit/NotebookEdit tool calls)
+fn get_session_modified_files_sync(conn: &rusqlite::Connection, session_id: &str) -> Vec<String> {
+    let sql = r#"
+        SELECT DISTINCT
+            json_extract(arguments, '$.file_path') as file_path
+        FROM tool_history
+        WHERE session_id = ?
+          AND tool_name IN ('Write', 'Edit', 'NotebookEdit')
+          AND json_extract(arguments, '$.file_path') IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 10
+    "#;
+    conn.prepare(sql)
+        .ok()
+        .and_then(|mut stmt| {
+            stmt.query_map([session_id], |row| row.get::<_, String>(0))
+                .ok()
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+}
+
+/// Get session snapshot metadata stored by the stop hook
+fn get_session_snapshot_sync(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+        [session_id],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// Build a "You were working on X" summary from snapshot data
+fn build_working_on_summary(snapshot: &serde_json::Value) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Top tools used gives a hint of what they were doing
+    if let Some(top_tools) = snapshot.get("top_tools").and_then(|v| v.as_array()) {
+        let tool_names: Vec<&str> = top_tools
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+            .take(3)
+            .collect();
+        if !tool_names.is_empty() {
+            let activity = infer_activity_from_tools(&tool_names);
+            if !activity.is_empty() {
+                parts.push(activity);
+            }
+        }
+    }
+
+    // Modified files
+    if let Some(files) = snapshot.get("files_modified").and_then(|v| v.as_array()) {
+        let file_names: Vec<&str> = files
+            .iter()
+            .filter_map(|f| f.as_str())
+            .filter_map(|p| p.rsplit('/').next())
+            .take(3)
+            .collect();
+        if !file_names.is_empty() {
+            parts.push(format!("editing {}", file_names.join(", ")));
+        }
+    }
+
+    if parts.is_empty() {
+        // Fall back to tool count
+        if let Some(count) = snapshot.get("tool_count").and_then(|v| v.as_i64()) {
+            if count > 0 {
+                return Some(format!("{} tool calls in the previous session", count));
+            }
+        }
+        return None;
+    }
+
+    Some(parts.join(", "))
+}
+
+/// Infer a human-readable activity description from the most-used tools
+fn infer_activity_from_tools(tools: &[&str]) -> String {
+    // Map tool names to activity descriptions
+    let has = |name: &str| tools.iter().any(|t| t.eq_ignore_ascii_case(name));
+
+    if has("Edit") || has("Write") {
+        "code editing".to_string()
+    } else if has("Bash") {
+        "running commands".to_string()
+    } else if has("Read") || has("Glob") || has("Grep") {
+        "code exploration".to_string()
+    } else if has("mcp__mira__code") || has("code") {
+        "code analysis".to_string()
+    } else if has("mcp__mira__memory") || has("memory") {
+        "memory operations".to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// Read Claude's session_id from the temp file (if available)
@@ -762,5 +910,98 @@ mod tests {
             .map(|s| s.trim().to_string());
 
         assert_eq!(content, Some("/home/user/project".to_string()));
+    }
+
+    // ============================================================================
+    // build_working_on_summary tests
+    // ============================================================================
+
+    #[test]
+    fn test_build_working_on_summary_with_edit_tools_and_files() {
+        let snapshot = serde_json::json!({
+            "tool_count": 15,
+            "top_tools": [
+                {"name": "Edit", "count": 8},
+                {"name": "Read", "count": 5},
+            ],
+            "files_modified": ["/home/user/project/src/main.rs", "/home/user/project/src/lib.rs"],
+        });
+        let result = build_working_on_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(summary.contains("code editing"), "got: {}", summary);
+        assert!(summary.contains("main.rs"), "got: {}", summary);
+        assert!(summary.contains("lib.rs"), "got: {}", summary);
+    }
+
+    #[test]
+    fn test_build_working_on_summary_with_bash_tools() {
+        let snapshot = serde_json::json!({
+            "tool_count": 5,
+            "top_tools": [
+                {"name": "Bash", "count": 4},
+            ],
+            "files_modified": [],
+        });
+        let result = build_working_on_summary(&snapshot);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("running commands"));
+    }
+
+    #[test]
+    fn test_build_working_on_summary_empty_snapshot() {
+        let snapshot = serde_json::json!({
+            "tool_count": 0,
+            "top_tools": [],
+            "files_modified": [],
+        });
+        let result = build_working_on_summary(&snapshot);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_working_on_summary_fallback_to_tool_count() {
+        let snapshot = serde_json::json!({
+            "tool_count": 10,
+            "top_tools": [
+                {"name": "SomeUnknownTool", "count": 10},
+            ],
+            "files_modified": [],
+        });
+        let result = build_working_on_summary(&snapshot);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("10 tool calls"));
+    }
+
+    // ============================================================================
+    // infer_activity_from_tools tests
+    // ============================================================================
+
+    #[test]
+    fn test_infer_activity_edit() {
+        assert_eq!(infer_activity_from_tools(&["Edit", "Read"]), "code editing");
+    }
+
+    #[test]
+    fn test_infer_activity_write() {
+        assert_eq!(infer_activity_from_tools(&["Write"]), "code editing");
+    }
+
+    #[test]
+    fn test_infer_activity_bash() {
+        assert_eq!(infer_activity_from_tools(&["Bash"]), "running commands");
+    }
+
+    #[test]
+    fn test_infer_activity_exploration() {
+        assert_eq!(
+            infer_activity_from_tools(&["Read", "Glob"]),
+            "code exploration"
+        );
+    }
+
+    #[test]
+    fn test_infer_activity_unknown() {
+        assert_eq!(infer_activity_from_tools(&["SomeTool"]), "");
     }
 }

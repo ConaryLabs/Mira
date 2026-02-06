@@ -101,6 +101,9 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add team intelligence layer tables (after drop guard for old tables)
     team::migrate_team_tables(conn)?;
 
+    // Add session_snapshots table for resume context
+    session::migrate_session_snapshots_table(conn)?;
+
     Ok(())
 }
 

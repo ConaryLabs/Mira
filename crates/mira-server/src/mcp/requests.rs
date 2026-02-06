@@ -480,11 +480,13 @@ pub enum TeamAction {
     Status,
     /// Review a teammate's modified files
     Review,
+    /// Distill key findings/decisions from team work into team-scoped memories
+    Distill,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TeamRequest {
-    #[schemars(description = "Action: status (team overview), review (teammate's work)")]
+    #[schemars(description = "Action: status (team overview), review (teammate's work), distill (extract key findings)")]
     pub action: TeamAction,
     #[schemars(description = "Teammate name (for review action, defaults to self)")]
     pub teammate: Option<String>,

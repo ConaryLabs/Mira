@@ -20,6 +20,7 @@ mod pondering;
 pub mod session_summaries;
 mod slow_lane;
 pub(crate) mod summaries;
+pub(crate) mod knowledge_distillation;
 pub(crate) mod team_monitor;
 pub mod watcher;
 

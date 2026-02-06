@@ -128,7 +128,7 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] {} active goal(s) found", goals.len());
     }
 
-    // Build session summary and close the session
+    // Build session summary, save snapshot, and close the session
     {
         let pool_clone = pool.clone();
         let session_id = stop_input.session_id.clone();
@@ -147,6 +147,13 @@ pub async fn run() -> Result<()> {
                 } else {
                     None
                 };
+
+                // Save structured session snapshot for future resume context
+                if !session_id.is_empty() {
+                    if let Err(e) = save_session_snapshot(conn, &session_id) {
+                        eprintln!("[mira] Session snapshot failed: {}", e);
+                    }
+                }
 
                 // Close the session with summary
                 if !session_id.is_empty() {
@@ -222,6 +229,51 @@ pub async fn run_session_end() -> Result<()> {
     // Deactivate team session if we're in a team
     if !session_id.is_empty() {
         if let Some(membership) = crate::hooks::session::read_team_membership_from_db(&pool, session_id).await {
+            // Trigger knowledge distillation before deactivating (async, non-blocking)
+            let distill_pool = pool.clone();
+            let distill_team_id = membership.team_id;
+            let distill_project_id = {
+                let pool_clone = pool.clone();
+                pool_clone
+                    .interact(move |conn| {
+                        let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+                        Ok::<_, anyhow::Error>(
+                            path.and_then(|p| {
+                                crate::db::get_or_create_project_sync(conn, &p, None)
+                                    .ok()
+                                    .map(|(id, _)| id)
+                            }),
+                        )
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+            };
+
+            tokio::spawn(async move {
+                match crate::background::knowledge_distillation::distill_team_session(
+                    &distill_pool,
+                    distill_team_id,
+                    distill_project_id,
+                )
+                .await
+                {
+                    Ok(Some(result)) => {
+                        eprintln!(
+                            "[mira] Distilled {} finding(s) from team '{}'",
+                            result.findings.len(),
+                            result.team_name,
+                        );
+                    }
+                    Ok(None) => {
+                        eprintln!("[mira] No findings to distill for team session");
+                    }
+                    Err(e) => {
+                        eprintln!("[mira] Knowledge distillation failed: {}", e);
+                    }
+                }
+            });
+
             let pool_clone = pool.clone();
             let sid = session_id.to_string();
             let _ = pool_clone
@@ -486,4 +538,89 @@ fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<Go
     })
     .map(|rows| rows.filter_map(|r| r.ok()).collect())
     .unwrap_or_default()
+}
+
+/// Save a structured session snapshot for future resume context.
+///
+/// Captures tool usage counts, top tools, and modified files as JSON
+/// in the session_snapshots table.
+fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Result<()> {
+    // Get tool count and top tools
+    let (tool_count, top_tools) =
+        crate::db::get_session_stats_sync(conn, session_id).unwrap_or((0, Vec::new()));
+
+    if tool_count == 0 {
+        return Ok(());
+    }
+
+    // Build top_tools with counts
+    let top_tools_json: Vec<serde_json::Value> = {
+        let sql = r#"
+            SELECT tool_name, COUNT(*) as cnt
+            FROM tool_history
+            WHERE session_id = ?
+            GROUP BY tool_name
+            ORDER BY cnt DESC
+            LIMIT 5
+        "#;
+        conn.prepare(sql)
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map(rusqlite::params![session_id], |row| {
+                    let name: String = row.get(0)?;
+                    let count: i64 = row.get(1)?;
+                    Ok(serde_json::json!({"name": name, "count": count}))
+                })
+                .ok()
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    };
+
+    // Get files modified (Write/Edit/NotebookEdit tool calls)
+    let files_modified: Vec<String> = {
+        let sql = r#"
+            SELECT DISTINCT
+                json_extract(arguments, '$.file_path') as file_path
+            FROM tool_history
+            WHERE session_id = ?
+              AND tool_name IN ('Write', 'Edit', 'NotebookEdit')
+              AND json_extract(arguments, '$.file_path') IS NOT NULL
+            LIMIT 10
+        "#;
+        conn.prepare(sql)
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map(rusqlite::params![session_id], |row| {
+                    row.get::<_, String>(0)
+                })
+                .ok()
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    };
+
+    let snapshot = serde_json::json!({
+        "tool_count": tool_count,
+        "top_tools": top_tools_json,
+        "top_tool_names": top_tools,
+        "files_modified": files_modified,
+    });
+
+    let snapshot_str = serde_json::to_string(&snapshot)?;
+
+    conn.execute(
+        "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+         VALUES (?1, ?2, datetime('now'))
+         ON CONFLICT(session_id) DO UPDATE SET snapshot = ?2, created_at = datetime('now')",
+        rusqlite::params![session_id, snapshot_str],
+    )?;
+
+    eprintln!(
+        "[mira] Session snapshot saved ({} tools, {} files modified)",
+        tool_count,
+        files_modified.len()
+    );
+
+    Ok(())
 }

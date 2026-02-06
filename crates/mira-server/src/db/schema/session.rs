@@ -93,3 +93,21 @@ pub fn migrate_sessions_resume(conn: &Connection) -> Result<()> {
 
     Ok(())
 }
+
+/// Create session_snapshots table for lightweight session state capture on stop
+pub fn migrate_session_snapshots_table(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::create_table_if_missing;
+    create_table_if_missing(
+        conn,
+        "session_snapshots",
+        r#"
+        CREATE TABLE IF NOT EXISTS session_snapshots (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),
+            snapshot TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_snapshots_session ON session_snapshots(session_id);
+    "#,
+    )
+}
