@@ -120,9 +120,10 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
     )?;
 
     // Deduplicate orphan session rows across duplicate teams: when the same
-    // session_id appears in multiple duplicates (but not in the survivor),
-    // keep only the freshest row so the subsequent OR IGNORE remap is
-    // deterministic regardless of rowid/insert order.
+    // session_id appears in multiple duplicates within a group, keep only the
+    // freshest row per (survivor_team, session_id) so the subsequent OR IGNORE
+    // remap is deterministic. Scoped to each survivor group to avoid collapsing
+    // rows across unrelated duplicate groups that happen to share a session_id.
     conn.execute_batch(
         "DELETE FROM team_sessions
          WHERE team_id NOT IN (
@@ -131,13 +132,21 @@ pub fn migrate_team_tables(conn: &Connection) -> Result<()> {
          AND id NOT IN (
              SELECT id FROM (
                  SELECT ts.id, ROW_NUMBER() OVER (
-                     PARTITION BY ts.session_id
+                     PARTITION BY surv.surv_team, ts.session_id
                      ORDER BY ts.last_heartbeat DESC, ts.team_id DESC
                  ) AS rn
                  FROM team_sessions ts
-                 WHERE ts.team_id NOT IN (
-                     SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
-                 )
+                 JOIN (
+                     SELECT t.id AS dup_team,
+                            (SELECT MIN(t2.id) FROM teams t2
+                             WHERE t2.name = t.name
+                               AND COALESCE(t2.project_id, 0) = COALESCE(t.project_id, 0)
+                            ) AS surv_team
+                     FROM teams t
+                     WHERE t.id NOT IN (
+                         SELECT MIN(id) FROM teams GROUP BY name, COALESCE(project_id, 0)
+                     )
+                 ) surv ON ts.team_id = surv.dup_team
              )
              WHERE rn = 1
          );",
@@ -737,6 +746,88 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM team_sessions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1, "should have exactly one session row");
+    }
+
+    #[test]
+    fn test_dedupe_cross_group_preserves_both_groups() {
+        let conn = setup_db();
+        conn.execute_batch(
+            "CREATE TABLE teams (
+                 id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                 project_id INTEGER REFERENCES projects(id),
+                 config_path TEXT NOT NULL, status TEXT DEFAULT 'active',
+                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE team_sessions (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 role TEXT DEFAULT 'teammate', agent_type TEXT,
+                 joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                 last_heartbeat TEXT DEFAULT CURRENT_TIMESTAMP,
+                 status TEXT DEFAULT 'active',
+                 UNIQUE(team_id, session_id)
+             );
+             CREATE TABLE team_file_ownership (
+                 id INTEGER PRIMARY KEY,
+                 team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                 session_id TEXT NOT NULL, member_name TEXT NOT NULL,
+                 file_path TEXT NOT NULL, operation TEXT NOT NULL,
+                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+             );",
+        )
+        .unwrap();
+
+        // Two UNRELATED duplicate groups (alpha and beta), each with duplicates.
+        // Both groups have orphan sessions with the SAME session_id 'sess-shared'.
+        // The dedupe must keep one row per group, not collapse across groups.
+        conn.execute_batch(
+            "-- Group alpha: survivor=1, duplicate=2
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (1, 'alpha', 1, '/a1');
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (2, 'alpha', 1, '/a2');
+             -- Group beta: survivor=3, duplicate=4 (same project, different name)
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (3, 'beta', 1, '/b1');
+             INSERT INTO teams (id, name, project_id, config_path) VALUES (4, 'beta', 1, '/b2');
+             -- Orphan in alpha's duplicate
+             INSERT INTO team_sessions (team_id, session_id, member_name, role, last_heartbeat)
+                 VALUES (2, 'sess-shared', 'alice', 'lead', '2025-06-01T00:00:00');
+             -- Orphan in beta's duplicate
+             INSERT INTO team_sessions (team_id, session_id, member_name, role, last_heartbeat)
+                 VALUES (4, 'sess-shared', 'bob', 'teammate', '2025-03-01T00:00:00');",
+        )
+        .unwrap();
+
+        migrate_team_tables(&conn).unwrap();
+
+        // Both groups should have their session remapped to their respective survivor
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM team_sessions WHERE session_id = 'sess-shared'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "each group should retain its own session row");
+
+        let alpha_name: String = conn
+            .query_row(
+                "SELECT member_name FROM team_sessions WHERE team_id = 1 AND session_id = 'sess-shared'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(alpha_name, "alice");
+
+        let beta_name: String = conn
+            .query_row(
+                "SELECT member_name FROM team_sessions WHERE team_id = 3 AND session_id = 'sess-shared'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(beta_name, "bob");
+
+        let team_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM teams", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(team_count, 2, "two survivor teams remain");
     }
 
     #[test]

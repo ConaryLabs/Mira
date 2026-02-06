@@ -583,7 +583,7 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
 
     let entries = fs::read_dir(&teams_dir).ok()?;
     let mut candidates: Vec<(usize, TeamConfigInfo)> = Vec::new();
-    let mut fallback: Option<TeamConfigInfo> = None;
+    let mut fallback: Vec<TeamConfigInfo> = Vec::new();
 
     for entry in entries.flatten() {
         let config_path = entry.path().join("config.json");
@@ -627,9 +627,9 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
             }
         }
 
-        // If we don't have cwd, remember one fallback (but prefer cwd matches)
-        if cwd.is_none() && fallback.is_none() {
-            fallback = Some(TeamConfigInfo {
+        // If we don't have cwd, collect as fallback (but prefer cwd matches)
+        if cwd.is_none() {
+            fallback.push(TeamConfigInfo {
                 team_name: team_name_val,
                 config_path: config_path.to_string_lossy().to_string(),
             });
@@ -642,7 +642,13 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
         return Some(candidates.into_iter().next().unwrap().1);
     }
 
-    fallback
+    if !fallback.is_empty() {
+        // Deterministic: sort by team name when no cwd to disambiguate
+        fallback.sort_by(|a, b| a.team_name.cmp(&b.team_name));
+        return Some(fallback.into_iter().next().unwrap());
+    }
+
+    None
 }
 
 #[cfg(test)]
