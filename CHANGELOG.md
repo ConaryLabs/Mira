@@ -19,7 +19,7 @@ The current architecture - a persistent intelligence layer for Claude Code.
 - **Evidence-based memory** - Candidate-to-confirmed promotion system
 - **Cross-project intelligence** - Opt-in pattern sharing across codebases
 - **DatabasePool migration** - Complete async database layer rewrite
-- **Tool consolidation** - 40+ MCP tools reduced to ~22 action-based tools
+- **Tool consolidation** - 40+ MCP tools reduced to 11 action-based tools
 - **Goal/milestone tracking** - Replaced tasks with persistent goals
 
 ### Era 6: MCP Transformation (December 2025)

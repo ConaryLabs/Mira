@@ -18,9 +18,15 @@ Mira is a Rust MCP server that gives Claude Code long-term memory, deep code und
 
 **Builds intelligence in the background.** A background engine continuously generates module summaries, detects capabilities, summarizes git changes since your last session, scores tech debt, and surfaces insights — all without you asking.
 
-**Provides expert second opinions.** On-demand consultation from specialized AI reviewers (architect, security, code reviewer, scope analyst, plan reviewer) that have full access to search your codebase before answering. Powered by DeepSeek Reasoner or Zhipu GLM-4.7. Mira also implements MCP Sampling support for zero-key expert consultation via the host client.
+**Provides expert second opinions.** On-demand consultation from specialized AI reviewers (architect, security, code reviewer, scope analyst, plan reviewer) that have full access to search your codebase before answering. Powered by DeepSeek Reasoner or Zhipu GLM-4.7, or zero-key via MCP Sampling through the host client.
+
+**Coordinates agent teams.** Automatic team detection when using Claude Code Agent Teams — tracks file ownership, detects conflicts across teammates, and distills team discoveries into shared memory.
+
+**Distills knowledge over time.** A background system analyzes accumulated memories and surfaces cross-cutting patterns as higher-level insights, so institutional knowledge compounds rather than just accumulates.
 
 **Tracks goals across sessions.** Weighted milestones that persist across conversations, so multi-session work doesn't lose its thread.
+
+**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. MCP Sampling enables expert consultation without provider keys. Add an OpenAI key for semantic search, or DeepSeek/Zhipu for direct expert access.
 
 **Detects documentation gaps.** Finds undocumented APIs and modules, flags stale docs when source changes, and provides writing guidelines so Claude can fill the gaps directly.
 
@@ -36,11 +42,12 @@ This detects your OS, downloads the binary, installs the Claude Code plugin (whi
 
 Then add your API keys to `~/.mira/.env`:
 ```bash
-DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
-OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys
+OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys (embeddings)
+DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys (experts)
+ZHIPU_API_KEY=your-key-here     # https://z.ai (alternative expert provider)
 ```
 
-> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without them. Search falls back to fuzzy/keyword matching and analysis uses heuristic parsers. Expert consultation requires a DeepSeek or Zhipu key. OpenAI key enables semantic search via embeddings.
+> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without any keys. Search falls back to fuzzy/keyword matching, analysis uses heuristic parsers, and expert consultation works via MCP Sampling through the host client. Add keys for enhanced capabilities: OpenAI for semantic search, DeepSeek or Zhipu for direct expert access with codebase search.
 
 ### Manual Install
 
@@ -161,7 +168,8 @@ The **MCP server** (cargo install / build from source) provides the core tools. 
 Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
                                   |
                                   +--->  OpenAI (embeddings)
-                                  +--->  DeepSeek (intelligence)
+                                  +--->  DeepSeek Reasoner (experts)
+                                  +--->  Zhipu GLM-4.7 (experts)
 ```
 
 All data stored locally in `~/.mira/`. No cloud storage, no external databases. Two SQLite databases: `mira.db` for memories, sessions, goals, and expert history; `mira-code.db` for the code index.
@@ -199,6 +207,10 @@ Project context is auto-initialized from Claude Code's working directory. Verify
 - [Design Philosophy](docs/DESIGN.md) — Architecture decisions and tradeoffs
 - [Core Concepts](docs/CONCEPTS.md) — Memory, intelligence, experts explained
 - [Configuration](docs/CONFIGURATION.md) — All options and hooks
+- [Database](docs/DATABASE.md) — Schema and storage details
+- [Testing](docs/TESTING.md) — Test infrastructure and patterns
+- [Tool Reference](docs/tools/) — Per-tool documentation (memory, code, expert, etc.)
+- [Module Reference](docs/modules/) — Internal module documentation
 - [Changelog](CHANGELOG.md) — Version history
 
 ## Contributing
