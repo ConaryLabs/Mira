@@ -187,7 +187,15 @@ impl MiraServer {
         if self.team_membership.read().await.is_some() {
             return; // Already populated
         }
-        if let Some(sid) = read_claude_session_id() {
+        // Prefer in-memory session ID (set via project(..., session_id=...)),
+        // fall back to filesystem hook file for standard Claude Code sessions.
+        let sid = self
+            .session_id
+            .read()
+            .await
+            .clone()
+            .or_else(read_claude_session_id);
+        if let Some(sid) = sid {
             let pool_clone = self.pool.clone();
             let sid_clone = sid.clone();
             if let Ok(Some(membership)) = pool_clone
