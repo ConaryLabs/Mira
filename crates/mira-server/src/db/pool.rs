@@ -76,7 +76,10 @@ const RETRY_DELAYS: [std::time::Duration; 3] = [
 ///
 /// Calls `op` up to `RETRY_DELAYS.len() + 1` times, sleeping between retries when
 /// `is_retryable` returns true for the error.
-async fn retry_with_backoff<F, Fut, R, E>(mut op: F, is_retryable: impl Fn(&E) -> bool) -> Result<R, E>
+async fn retry_with_backoff<F, Fut, R, E>(
+    mut op: F,
+    is_retryable: impl Fn(&E) -> bool,
+) -> Result<R, E>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<R, E>>,
@@ -303,10 +306,13 @@ impl DatabasePool {
         R: Send + 'static,
         E: std::fmt::Display + Send + 'static,
     {
-        retry_with_backoff(|| {
-            let f_clone = f.clone();
-            self.run(f_clone)
-        }, |e| is_sqlite_contention(e))
+        retry_with_backoff(
+            || {
+                let f_clone = f.clone();
+                self.run(f_clone)
+            },
+            |e| is_sqlite_contention(e),
+        )
         .await
     }
 
@@ -319,10 +325,13 @@ impl DatabasePool {
         F: FnOnce(&Connection) -> Result<R> + Send + Clone + 'static,
         R: Send + 'static,
     {
-        retry_with_backoff(|| {
-            let f_clone = f.clone();
-            self.interact(f_clone)
-        }, |e| is_sqlite_contention(&e.to_string()))
+        retry_with_backoff(
+            || {
+                let f_clone = f.clone();
+                self.interact(f_clone)
+            },
+            |e| is_sqlite_contention(&e.to_string()),
+        )
         .await
     }
 
@@ -337,6 +346,9 @@ impl DatabasePool {
     async fn run_migrations(&self) -> Result<()> {
         self.interact(|conn| {
             super::schema::run_all_migrations(conn)?;
+            if let Err(e) = conn.execute_batch("PRAGMA optimize") {
+                tracing::debug!("PRAGMA optimize (main DB) skipped: {}", e);
+            }
             Ok(())
         })
         .await
@@ -348,6 +360,9 @@ impl DatabasePool {
     async fn run_code_migrations(&self) -> Result<()> {
         self.interact(|conn| {
             super::schema::run_code_migrations(conn)?;
+            if let Err(e) = conn.execute_batch("PRAGMA optimize") {
+                tracing::debug!("PRAGMA optimize (code DB) skipped: {}", e);
+            }
             Ok(())
         })
         .await

@@ -39,28 +39,31 @@ pub fn store_pattern(
     pattern: &AnonymizedPattern,
     k_anonymity: i64,
 ) -> Result<i64> {
+    let tx = conn.unchecked_transaction()?;
+
     // Check preferences
-    let prefs = get_preferences(conn, project_id)?;
+    let prefs = get_preferences(&tx, project_id)?;
     if !prefs.can_export(pattern.pattern_type, pattern.noise_added) {
         anyhow::bail!("Export not allowed for this pattern type or privacy budget exhausted");
     }
 
     let data_json = serde_json::to_string(&pattern.anonymized_data)?;
 
-    // Upsert the pattern
+    // Upsert the pattern and always return the affected row id.
     let sql = r#"
         INSERT INTO cross_project_patterns
         (pattern_type, pattern_hash, anonymized_data, category, confidence,
          noise_added, min_projects_required, source_project_count)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(pattern_hash) DO UPDATE SET
-            confidence = (confidence * source_project_count + excluded.confidence) / (source_project_count + 1),
-            occurrence_count = occurrence_count + 1,
-            source_project_count = source_project_count + 1,
+            confidence = (cross_project_patterns.confidence * cross_project_patterns.source_project_count + excluded.confidence) / (cross_project_patterns.source_project_count + 1),
+            occurrence_count = cross_project_patterns.occurrence_count + 1,
+            source_project_count = cross_project_patterns.source_project_count + 1,
             last_updated_at = datetime('now')
+        RETURNING id
     "#;
 
-    conn.execute(
+    let pattern_id: i64 = tx.query_row(
         sql,
         rusqlite::params![
             pattern.pattern_type.as_str(),
@@ -71,9 +74,8 @@ pub fn store_pattern(
             pattern.noise_added,
             k_anonymity,
         ],
+        |row| row.get(0),
     )?;
-
-    let pattern_id = conn.last_insert_rowid();
 
     // Record provenance (anonymized)
     let contribution_hash = hash_contribution(project_id, &pattern.pattern_hash);
@@ -82,17 +84,19 @@ pub fn store_pattern(
         (pattern_id, contribution_hash)
         VALUES (?, ?)
     "#;
-    conn.execute(
+    tx.execute(
         provenance_sql,
         rusqlite::params![pattern_id, contribution_hash],
     )?;
 
     // Consume privacy budget
-    consume_privacy_budget(conn, project_id, pattern.noise_added)?;
+    if !consume_privacy_budget(&tx, project_id, pattern.noise_added)? {
+        anyhow::bail!("Privacy budget exhausted while storing pattern");
+    }
 
     // Log the sharing event
     log_sharing_event(
-        conn,
+        &tx,
         project_id,
         SharingDirection::Export,
         pattern.pattern_type,
@@ -101,6 +105,7 @@ pub fn store_pattern(
         pattern.noise_added,
     )?;
 
+    tx.commit()?;
     Ok(pattern_id)
 }
 
@@ -164,7 +169,7 @@ pub fn get_shareable_patterns(
         })
     })?;
 
-    let patterns: Vec<CrossProjectPattern> = rows.flatten().collect();
+    let patterns: Vec<CrossProjectPattern> = rows.filter_map(crate::db::log_and_discard).collect();
     Ok(patterns)
 }
 
@@ -345,7 +350,7 @@ pub fn extract_and_store_patterns(
         },
     )?;
 
-    for row in file_rows.flatten() {
+    for row in file_rows.filter_map(crate::db::log_and_discard) {
         let (data, confidence) = row;
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data)
             && let Some(seq) = parsed.get("sequence").and_then(|s| s.as_array())
@@ -387,7 +392,7 @@ pub fn extract_and_store_patterns(
         },
     )?;
 
-    for row in tool_rows.flatten() {
+    for row in tool_rows.filter_map(crate::db::log_and_discard) {
         let (data, confidence) = row;
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data)
             && let Some(tools) = parsed.get("tools").and_then(|t| t.as_array())
@@ -432,7 +437,7 @@ pub fn extract_and_store_patterns(
         ))
     })?;
 
-    for row in problem_rows.flatten() {
+    for row in problem_rows.filter_map(crate::db::log_and_discard) {
         let (expert_role, _signature, _description, approaches_json, tools_json, success_rate) =
             row;
 

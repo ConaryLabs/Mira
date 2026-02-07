@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS call_graph (
 );
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON call_graph(caller_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON call_graph(callee_id);
+CREATE INDEX IF NOT EXISTS idx_calls_callee_name ON call_graph(callee_name, call_count DESC);
 
 CREATE TABLE IF NOT EXISTS imports (
     id INTEGER PRIMARY KEY,

@@ -112,7 +112,7 @@ pub fn get_pending_interventions(
         })
     })?;
 
-    let interventions: Vec<PendingFeedback> = rows.flatten().collect();
+    let interventions: Vec<PendingFeedback> = rows.filter_map(crate::db::log_and_discard).collect();
     Ok(interventions)
 }
 
@@ -194,7 +194,7 @@ pub fn run_learning_update(conn: &Connection, project_id: i64) -> Result<usize> 
     })?;
 
     let mut updates = 0;
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (pattern_id, avg_effectiveness) = row;
 
         // Update pattern confidence based on average effectiveness

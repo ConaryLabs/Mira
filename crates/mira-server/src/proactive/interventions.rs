@@ -118,7 +118,7 @@ pub fn get_pending_interventions_sync(
     })?;
 
     let mut interventions = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (pattern_id, pattern_type, pattern_data, confidence) = row;
 
         // Extract description from pattern_data JSON
@@ -185,7 +185,7 @@ fn get_documentation_interventions_sync(
         Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
     })?;
 
-    for row in stale_rows.flatten() {
+    for row in stale_rows.filter_map(crate::db::log_and_discard) {
         let (doc_path, summary) = row;
 
         // Skip if the doc file no longer exists on disk
@@ -233,7 +233,7 @@ fn get_documentation_interventions_sync(
         ))
     })?;
 
-    for row in pending_rows.flatten() {
+    for row in pending_rows.filter_map(crate::db::log_and_discard) {
         let (target_path, source_path, category) = row;
 
         // Skip if the source file no longer exists on disk

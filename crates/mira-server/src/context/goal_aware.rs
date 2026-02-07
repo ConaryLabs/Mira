@@ -76,35 +76,40 @@ impl GoalAwareInjector {
         let gids = goals.iter().map(|g| g.id).collect::<Vec<_>>();
         let milestones_by_goal = self
             .pool
-            .interact(move |conn| -> anyhow::Result<std::collections::HashMap<i64, (usize, usize)>> {
-                if gids.is_empty() {
-                    return Ok(std::collections::HashMap::new());
-                }
-                let placeholders: String = gids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                let sql = format!(
-                    "SELECT goal_id, completed FROM milestones WHERE goal_id IN ({})",
-                    placeholders
-                );
-                let mut stmt = conn.prepare(&sql)?;
-                let params: Vec<Box<dyn rusqlite::types::ToSql>> =
-                    gids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
-                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
-                let rows = stmt.query_map(param_refs.as_slice(), |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?))
-                })?;
-                let mut map: std::collections::HashMap<i64, (usize, usize)> =
-                    std::collections::HashMap::new();
-                for row in rows {
-                    let (gid, completed) = row?;
-                    let entry = map.entry(gid).or_insert((0, 0));
-                    entry.1 += 1; // total
-                    if completed {
-                        entry.0 += 1; // completed
+            .interact(
+                move |conn| -> anyhow::Result<std::collections::HashMap<i64, (usize, usize)>> {
+                    if gids.is_empty() {
+                        return Ok(std::collections::HashMap::new());
                     }
-                }
-                Ok(map)
-            })
+                    let placeholders: String =
+                        gids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                    let sql = format!(
+                        "SELECT goal_id, completed FROM milestones WHERE goal_id IN ({})",
+                        placeholders
+                    );
+                    let mut stmt = conn.prepare(&sql)?;
+                    let params: Vec<Box<dyn rusqlite::types::ToSql>> = gids
+                        .iter()
+                        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+                        .collect();
+                    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                        params.iter().map(|p| p.as_ref()).collect();
+                    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?))
+                    })?;
+                    let mut map: std::collections::HashMap<i64, (usize, usize)> =
+                        std::collections::HashMap::new();
+                    for row in rows {
+                        let (gid, completed) = row?;
+                        let entry = map.entry(gid).or_insert((0, 0));
+                        entry.1 += 1; // total
+                        if completed {
+                            entry.0 += 1; // completed
+                        }
+                    }
+                    Ok(map)
+                },
+            )
             .await
             .unwrap_or_default();
 
@@ -112,15 +117,16 @@ impl GoalAwareInjector {
         context.push_str("Active goals:\n");
 
         for goal in &goals {
-            let milestone_summary = if let Some((completed, total)) = milestones_by_goal.get(&goal.id) {
-                if *total > 0 {
-                    format!(" - {}/{} milestones", completed, total)
+            let milestone_summary =
+                if let Some((completed, total)) = milestones_by_goal.get(&goal.id) {
+                    if *total > 0 {
+                        format!(" - {}/{} milestones", completed, total)
+                    } else {
+                        String::new()
+                    }
                 } else {
                     String::new()
-                }
-            } else {
-                String::new()
-            };
+                };
 
             context.push_str(&format!(
                 "  - Goal: {} ({}%){}\n",

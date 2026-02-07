@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_activity TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_activity DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_status_activity ON sessions(status, last_activity DESC);
 
 CREATE TABLE IF NOT EXISTS tool_history (
     id INTEGER PRIMARY KEY,
@@ -246,6 +247,7 @@ CREATE TABLE IF NOT EXISTS goals (
     progress_percent INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_goals_project_status_created ON goals(project_id, status, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS milestones (
     id INTEGER PRIMARY KEY,

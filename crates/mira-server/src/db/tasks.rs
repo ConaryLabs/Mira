@@ -261,11 +261,13 @@ pub fn update_goal_sync(
 /// Delete a goal (sync version for pool.interact)
 /// First orphans any tasks and milestones referencing this goal
 pub fn delete_goal_sync(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
     // First, orphan any tasks referencing this goal
-    conn.execute("UPDATE tasks SET goal_id = NULL WHERE goal_id = ?", [id])?;
+    tx.execute("UPDATE tasks SET goal_id = NULL WHERE goal_id = ?", [id])?;
     // Delete milestones (no need to orphan, just delete)
-    conn.execute("DELETE FROM milestones WHERE goal_id = ?", [id])?;
+    tx.execute("DELETE FROM milestones WHERE goal_id = ?", [id])?;
     // Now delete the goal
-    conn.execute("DELETE FROM goals WHERE id = ?", [id])?;
+    tx.execute("DELETE FROM goals WHERE id = ?", [id])?;
+    tx.commit()?;
     Ok(())
 }

@@ -87,9 +87,10 @@ pub fn upsert_pattern(conn: &Connection, pattern: &BehaviorPattern) -> Result<i6
             occurrence_count = excluded.occurrence_count,
             last_triggered_at = datetime('now'),
             updated_at = datetime('now')
+        RETURNING id
     "#;
 
-    conn.execute(
+    let id = conn.query_row(
         sql,
         rusqlite::params![
             pattern.project_id,
@@ -99,9 +100,10 @@ pub fn upsert_pattern(conn: &Connection, pattern: &BehaviorPattern) -> Result<i6
             pattern.confidence,
             pattern.occurrence_count,
         ],
+        |row| row.get(0),
     )?;
 
-    Ok(conn.last_insert_rowid())
+    Ok(id)
 }
 
 /// Get patterns for a project by type
@@ -136,7 +138,7 @@ pub fn get_patterns_by_type(
     )?;
 
     let mut patterns = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (
             id,
             project_id,
@@ -194,7 +196,7 @@ pub fn get_high_confidence_patterns(
     })?;
 
     let mut patterns = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (
             id,
             project_id,
@@ -285,7 +287,7 @@ pub fn mine_file_sequence_patterns(
     })?;
 
     let mut patterns = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (file_a, file_b, count) = row;
 
         // Generate a unique key for this pair
@@ -351,7 +353,7 @@ pub fn mine_tool_chain_patterns(
     })?;
 
     let mut patterns = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (tool_a, tool_b, count) = row;
 
         let pattern_key = format!("{}->{}", &tool_a, &tool_b);

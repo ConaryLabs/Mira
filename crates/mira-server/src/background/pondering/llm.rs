@@ -142,10 +142,7 @@ fn build_prompt(
             .iter()
             .map(|s| format!("- {}", s.description))
             .collect();
-        sections.push(format!(
-            "## Recent Session Patterns\n{}",
-            items.join("\n")
-        ));
+        sections.push(format!("## Recent Session Patterns\n{}", items.join("\n")));
     }
 
     // Secondary context: recent tool usage

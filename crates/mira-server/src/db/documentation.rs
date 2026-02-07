@@ -104,16 +104,25 @@ pub fn get_pending_doc_tasks(
 ) -> Result<Vec<DocTask>, String> {
     let sql = format!(
         "SELECT * FROM documentation_tasks
-         WHERE (?1 IS NULL OR project_id = ?1) AND status = 'pending'
+         WHERE {}status = 'pending'
          ORDER BY {}, created_at DESC
-         LIMIT ?2",
+         LIMIT ?",
+        if project_id.is_some() {
+            "project_id = ? AND "
+        } else {
+            ""
+        },
         super::PRIORITY_ORDER_SQL
     );
 
     let mut stmt = conn.prepare(&sql).str_err()?;
-    let rows = stmt
-        .query_map(params![project_id, limit as i64], parse_doc_task)
-        .str_err()?;
+    let rows = if let Some(pid) = project_id {
+        stmt.query_map(params![pid, limit as i64], parse_doc_task)
+            .str_err()?
+    } else {
+        stmt.query_map(params![limit as i64], parse_doc_task)
+            .str_err()?
+    };
     rows.collect::<Result<Vec<_>, _>>().str_err()
 }
 
@@ -259,7 +268,7 @@ pub fn upsert_doc_inventory(
     conn: &rusqlite::Connection,
     p: &DocInventoryParams,
 ) -> Result<i64, String> {
-    conn.execute(
+    conn.query_row(
         "INSERT INTO documentation_inventory (
             project_id, doc_path, doc_type, doc_category, title,
             source_signature_hash, source_symbols, last_seen_commit
@@ -273,7 +282,8 @@ pub fn upsert_doc_inventory(
             last_seen_commit = excluded.last_seen_commit,
             is_stale = 0,
             staleness_reason = NULL,
-            verified_at = CURRENT_TIMESTAMP",
+            verified_at = CURRENT_TIMESTAMP
+        RETURNING id",
         params![
             p.project_id,
             p.doc_path,
@@ -284,8 +294,8 @@ pub fn upsert_doc_inventory(
             p.source_symbols,
             p.git_commit,
         ],
+        |row| row.get(0),
     )
-    .map(|_| conn.last_insert_rowid())
     .str_err()
 }
 

@@ -174,7 +174,7 @@ pub fn get_session_events(
     })?;
 
     let mut events = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (event_type_str, event_data_str, created_at_str) = row;
 
         if let Ok(event_type) = event_type_str.parse::<EventType>() {
@@ -215,7 +215,7 @@ pub fn get_recent_file_sequence(
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map([project_id, limit], |row| row.get::<_, String>(0))?;
 
-    let files: Vec<String> = rows.flatten().collect();
+    let files: Vec<String> = rows.filter_map(crate::db::log_and_discard).collect();
     Ok(files)
 }
 
@@ -238,7 +238,7 @@ pub fn get_tool_usage_stats(conn: &Connection, project_id: i64) -> Result<Vec<(S
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
     })?;
 
-    let stats: Vec<(String, i64)> = rows.flatten().collect();
+    let stats: Vec<(String, i64)> = rows.filter_map(crate::db::log_and_discard).collect();
     Ok(stats)
 }
 

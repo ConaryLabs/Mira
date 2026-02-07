@@ -304,7 +304,15 @@ pub fn recall_semantic_sync(
     team_id: Option<i64>,
     limit: usize,
 ) -> rusqlite::Result<Vec<(i64, String, f32)>> {
-    recall_semantic_with_branch_sync(conn, embedding_bytes, project_id, user_id, team_id, None, limit)
+    recall_semantic_with_branch_sync(
+        conn,
+        embedding_bytes,
+        project_id,
+        user_id,
+        team_id,
+        None,
+        limit,
+    )
 }
 
 /// Semantic search with entity boost applied.
@@ -461,7 +469,7 @@ pub fn get_memory_metadata_sync(
         ))
     })?;
     let mut map = std::collections::HashMap::new();
-    for row in rows.flatten() {
+    for row in rows.filter_map(super::log_and_discard) {
         map.insert(row.0, (row.1, row.2));
     }
     Ok(map)
@@ -514,23 +522,18 @@ pub fn record_memory_access_sync(
     memory_id: i64,
     session_id: &str,
 ) -> rusqlite::Result<()> {
-    // Get current session info
-    let current: Option<String> = conn
-        .query_row(
-            "SELECT last_session_id FROM memory_facts WHERE id = ?",
-            [memory_id],
-            |row| row.get(0),
-        )
-        .ok()
-        .flatten();
+    // Atomic conditional update avoids read-then-write races under concurrency.
+    let updated = conn.execute(
+        "UPDATE memory_facts
+         SET session_count = session_count + 1,
+             last_session_id = ?1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?2
+           AND COALESCE(last_session_id, '') != ?1",
+        rusqlite::params![session_id, memory_id],
+    )?;
 
-    // Only increment if this is a new session
-    if current.as_deref() != Some(session_id) {
-        conn.execute(
-            "UPDATE memory_facts SET session_count = session_count + 1, last_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            rusqlite::params![session_id, memory_id],
-        )?;
-
+    if updated > 0 {
         // Check for promotion
         conn.execute(
             "UPDATE memory_facts SET status = 'confirmed', confidence = MIN(confidence + 0.2, 1.0)
@@ -560,16 +563,18 @@ pub fn get_memory_scope_sync(
 
 /// Delete a memory and its embedding (sync version for pool.interact())
 pub fn delete_memory_sync(conn: &rusqlite::Connection, id: i64) -> rusqlite::Result<bool> {
+    let tx = conn.unchecked_transaction()?;
     // Delete from vector table first
-    conn.execute(
+    tx.execute(
         "DELETE FROM vec_memory WHERE fact_id = ?",
         rusqlite::params![id],
     )?;
     // Delete from facts table
-    let deleted = conn.execute(
+    let deleted = tx.execute(
         "DELETE FROM memory_facts WHERE id = ?",
         rusqlite::params![id],
     )? > 0;
+    tx.commit()?;
     Ok(deleted)
 }
 
@@ -619,7 +624,10 @@ pub fn get_preferences_sync(
     );
     let mut stmt = conn.prepare(&sql)?;
 
-    let rows = stmt.query_map(rusqlite::params![project_id, user_id, team_id], parse_memory_fact_row)?;
+    let rows = stmt.query_map(
+        rusqlite::params![project_id, user_id, team_id],
+        parse_memory_fact_row,
+    )?;
     rows.collect()
 }
 

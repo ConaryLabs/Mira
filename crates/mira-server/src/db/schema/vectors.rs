@@ -64,14 +64,17 @@ pub fn check_embedding_provider_change(conn: &Connection, current_provider: &str
         current_provider
     );
 
+    let tx = conn.unchecked_transaction()?;
+
     // Clear all memory embeddings
-    conn.execute_batch("DELETE FROM vec_memory")?;
+    tx.execute_batch("DELETE FROM vec_memory")?;
 
     // Reset has_embedding flags so background worker re-embeds
-    conn.execute("UPDATE memory_facts SET has_embedding = 0", [])?;
+    tx.execute("UPDATE memory_facts SET has_embedding = 0", [])?;
 
     // Store the new provider
-    set_server_state_sync(conn, EMBEDDING_PROVIDER_KEY, current_provider)?;
+    set_server_state_sync(&tx, EMBEDDING_PROVIDER_KEY, current_provider)?;
+    tx.commit()?;
 
     Ok(true)
 }

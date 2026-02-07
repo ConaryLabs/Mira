@@ -119,7 +119,7 @@ fn mine_module_hotspots(conn: &Connection, project_id: i64) -> Result<usize> {
     )?;
 
     let mut stored = 0;
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (module, total, clean, reverted, fixed, sample_commits_str) = row;
 
         let bad_rate = (reverted + fixed) as f64 / total as f64;
@@ -361,7 +361,7 @@ fn mine_size_risk(conn: &Connection, project_id: i64) -> Result<usize> {
     )?;
 
     let mut stored = 0;
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (bucket, total, clean, reverted, fixed, sample_commits_str) = row;
 
         let bad_rate = (reverted + fixed) as f64 / total as f64;

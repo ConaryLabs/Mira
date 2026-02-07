@@ -168,10 +168,8 @@ pub fn update_preferences(conn: &Connection, prefs: &SharingPreferences) -> Resu
 
 /// Consume privacy budget for an export
 pub fn consume_privacy_budget(conn: &Connection, project_id: i64, epsilon: f64) -> Result<bool> {
-    let prefs = get_preferences(conn, project_id)?;
-
-    if !prefs.has_privacy_budget(epsilon) {
-        return Ok(false);
+    if epsilon < 0.0 {
+        anyhow::bail!("privacy epsilon must be non-negative");
     }
 
     let sql = r#"
@@ -179,10 +177,13 @@ pub fn consume_privacy_budget(conn: &Connection, project_id: i64, epsilon: f64) 
         SET privacy_epsilon_used = privacy_epsilon_used + ?,
             updated_at = datetime('now')
         WHERE project_id = ?
+          AND sharing_enabled = 1
+          AND export_patterns = 1
+          AND (privacy_epsilon_used + ?) <= privacy_epsilon_budget
     "#;
 
-    conn.execute(sql, rusqlite::params![epsilon, project_id])?;
-    Ok(true)
+    let updated = conn.execute(sql, rusqlite::params![epsilon, project_id, epsilon])?;
+    Ok(updated > 0)
 }
 
 /// Reset privacy budget (e.g., at the start of a new period)

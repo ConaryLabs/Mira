@@ -4,7 +4,6 @@
 use mira_types::MemoryFact;
 use rusqlite::{Connection, OptionalExtension, params};
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
 // ═══════════════════════════════════════════════════════════════════════════════

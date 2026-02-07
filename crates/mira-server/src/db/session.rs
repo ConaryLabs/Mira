@@ -36,40 +36,20 @@ pub fn create_session_ext_sync(
     source: Option<&str>,
     resumed_from: Option<&str>,
 ) -> rusqlite::Result<()> {
-    // Check if session exists and its status
-    let existing_status: Option<String> = conn
-        .query_row(
-            "SELECT status FROM sessions WHERE id = ?",
-            [session_id],
-            |row| row.get(0),
-        )
-        .ok();
-
-    match existing_status {
-        Some(status) if status == "completed" => {
-            // Reactivate completed session
-            conn.execute(
-                "UPDATE sessions SET status = 'active', last_activity = datetime('now'),
-                 source = COALESCE(?1, source) WHERE id = ?2",
-                params![source, session_id],
-            )?;
-        }
-        Some(_) => {
-            // Update existing active session
-            conn.execute(
-                "UPDATE sessions SET last_activity = datetime('now') WHERE id = ?",
-                [session_id],
-            )?;
-        }
-        None => {
-            // Create new session
-            conn.execute(
-                "INSERT INTO sessions (id, project_id, status, source, resumed_from, started_at, last_activity)
-                 VALUES (?1, ?2, 'active', ?3, ?4, datetime('now'), datetime('now'))",
-                params![session_id, project_id, source.unwrap_or("startup"), resumed_from],
-            )?;
-        }
-    }
+    conn.execute(
+        "INSERT INTO sessions (id, project_id, status, source, resumed_from, started_at, last_activity)
+         VALUES (?1, ?2, 'active', ?3, ?4, datetime('now'), datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET
+            status = 'active',
+            last_activity = datetime('now'),
+            project_id = COALESCE(excluded.project_id, sessions.project_id),
+            source = CASE
+                WHEN sessions.status = 'completed' THEN COALESCE(excluded.source, sessions.source)
+                ELSE sessions.source
+            END,
+            resumed_from = COALESCE(excluded.resumed_from, sessions.resumed_from)",
+        params![session_id, project_id, source.unwrap_or("startup"), resumed_from],
+    )?;
     Ok(())
 }
 

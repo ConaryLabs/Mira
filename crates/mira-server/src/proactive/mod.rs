@@ -145,7 +145,7 @@ pub fn get_proactive_config(
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
 
-    for row in rows.flatten() {
+    for row in rows.filter_map(crate::db::log_and_discard) {
         let (key, value) = row;
         match key.as_str() {
             "min_confidence" => {

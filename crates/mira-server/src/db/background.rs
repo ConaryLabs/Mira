@@ -436,7 +436,7 @@ pub fn map_files_to_symbols_sync(
                 row.get::<_, String>(2)?,
             ))
         }) {
-            for row in rows.flatten() {
+            for row in rows.filter_map(super::log_and_discard) {
                 symbols.push(row);
             }
         }

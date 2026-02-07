@@ -1,13 +1,11 @@
 // background/pondering/heuristic.rs
 // Data-driven heuristic insight generation (no LLM needed)
 
-use super::types::{ProjectInsightData, PonderingInsight};
+use super::types::{PonderingInsight, ProjectInsightData};
 
 /// Generate insights from project data without LLM.
 /// Produces specific, actionable insights based on real project signals.
-pub(super) fn generate_insights_heuristic(
-    data: &ProjectInsightData,
-) -> Vec<PonderingInsight> {
+pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<PonderingInsight> {
     let mut insights = Vec::new();
 
     // 1. Stale goals — goals stuck in_progress for >14 days
@@ -114,8 +112,8 @@ pub(super) fn generate_insights_heuristic(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::*;
+    use super::*;
 
     #[test]
     fn test_stale_goal_21_days() {

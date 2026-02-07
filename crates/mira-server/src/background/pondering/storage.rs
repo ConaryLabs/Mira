@@ -9,9 +9,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 /// Delete insights not triggered in the last 30 days.
-pub async fn cleanup_stale_insights(
-    pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
+pub async fn cleanup_stale_insights(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     pool.interact(|conn| {
         let deleted = conn
             .execute(

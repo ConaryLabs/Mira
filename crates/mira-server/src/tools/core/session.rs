@@ -139,10 +139,7 @@ async fn query_insights<C: ToolContext>(
         .collect();
 
     // Fire-and-forget: mark all returned pondering insights as shown by row ID
-    let row_ids: Vec<i64> = insights
-        .iter()
-        .filter_map(|i| i.row_id)
-        .collect();
+    let row_ids: Vec<i64> = insights.iter().filter_map(|i| i.row_id).collect();
     if !row_ids.is_empty() {
         let pool = ctx.pool().clone();
         tokio::spawn(async move {
@@ -156,10 +153,7 @@ async fn query_insights<C: ToolContext>(
                          WHERE id IN ({})",
                         placeholders
                     );
-                    let _ = conn.execute(
-                        &sql,
-                        rusqlite::params_from_iter(row_ids.iter()),
-                    );
+                    let _ = conn.execute(&sql, rusqlite::params_from_iter(row_ids.iter()));
                     Ok::<_, String>(())
                 })
                 .await;

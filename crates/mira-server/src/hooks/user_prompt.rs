@@ -440,4 +440,3 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
         Some(parts.join("\n"))
     }
 }
-

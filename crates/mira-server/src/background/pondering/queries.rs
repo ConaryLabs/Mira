@@ -392,8 +392,7 @@ pub(super) async fn get_untested_hotspots(
             std::collections::HashSet::new();
 
         for row in rows {
-            let (event_data, session_id) =
-                row.map_err(|e| anyhow::anyhow!("Row error: {}", e))?;
+            let (event_data, session_id) = row.map_err(|e| anyhow::anyhow!("Row error: {}", e))?;
 
             // event_data is JSON, extract file_path
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event_data) {
@@ -408,7 +407,9 @@ pub(super) async fn get_untested_hotspots(
                         continue;
                     }
 
-                    let entry = file_stats.entry(file_path).or_insert((0, Default::default()));
+                    let entry = file_stats
+                        .entry(file_path)
+                        .or_insert((0, Default::default()));
                     entry.0 += 1;
                     entry.1.insert(session_id);
                 }
@@ -532,14 +533,13 @@ pub(super) async fn get_project_insight_data(
     project_id: i64,
 ) -> Result<ProjectInsightData, String> {
     // Run all queries concurrently
-    let (stale_goals, fragile_modules, revert_clusters, untested_hotspots, session_patterns) =
-        tokio::join!(
-            get_stale_goals(pool, project_id),
-            get_fragile_modules(pool, project_id),
-            get_recent_revert_clusters(pool, project_id),
-            get_untested_hotspots(pool, project_id),
-            get_session_patterns(pool, project_id),
-        );
+    let (stale_goals, fragile_modules, revert_clusters, untested_hotspots, session_patterns) = tokio::join!(
+        get_stale_goals(pool, project_id),
+        get_fragile_modules(pool, project_id),
+        get_recent_revert_clusters(pool, project_id),
+        get_untested_hotspots(pool, project_id),
+        get_session_patterns(pool, project_id),
+    );
 
     Ok(ProjectInsightData {
         stale_goals: stale_goals.unwrap_or_default(),

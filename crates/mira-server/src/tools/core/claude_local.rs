@@ -1063,17 +1063,32 @@ mod tests {
     #[test]
     fn test_classify_by_type_and_category() {
         // Test fact_type classification
-        assert_eq!(classify_by_type_and_category("preference", None), "Preferences");
+        assert_eq!(
+            classify_by_type_and_category("preference", None),
+            "Preferences"
+        );
         assert_eq!(classify_by_type_and_category("decision", None), "Decisions");
         assert_eq!(classify_by_type_and_category("pattern", None), "Patterns");
-        assert_eq!(classify_by_type_and_category("convention", None), "Patterns");
+        assert_eq!(
+            classify_by_type_and_category("convention", None),
+            "Patterns"
+        );
 
         // Test category fallback
-        assert_eq!(classify_by_type_and_category("general", Some("preference")), "Preferences");
-        assert_eq!(classify_by_type_and_category("general", Some("decision")), "Decisions");
+        assert_eq!(
+            classify_by_type_and_category("general", Some("preference")),
+            "Preferences"
+        );
+        assert_eq!(
+            classify_by_type_and_category("general", Some("decision")),
+            "Decisions"
+        );
 
         // Default to General
-        assert_eq!(classify_by_type_and_category("general", Some("other")), "General");
+        assert_eq!(
+            classify_by_type_and_category("general", Some("other")),
+            "General"
+        );
         assert_eq!(classify_by_type_and_category("general", None), "General");
     }
 
