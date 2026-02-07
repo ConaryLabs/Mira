@@ -80,6 +80,19 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-02-06
+
+### Fixed
+- **Cross-platform path normalization** — `path_to_string()` now normalizes backslashes to forward slashes for Windows compatibility. Added `sanitize_project_path()` and `truncate_at_boundary()` utilities.
+- **Install script portability** — Fixed `install.sh` and `test-install.sh` for cross-platform use. Added Windows CI workflow.
+- **Resume context scoping** — Resume context is now scoped to the current working directory, preventing stale context from other projects.
+- **Crossref punctuation tolerance** — Cross-reference search now handles punctuation in query terms.
+- **Comprehensive audit fixes** — 31 fixes across expert system, memory, session, hooks, and tools from Codex review.
+- **ARM64 Linux cross-compilation** — Fixed aarch64-linux builds with vendored OpenSSL.
+
+### Changed
+- **Test quality overhaul** — Replaced tautological tests with meaningful integration tests covering real tool behavior.
+
 ## [0.6.1] - 2026-02-06
 
 ### Added

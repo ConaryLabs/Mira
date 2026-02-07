@@ -28,7 +28,7 @@ The crate follows a modular design with clear separation between protocol handli
 | `http` | HTTP client utilities |
 | `identity` | User and team identity |
 | `indexer` | Code indexing and symbol extraction |
-| `llm` | LLM provider abstraction (DeepSeek, Zhipu, MCP Sampling) |
+| `llm` | LLM provider abstraction (DeepSeek, Zhipu, Ollama, MCP Sampling) |
 | `mcp` | MCP protocol server (includes router, client, elicitation, tasks) |
 | `project_files` | Project file discovery and filtering |
 | `proactive` | Proactive analysis and suggestions |

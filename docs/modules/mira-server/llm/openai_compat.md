@@ -18,4 +18,4 @@ Shared OpenAI-compatible request/response handling. Used by DeepSeek and other p
 
 ## Usage
 
-Providers like DeepSeek build their requests using these shared types rather than implementing their own serialization, reducing code duplication.
+Providers like DeepSeek, Zhipu, and Ollama build their requests using these shared types rather than implementing their own serialization, reducing code duplication.

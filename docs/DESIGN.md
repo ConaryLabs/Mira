@@ -81,7 +81,7 @@ Claude Code  <--stdio/MCP-->  Mira Server
                     +--------------+--------------+
                     |              |              |
                  SQLite      Background       LLM Providers
-              (sqlite-vec)     Worker        (DeepSeek, etc.)
+              (sqlite-vec)     Worker        (DeepSeek, Zhipu, Ollama)
 ```
 
 Key components:
@@ -92,7 +92,7 @@ Key components:
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
-| LLM Factory | `llm/factory.rs` | DeepSeek and Zhipu providers |
+| LLM Factory | `llm/factory.rs` | DeepSeek, Zhipu, and Ollama providers |
 | Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small) |
 | MCP Sampling | `llm/sampling.rs` | Expert consultation via host client (awaiting Claude Code support) |
 | Elicitation | `elicitation.rs` | Interactive API key setup flow |
@@ -195,8 +195,8 @@ during indexing.
 ### What We Chose
 
 Mira's intelligence features use a **Provider Factory** that supports DeepSeek,
-with a **Reasoning Strategy** layer that manages how models are paired for
-expert consultations.
+Zhipu, and Ollama, with a **Reasoning Strategy** layer that manages how models
+are paired for expert consultations.
 
 ### Why This Architecture
 
@@ -522,7 +522,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
 | Storage | SQLite local files | Horizontal scaling |
-| Intelligence | DeepSeek / Zhipu | Full features need at least one API key |
+| Intelligence | DeepSeek / Zhipu / Ollama | Full features need at least one provider |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |
 | Data | Local-first | Built-in sync |

@@ -23,14 +23,20 @@ claude plugin install mira@mira
 
 The `mira` binary is **auto-downloaded** on first launch — no manual installation needed. The wrapper script (`plugin/bin/mira-wrapper`) handles downloading the correct binary for your platform to `~/.mira/bin/mira`.
 
-After the first launch, add your API keys to `~/.mira/.env`:
+After the first launch, configure providers:
+
+```bash
+mira setup  # Interactive wizard with API key validation and Ollama detection
+```
+
+Or manually add API keys to `~/.mira/.env`:
 
 ```bash
 DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
 OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys
 ```
 
-> **No API keys?** Expert consultation works without keys via MCP Sampling (uses the host client). All other tools work with heuristic fallbacks.
+> **No API keys?** Expert consultation works without keys via MCP Sampling (uses the host client). All other tools work with heuristic fallbacks. Ollama can power background tasks locally without any API keys.
 
 ### Alternative: Standalone Install
 
@@ -82,6 +88,7 @@ The plugin bundles the Mira MCP server with 11 action-based tools:
 | `finding` | list, get, review, stats, patterns, extract | Code review findings |
 | `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
 | `index` | project, file, status, compact, summarize, health | Code indexing and health |
+| `team` | status, review, distill | Agent team intelligence |
 | `reply_to_mira` | — | Send a response back during collaboration |
 
 All tools return structured JSON via MCP outputSchema.

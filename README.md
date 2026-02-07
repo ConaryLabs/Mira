@@ -169,6 +169,7 @@ Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
                                   +--->  OpenAI (embeddings)
                                   +--->  DeepSeek Reasoner (experts)
                                   +--->  Zhipu GLM-4.7 (experts)
+                                  +--->  Ollama (local background tasks)
 ```
 
 All data stored locally in `~/.mira/`. No cloud storage, no external databases. Two SQLite databases: `mira.db` for memories, sessions, goals, and expert history; `mira-code.db` for the code index.

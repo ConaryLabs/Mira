@@ -14,7 +14,7 @@ DeepSeek API client with tool calling support. Used for expert consultations and
 
 ## Chat vs Reasoner Split
 
-The `LlmFactory` creates two separate DeepSeek clients when the primary model is a reasoner:
+The `ProviderFactory` creates two separate DeepSeek clients when the primary model is a reasoner:
 
 - **`deepseek-chat`** — Handles tool-calling loops (agentic exploration). Max tokens: 8192.
 - **`deepseek-reasoner`** — Handles final synthesis. Max tokens: 65536.

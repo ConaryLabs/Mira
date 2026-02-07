@@ -176,8 +176,9 @@ Experts can be backed by different LLM providers via `expert(action="configure")
 - **MCP Sampling** — Routes through the host client when enabled
 - **DeepSeek** (default with key) — Optimized for extended reasoning
 - **Zhipu** (alternative with key) — GLM-4.7 provider
+- **Ollama** — Local LLM for background tasks (not used for expert consultation)
 
-Each expert role can use a different provider based on the task requirements.
+Each expert role can use a different provider based on the task requirements. Background tasks (summaries, briefings, code health) can also use Ollama as a local fallback.
 
 ### How Experts Work
 

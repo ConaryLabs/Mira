@@ -14,9 +14,11 @@ Mira uses environment variables for API keys and configuration. These can be set
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, documentation (default provider) |
 | `ZHIPU_API_KEY` | Optional | Alternative provider: Zhipu GLM-4.7 |
+| `OLLAMA_HOST` | Optional | Ollama base URL for local LLM (default: `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Optional | Ollama model to use (default: `llama3.3`) |
 | `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |
 | `BRAVE_API_KEY` | Optional | Enables web search for expert consultations |
-| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `zhipu` |
+| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek`, `zhipu`, or `ollama` |
 | `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |
@@ -318,12 +320,13 @@ background_provider = "deepseek"
 
 ### Available Providers
 
-| Provider | Config Value | API Key Env Var | Default Model |
-|----------|--------------|-----------------|---------------|
+| Provider | Config Value | API Key / Env Var | Default Model |
+|----------|--------------|-------------------|---------------|
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
 | Zhipu | `zhipu` | `ZHIPU_API_KEY` | `glm-4.7` |
+| Ollama | `ollama` | `OLLAMA_HOST` (URL, no key) | `llama3.3` |
 
-If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available.
+If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available. Ollama is included in the background task fallback chain but is excluded from expert fallback (experts require DeepSeek or Zhipu).
 
 ---
 

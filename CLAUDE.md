@@ -70,8 +70,9 @@ API keys are in `~/.mira/.env` (optional with MCP Sampling):
 - `DEEPSEEK_API_KEY` - Expert consultation (Reasoner)
 - `ZHIPU_API_KEY` - Alternative expert provider (GLM-4.7)
 - `OPENAI_API_KEY` - Embeddings (OpenAI text-embedding-3-small)
+- `OLLAMA_HOST` - Local LLM for background tasks (no API key needed)
 
-Optional: `BRAVE_API_KEY` (web search), `DEFAULT_LLM_PROVIDER`, `MIRA_DISABLE_LLM`, `MIRA_USER_ID`.
+Optional: `OLLAMA_MODEL`, `BRAVE_API_KEY` (web search), `DEFAULT_LLM_PROVIDER`, `MIRA_DISABLE_LLM`, `MIRA_USER_ID`.
 See `.env.example` for all options.
 
 If no keys are configured, experts use MCP Sampling to route through the host client.
