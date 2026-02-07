@@ -122,20 +122,38 @@ pub fn get_cached_diff_analysis_sync(
 }
 
 /// Get recent diff analyses for a project (sync version for pool.interact())
+///
+/// Uses UNION ALL instead of OR for index-friendly project scoping.
 pub fn get_recent_diff_analyses_sync(
     conn: &Connection,
     project_id: Option<i64>,
     limit: usize,
 ) -> rusqlite::Result<Vec<DiffAnalysis>> {
-    let sql = "SELECT id, project_id, from_commit, to_commit, analysis_type,
-                      changes_json, impact_json, risk_json, summary,
-                      files_changed, lines_added, lines_removed, status, created_at,
-                      files_json
-               FROM diff_analyses
-               WHERE project_id = ? OR project_id IS NULL
-               ORDER BY created_at DESC
-               LIMIT ?";
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![project_id, limit as i64], parse_diff_analysis_row)?;
-    rows.collect()
+    let cols = "id, project_id, from_commit, to_commit, analysis_type, \
+                changes_json, impact_json, risk_json, summary, \
+                files_changed, lines_added, lines_removed, status, created_at, \
+                files_json";
+    let lim = limit as i64;
+    match project_id {
+        Some(pid) => {
+            let sql = format!(
+                "SELECT {cols} FROM diff_analyses WHERE project_id = ?1 \
+                 UNION ALL \
+                 SELECT {cols} FROM diff_analyses WHERE project_id IS NULL \
+                 ORDER BY created_at DESC LIMIT ?2"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![pid, lim], parse_diff_analysis_row)?;
+            rows.collect()
+        }
+        None => {
+            let sql = format!(
+                "SELECT {cols} FROM diff_analyses WHERE project_id IS NULL \
+                 ORDER BY created_at DESC LIMIT ?1"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![lim], parse_diff_analysis_row)?;
+            rows.collect()
+        }
+    }
 }

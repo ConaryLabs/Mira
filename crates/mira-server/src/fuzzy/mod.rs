@@ -205,28 +205,41 @@ impl FuzzyCache {
         let project_id_for_query = project_id;
         let items: Vec<FuzzyMemoryItem> = pool
             .run(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, project_id, content, fact_type, category, scope, user_id, team_id
-                     FROM memory_facts
-                     WHERE project_id = ? OR project_id IS NULL
-                     LIMIT ?",
-                )?;
-                let rows = stmt.query_map(
-                    params![project_id_for_query, MAX_MEMORY_ITEMS as i64],
-                    |row| {
-                        Ok(FuzzyMemoryItem {
-                            id: row.get(0)?,
-                            project_id: row.get(1)?,
-                            content: row.get(2)?,
-                            fact_type: row.get(3)?,
-                            category: row.get(4)?,
-                            scope: row.get(5)?,
-                            user_id: row.get(6)?,
-                            team_id: row.get(7)?,
-                        })
-                    },
-                )?;
-                rows.collect::<Result<Vec<_>, _>>()
+                let cols = "id, project_id, content, fact_type, category, scope, user_id, team_id";
+                let parse_row = |row: &rusqlite::Row| {
+                    Ok(FuzzyMemoryItem {
+                        id: row.get(0)?,
+                        project_id: row.get(1)?,
+                        content: row.get(2)?,
+                        fact_type: row.get(3)?,
+                        category: row.get(4)?,
+                        scope: row.get(5)?,
+                        user_id: row.get(6)?,
+                        team_id: row.get(7)?,
+                    })
+                };
+                let lim = MAX_MEMORY_ITEMS as i64;
+                match project_id_for_query {
+                    Some(pid) => {
+                        let sql = format!(
+                            "SELECT {cols} FROM memory_facts WHERE project_id = ?1 \
+                             UNION ALL \
+                             SELECT {cols} FROM memory_facts WHERE project_id IS NULL \
+                             LIMIT ?2"
+                        );
+                        let mut stmt = conn.prepare(&sql)?;
+                        stmt.query_map(params![pid, lim], parse_row)?
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    None => {
+                        let sql = format!(
+                            "SELECT {cols} FROM memory_facts WHERE project_id IS NULL LIMIT ?1"
+                        );
+                        let mut stmt = conn.prepare(&sql)?;
+                        stmt.query_map(params![lim], parse_row)?
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                }
             })
             .await
             .str_err()?;

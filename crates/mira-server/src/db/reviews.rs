@@ -87,6 +87,9 @@ pub fn get_relevant_corrections_sync(
 }
 
 /// Get review findings with optional filters (sync version for pool.interact)
+///
+/// Uses UNION ALL instead of OR for index-friendly project scoping.
+/// Positional params are shared across UNION ALL branches (?2-?4 reused in both).
 pub fn get_findings_sync(
     conn: &Connection,
     project_id: Option<i64>,
@@ -95,28 +98,39 @@ pub fn get_findings_sync(
     file_path: Option<&str>,
     limit: usize,
 ) -> rusqlite::Result<Vec<ReviewFinding>> {
-    // Build dynamic query
-    let mut conditions = vec!["(project_id = ?1 OR project_id IS NULL)"];
+    let cols = "id, project_id, expert_role, file_path, finding_type, severity, \
+                content, code_snippet, suggestion, status, feedback, confidence, \
+                user_id, reviewed_by, session_id, created_at, reviewed_at";
+
+    // Fixed param positions: ?1=project_id, ?2=status, ?3=role, ?4=path, ?5=limit
+    let mut extra = Vec::new();
     if status.is_some() {
-        conditions.push("status = ?2");
+        extra.push("status = ?2");
     }
     if expert_role.is_some() {
-        conditions.push("expert_role = ?3");
+        extra.push("expert_role = ?3");
     }
     if file_path.is_some() {
-        conditions.push("file_path = ?4");
+        extra.push("file_path = ?4");
     }
+    let extra_clause = if extra.is_empty() {
+        String::new()
+    } else {
+        format!(" AND {}", extra.join(" AND "))
+    };
 
-    let sql = format!(
-        "SELECT id, project_id, expert_role, file_path, finding_type, severity,
-                content, code_snippet, suggestion, status, feedback, confidence,
-                user_id, reviewed_by, session_id, created_at, reviewed_at
-         FROM review_findings
-         WHERE {}
-         ORDER BY created_at DESC
-         LIMIT ?5",
-        conditions.join(" AND ")
-    );
+    let sql = match project_id {
+        Some(_) => format!(
+            "SELECT {cols} FROM review_findings WHERE project_id = ?1{extra_clause} \
+             UNION ALL \
+             SELECT {cols} FROM review_findings WHERE project_id IS NULL{extra_clause} \
+             ORDER BY created_at DESC LIMIT ?5"
+        ),
+        None => format!(
+            "SELECT {cols} FROM review_findings WHERE project_id IS NULL{extra_clause} \
+             ORDER BY created_at DESC LIMIT ?5"
+        ),
+    };
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
@@ -152,19 +166,36 @@ pub fn get_finding_sync(
 }
 
 /// Get statistics about review findings (sync version for pool.interact)
+///
+/// Uses UNION ALL subquery instead of OR for index-friendly project scoping.
 pub fn get_finding_stats_sync(
     conn: &Connection,
     project_id: Option<i64>,
 ) -> rusqlite::Result<(i64, i64, i64, i64)> {
-    let sql = "SELECT
-                   SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                   SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
-                   SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-                   SUM(CASE WHEN status = 'fixed' THEN 1 ELSE 0 END) as fixed
-               FROM review_findings
-               WHERE project_id = ? OR project_id IS NULL";
+    let sql = match project_id {
+        Some(_) => {
+            "SELECT \
+                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN status = 'fixed' THEN 1 ELSE 0 END) \
+             FROM ( \
+                 SELECT status FROM review_findings WHERE project_id = ?1 \
+                 UNION ALL \
+                 SELECT status FROM review_findings WHERE project_id IS NULL \
+             )"
+        }
+        None => {
+            "SELECT \
+                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN status = 'fixed' THEN 1 ELSE 0 END) \
+             FROM review_findings WHERE project_id IS NULL"
+        }
+    };
 
-    conn.query_row(sql, [project_id], |row| {
+    conn.query_row(sql, params![project_id], |row| {
         Ok((
             row.get::<_, Option<i64>>(0)?.unwrap_or(0),
             row.get::<_, Option<i64>>(1)?.unwrap_or(0),
@@ -224,67 +255,78 @@ pub fn bulk_update_finding_status_sync(
 }
 
 /// Extract patterns from accepted findings (sync version for pool.interact)
+///
+/// Uses UNION ALL instead of OR for index-friendly project scoping.
 pub fn extract_patterns_from_findings_sync(
     conn: &Connection,
     project_id: Option<i64>,
 ) -> rusqlite::Result<usize> {
     // Find accepted findings that could become patterns
-    let sql = "SELECT finding_type, content, MAX(suggestion), COUNT(*) as cnt
-               FROM review_findings
-               WHERE (project_id = ? OR project_id IS NULL)
-                     AND status = 'accepted'
-                     AND suggestion IS NOT NULL
-               GROUP BY finding_type, content
-               HAVING cnt >= 2
-               ORDER BY cnt DESC
-               LIMIT 50";
+    let sql = match project_id {
+        Some(_) => {
+            "SELECT finding_type, content, MAX(suggestion), COUNT(*) as cnt FROM ( \
+                 SELECT finding_type, content, suggestion FROM review_findings \
+                     WHERE project_id = ?1 AND status = 'accepted' AND suggestion IS NOT NULL \
+                 UNION ALL \
+                 SELECT finding_type, content, suggestion FROM review_findings \
+                     WHERE project_id IS NULL AND status = 'accepted' AND suggestion IS NOT NULL \
+             ) GROUP BY finding_type, content HAVING cnt >= 2 ORDER BY cnt DESC LIMIT 50"
+        }
+        None => {
+            "SELECT finding_type, content, MAX(suggestion), COUNT(*) as cnt \
+             FROM review_findings \
+             WHERE project_id IS NULL AND status = 'accepted' AND suggestion IS NOT NULL \
+             GROUP BY finding_type, content HAVING cnt >= 2 ORDER BY cnt DESC LIMIT 50"
+        }
+    };
 
     let mut stmt = conn.prepare(sql)?;
     let patterns: Vec<(String, String, String, i64)> = stmt
-        .query_map([project_id], |row| {
+        .query_map(params![project_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
         .filter_map(super::log_and_discard)
         .collect();
 
     let mut created = 0;
+    // Exists check + update: use project_id = ?1 UNION ALL project_id IS NULL
+    let exists_sql = match project_id {
+        Some(_) => {
+            "SELECT 1 FROM corrections WHERE project_id = ?1 AND what_was_wrong = ?2 \
+             UNION ALL \
+             SELECT 1 FROM corrections WHERE project_id IS NULL AND what_was_wrong = ?2 \
+             LIMIT 1"
+        }
+        None => "SELECT 1 FROM corrections WHERE project_id IS NULL AND what_was_wrong = ?2 LIMIT 1",
+    };
+    let update_sql = match project_id {
+        Some(_) => {
+            "UPDATE corrections SET occurrence_count = occurrence_count + ?1 \
+             WHERE (project_id = ?2 OR project_id IS NULL) AND what_was_wrong = ?3"
+        }
+        None => {
+            "UPDATE corrections SET occurrence_count = occurrence_count + ?1 \
+             WHERE project_id IS NULL AND what_was_wrong = ?3"
+        }
+    };
+
     for (finding_type, content, suggestion, count) in patterns {
-        // Check if this pattern already exists
         let exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM corrections
-                 WHERE (project_id = ? OR project_id IS NULL)
-                       AND what_was_wrong = ?",
-                params![project_id, &content],
-                |_| Ok(true),
-            )
+            .query_row(exists_sql, params![project_id, &content], |_| Ok(true))
             .unwrap_or(false);
 
         if !exists {
-            // Create new correction
             let confidence = (count as f64 / 10.0).min(1.0);
             conn.execute(
                 "INSERT INTO corrections (
                     project_id, what_was_wrong, what_is_right, correction_type,
                     scope, confidence, occurrence_count, acceptance_rate
                 ) VALUES (?, ?, ?, ?, 'project', ?, ?, 1.0)",
-                params![
-                    project_id,
-                    &content,
-                    &suggestion,
-                    &finding_type,
-                    confidence,
-                    count
-                ],
+                params![project_id, &content, &suggestion, &finding_type, confidence, count],
             )?;
             created += 1;
         } else {
-            conn.execute(
-                "UPDATE corrections
-                 SET occurrence_count = occurrence_count + ?
-                 WHERE (project_id = ? OR project_id IS NULL) AND what_was_wrong = ?",
-                params![count, project_id, &content],
-            )?;
+            conn.execute(update_sql, params![count, project_id, &content])?;
         }
     }
 

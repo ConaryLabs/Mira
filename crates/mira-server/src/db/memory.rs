@@ -580,23 +580,30 @@ pub fn delete_memory_sync(conn: &rusqlite::Connection, id: i64) -> rusqlite::Res
 
 /// Get memory statistics for a project (sync version for pool.interact())
 /// Returns (candidate_count, confirmed_count)
+///
+/// Uses scalar subqueries instead of OR to let each COUNT hit the index directly.
 pub fn get_memory_stats_sync(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
 ) -> rusqlite::Result<(i64, i64)> {
-    let candidates: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM memory_facts WHERE (project_id = ? OR project_id IS NULL) AND status = 'candidate'",
-        rusqlite::params![project_id],
-        |row| row.get(0),
-    )?;
-
-    let confirmed: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM memory_facts WHERE (project_id = ? OR project_id IS NULL) AND status = 'confirmed'",
-        rusqlite::params![project_id],
-        |row| row.get(0),
-    )?;
-
-    Ok((candidates, confirmed))
+    match project_id {
+        Some(pid) => conn.query_row(
+            "SELECT \
+                 (SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1 AND status = 'candidate') + \
+                 (SELECT COUNT(*) FROM memory_facts WHERE project_id IS NULL AND status = 'candidate'), \
+                 (SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1 AND status = 'confirmed') + \
+                 (SELECT COUNT(*) FROM memory_facts WHERE project_id IS NULL AND status = 'confirmed')",
+            rusqlite::params![pid],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ),
+        None => conn.query_row(
+            "SELECT \
+                 (SELECT COUNT(*) FROM memory_facts WHERE project_id IS NULL AND status = 'candidate'), \
+                 (SELECT COUNT(*) FROM memory_facts WHERE project_id IS NULL AND status = 'confirmed')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ),
+    }
 }
 
 /// Get preferences for a project (sync version for pool.interact())

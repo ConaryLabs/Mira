@@ -419,16 +419,28 @@ pub fn map_files_to_symbols_sync(
     let mut symbols = Vec::new();
 
     for file in changed_files {
-        let mut stmt = match conn.prepare(
-            "SELECT name, symbol_type, file_path FROM code_symbols
-             WHERE (project_id = ? OR project_id IS NULL) AND file_path LIKE ?
-             ORDER BY start_line",
-        ) {
+        let file_pattern = format!("%{}", file);
+        let sql = match project_id {
+            Some(_) => {
+                "SELECT name, symbol_type, file_path FROM code_symbols \
+                 WHERE project_id = ?1 AND file_path LIKE ?2 \
+                 UNION ALL \
+                 SELECT name, symbol_type, file_path FROM code_symbols \
+                 WHERE project_id IS NULL AND file_path LIKE ?2 \
+                 ORDER BY start_line"
+            }
+            None => {
+                "SELECT name, symbol_type, file_path FROM code_symbols \
+                 WHERE project_id IS NULL AND file_path LIKE ?2 \
+                 ORDER BY start_line"
+            }
+        };
+
+        let mut stmt = match conn.prepare(sql) {
             Ok(s) => s,
             Err(_) => continue,
         };
 
-        let file_pattern = format!("%{}", file);
         if let Ok(rows) = stmt.query_map(params![project_id, file_pattern], |row| {
             Ok((
                 row.get::<_, String>(0)?,
