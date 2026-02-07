@@ -161,6 +161,18 @@ impl SlowLaneWorker {
                 pondering::process_pondering(&self.pool, client),
             )
             .await;
+
+            // Cleanup stale insights and expired proactive suggestions
+            processed += Self::run_task(
+                "insight cleanup",
+                pondering::cleanup_stale_insights(&self.pool),
+            )
+            .await;
+            processed += Self::run_task(
+                "proactive cleanup",
+                crate::proactive::background::cleanup_expired_suggestions(&self.pool),
+            )
+            .await;
         }
 
         if self.cycle_count.is_multiple_of(OUTCOME_SCAN_CYCLE_INTERVAL) {

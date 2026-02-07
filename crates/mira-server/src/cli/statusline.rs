@@ -76,13 +76,13 @@ fn query_goals(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Count insights (behavior_patterns with insight_* types) from the last 7 days.
+/// Count genuinely new insights (first seen in the last 7 days).
 fn query_insights(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM behavior_patterns \
          WHERE project_id = ?1 \
            AND pattern_type LIKE 'insight_%' \
-           AND updated_at > datetime('now', '-7 days')",
+           AND first_seen_at > datetime('now', '-7 days')",
         [project_id],
         |r| r.get(0),
     )

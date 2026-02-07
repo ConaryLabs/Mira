@@ -20,6 +20,8 @@ use std::sync::Arc;
 /// Minimum number of tool calls needed before pondering
 const MIN_TOOL_CALLS: usize = 10;
 
+pub use storage::cleanup_stale_insights;
+
 /// Process pondering - analyze recent activity for patterns
 pub async fn process_pondering(
     pool: &Arc<DatabasePool>,

@@ -8,6 +8,28 @@ use rusqlite::params;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+/// Delete insights not triggered in the last 30 days.
+pub async fn cleanup_stale_insights(
+    pool: &Arc<DatabasePool>,
+) -> Result<usize, String> {
+    pool.interact(|conn| {
+        let deleted = conn
+            .execute(
+                "DELETE FROM behavior_patterns \
+                 WHERE pattern_type LIKE 'insight_%' \
+                   AND last_triggered_at < datetime('now', '-30 days')",
+                [],
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to cleanup insights: {}", e))?;
+        if deleted > 0 {
+            tracing::info!("Cleaned up {} stale insights", deleted);
+        }
+        Ok(deleted)
+    })
+    .await
+    .str_err()
+}
+
 /// Store insights as behavior patterns
 pub(super) async fn store_insights(
     pool: &Arc<DatabasePool>,
@@ -55,8 +77,7 @@ pub(super) async fn store_insights(
                 ON CONFLICT(project_id, pattern_type, pattern_key) DO UPDATE SET
                     occurrence_count = occurrence_count + 1,
                     confidence = (confidence + excluded.confidence) / 2,
-                    last_triggered_at = datetime('now'),
-                    updated_at = datetime('now')
+                    last_triggered_at = datetime('now')
                 "#,
                 params![
                     project_id,
