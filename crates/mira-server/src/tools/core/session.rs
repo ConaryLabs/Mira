@@ -148,15 +148,17 @@ async fn query_insights<C: ToolContext>(
         .collect();
     if !pondering_descriptions.is_empty() {
         let pool = ctx.pool().clone();
+        let pid = project_id;
         tokio::spawn(async move {
             let _ = pool
                 .run(move |conn| {
                     for desc in &pondering_descriptions {
                         let _ = conn.execute(
                             "UPDATE behavior_patterns SET shown_count = COALESCE(shown_count, 0) + 1
-                             WHERE pattern_type LIKE 'insight_%'
-                               AND json_extract(pattern_data, '$.description') = ?1",
-                            rusqlite::params![desc],
+                             WHERE project_id = ?1
+                               AND pattern_type LIKE 'insight_%'
+                               AND json_extract(pattern_data, '$.description') = ?2",
+                            rusqlite::params![pid, desc],
                         );
                     }
                     Ok::<_, String>(())

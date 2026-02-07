@@ -95,10 +95,15 @@ fn fetch_pondering_insights(
                 (pattern_data, None)
             };
 
-        // Type weight: friction=1.0, tool_chain=0.8, workflow=0.7, focus_area=0.6
+        // Type weight: higher weight = more likely to surface
         let type_weight = match pattern_type.as_str() {
             "insight_friction" => 1.0,
+            "insight_revert_cluster" => 1.0,
+            "insight_fragile_code" => 0.95,
+            "insight_stale_goal" => 0.9,
+            "insight_untested" => 0.85,
             "insight_tool_chain" => 0.8,
+            "insight_session" => 0.75,
             "insight_workflow" => 0.7,
             "insight_focus_area" => 0.6,
             _ => 0.5,

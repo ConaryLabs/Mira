@@ -328,22 +328,29 @@ pub(super) async fn get_recent_revert_clusters(
 
             reverts.sort_by(|a, b| a.1.cmp(&b.1));
 
-            // Simple sliding window: check if first to last is within 48h
-            // For a more sophisticated approach, we'd use actual datetime parsing
-            // but for our purposes the SQL already constrains to 7 days
             let commits: Vec<String> = reverts.iter().map(|(c, _)| c.clone()).collect();
             let count = reverts.len() as i64;
 
-            // Estimate timespan: if all within 7 days, use rough hours
-            // A more precise calculation would parse the timestamps
-            let timespan_hours = if count >= 2 { 48 } else { 0 };
+            // Compute actual timespan from first to last revert timestamp
+            let timespan_hours = if reverts.len() >= 2 {
+                // Timestamps are ISO format "YYYY-MM-DD HH:MM:SS" — lexicographic sort works
+                // Parse to compute actual hour difference
+                let first = &reverts[0].1;
+                let last = &reverts[reverts.len() - 1].1;
+                compute_timespan_hours(first, last)
+            } else {
+                0
+            };
 
-            clusters.push(RevertCluster {
-                module,
-                revert_count: count,
-                timespan_hours,
-                commits,
-            });
+            // Only include as a cluster if reverts are actually clustered (within 48h)
+            if timespan_hours <= 48 {
+                clusters.push(RevertCluster {
+                    module,
+                    revert_count: count,
+                    timespan_hours,
+                    commits,
+                });
+            }
         }
 
         clusters.sort_by(|a, b| b.revert_count.cmp(&a.revert_count));
@@ -551,6 +558,32 @@ pub(super) async fn get_project_insight_data(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+
+/// Compute hours between two ISO timestamps ("YYYY-MM-DD HH:MM:SS").
+/// Returns 0 on parse failure.
+fn compute_timespan_hours(first: &str, last: &str) -> i64 {
+    // Parse "YYYY-MM-DD HH:MM:SS" manually to avoid chrono dependency
+    fn parse_timestamp(s: &str) -> Option<i64> {
+        // Split "2026-01-15 10:30:00" into date and time parts
+        let parts: Vec<&str> = s.trim().splitn(2, |c| c == ' ' || c == 'T').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let date_parts: Vec<i64> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
+        let time_parts: Vec<i64> = parts[1].split(':').filter_map(|p| p.parse().ok()).collect();
+        if date_parts.len() != 3 || time_parts.len() < 2 {
+            return None;
+        }
+        // Rough epoch-ish hours (not accurate for month boundaries, but fine for diffs within days)
+        let hours = date_parts[0] * 8760 + date_parts[1] * 730 + date_parts[2] * 24 + time_parts[0];
+        Some(hours)
+    }
+
+    match (parse_timestamp(first), parse_timestamp(last)) {
+        (Some(a), Some(b)) => (b - a).abs(),
+        _ => 0,
+    }
+}
 
 /// Extract top-level module names from a files_json JSON array.
 /// e.g. `["src/db/pool.rs", "src/db/tasks.rs"]` -> `{"src/db"}`.

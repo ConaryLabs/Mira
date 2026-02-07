@@ -122,12 +122,17 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
     "#,
     )?;
 
-    // Add shown_count and dismissed columns to behavior_patterns
+    // Add shown_count and dismissed columns to behavior_patterns (check independently)
     if !column_exists(conn, "behavior_patterns", "shown_count") {
-        tracing::info!("Adding shown_count and dismissed columns to behavior_patterns");
+        tracing::info!("Adding shown_count column to behavior_patterns");
         conn.execute_batch(
-            "ALTER TABLE behavior_patterns ADD COLUMN shown_count INTEGER DEFAULT 0;
-             ALTER TABLE behavior_patterns ADD COLUMN dismissed INTEGER DEFAULT 0;",
+            "ALTER TABLE behavior_patterns ADD COLUMN shown_count INTEGER DEFAULT 0;",
+        )?;
+    }
+    if !column_exists(conn, "behavior_patterns", "dismissed") {
+        tracing::info!("Adding dismissed column to behavior_patterns");
+        conn.execute_batch(
+            "ALTER TABLE behavior_patterns ADD COLUMN dismissed INTEGER DEFAULT 0;",
         )?;
     }
 
