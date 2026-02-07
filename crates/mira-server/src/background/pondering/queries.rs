@@ -279,7 +279,8 @@ pub(super) async fn get_recent_revert_clusters(
                 SELECT
                     da.files_json,
                     do_out.evidence_commit,
-                    do_out.created_at
+                    do_out.created_at,
+                    CAST(strftime('%s', do_out.created_at) AS INTEGER) AS epoch_secs
                 FROM diff_outcomes do_out
                 JOIN diff_analyses da ON da.id = do_out.diff_analysis_id
                 WHERE do_out.project_id = ?
@@ -296,15 +297,16 @@ pub(super) async fn get_recent_revert_clusters(
                     row.get::<_, Option<String>>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
                 ))
             })
             .map_err(|e| anyhow::anyhow!("Failed to query revert clusters: {}", e))?;
 
-        // Group reverts by module with timestamps
-        let mut module_reverts: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        // Group reverts by module with epoch seconds for accurate timespan
+        let mut module_reverts: HashMap<String, Vec<(String, i64)>> = HashMap::new();
 
         for row in rows {
-            let (files_json, commit, timestamp) =
+            let (files_json, commit, _timestamp, epoch_secs) =
                 row.map_err(|e| anyhow::anyhow!("Row error: {}", e))?;
 
             let modules = extract_modules_from_files_json(&files_json.unwrap_or_default());
@@ -314,7 +316,7 @@ pub(super) async fn get_recent_revert_clusters(
                 module_reverts
                     .entry(module)
                     .or_default()
-                    .push((commit.clone(), timestamp.clone()));
+                    .push((commit.clone(), epoch_secs));
             }
         }
 
@@ -326,21 +328,15 @@ pub(super) async fn get_recent_revert_clusters(
                 continue;
             }
 
-            reverts.sort_by(|a, b| a.1.cmp(&b.1));
+            reverts.sort_by_key(|(_, secs)| *secs);
 
             let commits: Vec<String> = reverts.iter().map(|(c, _)| c.clone()).collect();
             let count = reverts.len() as i64;
 
-            // Compute actual timespan from first to last revert timestamp
-            let timespan_hours = if reverts.len() >= 2 {
-                // Timestamps are ISO format "YYYY-MM-DD HH:MM:SS" — lexicographic sort works
-                // Parse to compute actual hour difference
-                let first = &reverts[0].1;
-                let last = &reverts[reverts.len() - 1].1;
-                compute_timespan_hours(first, last)
-            } else {
-                0
-            };
+            // Compute actual timespan using SQLite-provided epoch seconds
+            let first_secs = reverts[0].1;
+            let last_secs = reverts[reverts.len() - 1].1;
+            let timespan_hours = (last_secs - first_secs) / 3600;
 
             // Only include as a cluster if reverts are actually clustered (within 48h)
             if timespan_hours <= 48 {
@@ -558,32 +554,6 @@ pub(super) async fn get_project_insight_data(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-/// Compute hours between two ISO timestamps ("YYYY-MM-DD HH:MM:SS").
-/// Returns 0 on parse failure.
-fn compute_timespan_hours(first: &str, last: &str) -> i64 {
-    // Parse "YYYY-MM-DD HH:MM:SS" manually to avoid chrono dependency
-    fn parse_timestamp(s: &str) -> Option<i64> {
-        // Split "2026-01-15 10:30:00" into date and time parts
-        let parts: Vec<&str> = s.trim().splitn(2, |c| c == ' ' || c == 'T').collect();
-        if parts.len() != 2 {
-            return None;
-        }
-        let date_parts: Vec<i64> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
-        let time_parts: Vec<i64> = parts[1].split(':').filter_map(|p| p.parse().ok()).collect();
-        if date_parts.len() != 3 || time_parts.len() < 2 {
-            return None;
-        }
-        // Rough epoch-ish hours (not accurate for month boundaries, but fine for diffs within days)
-        let hours = date_parts[0] * 8760 + date_parts[1] * 730 + date_parts[2] * 24 + time_parts[0];
-        Some(hours)
-    }
-
-    match (parse_timestamp(first), parse_timestamp(last)) {
-        (Some(a), Some(b)) => (b - a).abs(),
-        _ => 0,
-    }
-}
 
 /// Extract top-level module names from a files_json JSON array.
 /// e.g. `["src/db/pool.rs", "src/db/tasks.rs"]` -> `{"src/db"}`.
