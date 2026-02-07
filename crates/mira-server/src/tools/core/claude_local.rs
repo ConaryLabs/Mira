@@ -979,17 +979,20 @@ mod tests {
 
     #[test]
     fn test_get_auto_memory_dir_various_paths() {
+        // Normalize to forward slashes for cross-platform comparison
+        let normalize = |p: PathBuf| p.to_string_lossy().replace('\\', "/");
+
         // Root path
-        let dir = get_auto_memory_dir("/");
-        assert!(dir.to_string_lossy().contains("/-/memory"));
+        let dir = normalize(get_auto_memory_dir("/"));
+        assert!(dir.contains("/-/memory"));
 
         // Nested path
-        let dir = get_auto_memory_dir("/usr/local/src/myproject");
-        assert!(dir.to_string_lossy().contains("-usr-local-src-myproject"));
+        let dir = normalize(get_auto_memory_dir("/usr/local/src/myproject"));
+        assert!(dir.contains("-usr-local-src-myproject"));
 
         // Path with trailing slash (shouldn't happen but handle gracefully)
-        let dir = get_auto_memory_dir("/home/user/project/");
-        assert!(dir.to_string_lossy().contains("-home-user-project-"));
+        let dir = normalize(get_auto_memory_dir("/home/user/project/"));
+        assert!(dir.contains("-home-user-project-"));
     }
 
     #[test]

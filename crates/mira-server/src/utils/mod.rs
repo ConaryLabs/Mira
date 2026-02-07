@@ -31,9 +31,12 @@ impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
     }
 }
 
-/// Convert a Path to an owned String, replacing invalid UTF-8 with U+FFFD.
+/// Convert a Path to an owned String with forward slashes.
+///
+/// Normalizes backslashes to forward slashes for cross-platform consistency.
+/// Paths are stored and compared using Unix-style separators internally.
 pub fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// Get a path relative to a base, falling back to the original path if not a prefix.
