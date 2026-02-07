@@ -268,6 +268,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status_created ON tasks(project_id, status, created_at DESC, id DESC);
 
 -- =======================================
 -- PERMISSIONS

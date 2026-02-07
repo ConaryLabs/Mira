@@ -40,19 +40,38 @@ pub fn parse_goal_row(row: &rusqlite::Row) -> rusqlite::Result<Goal> {
 // Sync functions for pool.interact() usage
 
 /// Get pending tasks (sync version for pool.interact)
+///
+/// Uses UNION ALL instead of OR to let SQLite use the compound index on each
+/// branch independently, avoiding temp-sort and OR-planning overhead.
 pub fn get_pending_tasks_sync(
     conn: &Connection,
     project_id: Option<i64>,
     limit: usize,
 ) -> Result<Vec<Task>> {
-    let sql = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
-               FROM tasks
-               WHERE (project_id = ? OR project_id IS NULL) AND status != 'completed'
-               ORDER BY created_at DESC, id DESC
-               LIMIT ?";
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![project_id, limit as i64], parse_task_row)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    let cols = "id, project_id, goal_id, title, description, status, priority, created_at";
+    let lim = limit as i64;
+    match project_id {
+        Some(pid) => {
+            let sql = format!(
+                "SELECT {cols} FROM tasks WHERE project_id = ?1 AND status != 'completed' \
+                 UNION ALL \
+                 SELECT {cols} FROM tasks WHERE project_id IS NULL AND status != 'completed' \
+                 ORDER BY created_at DESC, id DESC LIMIT ?2"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![pid, lim], parse_task_row)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        }
+        None => {
+            let sql = format!(
+                "SELECT {cols} FROM tasks WHERE project_id IS NULL AND status != 'completed' \
+                 ORDER BY created_at DESC, id DESC LIMIT ?1"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![lim], parse_task_row)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        }
+    }
 }
 
 /// Get a task by ID (sync version for pool.interact)
@@ -65,19 +84,37 @@ pub fn get_task_by_id_sync(conn: &Connection, id: i64) -> Result<Option<Task>> {
 }
 
 /// Get active goals (sync version for pool.interact)
+///
+/// Uses UNION ALL instead of OR for index-friendly project scoping.
 pub fn get_active_goals_sync(
     conn: &Connection,
     project_id: Option<i64>,
     limit: usize,
 ) -> Result<Vec<Goal>> {
-    let sql = "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
-               FROM goals
-               WHERE (project_id = ? OR project_id IS NULL) AND status NOT IN ('completed', 'abandoned')
-               ORDER BY created_at DESC, id DESC
-               LIMIT ?";
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![project_id, limit as i64], parse_goal_row)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    let cols = "id, project_id, title, description, status, priority, progress_percent, created_at";
+    let lim = limit as i64;
+    match project_id {
+        Some(pid) => {
+            let sql = format!(
+                "SELECT {cols} FROM goals WHERE project_id = ?1 AND status NOT IN ('completed', 'abandoned') \
+                 UNION ALL \
+                 SELECT {cols} FROM goals WHERE project_id IS NULL AND status NOT IN ('completed', 'abandoned') \
+                 ORDER BY created_at DESC, id DESC LIMIT ?2"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![pid, lim], parse_goal_row)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        }
+        None => {
+            let sql = format!(
+                "SELECT {cols} FROM goals WHERE project_id IS NULL AND status NOT IN ('completed', 'abandoned') \
+                 ORDER BY created_at DESC, id DESC LIMIT ?1"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![lim], parse_goal_row)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        }
+    }
 }
 
 /// Create a new task (sync version for pool.interact)
@@ -100,28 +137,49 @@ pub fn create_task_sync(
 }
 
 /// Get tasks with optional status filter (sync version for pool.interact)
+///
+/// Uses UNION ALL instead of OR for index-friendly project scoping.
 pub fn get_tasks_sync(
     conn: &Connection,
     project_id: Option<i64>,
     status_filter: Option<&str>,
 ) -> rusqlite::Result<Vec<Task>> {
     let sf = super::StatusFilter::parse(status_filter);
-    let base = "SELECT id, project_id, goal_id, title, description, status, priority, created_at
-                FROM tasks WHERE (project_id = ? OR project_id IS NULL)";
-    let sql = match sf.value {
-        Some(_) => format!(
-            "{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100",
-            base,
-            sf.sql_op()
-        ),
-        None => format!("{} ORDER BY created_at DESC, id DESC LIMIT 100", base),
+    let cols = "id, project_id, goal_id, title, description, status, priority, created_at";
+    let status_clause = match sf.value {
+        Some(_) => format!(" AND status {} ?", sf.sql_op()),
+        None => String::new(),
     };
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = match sf.value {
-        Some(status) => stmt.query_map(params![project_id, status], parse_task_row)?,
-        None => stmt.query_map(params![project_id], parse_task_row)?,
-    };
-    rows.collect()
+    let tail = "ORDER BY created_at DESC, id DESC LIMIT 100";
+
+    match project_id {
+        Some(pid) => {
+            let sql = format!(
+                "SELECT {cols} FROM tasks WHERE project_id = ?1{status_clause} \
+                 UNION ALL \
+                 SELECT {cols} FROM tasks WHERE project_id IS NULL{status_clause} \
+                 {tail}"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = match sf.value {
+                Some(status) => stmt.query_map(params![pid, status, status], parse_task_row)?,
+                None => stmt.query_map(params![pid], parse_task_row)?,
+            };
+            rows.collect()
+        }
+        None => {
+            let sql = format!(
+                "SELECT {cols} FROM tasks WHERE project_id IS NULL{status_clause} \
+                 {tail}"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = match sf.value {
+                Some(status) => stmt.query_map(params![status], parse_task_row)?,
+                None => stmt.query_map([], parse_task_row)?,
+            };
+            rows.collect()
+        }
+    }
 }
 
 /// Update a task (sync version for pool.interact)
@@ -190,29 +248,49 @@ pub fn create_goal_sync(
 }
 
 /// Get goals with optional status filter (sync version for pool.interact)
+///
+/// Uses UNION ALL instead of OR for index-friendly project scoping.
 pub fn get_goals_sync(
     conn: &Connection,
     project_id: Option<i64>,
     status_filter: Option<&str>,
 ) -> rusqlite::Result<Vec<Goal>> {
     let sf = super::StatusFilter::parse(status_filter);
-    let base =
-        "SELECT id, project_id, title, description, status, priority, progress_percent, created_at
-                FROM goals WHERE (project_id = ? OR project_id IS NULL)";
-    let sql = match sf.value {
-        Some(_) => format!(
-            "{} AND status {} ? ORDER BY created_at DESC, id DESC LIMIT 100",
-            base,
-            sf.sql_op()
-        ),
-        None => format!("{} ORDER BY created_at DESC, id DESC LIMIT 100", base),
+    let cols = "id, project_id, title, description, status, priority, progress_percent, created_at";
+    let status_clause = match sf.value {
+        Some(_) => format!(" AND status {} ?", sf.sql_op()),
+        None => String::new(),
     };
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = match sf.value {
-        Some(status) => stmt.query_map(params![project_id, status], parse_goal_row)?,
-        None => stmt.query_map(params![project_id], parse_goal_row)?,
-    };
-    rows.collect()
+    let tail = "ORDER BY created_at DESC, id DESC LIMIT 100";
+
+    match project_id {
+        Some(pid) => {
+            let sql = format!(
+                "SELECT {cols} FROM goals WHERE project_id = ?1{status_clause} \
+                 UNION ALL \
+                 SELECT {cols} FROM goals WHERE project_id IS NULL{status_clause} \
+                 {tail}"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = match sf.value {
+                Some(status) => stmt.query_map(params![pid, status, status], parse_goal_row)?,
+                None => stmt.query_map(params![pid], parse_goal_row)?,
+            };
+            rows.collect()
+        }
+        None => {
+            let sql = format!(
+                "SELECT {cols} FROM goals WHERE project_id IS NULL{status_clause} \
+                 {tail}"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = match sf.value {
+                Some(status) => stmt.query_map(params![status], parse_goal_row)?,
+                None => stmt.query_map([], parse_goal_row)?,
+            };
+            rows.collect()
+        }
+    }
 }
 
 /// Update a goal (sync version for pool.interact)
