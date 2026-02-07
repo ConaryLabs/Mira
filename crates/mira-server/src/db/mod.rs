@@ -116,7 +116,7 @@ pub use memory::{
     find_facts_without_embeddings_sync,
     get_base_persona_sync,
     get_global_memories_sync,
-    get_health_alerts_sync as get_health_alerts_memory_sync,
+    get_health_alerts_sync as get_health_alerts_memory_sync, // alias for callers using the old 3-param signature
     get_memory_metadata_sync,
     get_memory_scope_sync,
     get_memory_stats_sync,
@@ -186,6 +186,18 @@ pub use usage::{
 
 // All database access goes through DatabasePool (db::pool).
 // All functions are available as _sync variants that take &Connection directly.
+
+/// Filter-map helper that logs row parse errors instead of silently swallowing them.
+/// Use in place of `.filter_map(|r| r.ok())` on query_map iterators.
+pub(crate) fn log_and_discard<T>(result: rusqlite::Result<T>) -> Option<T> {
+    match result {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!("Row parse error: {}", e);
+            None
+        }
+    }
+}
 
 /// Shared SQL fragment for ordering by priority (urgent > high > medium > low > rest).
 /// Append to ORDER BY clauses to keep priority ranking consistent across modules.

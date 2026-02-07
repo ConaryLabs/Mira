@@ -3,6 +3,8 @@
 
 use rusqlite::{Connection, params};
 
+use super::log_and_discard;
+
 /// A tech debt score for a module
 pub struct TechDebtScore {
     pub module_id: String,
@@ -70,7 +72,7 @@ pub fn get_debt_scores_sync(
                 finding_count: row.get(6)?,
             })
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(scores)
@@ -91,7 +93,7 @@ pub fn get_debt_summary_sync(
         .query_map(params![project_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(summary)

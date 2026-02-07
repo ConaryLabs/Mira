@@ -74,7 +74,7 @@ pub fn analyze_diff_heuristic(
         }
 
         let content = &line[1..];
-        let file_path = current_file.clone().unwrap_or_default();
+        let file_path = current_file.as_deref().unwrap_or("");
 
         // Detect function definitions in changed lines
         for pattern in FUNCTION_PATTERNS {
@@ -94,7 +94,7 @@ pub fn analyze_diff_heuristic(
                 if !already_exists {
                     changes.push(SemanticChange {
                         change_type: change_type.to_string(),
-                        file_path: file_path.clone(),
+                        file_path: file_path.to_string(),
                         symbol_name: Some(symbol_name),
                         description: format!(
                             "{} {}",

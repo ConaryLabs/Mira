@@ -348,7 +348,7 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
                 .ok()?;
 
             // Cache for future calls
-            let _ = write_team_membership_pub(session_id, &membership);
+            let _ = crate::hooks::session::write_team_membership(session_id, &membership);
             eprintln!(
                 "[mira] Lazy team detection: {} (team_id: {})",
                 membership.team_name, membership.team_id
@@ -441,15 +441,3 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
     }
 }
 
-/// Write team membership (public wrapper for lazy detection).
-fn write_team_membership_pub(
-    session_id: &str,
-    membership: &crate::hooks::session::TeamMembership,
-) -> Result<()> {
-    let path = crate::hooks::session::team_file_path_for_session(session_id);
-    let json = serde_json::to_string(membership)?;
-    let temp_path = path.with_extension("tmp");
-    std::fs::write(&temp_path, &json)?;
-    std::fs::rename(&temp_path, &path)?;
-    Ok(())
-}

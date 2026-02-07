@@ -65,6 +65,46 @@ fn is_sqlite_contention(err: &str) -> bool {
         || err.contains("SQLITE_LOCKED")
 }
 
+/// Retry delays for SQLite contention backoff (100ms, 500ms, 2s).
+const RETRY_DELAYS: [std::time::Duration; 3] = [
+    std::time::Duration::from_millis(100),
+    std::time::Duration::from_millis(500),
+    std::time::Duration::from_millis(2000),
+];
+
+/// Generic retry-with-backoff for async operations that may encounter SQLite contention.
+///
+/// Calls `op` up to `RETRY_DELAYS.len() + 1` times, sleeping between retries when
+/// `is_retryable` returns true for the error.
+async fn retry_with_backoff<F, Fut, R, E>(mut op: F, is_retryable: impl Fn(&E) -> bool) -> Result<R, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<R, E>>,
+    E: std::fmt::Display,
+{
+    for (attempt, delay) in RETRY_DELAYS.iter().enumerate() {
+        match op().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                if is_retryable(&e) {
+                    tracing::warn!(
+                        "SQLite contention on attempt {}/{}, retrying in {:?}",
+                        attempt + 1,
+                        RETRY_DELAYS.len(),
+                        delay
+                    );
+                    tokio::time::sleep(*delay).await;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    // Final attempt (no retry after this)
+    op().await
+}
+
 /// Database pool wrapper with sqlite-vec support and per-connection setup.
 ///
 /// Connection pool that scales for concurrent access.
@@ -263,33 +303,11 @@ impl DatabasePool {
         R: Send + 'static,
         E: std::fmt::Display + Send + 'static,
     {
-        let delays = [
-            std::time::Duration::from_millis(100),
-            std::time::Duration::from_millis(500),
-            std::time::Duration::from_millis(2000),
-        ];
-
-        for (attempt, delay) in delays.iter().enumerate() {
+        retry_with_backoff(|| {
             let f_clone = f.clone();
-            match self.run(f_clone).await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    if is_sqlite_contention(&e) {
-                        tracing::warn!(
-                            "SQLite contention on attempt {}/{}, retrying in {:?}",
-                            attempt + 1,
-                            delays.len(),
-                            delay
-                        );
-                        tokio::time::sleep(*delay).await;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            }
-        }
-
-        self.run(f).await
+            self.run(f_clone)
+        }, |e| is_sqlite_contention(e))
+        .await
     }
 
     /// Run a closure with retry on SQLite contention errors.
@@ -301,35 +319,11 @@ impl DatabasePool {
         F: FnOnce(&Connection) -> Result<R> + Send + Clone + 'static,
         R: Send + 'static,
     {
-        let delays = [
-            std::time::Duration::from_millis(100),
-            std::time::Duration::from_millis(500),
-            std::time::Duration::from_millis(2000),
-        ];
-
-        for (attempt, delay) in delays.iter().enumerate() {
+        retry_with_backoff(|| {
             let f_clone = f.clone();
-            match self.interact(f_clone).await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    let err_str = e.to_string();
-                    if is_sqlite_contention(&err_str) {
-                        tracing::warn!(
-                            "SQLite contention on attempt {}/{}, retrying in {:?}",
-                            attempt + 1,
-                            delays.len(),
-                            delay
-                        );
-                        tokio::time::sleep(*delay).await;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            }
-        }
-
-        // Final attempt (no retry after this)
-        self.interact(f).await
+            self.interact(f_clone)
+        }, |e| is_sqlite_contention(&e.to_string()))
+        .await
     }
 
     /// Get the database file path (None for in-memory).

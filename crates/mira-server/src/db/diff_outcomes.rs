@@ -97,35 +97,19 @@ pub fn get_outcomes_by_project_sync(
     outcome_type: Option<&str>,
     limit: usize,
 ) -> rusqlite::Result<Vec<DiffOutcome>> {
-    match outcome_type {
-        Some(otype) => {
-            let sql = "SELECT id, diff_analysis_id, project_id, outcome_type,
-                              evidence_commit, evidence_message,
-                              time_to_outcome_seconds, detected_by, created_at
-                       FROM diff_outcomes
-                       WHERE project_id = ? AND outcome_type = ?
-                       ORDER BY created_at DESC
-                       LIMIT ?";
-            let mut stmt = conn.prepare(sql)?;
-            let rows = stmt.query_map(
-                params![project_id, otype, limit as i64],
-                parse_diff_outcome_row,
-            )?;
-            rows.collect()
-        }
-        None => {
-            let sql = "SELECT id, diff_analysis_id, project_id, outcome_type,
-                              evidence_commit, evidence_message,
-                              time_to_outcome_seconds, detected_by, created_at
-                       FROM diff_outcomes
-                       WHERE project_id = ?
-                       ORDER BY created_at DESC
-                       LIMIT ?";
-            let mut stmt = conn.prepare(sql)?;
-            let rows = stmt.query_map(params![project_id, limit as i64], parse_diff_outcome_row)?;
-            rows.collect()
-        }
-    }
+    let sql = "SELECT id, diff_analysis_id, project_id, outcome_type,
+                      evidence_commit, evidence_message,
+                      time_to_outcome_seconds, detected_by, created_at
+               FROM diff_outcomes
+               WHERE project_id = ?1 AND (?2 IS NULL OR outcome_type = ?2)
+               ORDER BY created_at DESC
+               LIMIT ?3";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(
+        params![project_id, outcome_type, limit as i64],
+        parse_diff_outcome_row,
+    )?;
+    rows.collect()
 }
 
 /// Mark aged diff analyses as having clean outcomes (no issues detected).

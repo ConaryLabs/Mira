@@ -294,16 +294,25 @@ impl MiraServer {
     }
 }
 
+/// Result of submitting a task to the operation processor.
+pub(crate) struct EnqueuedTask {
+    pub task_id: String,
+    pub tool_name: String,
+    pub created_at: String,
+    pub ttl: u64,
+}
+
 impl MiraServer {
-    /// Auto-enqueue a task-eligible tool call via the OperationProcessor.
-    /// Returns a CallToolResult immediately with the task ID so the client can poll.
-    pub(crate) async fn auto_enqueue_task(
+    /// Shared logic for submitting a tool call as an async task.
+    /// Generates a task ID, builds the execution future, and submits to the processor.
+    /// Used by both `auto_enqueue_task` (call_tool path) and `enqueue_task` (native tasks).
+    pub(crate) async fn submit_tool_task(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
         tool_name: &str,
         ttl: u64,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<EnqueuedTask, ErrorData> {
         let task_id = uuid::Uuid::new_v4().to_string();
         let now = task_manager::current_timestamp();
 
@@ -331,28 +340,49 @@ impl MiraServer {
             ErrorData::internal_error(format!("Failed to enqueue task: {}", e), None)
         })?;
 
+        Ok(EnqueuedTask {
+            task_id,
+            tool_name: tn,
+            created_at: now,
+            ttl,
+        })
+    }
+
+    /// Auto-enqueue a task-eligible tool call via the OperationProcessor.
+    /// Returns a CallToolResult immediately with the task ID so the client can poll.
+    pub(crate) async fn auto_enqueue_task(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+        tool_name: &str,
+        ttl: u64,
+    ) -> Result<CallToolResult, ErrorData> {
+        let enqueued = self
+            .submit_tool_task(request, context, tool_name, ttl)
+            .await?;
+
         tracing::info!(
-            task_id = %task_id,
-            tool = %tn,
-            ttl_secs = ttl,
+            task_id = %enqueued.task_id,
+            tool = %enqueued.tool_name,
+            ttl_secs = enqueued.ttl,
             "Auto-enqueued async task (client used call_tool)"
         );
 
         let poll_hint = format!(
             "session(action=\"tasks\", tasks_action=\"get\", task_id=\"{}\")",
-            task_id
+            enqueued.task_id
         );
         Ok(CallToolResult {
             content: vec![Content::text(format!(
                 "Task {} started. Check status with: {}",
-                task_id, poll_hint
+                enqueued.task_id, poll_hint
             ))],
             structured_content: Some(serde_json::json!({
-                "task_id": task_id,
+                "task_id": enqueued.task_id,
                 "status": "working",
-                "message": format!("Running {} asynchronously", tn),
+                "message": format!("Running {} asynchronously", enqueued.tool_name),
                 "poll_with": poll_hint,
-                "created_at": now,
+                "created_at": enqueued.created_at,
             })),
             is_error: Some(false),
             meta: None,

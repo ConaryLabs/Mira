@@ -14,7 +14,7 @@ use rmcp::{
         TaskResult as ModelTaskResult, TaskStatus, TasksCapability,
     },
     service::{RequestContext, RoleServer},
-    task_manager::{self, OperationDescriptor, OperationMessage, ToolCallTaskResult},
+    task_manager::ToolCallTaskResult,
 };
 
 /// Extract the "action" field from tool arguments and look up the task TTL.
@@ -112,49 +112,25 @@ impl ServerHandler for MiraServer {
                 }
             };
 
-            // Generate task ID
-            let task_id = uuid::Uuid::new_v4().to_string();
-            let now = task_manager::current_timestamp();
-
-            // Strip the `task` field to prevent re-enqueue loops
-            let mut clean_request = request;
-            clean_request.task = None;
-
-            // Build the async future that calls run_tool_call
-            let server = self.clone();
-            let ctx = context.clone();
-            let tid = task_id.clone();
-            let future: task_manager::OperationFuture = Box::pin(async move {
-                let result = server.run_tool_call(clean_request, ctx).await;
-                let transport = ToolCallTaskResult::new(tid, result);
-                Ok(Box::new(transport) as Box<dyn task_manager::OperationResultTransport>)
-            });
-
-            // Build descriptor and submit
-            let descriptor =
-                OperationDescriptor::new(task_id.clone(), tool_name.clone()).with_ttl(ttl);
-            let message = OperationMessage::new(descriptor, future);
-
-            let mut proc = self.processor.lock().await;
-            proc.submit_operation(message).map_err(|e| {
-                ErrorData::internal_error(format!("Failed to enqueue task: {}", e), None)
-            })?;
+            let enqueued = self
+                .submit_tool_task(request, context, &tool_name, ttl)
+                .await?;
 
             tracing::info!(
-                task_id = %task_id,
-                tool = %tool_name,
-                ttl_secs = ttl,
+                task_id = %enqueued.task_id,
+                tool = %enqueued.tool_name,
+                ttl_secs = enqueued.ttl,
                 "Enqueued async task"
             );
 
             Ok(CreateTaskResult {
                 task: Task {
-                    task_id,
+                    task_id: enqueued.task_id,
                     status: TaskStatus::Working,
-                    status_message: Some(format!("Running {} asynchronously", tool_name)),
-                    created_at: now,
+                    status_message: Some(format!("Running {} asynchronously", enqueued.tool_name)),
+                    created_at: enqueued.created_at,
                     last_updated_at: None,
-                    ttl: Some(ttl * 1000), // Protocol uses milliseconds
+                    ttl: Some(enqueued.ttl * 1000), // Protocol uses milliseconds
                     poll_interval: Some(2000),
                 },
             })

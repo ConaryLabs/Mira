@@ -4,6 +4,7 @@
 use super::ToolContext;
 use super::prompts::*;
 use crate::llm::PromptBuilder;
+use std::borrow::Cow;
 
 /// Expert roles available for consultation
 #[derive(Debug, Clone)]
@@ -58,29 +59,31 @@ impl ExpertRole {
         format!("{}{}{}", base_prompt, date_context, mcp_context)
     }
 
-    /// Database key for this expert role
-    pub fn db_key(&self) -> String {
+    /// Database key for this expert role.
+    /// Avoids allocation for built-in roles by returning `Cow::Borrowed`.
+    pub fn db_key(&self) -> Cow<'static, str> {
         match self {
-            ExpertRole::Architect => "architect".to_string(),
-            ExpertRole::PlanReviewer => "plan_reviewer".to_string(),
-            ExpertRole::ScopeAnalyst => "scope_analyst".to_string(),
-            ExpertRole::CodeReviewer => "code_reviewer".to_string(),
-            ExpertRole::Security => "security".to_string(),
+            ExpertRole::Architect => "architect".into(),
+            ExpertRole::PlanReviewer => "plan_reviewer".into(),
+            ExpertRole::ScopeAnalyst => "scope_analyst".into(),
+            ExpertRole::CodeReviewer => "code_reviewer".into(),
+            ExpertRole::Security => "security".into(),
             ExpertRole::Custom(name, _) => {
-                format!("custom:{}", name.to_lowercase().replace(' ', "_"))
+                Cow::Owned(format!("custom:{}", name.to_lowercase().replace(' ', "_")))
             }
         }
     }
 
-    /// Display name for this expert
-    pub fn name(&self) -> String {
+    /// Display name for this expert.
+    /// Avoids allocation for built-in roles by returning `Cow::Borrowed`.
+    pub fn name(&self) -> Cow<'static, str> {
         match self {
-            ExpertRole::Architect => "Architect".to_string(),
-            ExpertRole::PlanReviewer => "Plan Reviewer".to_string(),
-            ExpertRole::ScopeAnalyst => "Scope Analyst".to_string(),
-            ExpertRole::CodeReviewer => "Code Reviewer".to_string(),
-            ExpertRole::Security => "Security Analyst".to_string(),
-            ExpertRole::Custom(name, _) => name.clone(),
+            ExpertRole::Architect => "Architect".into(),
+            ExpertRole::PlanReviewer => "Plan Reviewer".into(),
+            ExpertRole::ScopeAnalyst => "Scope Analyst".into(),
+            ExpertRole::CodeReviewer => "Code Reviewer".into(),
+            ExpertRole::Security => "Security Analyst".into(),
+            ExpertRole::Custom(name, _) => Cow::Owned(name.clone()),
         }
     }
 

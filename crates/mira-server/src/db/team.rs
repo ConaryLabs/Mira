@@ -166,7 +166,7 @@ pub fn get_active_team_members_sync(conn: &Connection, team_id: i64) -> Vec<Team
             status: row.get(5)?,
         })
     })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .map(|rows| rows.filter_map(super::log_and_discard).collect())
     .unwrap_or_default()
 }
 
@@ -255,7 +255,7 @@ pub fn get_file_conflicts_sync(
             timestamp: row.get(4)?,
         })
     })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .map(|rows| rows.filter_map(super::log_and_discard).collect())
     .unwrap_or_default()
 }
 
@@ -271,7 +271,7 @@ pub fn get_member_files_sync(conn: &Connection, team_id: i64, session_id: &str) 
     };
 
     stmt.query_map(params![team_id, session_id], |row| row.get::<_, String>(0))
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .map(|rows| rows.filter_map(super::log_and_discard).collect())
         .unwrap_or_default()
 }
 

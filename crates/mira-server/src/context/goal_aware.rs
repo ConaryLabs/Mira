@@ -2,39 +2,34 @@
 // Goal-aware context injection
 
 use crate::db::pool::DatabasePool;
-use crate::db::{get_active_goals_sync, get_milestones_for_goal_sync};
 use std::sync::Arc;
 
 pub struct GoalAwareInjector {
     pool: Arc<DatabasePool>,
-    project_id: Option<i64>,
 }
 
 impl GoalAwareInjector {
     pub fn new(pool: Arc<DatabasePool>) -> Self {
-        Self {
-            pool,
-            project_id: None,
-        }
+        Self { pool }
     }
 
-    /// Set the current project ID for goal queries
-    pub fn set_project_id(&mut self, project_id: Option<i64>) {
-        self.project_id = project_id;
-    }
-
-    /// Get active goal IDs for the current project
-    /// Returns goals with status not in 'completed' or 'abandoned'
+    /// Get active goal IDs (fetches all active goals across all projects)
     pub async fn get_active_goal_ids(&self) -> Vec<i64> {
-        let project_id = self.project_id;
         match self
             .pool
             .interact(move |conn| {
-                get_active_goals_sync(conn, project_id, 10).map_err(|e| anyhow::anyhow!("{}", e))
+                // Query all active goals regardless of project
+                let sql = "SELECT id FROM goals WHERE status NOT IN ('completed', 'abandoned') ORDER BY created_at DESC LIMIT 10";
+                let mut stmt = conn.prepare(sql)?;
+                let ids = stmt
+                    .query_map([], |row| row.get::<_, i64>(0))?
+                    .filter_map(|r| r.ok())
+                    .collect::<Vec<_>>();
+                Ok::<_, anyhow::Error>(ids)
             })
             .await
         {
-            Ok(goals) => goals.into_iter().map(|g| g.id).collect(),
+            Ok(ids) => ids,
             Err(e) => {
                 tracing::debug!("Failed to get active goals: {}", e);
                 Vec::new()
@@ -42,17 +37,35 @@ impl GoalAwareInjector {
         }
     }
 
-    /// Inject context about active goals and their milestones
+    /// Inject context about active goals and their milestones.
+    /// Fetches goal details for the provided `goal_ids`.
     pub async fn inject_goal_context(&self, goal_ids: Vec<i64>) -> String {
         if goal_ids.is_empty() {
             return String::new();
         }
 
-        let project_id = self.project_id;
+        // Fetch goals by their IDs directly
+        let ids = goal_ids.clone();
         let goals = match self
             .pool
             .interact(move |conn| {
-                get_active_goals_sync(conn, project_id, 5).map_err(|e| anyhow::anyhow!("{}", e))
+                let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let sql = format!(
+                    "SELECT id, project_id, title, description, status, priority, progress_percent, created_at \
+                     FROM goals WHERE id IN ({}) AND status NOT IN ('completed', 'abandoned') \
+                     ORDER BY created_at DESC LIMIT 5",
+                    placeholders
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    ids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                let goals = stmt
+                    .query_map(param_refs.as_slice(), crate::db::parse_goal_row)?
+                    .filter_map(|r| r.ok())
+                    .collect::<Vec<_>>();
+                Ok::<_, anyhow::Error>(goals)
             })
             .await
         {
@@ -64,26 +77,54 @@ impl GoalAwareInjector {
             return String::new();
         }
 
+        // Batch-fetch milestones for all goal IDs in one query
+        let gids = goals.iter().map(|g| g.id).collect::<Vec<_>>();
+        let milestones_by_goal = self
+            .pool
+            .interact(move |conn| -> anyhow::Result<std::collections::HashMap<i64, (usize, usize)>> {
+                if gids.is_empty() {
+                    return Ok(std::collections::HashMap::new());
+                }
+                let placeholders: String = gids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let sql = format!(
+                    "SELECT goal_id, completed FROM milestones WHERE goal_id IN ({})",
+                    placeholders
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    gids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?))
+                })?;
+                let mut map: std::collections::HashMap<i64, (usize, usize)> =
+                    std::collections::HashMap::new();
+                for row in rows {
+                    let (gid, completed) = row?;
+                    let entry = map.entry(gid).or_insert((0, 0));
+                    entry.1 += 1; // total
+                    if completed {
+                        entry.0 += 1; // completed
+                    }
+                }
+                Ok(map)
+            })
+            .await
+            .unwrap_or_default();
+
         let mut context = String::new();
         context.push_str("Active goals:\n");
 
-        for goal in goals.iter().take(5) {
-            // Get milestones for this goal
-            let gid = goal.id;
-            let milestones = self
-                .pool
-                .interact(move |conn| {
-                    get_milestones_for_goal_sync(conn, gid).map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .unwrap_or_default();
-
-            let milestone_summary = if milestones.is_empty() {
-                String::new()
+        for goal in &goals {
+            let milestone_summary = if let Some((completed, total)) = milestones_by_goal.get(&goal.id) {
+                if *total > 0 {
+                    format!(" - {}/{} milestones", completed, total)
+                } else {
+                    String::new()
+                }
             } else {
-                let completed = milestones.iter().filter(|m| m.completed).count();
-                let total = milestones.len();
-                format!(" - {}/{} milestones", completed, total)
+                String::new()
             };
 
             context.push_str(&format!(
@@ -143,8 +184,7 @@ mod tests {
             Ok::<_, anyhow::Error>(())
         }).await.unwrap();
 
-        let mut injector = GoalAwareInjector::new(pool);
-        injector.set_project_id(Some(project_id));
+        let injector = GoalAwareInjector::new(pool);
 
         let ids = injector.get_active_goal_ids().await;
         assert_eq!(ids.len(), 2);
@@ -187,8 +227,7 @@ mod tests {
             Ok::<_, anyhow::Error>(())
         }).await.unwrap();
 
-        let mut injector = GoalAwareInjector::new(pool);
-        injector.set_project_id(Some(project_id));
+        let injector = GoalAwareInjector::new(pool);
 
         let context = injector.inject_goal_context(vec![1]).await;
         assert!(context.contains("Feature X"));

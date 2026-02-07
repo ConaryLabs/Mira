@@ -3,6 +3,8 @@
 
 use rusqlite::{Connection, params};
 
+use super::log_and_discard;
+
 /// (id, name, symbol_type, start_line, end_line, signature)
 pub type SymbolRow = (
     i64,
@@ -35,8 +37,8 @@ pub fn get_scan_info_sync(
 /// Check if a time is older than a duration (e.g., '-1 day', '-7 days', '-1 hour')
 pub fn is_time_older_than_sync(conn: &Connection, time: &str, duration: &str) -> bool {
     conn.query_row(
-        &format!("SELECT datetime(?) < datetime('now', '{}')", duration),
-        [time],
+        "SELECT datetime(?1) < datetime('now', ?2)",
+        params![time, duration],
         |row| row.get(0),
     )
     .unwrap_or(false)
@@ -126,7 +128,7 @@ pub fn get_documented_by_category_sync(
 
     let paths = stmt
         .query_map(params![project_id, doc_category], |row| row.get(0))?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(paths)
@@ -147,7 +149,7 @@ pub fn get_lib_symbols_sync(
 
     let symbols = stmt
         .query_map(params![project_id], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(symbols)
@@ -169,7 +171,7 @@ pub fn get_modules_for_doc_gaps_sync(
         .query_map(params![project_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(modules)
@@ -199,7 +201,7 @@ pub fn get_symbols_for_file_sync(
                 row.get(5)?,
             ))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(symbols)
@@ -266,7 +268,7 @@ pub fn get_large_functions_sync(
         .query_map(params![project_id, min_lines], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(results)
@@ -294,7 +296,7 @@ pub fn get_error_heavy_functions_sync(
         .query_map(params![project_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(results)
@@ -397,7 +399,7 @@ pub fn get_unused_functions_sync(
         .query_map(params![project_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(results)
@@ -466,7 +468,7 @@ pub fn get_projects_with_pending_summaries_sync(
 
     let results = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map(|r| r.filter_map(|row| row.ok()).collect())?;
+        .map(|r| r.filter_map(log_and_discard).collect())?;
 
     Ok(results)
 }
@@ -481,7 +483,7 @@ pub fn get_project_ids_needing_summaries_sync(conn: &Connection) -> rusqlite::Re
     )?;
     let ids = stmt
         .query_map([], |row| row.get(0))?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
     Ok(ids)
 }
@@ -501,6 +503,6 @@ pub fn get_permission_rules_sync(conn: &Connection, tool_name: &str) -> Vec<(Str
 
     stmt.query_map([tool_name], |row| Ok((row.get(0)?, row.get(1)?)))
         .ok()
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .map(|rows| rows.filter_map(log_and_discard).collect())
         .unwrap_or_default()
 }

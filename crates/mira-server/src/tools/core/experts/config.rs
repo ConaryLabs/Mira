@@ -99,7 +99,7 @@ pub async fn configure_expert<C: ToolContext>(
                 .await?;
 
             let role_name = expert
-                .map(|e| e.name())
+                .map(|e| e.name().into_owned())
                 .unwrap_or_else(|| "Background Worker".to_string());
             let mut output = format!("Configuration for '{}' ({}):\n", role_key, role_name);
             output.push_str(&format!("  Provider: {}\n", config.provider));

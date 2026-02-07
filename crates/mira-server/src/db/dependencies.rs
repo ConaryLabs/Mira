@@ -65,7 +65,7 @@ pub fn get_module_deps_sync(
                 is_circular: row.get::<_, i32>(5)? != 0,
             })
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(deps)
@@ -87,7 +87,7 @@ pub fn get_circular_dependencies_sync(
         .query_map(params![project_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(circulars)

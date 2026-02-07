@@ -304,27 +304,7 @@ pub fn resolve_import_to_module(import: &str, module_ids: &[(String, String)]) -
     None
 }
 
-/// Count lines in Node.js module
+/// Count lines in Node.js module (delegates to shared walker-based helper)
 pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
-    let full_path = project_path.join(module_path);
-
-    let mut count = 0u32;
-
-    if full_path.is_file()
-        && let Ok(content) = std::fs::read_to_string(&full_path)
-    {
-        return content.lines().count() as u32;
-    }
-
-    for path in FileWalker::new(&full_path)
-        .for_language("node")
-        .walk_paths()
-        .filter_map(|p| p.ok())
-        .filter(|p| is_source_file(p))
-    {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            count += content.lines().count() as u32;
-        }
-    }
-    count
+    super::count_lines_with_walker(project_path, module_path, "node")
 }

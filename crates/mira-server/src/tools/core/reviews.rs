@@ -14,6 +14,15 @@ use crate::mcp::responses::{
 };
 use crate::utils::truncate;
 
+/// Compute acceptance rate as a percentage from accepted/rejected counts.
+fn acceptance_rate(accepted: i64, rejected: i64) -> f64 {
+    if accepted + rejected > 0 {
+        (accepted as f64 / (accepted + rejected) as f64) * 100.0
+    } else {
+        0.0
+    }
+}
+
 /// List review findings with optional filters
 pub async fn list_findings<C: ToolContext>(
     ctx: &C,
@@ -129,11 +138,6 @@ pub async fn list_findings<C: ToolContext>(
     }
 
     let stats_total = pending + accepted + rejected + fixed;
-    let acceptance_rate = if accepted + rejected > 0 {
-        (accepted as f64 / (accepted + rejected) as f64) * 100.0
-    } else {
-        0.0
-    };
 
     Ok(Json(FindingOutput {
         action: "list".into(),
@@ -146,7 +150,7 @@ pub async fn list_findings<C: ToolContext>(
                 rejected,
                 fixed,
                 total: stats_total,
-                acceptance_rate,
+                acceptance_rate: acceptance_rate(accepted, rejected),
             },
             total,
         })),
@@ -448,18 +452,14 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<Json<FindingOu
         .await?;
 
     let total = pending + accepted + rejected + fixed;
-    let acceptance_rate = if accepted + rejected > 0 {
-        (accepted as f64 / (accepted + rejected) as f64) * 100.0
-    } else {
-        0.0
-    };
+    let rate = acceptance_rate(accepted, rejected);
 
     let message = if total == 0 {
         "No review findings yet.".to_string()
     } else {
         format!(
             "Review Finding Statistics:\n  Total: {}\n  Pending: {}\n  Accepted: {}\n  Rejected: {}\n  Fixed: {}\n  Acceptance rate: {:.1}%",
-            total, pending, accepted, rejected, fixed, acceptance_rate
+            total, pending, accepted, rejected, fixed, rate
         )
     };
 
@@ -472,7 +472,7 @@ pub async fn get_finding_stats<C: ToolContext>(ctx: &C) -> Result<Json<FindingOu
             rejected,
             fixed,
             total,
-            acceptance_rate,
+            acceptance_rate: rate,
         })),
     }))
 }

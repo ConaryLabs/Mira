@@ -4,8 +4,6 @@
 use mira_types::MemoryFact;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::memory::scope_filter_sql;
-use super::parse_memory_fact_row;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
@@ -55,17 +53,12 @@ pub fn get_project_info_sync(
     conn: &Connection,
     project_id: i64,
 ) -> rusqlite::Result<Option<(Option<String>, String)>> {
-    let result = conn.query_row(
+    conn.query_row(
         "SELECT name, path FROM projects WHERE id = ?",
         [project_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
-    );
-
-    match result {
-        Ok(info) => Ok(Some(info)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e),
-    }
+    )
+    .optional()
 }
 
 /// Create or update a session - sync version for pool.interact()
@@ -118,7 +111,7 @@ pub fn get_indexed_projects_sync(conn: &Connection) -> rusqlite::Result<Vec<(i64
         Ok(mut stmt) => {
             let projects = stmt
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .filter_map(|r| r.ok())
+                .filter_map(super::log_and_discard)
                 .collect();
             Ok(projects)
         }
@@ -137,7 +130,7 @@ pub fn get_indexed_project_ids_sync(conn: &Connection) -> rusqlite::Result<Vec<i
         .prepare("SELECT DISTINCT project_id FROM codebase_modules WHERE project_id IS NOT NULL")?;
     let ids = stmt
         .query_map([], |row| row.get(0))?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
     Ok(ids)
 }
@@ -163,12 +156,14 @@ pub fn get_project_paths_by_ids_sync(
         .collect();
     let projects = stmt
         .query_map(params.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
     Ok(projects)
 }
 
 /// Search memories by text pattern - sync version for pool.interact()
+///
+/// Delegates to `memory::search_memories_sync` with reordered parameters.
 pub fn search_memories_text_sync(
     conn: &Connection,
     project_id: Option<i64>,
@@ -177,70 +172,24 @@ pub fn search_memories_text_sync(
     user_id: Option<&str>,
     team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let pattern = format!("%{}%", escaped);
-
-    let sql = format!(
-        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                session_count, first_session_id, last_session_id, status,
-                user_id, scope, team_id
-         FROM memory_facts
-         WHERE {}
-           AND content LIKE ?2 ESCAPE '\\'
-         ORDER BY updated_at DESC
-         LIMIT ?3",
-        scope_filter_sql("")
-            .replace("?{pid}", "?1")
-            .replace("?{uid}", "?4")
-            .replace("?{tid}", "?5")
-    );
-    let mut stmt = conn.prepare(&sql)?;
-
-    let rows = stmt
-        .query_map(
-            params![project_id, pattern, limit as i64, user_id, team_id],
-            parse_memory_fact_row,
-        )?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(rows)
+    super::memory::search_memories_sync(conn, project_id, query, user_id, team_id, limit)
 }
 
 /// Get preferences for a project - sync version for pool.interact()
+///
+/// Delegates to `memory::get_preferences_sync`.
 pub fn get_preferences_sync(
     conn: &Connection,
     project_id: Option<i64>,
     user_id: Option<&str>,
     team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
-    let sql = format!(
-        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                session_count, first_session_id, last_session_id, status,
-                user_id, scope, team_id
-         FROM memory_facts
-         WHERE {}
-           AND fact_type = 'preference'
-         ORDER BY category, created_at DESC",
-        scope_filter_sql("")
-            .replace("?{pid}", "?1")
-            .replace("?{uid}", "?2")
-            .replace("?{tid}", "?3")
-    );
-    let mut stmt = conn.prepare(&sql)?;
-
-    let rows = stmt
-        .query_map(params![project_id, user_id, team_id], parse_memory_fact_row)?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(rows)
+    super::memory::get_preferences_sync(conn, project_id, user_id, team_id)
 }
 
 /// Get health alerts for a project - sync version for pool.interact()
+///
+/// Delegates to `memory::get_health_alerts_sync`.
 pub fn get_health_alerts_sync(
     conn: &Connection,
     project_id: Option<i64>,
@@ -248,31 +197,7 @@ pub fn get_health_alerts_sync(
     user_id: Option<&str>,
     team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
-    let sql = format!(
-        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                session_count, first_session_id, last_session_id, status,
-                user_id, scope, team_id
-         FROM memory_facts
-         WHERE {}
-           AND fact_type = 'health'
-           AND confidence >= 0.7
-         ORDER BY confidence DESC, updated_at DESC
-         LIMIT ?4",
-        scope_filter_sql("")
-            .replace("?{pid}", "?1")
-            .replace("?{uid}", "?2")
-            .replace("?{tid}", "?3")
-    );
-    let mut stmt = conn.prepare(&sql)?;
-
-    let rows = stmt
-        .query_map(params![project_id, user_id, team_id, limit as i64], |row| {
-            parse_memory_fact_row(row)
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(rows)
+    super::memory::get_health_alerts_sync(conn, project_id, limit, user_id, team_id)
 }
 
 /// Get projects that need briefing checks - sync version for pool.interact()
@@ -324,15 +249,12 @@ pub fn set_server_state_sync(conn: &Connection, key: &str, value: &str) -> rusql
 
 /// Get a server state value by key - sync version for pool.interact()
 pub fn get_server_state_sync(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
-    match conn.query_row(
+    conn.query_row(
         "SELECT value FROM server_state WHERE key = ?",
         [key],
         |row| row.get(0),
-    ) {
-        Ok(value) => Ok(Some(value)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e),
-    }
+    )
+    .optional()
 }
 
 /// Get project briefing (What's New since last session) - sync version
@@ -340,7 +262,7 @@ pub fn get_project_briefing_sync(
     conn: &Connection,
     project_id: i64,
 ) -> rusqlite::Result<Option<super::types::ProjectBriefing>> {
-    let result = conn.query_row(
+    conn.query_row(
         "SELECT project_id, last_known_commit, last_session_at, briefing_text, generated_at
          FROM project_briefings WHERE project_id = ?",
         [project_id],
@@ -353,13 +275,8 @@ pub fn get_project_briefing_sync(
                 generated_at: row.get(4)?,
             })
         },
-    );
-
-    match result {
-        Ok(briefing) => Ok(Some(briefing)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e),
-    }
+    )
+    .optional()
 }
 
 /// Mark that a session occurred for this project (clears the briefing) - sync version

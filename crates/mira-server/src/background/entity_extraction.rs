@@ -21,8 +21,12 @@ const BACKFILL_BATCH_SIZE: usize = 50;
 pub async fn process_entity_backfill(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     // Find facts without entities
     let facts: Vec<(i64, Option<i64>, String)> = pool
-        .run(move |conn| find_facts_without_entities_sync(conn, BACKFILL_BATCH_SIZE))
-        .await?;
+        .interact(move |conn| {
+            find_facts_without_entities_sync(conn, BACKFILL_BATCH_SIZE)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     if facts.is_empty() {
         return Ok(0);
@@ -35,7 +39,7 @@ pub async fn process_entity_backfill(pool: &Arc<DatabasePool>) -> Result<usize, 
 
         let pool_clone = pool.clone();
         if let Err(e) = pool_clone
-            .run(move |conn| {
+            .interact(move |conn| -> anyhow::Result<()> {
                 let tx = conn.unchecked_transaction()?;
 
                 for entity in &entities {
@@ -52,7 +56,7 @@ pub async fn process_entity_backfill(pool: &Arc<DatabasePool>) -> Result<usize, 
                 // Always mark as processed, even if zero entities found
                 mark_fact_has_entities_sync(&tx, fact_id)?;
                 tx.commit()?;
-                Ok::<(), rusqlite::Error>(())
+                Ok(())
             })
             .await
         {

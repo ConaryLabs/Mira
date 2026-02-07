@@ -78,8 +78,17 @@ async fn migrate_code_tables_if_needed(
     }
 }
 
-/// Setup server context with database, embeddings, and restored project/session state
-pub async fn setup_server_context() -> Result<MiraServer> {
+/// Shared server components produced by `init_server_context`.
+struct ServerContext {
+    server: MiraServer,
+    pool: Arc<DatabasePool>,
+    env_config: EnvConfig,
+}
+
+/// Initialize configuration, database pools, embeddings, MCP client manager,
+/// and restore project + session state. Shared by `setup_server_context` and
+/// `run_mcp_server` to avoid duplicating ~40 lines of setup code.
+async fn init_server_context() -> Result<ServerContext> {
     // Load configuration once (single source of truth)
     let env_config = EnvConfig::load();
 
@@ -129,7 +138,7 @@ pub async fn setup_server_context() -> Result<MiraServer> {
         server.mcp_client_manager = Some(Arc::new(mcp_manager));
     }
 
-    // Restore context (Project & Session)
+    // Restore project context
     let restored_project = pool
         .interact(|conn| {
             // Try to get last active project
@@ -169,41 +178,27 @@ pub async fn setup_server_context() -> Result<MiraServer> {
         server.set_session_id(sid).await;
     }
 
-    Ok(server)
+    Ok(ServerContext {
+        server,
+        pool,
+        env_config,
+    })
+}
+
+/// Setup server context with database, embeddings, and restored project/session state
+pub async fn setup_server_context() -> Result<MiraServer> {
+    let ctx = init_server_context().await?;
+    Ok(ctx.server)
 }
 
 /// Run the MCP server with stdio transport
 pub async fn run_mcp_server() -> Result<()> {
-    // Load configuration once (single source of truth)
-    let env_config = EnvConfig::load();
+    let ctx = init_server_context().await?;
+    let mut server = ctx.server;
+    let pool = ctx.pool;
+    let env_config = ctx.env_config;
 
-    // Validate and log warnings
-    let validation = env_config.validate();
-    for warning in &validation.warnings {
-        warn!("{}", warning);
-    }
-
-    // Create shared HTTP client for all network operations
-    let http_client = create_shared_client();
-
-    // Open database pools (main + code index)
-    let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
-    let code_db_path = db_path.with_file_name("mira-code.db");
-    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
-
-    // Migrate code tables from main DB to code DB if needed
-    migrate_code_tables_if_needed(&pool, &code_pool).await;
-
-    // Initialize embeddings from centralized config
-    let embeddings = get_embeddings_from_config(
-        &env_config.api_keys,
-        &env_config.embeddings,
-        Some(pool.clone()),
-        http_client.clone(),
-    );
-
-    if let Some(ref emb) = embeddings {
+    if let Some(ref emb) = server.embeddings {
         info!("Semantic search enabled (OpenAI embeddings)");
 
         // Check for embedding provider change and invalidate stale vectors
@@ -239,24 +234,14 @@ pub async fn run_mcp_server() -> Result<()> {
     }
 
     // Spawn background workers with separate pools
-    let bg_embeddings = embeddings.clone();
+    let bg_embeddings = server.embeddings.clone();
     let (_shutdown_tx, fast_lane_notify) = background::spawn_with_pools(
-        code_pool.clone(),
+        server.code_pool.clone(),
         pool.clone(),
         bg_embeddings,
         llm_factory.clone(),
     );
     info!("Background worker started");
-
-    // Create MCP server with watcher from centralized config
-    let mut server = MiraServer::from_api_keys(
-        pool.clone(),
-        code_pool,
-        embeddings,
-        &env_config.api_keys,
-        env_config.fuzzy_fallback,
-        env_config.expert.clone(),
-    );
 
     // Spawn file watcher for incremental indexing (uses code_pool)
     let (_watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
@@ -269,78 +254,24 @@ pub async fn run_mcp_server() -> Result<()> {
     info!("File watcher started");
     server.watcher = Some(watcher_handle);
 
-    // Initialize MCP client manager for external MCP server access (expert tools)
-    // We initialize with CWD initially; project path will be used when available
-    let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
-    let mut mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
-    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(
-        env_config.expert.mcp_tool_timeout_secs,
-    ));
-    if mcp_manager.has_servers() {
-        info!("MCP client manager initialized for expert tool access");
-        server.mcp_client_manager = Some(Arc::new(mcp_manager));
-    }
-
-    // Restore context (Project & Session)
-    let restore_pool = pool.clone();
-    let restored = restore_pool
-        .interact(|conn| {
-            // Try to get last active project
-            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn)
-                && let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None)
-            {
-                return Ok(Some((ProjectContext { id, path, name }, true)));
-            }
-            // Fallback: Check if CWD is a project
-            if let Ok(cwd) = std::env::current_dir() {
-                let path_str = path_to_string(&cwd);
-                if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None)
-                {
-                    return Ok(Some((
-                        ProjectContext {
-                            id,
-                            path: path_str,
-                            name,
-                        },
-                        false,
-                    )));
-                }
-            }
-            Ok(None)
-        })
-        .await?;
-
-    if let Some((project, from_stored)) = restored {
-        if from_stored {
-            info!("Restoring project: {} (id: {})", project.path, project.id);
-        } else {
-            info!(
-                "Restoring project from CWD: {} (id: {})",
-                project.path, project.id
-            );
-        }
-        let project_path = project.path.clone();
-        let project_id = project.id;
-        server.set_project(project).await;
+    // Log project restoration
+    if let Some(project) = server.project.read().await.as_ref() {
+        info!("Restoring project: {} (id: {})", project.path, project.id);
 
         // Register with watcher if available
         if let Some(watcher) = server.watcher() {
             watcher
-                .watch(project_id, std::path::PathBuf::from(project_path))
+                .watch(project.id, std::path::PathBuf::from(&project.path))
                 .await;
         }
     }
 
-    // Restore session ID
-    if let Ok(Some(sid)) = pool
-        .interact(|conn| {
-            mira::db::get_server_state_sync(conn, "active_session_id")
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .await
-    {
-        info!("Restoring session: {}", sid);
-        server.set_session_id(sid).await;
+    // Log session restoration
+    if server.session_id.read().await.is_some() {
+        info!(
+            "Restoring session: {}",
+            server.session_id.read().await.as_deref().unwrap_or("?")
+        );
     }
 
     // Run with stdio transport

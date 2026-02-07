@@ -232,8 +232,6 @@ async fn get_source_signature(
     project_id: i64,
     source_path: &str,
 ) -> Result<Option<String>, String> {
-    use sha2::Digest;
-
     let source_path = source_path.to_string();
 
     // Get symbols from db - returns (id, name, symbol_type, start_line, end_line, signature)
@@ -249,18 +247,9 @@ async fn get_source_signature(
         return Ok(None);
     }
 
-    // Calculate hash from signatures (tuple index 5)
-    let normalized: Vec<String> = symbols
+    let sigs: Vec<&str> = symbols
         .iter()
-        .filter_map(|(_, _, _, _, _, sig)| sig.as_ref())
-        .map(|sig| sig.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter_map(|(_, _, _, _, _, sig)| sig.as_deref())
         .collect();
-
-    if normalized.is_empty() {
-        return Ok(None);
-    }
-
-    let combined = normalized.join("\n");
-    let hash = sha2::Sha256::digest(combined.as_bytes());
-    Ok(Some(format!("{:x}", hash)))
+    Ok(super::hash_normalized_signatures(&sigs))
 }

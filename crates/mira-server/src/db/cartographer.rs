@@ -44,7 +44,7 @@ pub fn get_cached_modules_sync(
                 detected_patterns: row.get(8)?,
             })
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(modules)
@@ -67,7 +67,7 @@ pub fn get_module_exports_sync(
         .query_map(params![project_id, path_pattern, limit as i64], |row| {
             row.get(0)
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(exports)
@@ -99,7 +99,7 @@ pub fn get_module_dependencies_sync(
 
     let deps = stmt
         .query_map(params![project_id, path_pattern], |row| row.get(0))?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(deps)
@@ -145,7 +145,7 @@ pub fn get_external_deps_sync(conn: &Connection, project_id: i64) -> rusqlite::R
 
     let deps = stmt
         .query_map(params![project_id], |row| row.get(0))?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(deps)
@@ -174,7 +174,7 @@ pub fn get_modules_needing_summaries_sync(
                 line_count: row.get(4)?,
             })
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(modules)

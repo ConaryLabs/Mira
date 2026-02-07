@@ -185,7 +185,13 @@ fn query_conventions(
                 detected_patterns: row.get(6)?,
             })
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("Failed to parse convention row: {}", e);
+                None
+            }
+        })
         .collect();
 
     Ok(rows)
@@ -267,21 +273,11 @@ fn format_conventions(modules: &[WorkingModule], conventions: &[ConventionRow]) 
 
 /// Extract pattern names from detected_patterns JSON array
 fn extract_pattern_names(json: &str) -> Option<String> {
-    // Simple extraction without pulling in full JSON parsing
-    // Format: [{"pattern":"repository","confidence":0.85,...}, ...]
-    let mut names = Vec::new();
-    for part in json.split("\"pattern\":\"") {
-        if names.is_empty() && !json.starts_with("{") {
-            // Skip the first split chunk (before first match)
-            // But only if it's the initial part
-        }
-        if let Some(end) = part.find('"') {
-            let name = &part[..end];
-            if !name.is_empty() && !name.contains('{') && !name.contains('[') {
-                names.push(name.to_string());
-            }
-        }
-    }
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    let names: Vec<&str> = parsed
+        .iter()
+        .filter_map(|entry| entry.get("pattern")?.as_str())
+        .collect();
 
     if names.is_empty() {
         None

@@ -615,7 +615,7 @@ pub async fn read_team_membership_from_db(
 }
 
 /// Write team membership atomically (temp + rename).
-fn write_team_membership(session_id: &str, membership: &TeamMembership) -> Result<()> {
+pub fn write_team_membership(session_id: &str, membership: &TeamMembership) -> Result<()> {
     let path = team_file_path_for_session(session_id);
     let json = serde_json::to_string(membership)?;
     let temp_path = path.with_extension("tmp");

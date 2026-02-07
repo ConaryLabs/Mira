@@ -8,6 +8,8 @@
 
 use rusqlite::{Connection, params};
 
+use super::log_and_discard;
+
 /// Result from a cross-reference query (caller/callee lookup)
 #[derive(Debug, Clone)]
 pub struct CrossRefResult {
@@ -39,7 +41,7 @@ pub fn find_callers_sync(
                 call_count: row.get::<_, i32>(2).unwrap_or(1),
             })
         })
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .map(|rows| rows.filter_map(log_and_discard).collect())
     })
     .unwrap_or_else(|e| {
         tracing::warn!(
@@ -74,7 +76,7 @@ pub fn find_callees_sync(
                 call_count: row.get::<_, i32>(2).unwrap_or(1),
             })
         })
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .map(|rows| rows.filter_map(log_and_discard).collect())
     })
     .unwrap_or_else(|e| {
         tracing::warn!(
@@ -139,7 +141,7 @@ pub fn fts_search_sync(
                 start_line: row.get(3)?,
             })
         })
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .map(|rows| rows.filter_map(log_and_discard).collect())
     })
     .unwrap_or_else(|e| {
         tracing::warn!(
@@ -175,7 +177,7 @@ where
         if let Ok(mut stmt) = conn.prepare_cached(sql)
             && let Ok(rows) = stmt.query_map(params![project_id, pattern, limit as i64], &map_row)
         {
-            for row in rows.filter_map(|r| r.ok()) {
+            for row in rows.filter_map(log_and_discard) {
                 if results.len() >= limit {
                     break;
                 }
@@ -285,7 +287,7 @@ pub fn semantic_code_search_sync(
                 start_line: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
             })
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(log_and_discard)
         .collect();
 
     Ok(results)

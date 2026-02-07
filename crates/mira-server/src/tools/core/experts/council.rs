@@ -79,7 +79,7 @@ pub async fn run_council<C: ToolContext + Clone + 'static>(
     context: String,
     question: Option<String>,
 ) -> Result<String, String> {
-    let role_keys: Vec<String> = roles.iter().map(|r| r.db_key()).collect();
+    let role_keys: Vec<String> = roles.iter().map(|r| r.db_key().into_owned()).collect();
     info!(roles = ?role_keys, "Council consultation starting");
 
     let findings_store = Arc::new(FindingsStore::new());
@@ -610,7 +610,7 @@ fn default_plan(roles: &[ExpertRole], question: Option<&str>) -> ResearchPlan {
     let tasks = roles
         .iter()
         .map(|role| ResearchTask {
-            role: role.db_key(),
+            role: role.db_key().into_owned(),
             task: format!(
                 "Analyze from the perspective of a {}: {}",
                 role.name(),

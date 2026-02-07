@@ -292,7 +292,10 @@ pub fn store_fact_embedding_sync(
 }
 
 /// Semantic search for memories with scope filtering (sync version for pool.interact())
-/// Returns (fact_id, content, distance) tuples
+///
+/// Convenience wrapper around `recall_semantic_with_branch_sync` with no branch boosting.
+/// Returns (fact_id, content, distance) tuples.
+#[inline]
 pub fn recall_semantic_sync(
     conn: &rusqlite::Connection,
     embedding_bytes: &[u8],
@@ -301,16 +304,7 @@ pub fn recall_semantic_sync(
     team_id: Option<i64>,
     limit: usize,
 ) -> rusqlite::Result<Vec<(i64, String, f32)>> {
-    // Delegate to branch-aware version with no branch (no boosting)
-    recall_semantic_with_branch_sync(
-        conn,
-        embedding_bytes,
-        project_id,
-        user_id,
-        team_id,
-        None,
-        limit,
-    )
+    recall_semantic_with_branch_sync(conn, embedding_bytes, project_id, user_id, team_id, None, limit)
 }
 
 /// Semantic search with entity boost applied.
@@ -356,7 +350,7 @@ pub fn recall_semantic_with_entity_boost_sync(
                 ))
             },
         )?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     // Get entity match counts (skip entirely if no query entities)
@@ -419,7 +413,7 @@ pub fn recall_semantic_with_branch_sync(
             ],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     // Apply branch boosting and re-sort
@@ -601,43 +595,64 @@ pub fn get_memory_stats_sync(
 }
 
 /// Get preferences for a project (sync version for pool.interact())
+///
+/// When `user_id` and `team_id` are provided, uses full scope filtering.
+/// Otherwise falls back to simple project_id filtering.
 pub fn get_preferences_sync(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
+    user_id: Option<&str>,
+    team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<mira_types::MemoryFact>> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
                 user_id, scope, team_id
          FROM memory_facts
-         WHERE (project_id = ? OR project_id IS NULL) AND fact_type = 'preference'
+         WHERE {}
+           AND fact_type = 'preference'
          ORDER BY category, created_at DESC",
-    )?;
+        scope_filter_sql("")
+            .replace("?{pid}", "?1")
+            .replace("?{uid}", "?2")
+            .replace("?{tid}", "?3")
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
-    let rows = stmt.query_map(rusqlite::params![project_id], parse_memory_fact_row)?;
+    let rows = stmt.query_map(rusqlite::params![project_id, user_id, team_id], parse_memory_fact_row)?;
     rows.collect()
 }
 
 /// Get health alerts for a project (sync version for pool.interact())
+///
+/// When `user_id` and `team_id` are provided, uses full scope filtering.
+/// Otherwise falls back to simple project_id filtering.
 pub fn get_health_alerts_sync(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
     limit: usize,
+    user_id: Option<&str>,
+    team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<mira_types::MemoryFact>> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
                 user_id, scope, team_id
          FROM memory_facts
-         WHERE (project_id = ? OR project_id IS NULL)
+         WHERE {}
            AND fact_type = 'health'
            AND confidence >= 0.7
          ORDER BY confidence DESC, updated_at DESC
-         LIMIT ?",
-    )?;
+         LIMIT ?4",
+        scope_filter_sql("")
+            .replace("?{pid}", "?1")
+            .replace("?{uid}", "?2")
+            .replace("?{tid}", "?3")
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt.query_map(
-        rusqlite::params![project_id, limit as i64],
+        rusqlite::params![project_id, user_id, team_id, limit as i64],
         parse_memory_fact_row,
     )?;
     rows.collect()

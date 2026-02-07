@@ -217,13 +217,14 @@ fn export_to_claude_local_md_sync(
     Ok(build_budgeted_export(&memories))
 }
 
-/// Classify a memory into a section bucket based on fact_type and category
-fn classify_memory(mem: &RankedMemory) -> &'static str {
-    match mem.fact_type.as_str() {
+/// Classify a memory into a section bucket based on fact_type and category.
+/// Works for both RankedMemory and AutoMemoryCandidate via the two field accessors.
+fn classify_by_type_and_category(fact_type: &str, category: Option<&str>) -> &'static str {
+    match fact_type {
         "preference" => "Preferences",
         "decision" => "Decisions",
         "pattern" | "convention" => "Patterns",
-        _ => match mem.category.as_deref() {
+        _ => match category {
             Some("preference") => "Preferences",
             Some("decision") => "Decisions",
             Some("pattern") | Some("convention") => "Patterns",
@@ -244,6 +245,26 @@ fn truncate_content(content: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     format!("{}...", &content[..end])
+}
+
+/// Render named sections as markdown. Returns empty string if all sections are empty.
+fn render_sections(header: &str, sections: &[(&str, Vec<String>)]) -> String {
+    if sections.iter().all(|(_, entries)| entries.is_empty()) {
+        return String::new();
+    }
+
+    let mut output = String::from(header);
+    for (name, entries) in sections {
+        if entries.is_empty() {
+            continue;
+        }
+        output.push_str(&format!("## {}\n\n", name));
+        for entry in entries {
+            output.push_str(entry);
+        }
+        output.push('\n');
+    }
+    output
 }
 
 /// Build budget-aware markdown export from ranked memories
@@ -279,7 +300,7 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
         let entry_line = format!("- {}\n", content);
         let entry_bytes = entry_line.len();
 
-        let section_name = classify_memory(mem);
+        let section_name = classify_by_type_and_category(&mem.fact_type, mem.category.as_deref());
 
         // Find the section bucket
         let section = sections.iter_mut().find(|(name, _)| *name == section_name);
@@ -309,26 +330,7 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
         }
     }
 
-    // Render output in fixed section order
-    let mut output = String::from(header);
-
-    for (name, entries) in &sections {
-        if entries.is_empty() {
-            continue;
-        }
-        output.push_str(&format!("## {}\n\n", name));
-        for entry in entries {
-            output.push_str(entry);
-        }
-        output.push('\n');
-    }
-
-    // If no entries were added, return empty
-    if sections.iter().all(|(_, entries)| entries.is_empty()) {
-        return String::new();
-    }
-
-    output
+    render_sections(header, &sections)
 }
 
 /// Write exported memories to CLAUDE.local.md file (sync version for run_blocking)
@@ -479,7 +481,7 @@ fn build_auto_memory_export(candidates: &[AutoMemoryCandidate]) -> String {
         let line_count = entry_line.lines().count();
 
         // Classify and check quota
-        let section = classify_auto_memory(mem);
+        let section = classify_by_type_and_category(&mem.fact_type, mem.category.as_deref());
 
         match section {
             "Preferences" if pref_lines + line_count <= AUTO_MEMORY_PREF_QUOTA => {
@@ -510,62 +512,13 @@ fn build_auto_memory_export(candidates: &[AutoMemoryCandidate]) -> String {
         }
     }
 
-    // Check if we have any content
-    if preferences.is_empty() && decisions.is_empty() && patterns.is_empty() && general.is_empty() {
-        return String::new();
-    }
-
-    // Build output in section order
-    let mut output = String::from(header);
-
-    if !preferences.is_empty() {
-        output.push_str("## Preferences\n\n");
-        for entry in &preferences {
-            output.push_str(entry);
-        }
-        output.push('\n');
-    }
-
-    if !decisions.is_empty() {
-        output.push_str("## Decisions\n\n");
-        for entry in &decisions {
-            output.push_str(entry);
-        }
-        output.push('\n');
-    }
-
-    if !patterns.is_empty() {
-        output.push_str("## Patterns\n\n");
-        for entry in &patterns {
-            output.push_str(entry);
-        }
-        output.push('\n');
-    }
-
-    if !general.is_empty() {
-        output.push_str("## General\n\n");
-        for entry in &general {
-            output.push_str(entry);
-        }
-        output.push('\n');
-    }
-
-    output
-}
-
-/// Classify an auto memory candidate into a section bucket
-fn classify_auto_memory(mem: &AutoMemoryCandidate) -> &'static str {
-    match mem.fact_type.as_str() {
-        "preference" => "Preferences",
-        "decision" => "Decisions",
-        "pattern" | "convention" => "Patterns",
-        _ => match mem.category.as_deref() {
-            Some("preference") => "Preferences",
-            Some("decision") => "Decisions",
-            Some("pattern") | Some("convention") => "Patterns",
-            _ => "General",
-        },
-    }
+    let sections: Vec<(&str, Vec<String>)> = vec![
+        ("Preferences", preferences),
+        ("Decisions", decisions),
+        ("Patterns", patterns),
+        ("General", general),
+    ];
+    render_sections(header, &sections)
 }
 
 /// Check if memory content matches ephemeral/task-related noise patterns
@@ -1108,30 +1061,20 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_auto_memory() {
+    fn test_classify_by_type_and_category() {
         // Test fact_type classification
-        let pref = make_auto_memory_candidate("test", "preference", None, 1.0);
-        assert_eq!(classify_auto_memory(&pref), "Preferences");
-
-        let decision = make_auto_memory_candidate("test", "decision", None, 1.0);
-        assert_eq!(classify_auto_memory(&decision), "Decisions");
-
-        let pattern = make_auto_memory_candidate("test", "pattern", None, 1.0);
-        assert_eq!(classify_auto_memory(&pattern), "Patterns");
-
-        let convention = make_auto_memory_candidate("test", "convention", None, 1.0);
-        assert_eq!(classify_auto_memory(&convention), "Patterns");
+        assert_eq!(classify_by_type_and_category("preference", None), "Preferences");
+        assert_eq!(classify_by_type_and_category("decision", None), "Decisions");
+        assert_eq!(classify_by_type_and_category("pattern", None), "Patterns");
+        assert_eq!(classify_by_type_and_category("convention", None), "Patterns");
 
         // Test category fallback
-        let cat_pref = make_auto_memory_candidate("test", "general", Some("preference"), 1.0);
-        assert_eq!(classify_auto_memory(&cat_pref), "Preferences");
-
-        let cat_decision = make_auto_memory_candidate("test", "general", Some("decision"), 1.0);
-        assert_eq!(classify_auto_memory(&cat_decision), "Decisions");
+        assert_eq!(classify_by_type_and_category("general", Some("preference")), "Preferences");
+        assert_eq!(classify_by_type_and_category("general", Some("decision")), "Decisions");
 
         // Default to General
-        let general = make_auto_memory_candidate("test", "general", Some("other"), 1.0);
-        assert_eq!(classify_auto_memory(&general), "General");
+        assert_eq!(classify_by_type_and_category("general", Some("other")), "General");
+        assert_eq!(classify_by_type_and_category("general", None), "General");
     }
 
     #[test]

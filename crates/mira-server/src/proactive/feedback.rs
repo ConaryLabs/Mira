@@ -92,7 +92,7 @@ pub fn record_response(
 pub fn get_pending_interventions(
     conn: &Connection,
     session_id: &str,
-) -> Result<Vec<PendingIntervention>> {
+) -> Result<Vec<PendingFeedback>> {
     let sql = r#"
         SELECT id, intervention_type, suggestion_content, confidence, created_at
         FROM proactive_interventions
@@ -103,7 +103,7 @@ pub fn get_pending_interventions(
 
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map([session_id], |row| {
-        Ok(PendingIntervention {
+        Ok(PendingFeedback {
             id: row.get(0)?,
             intervention_type: row.get(1)?,
             suggestion_content: row.get(2)?,
@@ -112,12 +112,12 @@ pub fn get_pending_interventions(
         })
     })?;
 
-    let interventions: Vec<PendingIntervention> = rows.flatten().collect();
+    let interventions: Vec<PendingFeedback> = rows.flatten().collect();
     Ok(interventions)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingIntervention {
+pub struct PendingFeedback {
     pub id: i64,
     pub intervention_type: String,
     pub suggestion_content: String,

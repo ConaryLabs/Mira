@@ -523,7 +523,9 @@ mod tests {
 
         let prefs = db!(pool, |conn| get_preferences_memory_sync(
             conn,
-            Some(project_id)
+            Some(project_id),
+            None,
+            None
         )
         .map_err(Into::into));
         assert_eq!(prefs.len(), 2);
@@ -622,7 +624,9 @@ mod tests {
         let alerts = db!(pool, |conn| get_health_alerts_memory_sync(
             conn,
             Some(project_id),
-            10
+            10,
+            None,
+            None
         )
         .map_err(Into::into));
         assert_eq!(alerts.len(), 1);
@@ -1045,7 +1049,9 @@ mod tests {
 
         let prefs = db!(pool, |conn| get_preferences_memory_sync(
             conn,
-            Some(project_id)
+            Some(project_id),
+            None,
+            None
         )
         .map_err(Into::into));
         assert_eq!(prefs.len(), 0);
@@ -1058,7 +1064,9 @@ mod tests {
         let alerts = db!(pool, |conn| get_health_alerts_memory_sync(
             conn,
             Some(project_id),
-            10
+            10,
+            None,
+            None
         )
         .map_err(Into::into));
         assert_eq!(alerts.len(), 0);

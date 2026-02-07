@@ -216,7 +216,7 @@ pub fn reset_orphaned_doc_tasks(
     let tasks: Vec<(i64, String)> = stmt
         .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     let mut reset_count = 0;

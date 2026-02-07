@@ -244,7 +244,7 @@ pub fn extract_patterns_from_findings_sync(
         .query_map([project_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     let mut created = 0;

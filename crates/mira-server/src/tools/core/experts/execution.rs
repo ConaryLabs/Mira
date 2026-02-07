@@ -110,7 +110,7 @@ pub async fn consult_expert<C: ToolContext>(
 
     // Get reasoning strategy: Single (one model) or Decoupled (chat + reasoner)
     let strategy = llm_factory
-        .strategy_for_role(expert_key.as_str(), ctx.pool())
+        .strategy_for_role(&expert_key, ctx.pool())
         .await
         .str_err()?;
 

@@ -106,7 +106,13 @@ fn get_recent_file_paths(
             row.get::<_, String>(0)
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("Failed to parse file path row: {}", e);
+                None
+            }
+        })
         .collect();
 
     Ok(paths)
@@ -123,7 +129,13 @@ fn get_module_paths(conn: &Connection, project_id: i64) -> Result<Vec<(String, S
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("Failed to parse module path row: {}", e);
+                None
+            }
+        })
         .collect();
 
     Ok(modules)

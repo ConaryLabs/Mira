@@ -5,6 +5,7 @@ use crate::db::{get_permission_rules_sync, pool::DatabasePool};
 use crate::hooks::{read_hook_input, write_hook_output};
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Run permission hook
 pub async fn run() -> Result<()> {
@@ -17,7 +18,7 @@ pub async fn run() -> Result<()> {
     // Open database pool
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let db_path = home.join(".mira/mira.db");
-    let pool = DatabasePool::open(&db_path).await?;
+    let pool = Arc::new(DatabasePool::open(&db_path).await?);
 
     // Check for matching permission rules
     let rules = pool

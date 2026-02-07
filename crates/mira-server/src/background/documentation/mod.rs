@@ -31,20 +31,27 @@ pub struct CodeSymbol {
 /// Calculate source signature hash (normalized hash of symbol signatures)
 /// This is more stable than raw file checksum for detecting API changes
 pub fn calculate_source_signature_hash(symbols: &[CodeSymbol]) -> Option<String> {
+    let sigs: Vec<&str> = symbols
+        .iter()
+        .filter_map(|s| s.signature.as_deref())
+        .collect();
+    hash_normalized_signatures(&sigs)
+}
+
+/// Compute a SHA256 hash from a slice of raw signature strings.
+/// Normalises whitespace and sorts for order-independence.
+/// Shared by `calculate_source_signature_hash`, `get_source_signature` (inventory),
+/// and `check_source_signature_changed` (detection).
+pub fn hash_normalized_signatures(signatures: &[&str]) -> Option<String> {
     use sha2::Digest;
 
-    if symbols.is_empty() {
+    if signatures.is_empty() {
         return None;
     }
 
-    // Collect normalized signatures (name + type, not full signature with whitespace)
-    let normalized: Vec<String> = symbols
+    let mut normalized: Vec<String> = signatures
         .iter()
-        .filter_map(|s| s.signature.as_ref())
-        .map(|sig| {
-            // Normalize: remove extra whitespace, keep core signature
-            sig.split_whitespace().collect::<Vec<_>>().join(" ")
-        })
+        .map(|sig| sig.split_whitespace().collect::<Vec<_>>().join(" "))
         .collect();
 
     if normalized.is_empty() {
@@ -52,11 +59,10 @@ pub fn calculate_source_signature_hash(symbols: &[CodeSymbol]) -> Option<String>
     }
 
     // Sort for consistent hashing
-    let mut sorted = normalized;
-    sorted.sort();
+    normalized.sort();
 
     let mut hasher = sha2::Sha256::new();
-    for sig in &sorted {
+    for sig in &normalized {
         hasher.update(sig.as_bytes());
         hasher.update(b"|");
     }
@@ -114,7 +120,7 @@ async fn analyze_stale_doc_impacts(
 
     // Get all projects with stale docs needing analysis
     let projects: Vec<(i64, String)> = main_pool
-        .run(|conn| {
+        .interact(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT DISTINCT p.id, p.path FROM projects p
                  JOIN documentation_inventory di ON di.project_id = p.id
@@ -123,6 +129,7 @@ async fn analyze_stale_doc_impacts(
             )?;
             let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
             rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
         .str_err()?;
@@ -132,8 +139,12 @@ async fn analyze_stale_doc_impacts(
     for (project_id, _project_path) in projects {
         // Get stale docs for this project (limit to avoid overwhelming)
         let stale_docs = main_pool
-            .run(move |conn| get_stale_docs_needing_analysis(conn, project_id, 3))
-            .await?;
+            .interact(move |conn| {
+                get_stale_docs_needing_analysis(conn, project_id, 3)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .map_err(|e| e.to_string())?;
 
         for doc in stale_docs {
             // Build context for LLM
@@ -203,10 +214,12 @@ SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
                     let impact_clone = impact.clone();
                     let summary_clone = summary.clone();
                     main_pool
-                        .run(move |conn| {
+                        .interact(move |conn| {
                             update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
+                                .map_err(|e| anyhow::anyhow!("{}", e))
                         })
-                        .await?;
+                        .await
+                        .map_err(|e| e.to_string())?;
 
                     tracing::debug!(
                         "Doc impact analysis for {}: {} - {}",
@@ -234,7 +247,7 @@ async fn get_current_signatures(
 ) -> Option<String> {
     let source_file = source_file.to_string();
     code_pool
-        .run(move |conn| -> Result<Option<String>, rusqlite::Error> {
+        .interact(move |conn| -> anyhow::Result<Option<String>> {
             let mut stmt = conn.prepare(
                 "SELECT name, symbol_type, signature FROM code_symbols
              WHERE project_id = ? AND file_path = ?

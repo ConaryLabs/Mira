@@ -260,7 +260,7 @@ pub fn get_session_stats_sync(
     )?;
     let tools: Vec<String> = stmt
         .query_map(params![session_id], |row| row.get(0))?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok((count, tools))
@@ -330,7 +330,7 @@ pub fn get_session_tool_summary_sync(
                 status, tool, args_preview, result_preview
             ))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(entries.join("\n"))

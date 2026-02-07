@@ -23,12 +23,8 @@ struct FuzzyCodeItem {
     file_path: String,
     content: String,
     start_line: u32,
-}
-
-impl FuzzyCodeItem {
-    fn search_text(&self) -> String {
-        format!("{} {}", self.file_path, self.content)
-    }
+    /// Pre-computed "{file_path} {content}" to avoid repeated allocation during fuzzy matching.
+    search_text: String,
 }
 
 struct FuzzyMemoryItem {
@@ -161,10 +157,12 @@ impl FuzzyCache {
                         let file_path: String = row.get(0)?;
                         let content: String = row.get(1)?;
                         let start_line: i64 = row.get(2)?;
+                        let search_text = format!("{} {}", file_path, content);
                         Ok(FuzzyCodeItem {
                             file_path,
                             content,
                             start_line: start_line as u32,
+                            search_text,
                         })
                     },
                 )?;
@@ -259,14 +257,13 @@ impl FuzzyCache {
         let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
 
-        // Build search text on-the-fly to avoid storing duplicated strings
-        let search_texts: Vec<String> = idx.items.iter().map(|item| item.search_text()).collect();
-        let candidates: Vec<CandidateKey<'_>> = search_texts
+        let candidates: Vec<CandidateKey<'_>> = idx
+            .items
             .iter()
             .enumerate()
-            .map(|(i, text)| CandidateKey {
+            .map(|(i, item)| CandidateKey {
                 idx: i,
-                text: text.as_str(),
+                text: &item.search_text,
             })
             .collect();
 
@@ -534,6 +531,7 @@ mod tests {
                 file_path: "test.rs".into(),
                 content: "fn main() {}".into(),
                 start_line: 1,
+                search_text: "test.rs fn main() {}".into(),
             }],
         };
         assert!(idx.is_stale(Some(2), CODE_CACHE_TTL));
@@ -546,7 +544,8 @@ mod tests {
             file_path: "src/main.rs".into(),
             content: "fn main() {}".into(),
             start_line: 1,
+            search_text: "src/main.rs fn main() {}".into(),
         };
-        assert_eq!(item.search_text(), "src/main.rs fn main() {}");
+        assert_eq!(item.search_text, "src/main.rs fn main() {}");
     }
 }

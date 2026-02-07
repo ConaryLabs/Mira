@@ -166,7 +166,10 @@ impl ContextInjectionManager {
             }
         })
         .await
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to get project info: {}", e);
+            Default::default()
+        })
     }
 
     /// Check if message is a simple command that doesn't need context injection

@@ -2,7 +2,7 @@
 // Configuration storage (custom system prompts, LLM provider config, etc.)
 
 use crate::llm::Provider;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 /// (role, prompt, provider, model)
 type PromptConfigRow = (String, String, String, Option<String>);
@@ -13,19 +13,21 @@ type PromptConfigRow = (String, String, String, Option<String>);
 
 /// Get full expert configuration for a role (sync version for pool.interact)
 pub fn get_expert_config_sync(conn: &Connection, role: &str) -> rusqlite::Result<ExpertConfig> {
-    let result = conn.query_row(
-        "SELECT prompt, provider, model FROM system_prompts WHERE role = ?",
-        params![role],
-        |row| {
-            let prompt: Option<String> = row.get(0)?;
-            let provider_str: Option<String> = row.get(1)?;
-            let model: Option<String> = row.get(2)?;
-            Ok((prompt, provider_str, model))
-        },
-    );
+    let result = conn
+        .query_row(
+            "SELECT prompt, provider, model FROM system_prompts WHERE role = ?",
+            params![role],
+            |row| {
+                let prompt: Option<String> = row.get(0)?;
+                let provider_str: Option<String> = row.get(1)?;
+                let model: Option<String> = row.get(2)?;
+                Ok((prompt, provider_str, model))
+            },
+        )
+        .optional()?;
 
     match result {
-        Ok((prompt, provider_str, model)) => {
+        Some((prompt, provider_str, model)) => {
             let provider = provider_str
                 .as_deref()
                 .and_then(Provider::from_str)
@@ -36,8 +38,7 @@ pub fn get_expert_config_sync(conn: &Connection, role: &str) -> rusqlite::Result
                 model,
             })
         }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(ExpertConfig::default()),
-        Err(e) => Err(e),
+        None => Ok(ExpertConfig::default()),
     }
 }
 
@@ -49,45 +50,18 @@ pub fn set_expert_config_sync(
     provider: Option<Provider>,
     model: Option<&str>,
 ) -> rusqlite::Result<()> {
-    // Check if row exists
-    let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM system_prompts WHERE role = ?",
-            params![role],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if exists {
-        // Update only provided fields
-        if let Some(p) = prompt {
-            conn.execute(
-                "UPDATE system_prompts SET prompt = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?",
-                params![p, role],
-            )?;
-        }
-        if let Some(prov) = provider {
-            conn.execute(
-                "UPDATE system_prompts SET provider = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?",
-                params![prov.to_string(), role],
-            )?;
-        }
-        if model.is_some() {
-            conn.execute(
-                "UPDATE system_prompts SET model = ?, updated_at = CURRENT_TIMESTAMP WHERE role = ?",
-                params![model, role],
-            )?;
-        }
-    } else {
-        // Insert new row
-        let prompt_val = prompt.unwrap_or("");
-        let provider_val = provider.unwrap_or(Provider::DeepSeek).to_string();
-        conn.execute(
-            "INSERT INTO system_prompts (role, prompt, provider, model, updated_at)
-             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-            params![role, prompt_val, provider_val, model],
-        )?;
-    }
+    let provider_str = provider.map(|p| p.to_string());
+    // For INSERT, use defaults for missing fields; for UPDATE, only override provided fields
+    conn.execute(
+        "INSERT INTO system_prompts (role, prompt, provider, model, updated_at)
+         VALUES (?1, COALESCE(?2, ''), COALESCE(?3, 'deepseek'), ?4, CURRENT_TIMESTAMP)
+         ON CONFLICT(role) DO UPDATE SET
+           prompt = COALESCE(?2, system_prompts.prompt),
+           provider = COALESCE(?3, system_prompts.provider),
+           model = CASE WHEN ?4 IS NOT NULL THEN ?4 ELSE system_prompts.model END,
+           updated_at = CURRENT_TIMESTAMP",
+        params![role, prompt, provider_str, model],
+    )?;
 
     Ok(())
 }
@@ -108,7 +82,7 @@ pub fn list_custom_prompts_sync(conn: &Connection) -> rusqlite::Result<Vec<Promp
         .query_map([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
-        .filter_map(|r| r.ok())
+        .filter_map(super::log_and_discard)
         .collect();
 
     Ok(results)
