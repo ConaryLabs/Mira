@@ -76,13 +76,15 @@ fn query_goals(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Count genuinely new insights (first seen in the last 7 days).
+/// Count unseen insights from the last 24 hours.
 fn query_insights(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM behavior_patterns \
          WHERE project_id = ?1 \
            AND pattern_type LIKE 'insight_%' \
-           AND first_seen_at > datetime('now', '-7 days')",
+           AND first_seen_at > datetime('now', '-24 hours') \
+           AND shown_count = 0 \
+           AND (dismissed IS NULL OR dismissed = 0)",
         [project_id],
         |r| r.get(0),
     )
