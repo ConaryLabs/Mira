@@ -431,7 +431,7 @@ impl ContextInjectionManager {
 
         // Goal context
         if self.config.enable_task_aware {
-            let goal_ids = self.goal_injector.get_active_goal_ids().await;
+            let goal_ids = self.goal_injector.get_active_goal_ids(project_id).await;
             if !goal_ids.is_empty() {
                 let goal_context = self.goal_injector.inject_goal_context(goal_ids).await;
                 if !goal_context.is_empty() {

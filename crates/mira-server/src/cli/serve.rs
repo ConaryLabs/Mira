@@ -255,14 +255,18 @@ pub async fn run_mcp_server() -> Result<()> {
     server.watcher = Some(watcher_handle);
 
     // Log project restoration
-    if let Some(project) = server.project.read().await.as_ref() {
-        info!("Restoring project: {} (id: {})", project.path, project.id);
+    let restored_project = server
+        .project
+        .read()
+        .await
+        .as_ref()
+        .map(|p| (p.id, p.path.clone()));
+    if let Some((pid, path)) = restored_project {
+        info!("Restoring project: {} (id: {})", path, pid);
 
         // Register with watcher if available
         if let Some(watcher) = server.watcher() {
-            watcher
-                .watch(project.id, std::path::PathBuf::from(&project.path))
-                .await;
+            watcher.watch(pid, std::path::PathBuf::from(&path)).await;
         }
     }
 

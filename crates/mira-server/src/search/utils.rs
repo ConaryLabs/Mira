@@ -36,22 +36,11 @@ pub trait Locatable: Clone {
 
 /// Deduplicate search results by (file_path, start_line), keeping the highest-scoring
 /// entry for each location. Returns results sorted by score descending.
-///
-/// Uses a hash of (file_path, start_line) as key to avoid cloning file_path strings.
 pub fn deduplicate_by_location<T: Locatable>(items: Vec<T>) -> Vec<T> {
-    use std::hash::{Hash, Hasher};
-
-    fn location_hash(path: &str, line: i64) -> u64 {
-        let mut hasher = std::hash::DefaultHasher::new();
-        path.hash(&mut hasher);
-        line.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    let mut best: HashMap<u64, T> = HashMap::new();
+    let mut best: HashMap<(String, i64), T> = HashMap::new();
 
     for item in items {
-        let key = location_hash(item.file_path(), item.start_line());
+        let key = (item.file_path().to_string(), item.start_line());
         best.entry(key)
             .and_modify(|existing| {
                 if item.score() > existing.score() {

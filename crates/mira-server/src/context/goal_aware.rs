@@ -13,18 +13,26 @@ impl GoalAwareInjector {
         Self { pool }
     }
 
-    /// Get active goal IDs (fetches all active goals across all projects)
-    pub async fn get_active_goal_ids(&self) -> Vec<i64> {
+    /// Get active goal IDs scoped to the current project
+    pub async fn get_active_goal_ids(&self, project_id: Option<i64>) -> Vec<i64> {
         match self
             .pool
             .interact(move |conn| {
-                // Query all active goals regardless of project
-                let sql = "SELECT id FROM goals WHERE status NOT IN ('completed', 'abandoned') ORDER BY created_at DESC LIMIT 10";
-                let mut stmt = conn.prepare(sql)?;
-                let ids = stmt
-                    .query_map([], |row| row.get::<_, i64>(0))?
-                    .filter_map(|r| r.ok())
-                    .collect::<Vec<_>>();
+                let ids = if let Some(pid) = project_id {
+                    let mut stmt = conn.prepare(
+                        "SELECT id FROM goals WHERE project_id = ? AND status NOT IN ('completed', 'abandoned') ORDER BY created_at DESC LIMIT 10"
+                    )?;
+                    stmt.query_map(rusqlite::params![pid], |row| row.get::<_, i64>(0))?
+                        .filter_map(|r| r.ok())
+                        .collect::<Vec<_>>()
+                } else {
+                    let mut stmt = conn.prepare(
+                        "SELECT id FROM goals WHERE status NOT IN ('completed', 'abandoned') ORDER BY created_at DESC LIMIT 10"
+                    )?;
+                    stmt.query_map([], |row| row.get::<_, i64>(0))?
+                        .filter_map(|r| r.ok())
+                        .collect::<Vec<_>>()
+                };
                 Ok::<_, anyhow::Error>(ids)
             })
             .await
@@ -150,7 +158,7 @@ mod tests {
     async fn test_empty_goals() {
         let injector = create_test_injector().await;
 
-        let ids = injector.get_active_goal_ids().await;
+        let ids = injector.get_active_goal_ids(None).await;
         assert!(ids.is_empty());
 
         let context = injector.inject_goal_context(vec![]).await;
@@ -186,7 +194,7 @@ mod tests {
 
         let injector = GoalAwareInjector::new(pool);
 
-        let ids = injector.get_active_goal_ids().await;
+        let ids = injector.get_active_goal_ids(Some(project_id)).await;
         assert_eq!(ids.len(), 2);
 
         let context = injector.inject_goal_context(ids).await;
