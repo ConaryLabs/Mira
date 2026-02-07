@@ -1,0 +1,20 @@
+#!/bin/bash
+# Mira status line for Claude Code (plugin wrapper)
+# Delegates to `mira statusline` which queries the databases directly.
+# Falls back to the wrapper script if mira binary isn't available yet.
+
+set -euo pipefail
+
+# Find the mira binary
+MIRA_BIN="${HOME}/.mira/bin/mira"
+if [ ! -x "$MIRA_BIN" ]; then
+    # Try PATH
+    MIRA_BIN=$(command -v mira 2>/dev/null || true)
+fi
+
+if [ -n "$MIRA_BIN" ] && [ -x "$MIRA_BIN" ]; then
+    exec "$MIRA_BIN" statusline
+fi
+
+# No binary available yet — silent exit
+exit 0

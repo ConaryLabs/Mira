@@ -9,6 +9,7 @@ pub mod debug;
 pub mod index;
 pub mod serve;
 pub mod setup;
+pub mod statusline;
 pub mod tool;
 
 // Re-export command handlers
@@ -86,6 +87,10 @@ pub enum Commands {
         #[arg(long, alias = "non-interactive")]
         yes: bool,
     },
+
+    /// Output status line for Claude Code (reads stdin, prints stats to stdout)
+    #[command(name = "statusline")]
+    StatusLine,
 }
 
 #[derive(Subcommand)]

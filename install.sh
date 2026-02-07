@@ -305,6 +305,43 @@ EOF
     fi
 }
 
+# Configure Claude Code status line to show Mira stats
+setup_statusline() {
+    local settings_dir="$HOME/.claude"
+    local settings_file="$settings_dir/settings.json"
+    # Use mira.exe on Windows, mira elsewhere
+    local mira_exe="mira"
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) mira_exe="mira.exe" ;;
+    esac
+    local mira_bin="$INSTALL_DIR/$mira_exe"
+
+    if ! command -v jq &> /dev/null; then
+        return
+    fi
+
+    mkdir -p "$settings_dir"
+
+    # Only add if no status line is configured yet
+    if [ -f "$settings_file" ]; then
+        local has_statusline
+        has_statusline=$(jq 'has("statusLine")' "$settings_file" 2>/dev/null || echo "false")
+        if [ "$has_statusline" = "true" ]; then
+            return
+        fi
+
+        local updated
+        updated=$(jq --arg cmd "${mira_bin} statusline" \
+            '.statusLine = {"type": "command", "command": $cmd}' "$settings_file")
+        echo "$updated" > "$settings_file"
+    else
+        jq -n --arg cmd "${mira_bin} statusline" \
+            '{statusLine: {type: "command", command: $cmd}}' > "$settings_file"
+    fi
+
+    info "Status line configured (shows memory/goal/index stats)"
+}
+
 main() {
     echo ""
     echo "  ╔╦╗╦╦═╗╔═╗"
@@ -332,6 +369,8 @@ main() {
     if [ "$plugin_ok" -eq 1 ]; then
         setup_hooks
     fi
+
+    setup_statusline
 
     info "Installation complete!"
     echo ""
