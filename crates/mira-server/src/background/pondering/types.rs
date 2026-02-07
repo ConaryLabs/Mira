@@ -91,7 +91,6 @@ pub(crate) struct UntestedFile {
 /// A detected session-level pattern (e.g. many short sessions, no-commit sessions).
 #[derive(Debug)]
 pub(crate) struct SessionPattern {
-    pub pattern_type: String,
     pub description: String,
     pub count: i64,
 }

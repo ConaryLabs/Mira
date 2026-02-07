@@ -463,7 +463,6 @@ pub(super) async fn get_session_patterns(
 
         if short_sessions >= 3 {
             patterns.push(SessionPattern {
-                pattern_type: "short_sessions".to_string(),
                 description: format!(
                     "{} sessions in the last 7 days lasted less than 5 minutes",
                     short_sessions
@@ -488,7 +487,6 @@ pub(super) async fn get_session_patterns(
 
         if total_sessions >= 10 {
             patterns.push(SessionPattern {
-                pattern_type: "high_session_churn".to_string(),
                 description: format!(
                     "{} sessions in the last 7 days — high context-switching frequency",
                     total_sessions
@@ -514,7 +512,6 @@ pub(super) async fn get_session_patterns(
 
         if no_summary_sessions >= 3 {
             patterns.push(SessionPattern {
-                pattern_type: "no_summary_sessions".to_string(),
                 description: format!(
                     "{} sessions in the last 7 days ended without a summary",
                     no_summary_sessions

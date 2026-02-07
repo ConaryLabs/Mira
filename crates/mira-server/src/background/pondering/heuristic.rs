@@ -260,7 +260,6 @@ mod tests {
     fn test_session_pattern() {
         let data = ProjectInsightData {
             session_patterns: vec![SessionPattern {
-                pattern_type: "short_sessions".to_string(),
                 description: "5 sessions in the last 7 days lasted less than 5 minutes".to_string(),
                 count: 5,
             }],
