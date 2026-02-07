@@ -13,27 +13,14 @@ impl GoalAwareInjector {
         Self { pool }
     }
 
-    /// Get active goal IDs scoped to the current project
+    /// Get active goal IDs scoped to the current project (plus global goals with NULL project_id).
+    /// Matches the canonical scoping in `db::tasks::get_active_goals_sync`.
     pub async fn get_active_goal_ids(&self, project_id: Option<i64>) -> Vec<i64> {
         match self
             .pool
             .interact(move |conn| {
-                let ids = if let Some(pid) = project_id {
-                    let mut stmt = conn.prepare(
-                        "SELECT id FROM goals WHERE project_id = ? AND status NOT IN ('completed', 'abandoned') ORDER BY created_at DESC LIMIT 10"
-                    )?;
-                    stmt.query_map(rusqlite::params![pid], |row| row.get::<_, i64>(0))?
-                        .filter_map(|r| r.ok())
-                        .collect::<Vec<_>>()
-                } else {
-                    let mut stmt = conn.prepare(
-                        "SELECT id FROM goals WHERE status NOT IN ('completed', 'abandoned') ORDER BY created_at DESC LIMIT 10"
-                    )?;
-                    stmt.query_map([], |row| row.get::<_, i64>(0))?
-                        .filter_map(|r| r.ok())
-                        .collect::<Vec<_>>()
-                };
-                Ok::<_, anyhow::Error>(ids)
+                let goals = crate::db::get_active_goals_sync(conn, project_id, 10)?;
+                Ok::<_, anyhow::Error>(goals.into_iter().map(|g| g.id).collect::<Vec<_>>())
             })
             .await
         {
