@@ -138,29 +138,28 @@ async fn query_insights<C: ToolContext>(
         })
         .collect();
 
-    // Fire-and-forget: increment shown_count for pondering insights
-    // TODO: Once UnifiedInsight carries pattern_key, use it directly instead of
-    // matching by description. For now, match pondering insights by description.
-    let pondering_descriptions: Vec<String> = insights
+    // Fire-and-forget: mark all returned pondering insights as shown by row ID
+    let row_ids: Vec<i64> = insights
         .iter()
-        .filter(|i| i.source == "pondering")
-        .map(|i| i.description.clone())
+        .filter_map(|i| i.row_id)
         .collect();
-    if !pondering_descriptions.is_empty() {
+    if !row_ids.is_empty() {
         let pool = ctx.pool().clone();
-        let pid = project_id;
         tokio::spawn(async move {
             let _ = pool
                 .run(move |conn| {
-                    for desc in &pondering_descriptions {
-                        let _ = conn.execute(
-                            "UPDATE behavior_patterns SET shown_count = COALESCE(shown_count, 0) + 1
-                             WHERE project_id = ?1
-                               AND pattern_type LIKE 'insight_%'
-                               AND json_extract(pattern_data, '$.description') = ?2",
-                            rusqlite::params![pid, desc],
-                        );
-                    }
+                    let placeholders: String =
+                        row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                    let sql = format!(
+                        "UPDATE behavior_patterns \
+                         SET shown_count = COALESCE(shown_count, 0) + 1 \
+                         WHERE id IN ({})",
+                        placeholders
+                    );
+                    let _ = conn.execute(
+                        &sql,
+                        rusqlite::params_from_iter(row_ids.iter()),
+                    );
                     Ok::<_, String>(())
                 })
                 .await;

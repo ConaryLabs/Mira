@@ -97,6 +97,8 @@ pub struct UnifiedInsight {
     pub confidence: f64,
     pub timestamp: String,
     pub evidence: Option<String>,
+    /// Row ID from behavior_patterns (pondering) for marking as shown
+    pub row_id: Option<i64>,
 }
 
 /// Project briefing (What's New since last session)

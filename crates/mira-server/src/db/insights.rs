@@ -57,7 +57,7 @@ fn fetch_pondering_insights(
     days_back: i64,
 ) -> rusqlite::Result<Vec<UnifiedInsight>> {
     let mut stmt = conn.prepare(
-        r#"SELECT pattern_type, pattern_data, confidence, last_triggered_at
+        r#"SELECT id, pattern_type, pattern_data, confidence, last_triggered_at
            FROM behavior_patterns
            WHERE project_id = ?1
              AND pattern_type LIKE 'insight_%'
@@ -67,16 +67,17 @@ fn fetch_pondering_insights(
     )?;
 
     let rows = stmt.query_map(params![project_id, days_back], |row| {
-        let pattern_type: String = row.get(0)?;
-        let pattern_data: String = row.get(1)?;
-        let confidence: f64 = row.get(2)?;
-        let timestamp: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-        Ok((pattern_type, pattern_data, confidence, timestamp))
+        let row_id: i64 = row.get(0)?;
+        let pattern_type: String = row.get(1)?;
+        let pattern_data: String = row.get(2)?;
+        let confidence: f64 = row.get(3)?;
+        let timestamp: String = row.get::<_, Option<String>>(4)?.unwrap_or_default();
+        Ok((row_id, pattern_type, pattern_data, confidence, timestamp))
     })?;
 
     let mut insights = Vec::new();
     for row in rows {
-        let (pattern_type, pattern_data, confidence, timestamp) = row?;
+        let (row_id, pattern_type, pattern_data, confidence, timestamp) = row?;
 
         // Extract description and evidence from JSON
         let (description, evidence) =
@@ -122,6 +123,7 @@ fn fetch_pondering_insights(
             confidence,
             timestamp,
             evidence,
+            row_id: Some(row_id),
         });
     }
 
@@ -179,6 +181,7 @@ fn fetch_doc_gap_insights(
             confidence: priority_score,
             timestamp,
             evidence: reason,
+            row_id: None,
         });
     }
 
