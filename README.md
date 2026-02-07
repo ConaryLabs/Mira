@@ -8,7 +8,7 @@
 
 Claude Code is stateless. Every session starts from zero — your architecture decisions forgotten, your preferences lost, your codebase understood only as far as it can grep. Mira fixes that.
 
-Mira is a Rust MCP server that gives Claude Code long-term memory, deep code understanding, and a team of AI expert reviewers. It runs locally, stores everything in SQLite, and integrates through Claude Code's plugin system with hooks that make context injection automatic.
+Mira is a Rust MCP server that gives Claude Code long-term memory and deep code understanding. It runs locally, stores everything in SQLite, and integrates through Claude Code's plugin system with hooks that make context injection automatic.
 
 ## What Mira Does
 
@@ -18,15 +18,13 @@ Mira is a Rust MCP server that gives Claude Code long-term memory, deep code und
 
 **Builds intelligence in the background.** A background engine continuously generates module summaries, detects capabilities, summarizes git changes since your last session, scores tech debt, and surfaces insights — all without you asking.
 
-**Provides expert second opinions.** On-demand consultation from specialized AI reviewers (architect, security, code reviewer, scope analyst, plan reviewer) that have full access to search your codebase before answering. Powered by DeepSeek Reasoner or Zhipu GLM-4.7, or zero-key via MCP Sampling through the host client.
-
 **Coordinates agent teams.** Automatic team detection when using Claude Code Agent Teams — tracks file ownership, detects conflicts across teammates, and distills team discoveries into shared memory.
 
 **Distills knowledge over time.** A background system analyzes accumulated memories and surfaces cross-cutting patterns as higher-level insights, so institutional knowledge compounds rather than just accumulates.
 
 **Tracks goals across sessions.** Weighted milestones that persist across conversations, so multi-session work doesn't lose its thread.
 
-**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. MCP Sampling enables expert consultation without provider keys. Add an OpenAI key for semantic search, or DeepSeek/Zhipu for direct expert access.
+**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. Add an OpenAI key for semantic search, or DeepSeek/Zhipu/Ollama for background intelligence tasks.
 
 **Detects documentation gaps.** Finds undocumented APIs and modules, flags stale docs when source changes, and provides writing guidelines so Claude can fill the gaps directly.
 
@@ -46,7 +44,7 @@ mira setup
 ```
 The setup wizard walks you through configuring API keys with live validation, auto-detects local Ollama instances and their models, and merges cleanly with any existing configuration. For CI or scripted installs, `mira setup --yes` runs non-interactively (auto-detects Ollama, skips API key prompts). Use `mira setup --check` for read-only validation of your current config.
 
-> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without any keys. Search falls back to fuzzy/keyword matching, analysis uses heuristic parsers, and expert consultation works via MCP Sampling through the host client. Add keys later with `mira setup` for enhanced capabilities: OpenAI for semantic search, DeepSeek or Zhipu for direct expert access with codebase search.
+> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without any keys. Search falls back to fuzzy/keyword matching and analysis uses heuristic parsers. Add keys later with `mira setup` for enhanced capabilities: OpenAI for semantic search, DeepSeek/Zhipu/Ollama for background intelligence.
 
 ### Manual Install
 
@@ -153,7 +151,7 @@ Hooks enable automatic context injection — relevant memories recalled on every
 
 See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CLAUDE.md` layout that teaches Claude Code how to use Mira's tools effectively. The modular structure uses:
 - `CLAUDE.md` — Core identity, anti-patterns, build commands (always loaded)
-- `.claude/rules/` — Tool selection, memory, tasks, experts (always loaded)
+- `.claude/rules/` — Tool selection, memory, tasks (always loaded)
 
 ### Plugin vs MCP Server
 
@@ -167,12 +165,10 @@ The **MCP server** (cargo install / build from source) provides the core tools. 
 Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
                                   |
                                   +--->  OpenAI (embeddings)
-                                  +--->  DeepSeek Reasoner (experts)
-                                  +--->  Zhipu GLM-4.7 (experts)
-                                  +--->  Ollama (local background tasks)
+                                  +--->  DeepSeek / Zhipu / Ollama (background intelligence)
 ```
 
-All data stored locally in `~/.mira/`. No cloud storage, no external databases. Two SQLite databases: `mira.db` for memories, sessions, goals, and expert history; `mira-code.db` for the code index.
+All data stored locally in `~/.mira/`. No cloud storage, no external databases. Two SQLite databases: `mira.db` for memories, sessions, and goals; `mira-code.db` for the code index.
 
 ## Slash Commands
 
@@ -182,7 +178,6 @@ All data stored locally in `~/.mira/`. No cloud storage, no external databases. 
 | `/mira:goals` | List and manage cross-session goals |
 | `/mira:search <query>` | Semantic code search |
 | `/mira:remember <text>` | Quick memory storage |
-| `/mira:experts <question>` | Expert consultation |
 | `/mira:diff` | Semantic analysis of recent changes |
 | `/mira:insights` | Surface background analysis |
 
@@ -205,11 +200,11 @@ Project context is auto-initialized from Claude Code's working directory. Verify
 ## Documentation
 
 - [Design Philosophy](docs/DESIGN.md) — Architecture decisions and tradeoffs
-- [Core Concepts](docs/CONCEPTS.md) — Memory, intelligence, experts explained
+- [Core Concepts](docs/CONCEPTS.md) — Memory, intelligence, sessions explained
 - [Configuration](docs/CONFIGURATION.md) — All options and hooks
 - [Database](docs/DATABASE.md) — Schema and storage details
 - [Testing](docs/TESTING.md) — Test infrastructure and patterns
-- [Tool Reference](docs/tools/) — Per-tool documentation (memory, code, expert, etc.)
+- [Tool Reference](docs/tools/) — Per-tool documentation (memory, code, goal, etc.)
 - [Module Reference](docs/modules/) — Internal module documentation
 - [Changelog](CHANGELOG.md) — Version history
 

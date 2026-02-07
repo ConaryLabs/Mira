@@ -11,7 +11,7 @@
     {
       "name": "mira",
       "source": "./plugin",
-      "description": "Persistent memory across sessions, expert consultations, goal tracking, and proactive context injection.",
+      "description": "Persistent memory across sessions, goal tracking, and proactive context injection.",
       "version": "0.6.2",
       "author": {
         "name": "Peter Permenter"
@@ -27,7 +27,6 @@
         "goals",
         "mcp",
         "persistent-memory",
-        "expert-consultation",
         "code-review",
         "session-history"
       ]

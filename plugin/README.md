@@ -1,12 +1,11 @@
 # Mira Plugin for Claude Code
 
-Semantic memory and code intelligence for Claude Code. Provides persistent memory across sessions, expert consultations, goal tracking, and proactive context injection.
+Semantic memory and code intelligence for Claude Code. Provides persistent memory across sessions, goal tracking, and proactive context injection.
 
 ## Features
 
 - **Persistent Memory**: Remember decisions, preferences, and context across sessions
 - **Semantic Code Search**: Find code by meaning, not just text
-- **Expert Consultations**: Get second opinions from AI architects, security analysts, code reviewers
 - **Goal Tracking**: Track multi-session objectives with milestones
 - **Proactive Context**: Automatic context injection based on your prompts
 
@@ -36,7 +35,7 @@ DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
 OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys
 ```
 
-> **No API keys?** Expert consultation works without keys via MCP Sampling (uses the host client). All other tools work with heuristic fallbacks. Ollama can power background tasks locally without any API keys.
+> **No API keys?** Core features work without keys using heuristic fallbacks. Ollama can power background tasks locally without any API keys.
 
 ### Alternative: Standalone Install
 
@@ -69,13 +68,12 @@ claude --plugin-dir /path/to/Mira/plugin
 | `/mira:recap` | Get session recap |
 | `/mira:goals [command]` | Manage goals and milestones |
 | `/mira:diff [--from REF] [--to REF]` | Semantic diff analysis |
-| `/mira:experts <question>` | Get expert second opinions |
 | `/mira:insights` | Surface background analysis |
 | `/mira:remember <content>` | Quick memory storage |
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 11 action-based tools:
+The plugin bundles the Mira MCP server with 9 action-based tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
@@ -83,9 +81,7 @@ The plugin bundles the Mira MCP server with 11 action-based tools:
 | `code` | search, symbols, callers, callees, dependencies, patterns, tech_debt, diff | Code intelligence + semantic diff analysis |
 | `project` | start, set, get | Project/session management |
 | `session` | history, recap, usage, insights, tasks | Session history, analytics, and async task management |
-| `expert` | consult, configure | Expert consultation (architect, security, code_reviewer, plan_reviewer, scope_analyst) |
 | `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
-| `finding` | list, get, review, stats, patterns, extract | Code review findings |
 | `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
 | `index` | project, file, status, compact, summarize, health | Code indexing and health |
 | `team` | status, review, distill | Agent team intelligence |

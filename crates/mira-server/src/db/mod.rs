@@ -11,7 +11,6 @@ pub mod diff_outcomes;
 pub mod documentation;
 mod embeddings;
 pub mod entities;
-mod expert_config;
 mod index;
 mod insights;
 mod memory;
@@ -19,7 +18,6 @@ mod migration_helpers;
 mod milestones;
 pub mod pool;
 mod project;
-mod reviews;
 mod schema;
 pub use schema::vectors::check_embedding_provider_change;
 mod search;
@@ -78,6 +76,7 @@ pub use config::{
     ExpertConfig, delete_custom_prompt_sync, get_expert_config_sync, list_custom_prompts_sync,
     set_expert_config_sync,
 };
+// Note: ExpertConfig and related functions retained for database config storage
 pub use diff_analysis::{
     DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync,
     get_recent_diff_analyses_sync, store_diff_analysis_sync,
@@ -148,12 +147,6 @@ pub use project::{
     mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
     set_server_state_sync, update_project_briefing_sync, update_project_name_sync,
     upsert_session_sync, upsert_session_with_branch_sync,
-};
-pub use reviews::{
-    Correction, ReviewFinding, ReviewFindingParams, bulk_update_finding_status_sync,
-    extract_patterns_from_findings_sync, get_finding_stats_sync, get_finding_sync,
-    get_findings_sync, get_relevant_corrections_sync, store_review_finding_sync,
-    update_finding_status_sync,
 };
 pub use search::{
     ChunkSearchResult, CrossRefResult, FtsSearchResult, SemanticCodeResult, SymbolSearchResult,

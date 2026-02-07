@@ -14,7 +14,7 @@ Database schema creation and migration system.
 | `fts` | Full-text search indexes |
 | `intelligence` | Proactive/evolutionary/cross-project tables |
 | `memory` | Facts, corrections, docs, users, teams |
-| `reviews` | Findings, corrections, embeddings, diffs, LLM usage |
+| `reviews` | Corrections, embeddings, diffs, LLM usage |
 | `session` | Sessions, tool history, chat |
 | `session_tasks` | Claude Code task persistence bridge |
 | `team` | Team schema migrations |

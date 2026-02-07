@@ -95,21 +95,6 @@ pub enum CrossProjectAction {
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ExpertConfigAction {
-    /// Set expert configuration
-    Set,
-    /// Get expert configuration
-    Get,
-    /// Delete expert configuration
-    Delete,
-    /// List all configurations
-    List,
-    /// List available providers
-    Providers,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum DocumentationAction {
     /// List documentation tasks
     List,
@@ -125,23 +110,6 @@ pub enum DocumentationAction {
     Scan,
     /// Export Mira memories to CLAUDE.local.md
     ExportClaudeLocal,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FindingAction {
-    /// List findings
-    List,
-    /// Get a finding by ID
-    Get,
-    /// Review a finding
-    Review,
-    /// Get finding statistics
-    Stats,
-    /// Get learned patterns
-    Patterns,
-    /// Extract patterns from findings
-    Extract,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -386,43 +354,6 @@ pub struct ReplyToMiraRequest {
     pub complete: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ExpertAction {
-    /// Consult one or more experts in parallel
-    Consult,
-    /// Configure expert system prompts
-    Configure,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ExpertRequest {
-    #[schemars(description = "Action: consult, configure")]
-    pub action: ExpertAction,
-    #[schemars(
-        description = "Expert roles to consult: architect, plan_reviewer, scope_analyst, code_reviewer, security (required for consult)"
-    )]
-    pub roles: Option<Vec<String>>,
-    #[schemars(description = "Code, design, or situation to analyze (required for consult)")]
-    pub context: Option<String>,
-    #[schemars(description = "Specific question for all experts")]
-    pub question: Option<String>,
-    #[schemars(description = "Collaboration mode: parallel (default) or debate")]
-    pub mode: Option<String>,
-    #[schemars(
-        description = "Configure sub-action: set/get/delete/list/providers (required for configure)"
-    )]
-    pub config_action: Option<ExpertConfigAction>,
-    #[schemars(description = "Expert role for configuration")]
-    pub role: Option<String>,
-    #[schemars(description = "Custom system prompt (for configure set)")]
-    pub prompt: Option<String>,
-    #[schemars(description = "LLM provider: deepseek/zhipu (for configure set)")]
-    pub provider: Option<String>,
-    #[schemars(description = "Custom model name (for configure set)")]
-    pub model: Option<String>,
-}
-
 // Documentation request types
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -441,34 +372,6 @@ pub struct DocumentationRequest {
     pub priority: Option<String>,
     #[schemars(description = "Filter by status")]
     pub status: Option<String>,
-}
-
-// Review findings request type (unified)
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct FindingRequest {
-    #[schemars(description = "Action: list, get, review, stats, patterns, extract")]
-    pub action: FindingAction,
-    #[schemars(description = "Finding ID (for get/review single)")]
-    pub finding_id: Option<i64>,
-    #[schemars(description = "Finding IDs for bulk review")]
-    pub finding_ids: Option<Vec<i64>>,
-    #[schemars(
-        description = "Status filter (for list) or new status (for review): pending/accepted/rejected/fixed"
-    )]
-    pub status: Option<String>,
-    #[schemars(description = "Feedback explaining review decision (helps learning)")]
-    pub feedback: Option<String>,
-    #[schemars(description = "Filter by file path")]
-    pub file_path: Option<String>,
-    #[schemars(description = "Filter by expert role: code_reviewer/security/architect/etc.")]
-    pub expert_role: Option<String>,
-    #[schemars(
-        description = "Filter by correction type: bug/style/security/performance (for patterns)"
-    )]
-    pub correction_type: Option<String>,
-    #[schemars(description = "Max results (default: 20)")]
-    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]

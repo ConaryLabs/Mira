@@ -16,7 +16,7 @@ Built on the **`rmcp`** library (Rust MCP). Implements the `ServerHandler` trait
 | `requests.rs` | Request type definitions (action enums, parameter structs) |
 | `responses/` | Response type definitions (structured JSON output schemas) |
 | `extraction.rs` | Tool outcome extraction and memory capture |
-| `client.rs` | MCP client for accessing host environment tools from experts |
+| `client.rs` | MCP client for accessing host environment tools |
 | `elicitation.rs` | Interactive user input (API key setup) |
 | `tasks.rs` | Async long-running task management |
 
@@ -26,7 +26,7 @@ The central server state holding:
 
 - `pool` / `code_pool` - Database connection pools (main + code index)
 - `embeddings` - Embedding client for semantic search
-- `llm_factory` - LLM provider factory for expert consultation
+- `llm_factory` - LLM provider factory for background tasks
 - `project` - Current project context
 - `session_id` / `branch` - Session tracking
 - `mcp_client_manager` - Connections to external MCP servers

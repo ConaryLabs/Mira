@@ -5,7 +5,7 @@ Mira uses a modular structure to keep always-loaded context small:
 | Location | Purpose | When Loaded |
 |----------|---------|-------------|
 | `CLAUDE.md` | Core identity, anti-patterns, build commands | Always |
-| `.claude/rules/*.md` | Tool selection, memory, tasks, experts | Always |
+| `.claude/rules/*.md` | Tool selection, memory, tasks | Always |
 | `.claude/skills/*/SKILL.md` | Reference docs (Context7, tool APIs) | On-demand |
 
 ---
@@ -65,7 +65,6 @@ Create these rule files for detailed guidance:
 - **`memory-system.md`** — Evidence threshold, when to remember/recall
 - **`sub-agents.md`** — Recall before launching Task agents
 - **`task-management.md`** — Session tasks vs cross-session goals
-- **`experts.md`** — Available expert roles, when to consult
 
 See Mira's own [.claude/rules/](../.claude/rules/) for examples of each.
 

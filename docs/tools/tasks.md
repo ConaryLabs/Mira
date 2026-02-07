@@ -4,7 +4,7 @@
 
 Manage async long-running operations. This is a fallback for clients without native MCP task support.
 
-Long-running tools like `index(action="project")`, `index(action="health")`, `code(action="diff")`, and `expert(action="consult")` can enqueue background tasks. Use this tool to monitor their progress.
+Long-running tools like `index(action="project")`, `index(action="health")`, and `code(action="diff")` can enqueue background tasks. Use this tool to monitor their progress.
 
 ## Usage
 

@@ -143,18 +143,6 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Get second opinions from AI experts for code review, architecture, security, and planning. Actions: consult (parallel expert opinions), configure (set/get/delete/list/providers for expert LLM routing). Roles: architect, plan_reviewer, scope_analyst, code_reviewer, security.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ExpertOutput>()
-            .expect("ExpertOutput schema")
-    )]
-    async fn expert(
-        &self,
-        Parameters(req): Parameters<ExpertRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_expert(self, req).await)
-    }
-
-    #[tool(
         description = "Manage documentation gap detection and writing tasks. Actions: list (show needed docs), get (task details with writing guidelines), complete (mark done), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DocOutput>()
             .expect("DocOutput schema")
@@ -189,31 +177,6 @@ impl MiraServer {
         tool_result(tools::handle_team(self, req).await)
     }
 
-    #[tool(
-        description = "Manage code review findings, bugs, and learned quality patterns. Actions: list, get, review (single or bulk), stats, patterns (learned corrections), extract (derive patterns from accepted findings). Filter by status, expert role, file path, or correction type.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::FindingOutput>()
-            .expect("FindingOutput schema")
-    )]
-    async fn finding(
-        &self,
-        Parameters(req): Parameters<FindingRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(
-            tools::finding(
-                self,
-                req.action,
-                req.finding_id,
-                req.finding_ids,
-                req.status,
-                req.feedback,
-                req.file_path,
-                req.expert_role,
-                req.correction_type,
-                req.limit,
-            )
-            .await,
-        )
-    }
 }
 
 impl MiraServer {

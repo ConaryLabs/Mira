@@ -131,4 +131,3 @@ Analyzes git changes for change types, impact, and risk. Uses LLM-powered analys
 
 - [**index**](./index.md): Index project to build the code intelligence database
 - [**memory**](./memory.md): Search memories by meaning
-- [**expert**](./expert.md): Expert consultations that use code intelligence

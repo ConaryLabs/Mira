@@ -5,14 +5,12 @@
 
 mod test_utils;
 
-use mira::mcp::requests::{
-    ExpertConfigAction, GoalAction, GoalRequest, IndexAction, SessionHistoryAction,
-};
+use mira::mcp::requests::{GoalAction, GoalRequest, IndexAction, SessionHistoryAction};
 use mira::mcp::responses::*;
 use mira::tools::core::{
-    ToolContext, configure_expert, ensure_session, find_function_callees, find_function_callers,
-    forget, get_project, get_session_recap, get_symbols, goal, index, recall, remember,
-    reply_to_mira, search_code, session_history, session_start, set_project, summarize_codebase,
+    ToolContext, ensure_session, find_function_callees, find_function_callers, forget, get_project,
+    get_session_recap, get_symbols, goal, index, recall, remember, reply_to_mira, search_code,
+    session_history, session_start, set_project, summarize_codebase,
 };
 use std::sync::Arc;
 use test_utils::TestContext;
@@ -654,148 +652,6 @@ async fn test_goal_create_and_list() {
     );
 }
 
-#[tokio::test]
-async fn test_configure_expert_providers() {
-    let ctx = TestContext::new().await;
-
-    let project_path = "/tmp/test_expert".to_string();
-    session_start(
-        &ctx,
-        project_path.clone(),
-        Some("Expert Test".to_string()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // providers action should list available LLM providers (none in test)
-    let result =
-        configure_expert(&ctx, ExpertConfigAction::Providers, None, None, None, None).await;
-    assert!(
-        result.is_ok(),
-        "configure_expert providers failed: {:?}",
-        result.err()
-    );
-    let output = result.unwrap();
-    // Should indicate no providers available
-    assert!(
-        output.contains("No LLM providers") || output.contains("LLM providers"),
-        "Output: {}",
-        output
-    );
-}
-
-#[tokio::test]
-async fn test_configure_expert_list() {
-    let ctx = TestContext::new().await;
-
-    let project_path = "/tmp/test_expert_list".to_string();
-    session_start(
-        &ctx,
-        project_path.clone(),
-        Some("Expert List Test".to_string()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // list action should show no custom configurations
-    let result = configure_expert(&ctx, ExpertConfigAction::List, None, None, None, None).await;
-    assert!(
-        result.is_ok(),
-        "configure_expert list failed: {:?}",
-        result.err()
-    );
-    let output = result.unwrap();
-    assert!(
-        output.contains("No custom configurations") || output.contains("expert configurations"),
-        "Output: {}",
-        output
-    );
-}
-
-#[tokio::test]
-async fn test_configure_expert_set_get_delete() {
-    let ctx = TestContext::new().await;
-
-    let project_path = "/tmp/test_expert_crud".to_string();
-    session_start(
-        &ctx,
-        project_path.clone(),
-        Some("Expert CRUD Test".to_string()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // Set custom prompt for architect
-    let custom_prompt = "You are a test architect. Provide simple answers.";
-    let result = configure_expert(
-        &ctx,
-        ExpertConfigAction::Set,
-        Some("architect".to_string()),
-        Some(custom_prompt.to_string()),
-        None,
-        None,
-    )
-    .await;
-    assert!(
-        result.is_ok(),
-        "configure_expert set failed: {:?}",
-        result.err()
-    );
-    let output = result.unwrap();
-    assert!(
-        output.contains("Configuration updated"),
-        "Output: {}",
-        output
-    );
-
-    // Get the configuration
-    let result = configure_expert(
-        &ctx,
-        ExpertConfigAction::Get,
-        Some("architect".to_string()),
-        None,
-        None,
-        None,
-    )
-    .await;
-    assert!(
-        result.is_ok(),
-        "configure_expert get failed: {:?}",
-        result.err()
-    );
-    let output = result.unwrap();
-    assert!(
-        output.contains("Configuration for 'architect'"),
-        "Output: {}",
-        output
-    );
-    assert!(output.contains("Custom prompt:"), "Output: {}", output);
-
-    // Delete the configuration
-    let result = configure_expert(
-        &ctx,
-        ExpertConfigAction::Delete,
-        Some("architect".to_string()),
-        None,
-        None,
-        None,
-    )
-    .await;
-    assert!(
-        result.is_ok(),
-        "configure_expert delete failed: {:?}",
-        result.err()
-    );
-    let output = result.unwrap();
-    assert!(
-        output.contains("Configuration deleted") || output.contains("No custom configuration"),
-        "Output: {}",
-        output
-    );
-}
 
 #[tokio::test]
 async fn test_get_session_recap() {

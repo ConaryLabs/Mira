@@ -5,9 +5,9 @@ use super::serve::setup_server_context;
 use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    CodeAction, CodeRequest, DocumentationRequest, ExpertRequest, FindingRequest, GoalRequest,
-    IndexRequest, MemoryRequest, ProjectRequest, ReplyToMiraRequest, SessionAction, SessionRequest,
-    TasksAction, TasksRequest, TeamRequest,
+    CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, MemoryRequest,
+    ProjectRequest, ReplyToMiraRequest, SessionAction, SessionRequest, TasksAction, TasksRequest,
+    TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -81,12 +81,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                     .map(|output| output.0.message)
             }
         }
-        "expert" => {
-            let req: ExpertRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_expert(&server, req)
-                .await
-                .map(|output| output.0.message)
-        }
         "reply_to_mira" => {
             let req: ReplyToMiraRequest = serde_json::from_str(&args)?;
             mira::tools::reply_to_mira(
@@ -118,23 +112,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 .await
                 .map(|output| output.0.message)
         }
-        "finding" => {
-            let req: FindingRequest = serde_json::from_str(&args)?;
-            mira::tools::finding(
-                &server,
-                req.action,
-                req.finding_id,
-                req.finding_ids,
-                req.status,
-                req.feedback,
-                req.file_path,
-                req.expert_role,
-                req.correction_type,
-                req.limit,
-            )
-            .await
-            .map(|output| output.0.message)
-        }
         _ => Err(format!("Unknown tool: {}", name)),
     };
 
@@ -156,11 +133,9 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "goal",
         "index",
         "session",
-        "expert",
         "reply_to_mira",
         "documentation",
         "team",
-        "finding",
     ]
 }
 

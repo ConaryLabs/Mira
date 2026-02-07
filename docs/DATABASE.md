@@ -4,7 +4,7 @@ Mira uses two SQLite databases with the sqlite-vec extension for vector search.
 
 | Database | Path | Purpose |
 |----------|------|---------|
-| **Main** | `~/.mira/mira.db` | Memories, sessions, experts, goals, proactive intelligence |
+| **Main** | `~/.mira/mira.db` | Memories, sessions, goals, proactive intelligence |
 | **Code Index** | `~/.mira/mira-code.db` | Code symbols, call graph, embeddings, FTS |
 
 The code index was separated from the main database in v0.3.5 to eliminate write contention - indexing operations no longer block tool calls. Each database has its own `DatabasePool` and WAL mode configuration.
@@ -56,7 +56,7 @@ Semantic memory storage with evidence-based confidence tracking.
 
 ### corrections
 
-Pattern corrections learned from reviewed findings.
+Pattern corrections learned from code reviews.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -264,45 +264,7 @@ Registry of existing documentation files.
 
 ---
 
-## Expert System
-
-### system_prompts
-
-Custom configuration for expert roles.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| role | TEXT PK | `architect`, `code_reviewer`, `security`, etc. |
-| prompt | TEXT | Custom system prompt |
-| provider | TEXT | LLM provider: `deepseek` or `zhipu` |
-| model | TEXT | Custom model name (optional) |
-| updated_at | TEXT | Last modification |
-
-### review_findings
-
-Code review findings from expert consultations (learning loop).
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| project_id | INTEGER FK | Project reference |
-| expert_role | TEXT | Which expert found this |
-| file_path | TEXT | File with the issue |
-| finding_type | TEXT | Type of finding |
-| severity | TEXT | `low`, `medium`, `high`, `critical` |
-| content | TEXT | Finding description |
-| code_snippet | TEXT | Relevant code |
-| suggestion | TEXT | Suggested fix |
-| status | TEXT | `pending`, `accepted`, `rejected`, `fixed` |
-| feedback | TEXT | User feedback on finding |
-| confidence | REAL | Expert's confidence |
-| user_id | TEXT | User identity |
-| reviewed_by | TEXT | Who reviewed |
-| session_id | TEXT | Session when found |
-| created_at | TEXT | Timestamp |
-| reviewed_at | TEXT | When reviewed |
-
-When findings are accepted/rejected, patterns are extracted into `corrections` for future expert consultations.
+## Diff Analysis
 
 ### diff_analyses
 
@@ -417,106 +379,6 @@ Pre-generated suggestions for fast lookup during UserPromptSubmit hook.
 | expires_at | TEXT | Expiration (7 days) |
 
 ---
-
-## Evolutionary Expert System
-
-Tables for tracking expert consultation history, problem patterns, and prompt evolution.
-
-### expert_consultations
-
-Detailed history of each expert consultation.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| expert_role | TEXT | Expert role used |
-| project_id | INTEGER FK | Project reference |
-| session_id | TEXT | Session reference |
-| context_hash | TEXT | Hash of context for pattern matching |
-| problem_category | TEXT | Categorized problem type |
-| context_summary | TEXT | Brief summary of context |
-| tools_used | TEXT | JSON array of tools called |
-| tool_call_count | INTEGER | Number of tool calls |
-| consultation_duration_ms | INTEGER | Duration in milliseconds |
-| initial_confidence | REAL | Expert's stated confidence |
-| calibrated_confidence | REAL | Adjusted based on history |
-| prompt_version | INTEGER | Which prompt version was used |
-| created_at | TEXT | Timestamp |
-
-### problem_patterns
-
-Recurring problem signatures per expert.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| expert_role | TEXT | Expert role |
-| pattern_signature | TEXT | Hash of problem characteristics |
-| pattern_description | TEXT | Human-readable description |
-| common_context_elements | TEXT | JSON: context elements that appear together |
-| successful_approaches | TEXT | JSON: which analysis approaches work best |
-| recommended_tools | TEXT | JSON: which tools yield best results |
-| success_rate | REAL | Success rate |
-| occurrence_count | INTEGER | Times observed |
-| avg_confidence | REAL | Average confidence |
-| avg_acceptance_rate | REAL | Average acceptance rate |
-| last_seen_at | TEXT | Last observation |
-| created_at | TEXT | Timestamp |
-
-### expert_outcomes
-
-Tracks whether expert advice led to good results.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| consultation_id | INTEGER FK | Consultation reference |
-| finding_id | INTEGER FK | Finding reference |
-| outcome_type | TEXT | `code_change`, `design_adoption`, `bug_fix`, `security_fix` |
-| git_commit_hash | TEXT | If advice led to code change |
-| files_changed | TEXT | JSON array of changed files |
-| change_similarity_score | REAL | How closely change matches suggestion |
-| user_outcome_rating | REAL | User-provided rating (0-1) |
-| outcome_evidence | TEXT | JSON: links to tests, metrics, etc. |
-| time_to_outcome_seconds | INTEGER | Time until outcome realized |
-| learned_lesson | TEXT | What pattern we learned |
-| created_at | TEXT | Timestamp |
-| verified_at | TEXT | Verification time |
-
-### expert_prompt_versions
-
-Tracks prompt versions and their performance.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| expert_role | TEXT | Expert role |
-| version | INTEGER | Version number |
-| prompt_additions | TEXT | Additional context added to base prompt |
-| performance_metrics | TEXT | JSON: acceptance_rate, outcome_success, etc. |
-| adaptation_reason | TEXT | Why this version was created |
-| consultation_count | INTEGER | Number of consultations |
-| acceptance_rate | REAL | Acceptance rate |
-| is_active | INTEGER | 1 if active |
-| created_at | TEXT | Timestamp |
-
-### collaboration_patterns
-
-When experts should work together.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| problem_domains | TEXT | JSON: which expertise domains involved |
-| complexity_threshold | REAL | Min complexity score to trigger |
-| recommended_experts | TEXT | JSON: which experts to involve |
-| collaboration_mode | TEXT | `parallel`, `sequential`, `hierarchical` |
-| synthesis_method | TEXT | How to combine outputs |
-| success_rate | REAL | Success rate |
-| time_saved_percent | REAL | Efficiency vs individual consultations |
-| occurrence_count | INTEGER | Times used |
-| last_used_at | TEXT | Last use |
-| created_at | TEXT | Timestamp |
 
 ---
 
@@ -753,7 +615,7 @@ LLM API usage and cost tracking.
 | id | INTEGER PK | Auto-increment ID |
 | provider | TEXT | `deepseek`, `zhipu`, or `sampling` |
 | model | TEXT | Model name |
-| role | TEXT | Expert role that made the call |
+| role | TEXT | LLM role/purpose for the call |
 | prompt_tokens | INTEGER | Input token count |
 | completion_tokens | INTEGER | Output token count |
 | total_tokens | INTEGER | Total tokens |

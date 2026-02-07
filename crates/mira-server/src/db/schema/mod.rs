@@ -70,9 +70,6 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Add proactive intelligence tables for behavior tracking
     intelligence::migrate_proactive_intelligence_tables(conn)?;
 
-    // Add evolutionary expert system tables
-    intelligence::migrate_evolutionary_expert_tables(conn)?;
-
     // Add cross-project intelligence tables for pattern sharing
     intelligence::migrate_cross_project_intelligence_tables(conn)?;
 

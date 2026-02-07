@@ -2,13 +2,10 @@
 // Provider factory for managing multiple LLM clients
 
 use crate::config::{ApiKeys, MiraConfig};
-use crate::db::pool::DatabasePool;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::ollama::OllamaClient;
 use crate::llm::provider::{LlmClient, Provider};
-use crate::llm::sampling::SamplingClient;
 use crate::llm::zhipu::ZhipuClient;
-use crate::tools::core::experts::strategy::ReasoningStrategy;
 use rmcp::service::{Peer, RoleServer};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,12 +17,7 @@ pub struct ProviderFactory {
     clients: HashMap<Provider, Arc<dyn LlmClient>>,
     default_provider: Option<Provider>,
     background_provider: Option<Provider>,
-    expert_fallback_order: Vec<Provider>,
     background_fallback_order: Vec<Provider>,
-    // Store API keys/hosts to create custom clients on demand
-    deepseek_key: Option<String>,
-    zhipu_key: Option<String>,
-    ollama_host: Option<String>,
     // MCP sampling peer — last-resort fallback when no API keys are configured
     sampling_peer: Option<Arc<RwLock<Option<Peer<RoleServer>>>>>,
 }
@@ -92,18 +84,13 @@ impl ProviderFactory {
         let available: Vec<_> = clients.keys().map(|p| p.to_string()).collect();
         info!(providers = ?available, "LLM providers available");
 
-        let expert_fallback_order = vec![Provider::DeepSeek, Provider::Zhipu];
         let background_fallback_order = vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama];
 
         Self {
             clients,
             default_provider,
             background_provider,
-            expert_fallback_order,
             background_fallback_order,
-            deepseek_key: api_keys.deepseek,
-            zhipu_key: api_keys.zhipu,
-            ollama_host: api_keys.ollama,
             sampling_peer: None,
         }
     }
@@ -142,95 +129,6 @@ impl ProviderFactory {
         None
     }
 
-    /// Get a client for a specific expert role (async to avoid blocking on DB)
-    /// Priority: role config -> global default -> fallback chain
-    pub async fn client_for_role(
-        &self,
-        role: &str,
-        pool: &Arc<DatabasePool>,
-    ) -> Result<Arc<dyn LlmClient>, String> {
-        // 1. Check role-specific configuration in database (async!)
-        if let Ok(config) = pool.get_expert_config(role).await {
-            // If a specific model is configured, try to create a client for it
-            if let Some(model) = config.model {
-                let client_opt: Option<Arc<dyn LlmClient>> = match config.provider {
-                    Provider::DeepSeek => self.deepseek_key.as_ref().map(|k| {
-                        Arc::new(DeepSeekClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
-                    }),
-                    Provider::Zhipu => self.zhipu_key.as_ref().map(|k| {
-                        Arc::new(ZhipuClient::with_model(k.clone(), model)) as Arc<dyn LlmClient>
-                    }),
-                    Provider::Ollama => self.ollama_host.as_ref().map(|host| {
-                        Arc::new(OllamaClient::with_model(host.clone(), model))
-                            as Arc<dyn LlmClient>
-                    }),
-                    _ => None,
-                };
-
-                if let Some(client) = client_opt {
-                    info!(
-                        role = role,
-                        provider = %config.provider,
-                        model = %client.model_name(),
-                        "Using configured provider and model for role"
-                    );
-                    return Ok(client);
-                }
-            }
-
-            // Fallback to default client for that provider
-            if let Some(client) = self.clients.get(&config.provider) {
-                info!(
-                    role = role,
-                    provider = %config.provider,
-                    "Using configured provider for role (default model)"
-                );
-                return Ok(client.clone());
-            } else {
-                warn!(
-                    role = role,
-                    provider = %config.provider,
-                    "Configured provider not available, falling back"
-                );
-            }
-        }
-
-        // 2. Try global default if set
-        if let Some(ref default) = self.default_provider
-            && let Some(client) = self.clients.get(default)
-        {
-            info!(
-                role = role,
-                provider = %default,
-                "Using global default provider"
-            );
-            return Ok(client.clone());
-        }
-
-        // 3. Fall back through the chain (experts only: no Ollama)
-        for provider in &self.expert_fallback_order {
-            if let Some(client) = self.clients.get(provider) {
-                info!(
-                    role = role,
-                    provider = %provider,
-                    "Using fallback provider"
-                );
-                return Ok(client.clone());
-            }
-        }
-
-        // 4. Last resort: MCP sampling (zero-key fallback via host client)
-        if let Some(ref peer) = self.sampling_peer {
-            info!(role = role, "Using MCP sampling fallback (no API keys)");
-            return Ok(Arc::new(SamplingClient::new(peer.clone())));
-        }
-
-        Err(
-            "No LLM providers available. Set DEEPSEEK_API_KEY, ZHIPU_API_KEY, or OLLAMA_HOST."
-                .into(),
-        )
-    }
-
     /// Get a specific provider client (if available)
     pub fn get_provider(&self, provider: Provider) -> Option<Arc<dyn LlmClient>> {
         self.clients.get(&provider).cloned()
@@ -256,45 +154,6 @@ impl ProviderFactory {
         !self.clients.is_empty() || self.sampling_peer.is_some()
     }
 
-    /// Get a `ReasoningStrategy` for an expert role.
-    ///
-    /// For DeepSeek: returns `Decoupled` with deepseek-chat (actor) + deepseek-reasoner (thinker).
-    /// For other providers: returns `Single` with the primary client.
-    pub async fn strategy_for_role(
-        &self,
-        role: &str,
-        pool: &Arc<DatabasePool>,
-    ) -> Result<ReasoningStrategy, String> {
-        let primary = self.client_for_role(role, pool).await?;
-
-        // If the primary provider is DeepSeek, enforce chat+reasoner split:
-        // - Tool use (actor) should run on deepseek-chat
-        // - Final synthesis (thinker) should run on deepseek-reasoner
-        if primary.provider_type() == Provider::DeepSeek {
-            let actor: Arc<dyn LlmClient> = if primary.model_name().contains("reasoner") {
-                match self.deepseek_key.as_ref() {
-                    Some(key) => Arc::new(DeepSeekClient::with_model(
-                        key.clone(),
-                        "deepseek-chat".into(),
-                    )),
-                    None => primary.clone(),
-                }
-            } else {
-                primary.clone()
-            };
-
-            let thinker = self.deepseek_key.as_ref().map(|key| {
-                Arc::new(DeepSeekClient::with_model(
-                    key.clone(),
-                    "deepseek-reasoner".into(),
-                )) as Arc<dyn LlmClient>
-            });
-
-            return Ok(ReasoningStrategy::from_dual_mode(actor, thinker));
-        }
-
-        Ok(ReasoningStrategy::Single(primary))
-    }
 }
 
 impl Default for ProviderFactory {
@@ -313,11 +172,8 @@ mod tests {
             clients: HashMap::new(),
             default_provider: None,
             background_provider: None,
-            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
+
             background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
-            deepseek_key: None,
-            zhipu_key: None,
-            ollama_host: None,
             sampling_peer: None,
         }
     }
@@ -353,23 +209,16 @@ mod tests {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
+
             background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
-            deepseek_key: None,
-            zhipu_key: None,
-            ollama_host: None,
             sampling_peer: None,
         };
         assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
     }
 
     #[test]
-    fn test_fallback_orders() {
+    fn test_background_fallback_order() {
         let factory = empty_factory();
-        // Expert fallback excludes Ollama
-        assert_eq!(factory.expert_fallback_order.len(), 2);
-        assert_eq!(factory.expert_fallback_order[0], Provider::DeepSeek);
-        assert_eq!(factory.expert_fallback_order[1], Provider::Zhipu);
         // Background fallback includes Ollama
         assert_eq!(factory.background_fallback_order.len(), 3);
         assert_eq!(factory.background_fallback_order[0], Provider::DeepSeek);
@@ -377,129 +226,4 @@ mod tests {
         assert_eq!(factory.background_fallback_order[2], Provider::Ollama);
     }
 
-    // ========================================================================
-    // strategy_for_role tests (DeepSeek chat/reasoner split via ReasoningStrategy)
-    // ========================================================================
-
-    /// Create a factory with a DeepSeek client registered in the fallback chain
-    fn factory_with_deepseek(model: &str) -> ProviderFactory {
-        let key = "test-key".to_string();
-        let client =
-            Arc::new(DeepSeekClient::with_model(key.clone(), model.into())) as Arc<dyn LlmClient>;
-        let mut clients = HashMap::new();
-        clients.insert(Provider::DeepSeek, client);
-        ProviderFactory {
-            clients,
-            default_provider: Some(Provider::DeepSeek),
-            background_provider: None,
-            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
-            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
-            deepseek_key: Some(key),
-            zhipu_key: None,
-            ollama_host: None,
-            sampling_peer: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_strategy_deepseek_chat_returns_decoupled() {
-        let factory = factory_with_deepseek("deepseek-chat");
-        let pool = Arc::new(
-            crate::db::pool::DatabasePool::open_in_memory()
-                .await
-                .unwrap(),
-        );
-        let strategy = factory.strategy_for_role("architect", &pool).await.unwrap();
-        // DeepSeek should produce a Decoupled strategy
-        assert!(
-            strategy.is_decoupled(),
-            "DeepSeek should use Decoupled strategy"
-        );
-        // Actor should be deepseek-chat
-        assert_eq!(strategy.actor().provider_type(), Provider::DeepSeek);
-        assert!(
-            strategy.actor().model_name().contains("chat"),
-            "actor model should be deepseek-chat, got: {}",
-            strategy.actor().model_name()
-        );
-        // Thinker should be deepseek-reasoner
-        assert_eq!(strategy.thinker().provider_type(), Provider::DeepSeek);
-        assert!(
-            strategy.thinker().model_name().contains("reasoner"),
-            "thinker model should be deepseek-reasoner, got: {}",
-            strategy.thinker().model_name()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_strategy_deepseek_reasoner_swaps_actor_to_chat() {
-        // When primary is deepseek-reasoner, actor should be swapped to deepseek-chat
-        let factory = factory_with_deepseek("deepseek-reasoner");
-        let pool = Arc::new(
-            crate::db::pool::DatabasePool::open_in_memory()
-                .await
-                .unwrap(),
-        );
-        let strategy = factory.strategy_for_role("architect", &pool).await.unwrap();
-        assert!(
-            strategy.is_decoupled(),
-            "DeepSeek should use Decoupled strategy"
-        );
-        // Actor should be swapped to deepseek-chat even when primary is reasoner
-        assert!(
-            strategy.actor().model_name().contains("chat"),
-            "actor should be deepseek-chat even when primary is reasoner, got: {}",
-            strategy.actor().model_name()
-        );
-        // Thinker should be deepseek-reasoner
-        assert!(strategy.thinker().model_name().contains("reasoner"));
-    }
-
-    #[tokio::test]
-    async fn test_strategy_deepseek_no_key_falls_back_to_single() {
-        // If deepseek_key is None, can't create new clients — should fall back to Single
-        let client = Arc::new(DeepSeekClient::with_model(
-            "test-key".into(),
-            "deepseek-reasoner".into(),
-        )) as Arc<dyn LlmClient>;
-        let mut clients = HashMap::new();
-        clients.insert(Provider::DeepSeek, client);
-        let factory = ProviderFactory {
-            clients,
-            default_provider: Some(Provider::DeepSeek),
-            background_provider: None,
-            expert_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu],
-            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
-            deepseek_key: None, // No key available
-            zhipu_key: None,
-            ollama_host: None,
-            sampling_peer: None,
-        };
-        let pool = Arc::new(
-            crate::db::pool::DatabasePool::open_in_memory()
-                .await
-                .unwrap(),
-        );
-        let strategy = factory.strategy_for_role("architect", &pool).await.unwrap();
-        // Without key, can't create thinker — from_dual_mode returns Single
-        assert!(
-            !strategy.is_decoupled(),
-            "no key should produce Single strategy"
-        );
-        // Actor/thinker both point to the primary (reasoner) since that's all we have
-        assert!(strategy.actor().model_name().contains("reasoner"));
-    }
-
-    #[tokio::test]
-    async fn test_strategy_empty_factory_errors() {
-        // No providers available should return an error
-        let factory = empty_factory();
-        let pool = Arc::new(
-            crate::db::pool::DatabasePool::open_in_memory()
-                .await
-                .unwrap(),
-        );
-        let result = factory.strategy_for_role("architect", &pool).await;
-        assert!(result.is_err(), "empty factory should error");
-    }
 }

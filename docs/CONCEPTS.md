@@ -137,7 +137,6 @@ The Intelligence Engine is a background worker system that proactively analyzes 
 | **Git Briefings** | "What changed since your last session?" summaries |
 | **Code Health** | Scans for complexity issues, poor error handling |
 | **Embeddings** | Indexes code and memories for semantic search |
-| **Knowledge Distillation** | Extracts cross-session insights from expert findings |
 | **Pondering** | Active reasoning loops that analyze tool history and generate insights |
 
 These tasks run asynchronously during idle time, keeping Mira always up-to-date.
@@ -156,92 +155,7 @@ File Change Detected → Watcher queues update
 
 ---
 
-## 4. Expert System
-
-Mira employs specialized "Expert" agents to handle complex analysis tasks.
-
-### Expert Roles
-
-| Role | Use Case |
-|------|----------|
-| **Architect** | System design, patterns, scalability |
-| **Plan Reviewer** | Validates implementation plans before coding |
-| **Scope Analyst** | Detects requirements gaps and edge cases |
-| **Code Reviewer** | Bugs, safety, code quality patterns |
-| **Security** | Vulnerabilities and hardening |
-
-### Provider Configuration
-
-Experts can be backed by different LLM providers via `expert(action="configure")` or `~/.mira/config.toml`:
-- **MCP Sampling** — Routes through the host client when enabled
-- **DeepSeek** (default with key) — Optimized for extended reasoning
-- **Zhipu** (alternative with key) — GLM-4.7 provider
-- **Ollama** — Local LLM for background tasks (not used for expert consultation)
-
-Each expert role can use a different provider based on the task requirements. Background tasks (summaries, briefings, code health) can also use Ollama as a local fallback.
-
-### How Experts Work
-
-#### Single Expert Mode
-
-A single expert runs in a multi-turn **agentic loop**:
-
-```
-1. Reason  → Analyze the request, decide what info is needed
-2. Act     → Call tools (code search, read_file, callers...)
-3. Observe → Tool output feeds back into context
-4. Iterate → Continue until task complete (max 100 iterations)
-```
-
-#### Council Mode (Multi-Expert)
-
-When multiple experts are consulted, Mira uses a **council architecture** with a coordinator that orchestrates the consultation:
-
-```
-Plan     → Coordinator creates a research plan with tasks per expert
-Execute  → Experts run assigned tasks in parallel (agentic loops)
-Review   → Coordinator reviews all findings, identifies conflicts
-Delta    → If conflicts exist, targeted follow-up questions (up to 2 rounds)
-Synthesize → Final synthesis combining all findings
-```
-
-Each expert records structured **findings** (topic, content, evidence, severity, recommendation) via a `store_finding` tool. The coordinator reviews these findings to identify consensus, conflicts, and gaps.
-
-If the council pipeline fails, it falls back gracefully to parallel independent consultations.
-
-#### Reasoning Strategy
-
-Expert consultations use a `ReasoningStrategy` to manage LLM clients:
-
-- **Single**: One model handles both tool-calling and synthesis
-- **Decoupled**: A chat model (`deepseek-chat`) handles tool loops, and a reasoning model (`deepseek-reasoner`) handles final synthesis. This split prevents OOM from unbounded `reasoning_content` accumulation during long tool loops.
-
-### Tool Access
-
-Experts can use these tools to explore the codebase:
-
-- `code(action="search")` — Semantic code search
-- `read_file` — Read file contents
-- `code(action="symbols")` — Get functions/classes in a file
-- `code(action="callers")` / `code(action="callees")` — Trace call relationships
-- `memory(action="recall")` — Search memories
-- `web_fetch` / `web_search` — Web access (if API keys configured)
-- **MCP tools** — Tools from external MCP servers in the host environment
-
-### Learned Patterns
-
-For Code Reviewer and Security roles, Mira injects "Previously Identified Patterns" from the `corrections` table. If you correct a finding (e.g., "Always validate inputs"), the expert applies that pattern in future sessions.
-
-### Expert Prompts
-
-Expert system prompts include:
-- **Stakes framing** — Context on why the review matters
-- **Accountability rules** — Experts must cite evidence and avoid speculation
-- **Self-checks** — Required verification steps before finalizing output
-
----
-
-## 5. Sessions
+## 4. Sessions
 
 A **Session** represents a continuous period of work with Claude Code.
 
@@ -268,7 +182,7 @@ Sessions serve as the "evidence" unit for the Memory System. Memories are only p
 
 ---
 
-## 6. Session Hooks
+## 5. Session Hooks
 
 Mira integrates with Claude Code via **hooks** that trigger at key moments during a session.
 
@@ -299,7 +213,7 @@ Hooks are automatically configured by the installer in `~/.claude/settings.json`
 
 ---
 
-## 7. Proactive Intelligence
+## 6. Proactive Intelligence
 
 Mira proactively analyzes behavior to predict and inject helpful context before you ask.
 
@@ -339,7 +253,7 @@ The system generates suggestions based on:
 
 ---
 
-## 8. Documentation System
+## 7. Documentation System
 
 Mira actively manages project documentation to keep it in sync with code.
 
@@ -369,11 +283,11 @@ documentation(action="complete", task_id=42)  → Mark done after Claude writes
 documentation(action="skip", task_id=42)   → Mark as not needed
 ```
 
-Claude Code reads the source and writes documentation directly - no expert system overhead.
+Claude Code reads the source and writes documentation directly.
 
 ---
 
-## 9. Goals and Milestones
+## 8. Goals and Milestones
 
 Mira provides persistent goal tracking that survives across sessions. For in-session task tracking, use Claude Code's native task system.
 
@@ -424,15 +338,7 @@ Here's how the concepts connect:
 │  │ - Evidence  │  │ - Call graph│  │ - Embeddings        │  │
 │  │ - Scopes    │  │ - Search    │  │ - Summaries         │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
-│         ↑                ↑                    ↑              │
-│         └────────────────┼────────────────────┘              │
-│                          ↓                                   │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │              Expert System (Council)                     │ │
-│  │  Coordinator → Architect | Code Reviewer | Security | …  │ │
-│  │  FindingsStore ← structured findings from all experts    │ │
-│  └─────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The Intelligence Engine continuously updates Code Intelligence and Memory. Experts can query both to provide informed analysis. Sessions tie everything together with provenance and history.
+The Intelligence Engine continuously updates Code Intelligence and Memory. Sessions tie everything together with provenance and history.

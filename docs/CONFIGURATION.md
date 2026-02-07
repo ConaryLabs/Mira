@@ -1,6 +1,6 @@
 # Mira Configuration Guide
 
-This guide details all configuration options for Mira, including environment variables, file locations, hook setup, and expert customization.
+This guide details all configuration options for Mira, including environment variables, file locations, and hook setup.
 
 ---
 
@@ -12,18 +12,18 @@ Mira uses environment variables for API keys and configuration. These can be set
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | Recommended | Powers experts, summaries, documentation (default provider) |
+| `DEEPSEEK_API_KEY` | Optional | Powers summaries, pondering, background intelligence |
 | `ZHIPU_API_KEY` | Optional | Alternative provider: Zhipu GLM-4.7 |
 | `OLLAMA_HOST` | Optional | Ollama base URL for local LLM (default: `http://localhost:11434`) |
 | `OLLAMA_MODEL` | Optional | Ollama model to use (default: `llama3.3`) |
 | `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |
-| `BRAVE_API_KEY` | Optional | Enables web search for expert consultations |
+| `BRAVE_API_KEY` | Optional | Enables web search |
 | `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek`, `zhipu`, or `ollama` |
 | `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |
 
-*API keys are optional for core features. Mira's memory, code intelligence, and goal tracking work without any keys. Diff analysis, module summaries, and background insights use heuristic fallbacks (pattern-based parsing, metadata extraction, tool history analysis). Expert consultation requires `DEEPSEEK_API_KEY`. Semantic search requires `OPENAI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it.*
+*API keys are optional for core features. Mira's memory, code intelligence, and goal tracking work without any keys. Diff analysis, module summaries, and background insights use heuristic fallbacks (pattern-based parsing, metadata extraction, tool history analysis). Semantic search requires `OPENAI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it.*
 
 ### Embeddings Configuration
 
@@ -57,7 +57,7 @@ Mira loads environment files in this order (later overrides earlier):
 
 | Location | Purpose |
 |----------|---------|
-| `~/.mira/mira.db` | Main SQLite database (memories, sessions, experts, goals) |
+| `~/.mira/mira.db` | Main SQLite database (memories, sessions, goals) |
 | `~/.mira/mira-code.db` | Code index database (symbols, call graph, embeddings, FTS) |
 | `~/.mira/claude-session-id` | Current Claude session ID |
 
@@ -66,7 +66,7 @@ Mira loads environment files in this order (later overrides earlier):
 | File | Purpose |
 |------|---------|
 | `CLAUDE.md` | Core project instructions (always loaded) - see [template](CLAUDE_TEMPLATE.md) |
-| `.claude/rules/*.md` | Detailed guidance: tool selection, memory, tasks, experts (always loaded) |
+| `.claude/rules/*.md` | Detailed guidance: tool selection, memory, tasks (always loaded) |
 | `.claude/skills/*/SKILL.md` | Reference docs: Context7, tool APIs (loaded on-demand) |
 | `CLAUDE.local.md` | Local-only instructions (gitignored) |
 | `.miraignore` | Files to exclude from indexing |
@@ -123,7 +123,7 @@ MIRA_PROJECT_PATH = "/path/to/project"
 
 Notes:
 - `MIRA_PROJECT_PATH` lets Mira auto-initialize the project when Claude hooks are not present.
-- Mira reads `mcp_servers.*` from Codex config to discover external MCP servers for expert tool access.
+- Mira reads `mcp_servers.*` from Codex config to discover external MCP servers.
 - STDIO servers (`command`/`args`) and streamable HTTP servers (`url`) are supported.
 - HTTP servers support `bearer_token_env_var` for authentication. `http_headers` and `env_http_headers` are parsed but not currently passed to the transport (rmcp's streamable HTTP config only supports bearer auth). OAuth flows are not handled.
 
@@ -225,70 +225,7 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 
 ---
 
-## 5. Expert Configuration
-
-Mira's experts can be customized per role with different providers, models, and prompts.
-
-### Expert Roles
-
-| Role | Default Provider | Purpose |
-|------|-----------------|---------|
-| `architect` | deepseek | System design and tradeoffs |
-| `plan_reviewer` | deepseek | Implementation plan validation |
-| `scope_analyst` | deepseek | Requirements and edge cases |
-| `code_reviewer` | deepseek | Code quality and bugs |
-| `security` | deepseek | Vulnerability assessment |
-
-### Using `expert(action="configure")`
-
-**List current configurations:**
-```
-expert(action="configure", config_action="list")
-```
-
-**Set provider and model for an expert:**
-```
-expert(
-  action="configure",
-  config_action="set",
-  role="architect",
-  provider="deepseek",
-  model="deepseek-reasoner"
-)
-```
-
-**Customize an expert's system prompt:**
-```
-expert(
-  action="configure",
-  config_action="set",
-  role="code_reviewer",
-  prompt="Focus on Rust memory safety and ownership patterns."
-)
-```
-
-**List available providers:**
-```
-expert(action="configure", config_action="providers")
-```
-
-**Revert to defaults:**
-```
-expert(action="configure", config_action="delete", role="architect")
-```
-
-### Provider Options
-
-| Provider | Default Model | Best For |
-|----------|---------------|----------|
-| `deepseek` | `deepseek-reasoner` | Extended reasoning, multi-step analysis |
-| `zhipu` | `glm-4.7` | Alternative provider |
-
-Use `expert(action="configure", config_action="providers")` to see available providers and their configured models.
-
----
-
-## 6. Database Configuration
+## 5. Database Configuration
 
 The SQLite database is automatically created at `~/.mira/mira.db` with secure permissions:
 
@@ -305,16 +242,13 @@ These are managed automatically and should not be deleted while Mira is running.
 
 ---
 
-## 7. Default LLM Provider
+## 6. Default LLM Provider
 
 Configure default LLM providers in `~/.mira/config.toml`:
 
 ```toml
 [llm]
-# Provider for expert tools (expert(action="consult", roles=["architect"]), etc.)
-expert_provider = "deepseek"
-
-# Provider for background intelligence (summaries, briefings, capabilities, code health)
+# Provider for background intelligence (summaries, briefings, pondering, code health)
 background_provider = "deepseek"
 ```
 
@@ -326,11 +260,11 @@ background_provider = "deepseek"
 | Zhipu | `zhipu` | `ZHIPU_API_KEY` | `glm-4.7` |
 | Ollama | `ollama` | `OLLAMA_HOST` (URL, no key) | `llama3.3` |
 
-If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available. Ollama is included in the background task fallback chain but is excluded from expert fallback (experts require DeepSeek or Zhipu).
+If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available. All three providers are included in the background task fallback chain.
 
 ---
 
-## 8. Ignoring Files
+## 7. Ignoring Files
 
 Create `.miraignore` in your project root to exclude files from indexing:
 
@@ -354,7 +288,7 @@ The syntax is similar to `.gitignore`. Mira also respects `.gitignore` patterns.
 
 ---
 
-## 9. Setup Wizard
+## 8. Setup Wizard
 
 `mira setup` is the recommended way to configure providers. It handles API key entry, live validation, Ollama auto-detection, and `.env` file management.
 
@@ -368,7 +302,7 @@ The syntax is similar to `.gitignore`. Mira also respects `.gitignore` patterns.
 
 ### What It Does
 
-1. Prompts for expert provider (DeepSeek or Zhipu) with live API key validation
+1. Prompts for LLM provider (DeepSeek or Zhipu) with live API key validation
 2. Prompts for embeddings provider (OpenAI) with validation
 3. Optionally configures Brave Search
 4. Auto-detects Ollama and lists available models for background tasks
@@ -413,5 +347,4 @@ DEEPSEEK_API_KEY=sk-...
 mira setup          # Configure API keys and detect Ollama
 
 # Hooks are auto-configured by installer
-# Configure experts per project as needed
 ```

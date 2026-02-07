@@ -9,7 +9,6 @@ use mira::config::EnvConfig;
 use mira::db::pool::DatabasePool;
 use mira::http::create_shared_client;
 use mira::mcp::MiraServer;
-use mira::mcp::client::McpClientManager;
 use mira::tools::core::ToolContext;
 use mira::utils::path_to_string;
 use mira_types::ProjectContext;
@@ -119,24 +118,13 @@ async fn init_server_context() -> Result<ServerContext> {
     );
 
     // Create server context from centralized config
-    let mut server = MiraServer::from_api_keys(
+    let server = MiraServer::from_api_keys(
         pool.clone(),
         code_pool,
         embeddings,
         &env_config.api_keys,
         env_config.fuzzy_fallback,
-        env_config.expert.clone(),
     );
-
-    // Initialize MCP client manager for external MCP server access (expert tools)
-    let cwd = std::env::current_dir().ok().map(|p| path_to_string(&p));
-    let mut mcp_manager = McpClientManager::from_mcp_configs(cwd.as_deref());
-    mcp_manager.set_mcp_tool_timeout(std::time::Duration::from_secs(
-        env_config.expert.mcp_tool_timeout_secs,
-    ));
-    if mcp_manager.has_servers() {
-        server.mcp_client_manager = Some(Arc::new(mcp_manager));
-    }
 
     // Restore project context
     let restored_project = pool

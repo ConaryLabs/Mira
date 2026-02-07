@@ -4,7 +4,7 @@ LLM provider abstraction layer. Provides a unified interface for inference acros
 
 ## Supported Providers
 
-- **DeepSeek** — Primary provider for expert consultation
+- **DeepSeek** — Primary provider for background LLM tasks
 - **Zhipu** — Alternative provider (GLM-4.7)
 - **Ollama** — Local LLM via Ollama (background tasks, no API key needed)
 - **MCP Sampling** — Routes through the host client

@@ -58,5 +58,4 @@ Analyze git diffs semantically. Identifies change types, impact, and risks using
 ## See Also
 
 - [**code**](./code.md): Call graph queries used for impact analysis
-- [**finding**](./finding.md): Review findings generated from analysis
 - [**index**](./index.md): Code index powers the call graph traversal

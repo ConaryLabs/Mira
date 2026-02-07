@@ -182,42 +182,6 @@ pub enum WsEvent {
         /// If false, this is a partial stream chunk. If true, the message is complete.
         complete: bool,
     },
-    /// Progress event from an expert council consultation.
-    Council(CouncilEvent),
-}
-
-/// Progress events emitted during a multi-expert council consultation.
-///
-/// These are broadcast via WebSocket so frontends can show real-time progress.
-/// MCP clients won't see these (MCP can't stream), but WebSocket clients will.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "phase", rename_all = "snake_case")]
-pub enum CouncilEvent {
-    /// Coordinator created a research plan.
-    PlanCreated {
-        task_count: usize,
-        roles: Vec<String>,
-    },
-    /// An expert started working on their assigned task.
-    ExpertStarted { role: String, task: String },
-    /// An expert recorded a finding via store_finding.
-    FindingAdded { role: String, topic: String },
-    /// An expert completed their task.
-    ExpertComplete { role: String, finding_count: usize },
-    /// Coordinator completed review of all findings.
-    ReviewComplete {
-        consensus_count: usize,
-        conflict_count: usize,
-    },
-    /// A delta round started to resolve conflicts.
-    DeltaRoundStarted { round: usize, question_count: usize },
-    /// Final synthesis phase started.
-    SynthesisStarted,
-    /// Council consultation complete.
-    Complete {
-        total_findings: usize,
-        rounds: usize,
-    },
 }
 
 #[cfg(test)]

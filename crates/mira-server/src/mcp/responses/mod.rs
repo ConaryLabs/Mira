@@ -10,8 +10,6 @@
 mod code;
 mod diff;
 mod documentation;
-mod expert;
-mod finding;
 mod goal;
 mod index;
 mod memory;
@@ -24,8 +22,6 @@ pub mod team;
 pub use code::*;
 pub use diff::*;
 pub use documentation::*;
-pub use expert::*;
-pub use finding::*;
 pub use goal::*;
 pub use index::*;
 pub use memory::*;
@@ -137,12 +133,7 @@ mod tests {
             schema_for_output::<SessionOutput>().is_ok(),
             "SessionOutput"
         );
-        assert!(schema_for_output::<ExpertOutput>().is_ok(), "ExpertOutput");
         assert!(schema_for_output::<DocOutput>().is_ok(), "DocOutput");
-        assert!(
-            schema_for_output::<FindingOutput>().is_ok(),
-            "FindingOutput"
-        );
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
         assert!(schema_for_output::<ReplyOutput>().is_ok(), "ReplyOutput");
         assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");

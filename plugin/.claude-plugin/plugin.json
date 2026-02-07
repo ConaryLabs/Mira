@@ -1,6 +1,6 @@
 {
   "name": "mira",
-  "description": "Semantic memory and code intelligence for Claude Code. Persistent memory across sessions, expert consultations, goal tracking, and proactive context injection.",
+  "description": "Semantic memory and code intelligence for Claude Code. Persistent memory across sessions, goal tracking, and proactive context injection.",
   "version": "0.6.2",
   "author": {
     "name": "Peter Permenter"
@@ -23,7 +23,6 @@
     "./skills/search",
     "./skills/remember",
     "./skills/insights",
-    "./skills/experts",
     "./skills/diff"
   ]
 }

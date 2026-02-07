@@ -1,6 +1,6 @@
 # Mira Consolidated Tools Reference
 
-Mira uses 11 action-based tools. Reference for tool signatures and workflows.
+Mira uses 9 action-based tools. Reference for tool signatures and workflows.
 
 ## `project` — Project/Session Management
 
@@ -50,20 +50,6 @@ session(action="tasks", tasks_action="get", task_id="abc123")  # Get task status
 session(action="tasks", tasks_action="cancel", task_id="abc123")  # Cancel task
 ```
 
-## `expert` — Expert Consultation & Configuration
-
-```
-expert(action="consult", roles=["architect"], context="...", question="...")
-expert(action="consult", roles=["code_reviewer", "security"], context="...")
-expert(action="configure", config_action="list")
-expert(action="configure", config_action="set", role="architect", provider="deepseek")  # or "zhipu"
-expert(action="configure", config_action="get", role="architect")
-expert(action="configure", config_action="delete", role="architect")
-expert(action="configure", config_action="providers")
-```
-
-Roles: `architect`, `plan_reviewer`, `scope_analyst`, `code_reviewer`, `security`
-
 ## `goal` — Cross-Session Goal Tracking
 
 ```
@@ -77,18 +63,6 @@ goal(action="add_milestone", goal_id="1", milestone_title="...", weight=2)
 goal(action="complete_milestone", milestone_id="1")
 goal(action="delete_milestone", milestone_id="1")
 goal(action="progress", goal_id="1")
-```
-
-## `finding` — Code Review Findings
-
-```
-finding(action="list", status="pending", expert_role="security", file_path="...")
-finding(action="get", finding_id=123)
-finding(action="review", finding_id=123, status="accepted", feedback="...")
-finding(action="review", finding_ids=[1,2,3], status="rejected")  # Bulk
-finding(action="stats")
-finding(action="patterns", correction_type="bug")
-finding(action="extract")                   # Extract patterns from accepted findings
 ```
 
 ## `documentation` — Documentation Management

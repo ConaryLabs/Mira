@@ -94,7 +94,7 @@ Key components:
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
 | LLM Factory | `llm/factory.rs` | DeepSeek, Zhipu, and Ollama providers |
 | Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small) |
-| MCP Sampling | `llm/sampling.rs` | Expert consultation via host client (awaiting Claude Code support) |
+| MCP Sampling | `llm/sampling.rs` | LLM consultation via host client (awaiting Claude Code support) |
 | Elicitation | `elicitation.rs` | Interactive API key setup flow |
 | Async Tasks | `tools/core/tasks.rs` | Background task management |
 | Change Intelligence | `background/change_patterns.rs` | Outcome tracking, pattern mining, predictive risk |
@@ -195,42 +195,23 @@ during indexing.
 ### What We Chose
 
 Mira's intelligence features use a **Provider Factory** that supports DeepSeek,
-Zhipu, and Ollama, with a **Reasoning Strategy** layer that manages how models
-are paired for expert consultations.
+Zhipu, and Ollama for background tasks (summaries, briefings, pondering, code health).
 
 ### Why This Architecture
 
 **1) Different tasks benefit from different models**
-- Extended reasoning tasks (architects, security) → DeepSeek Reasoner (synthesis)
-- Tool-calling loops (agentic exploration) → DeepSeek Chat
+- Background intelligence → DeepSeek, Zhipu, or Ollama
 - Embeddings → OpenAI text-embedding-3-small
 
-**2) Decoupled Reasoning Strategy**
-- **Single mode**: One model handles both tool loops and synthesis
-- **Decoupled mode**: `deepseek-chat` handles tool-calling loops, `deepseek-reasoner` handles final synthesis
-- The split prevents OOM from unbounded `reasoning_content` accumulation during long agentic loops
-- Factory auto-detects when to use Decoupled mode (DeepSeek Reasoner as primary)
-
-**3) Resilience and extensibility**
+**2) Resilience and extensibility**
 - Trait-based abstraction allows adding new providers
 - Users can optimize for cost, speed, or quality
 
-**4) Tool access across providers**
-- All providers support tool-calling for the agentic expert loop
-- Experts can search code, trace call graphs, read files, recall memories, and call MCP tools from the host environment
-
 ### Configuration
-
-Via tool:
-```
-expert(action="configure", config_action="set", role="architect", provider="deepseek")
-expert(action="configure", config_action="providers")  # List available providers
-```
 
 Via config file (`~/.mira/config.toml`):
 ```toml
 [llm]
-expert_provider = "deepseek"      # Default for all experts
 background_provider = "deepseek"  # For summaries, briefings, etc.
 ```
 
@@ -242,7 +223,6 @@ rather than failing:
 - **Diff analysis** falls back to heuristic parsing (regex-based function detection, security keyword scanning)
 - **Module summaries** fall back to metadata extraction (file counts, language distribution, symbol names)
 - **Pondering/insights** fall back to tool history analysis (usage distribution, friction detection)
-- **Expert consultation** requires an LLM key (MCP Sampling support is implemented but Claude Code doesn't advertise the capability yet)
 
 Heuristic results are prefixed with `[heuristic]` and cached separately, so LLM re-analysis
 can upgrade them when a provider becomes available.
@@ -255,12 +235,6 @@ can upgrade them when a provider becomes available.
 | Cost optimization | Configuration complexity |
 | No vendor lock-in | Different providers have different strengths |
 | Works without any keys | Heuristic results are less detailed than LLM |
-
-### Default Behavior
-
-DeepSeek Reasoner remains the default for final synthesis, while DeepSeek Chat
-handles tool-calling loops in Decoupled mode. The prompt strategy includes
-stakes framing, accountability rules, and self-checks for higher quality output.
 
 ---
 
@@ -381,10 +355,9 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira exposes 11 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
+Mira exposes 9 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
-The server implements MCP Sampling (expert consultation via host client, awaiting Claude Code support),
-MCP Elicitation (interactive setup), and MCP Tasks (async long-running operations).
+The server implements MCP Elicitation (interactive setup) and MCP Tasks (async long-running operations).
 
 This architecture encourages:
 - A stable "capabilities surface" with fewer, more capable tools
@@ -401,9 +374,8 @@ The schema is "product-shaped," not purely technical:
 | Sessions | `sessions`, `tool_history` | Provenance and history |
 | Background | `pending_embeddings`, `project_briefings` | Work queues |
 | Workflow | `goals`, `milestones` | Goal and milestone tracking |
-| Learning | `review_findings`, `corrections` | Expert feedback loop |
+| Learning | `corrections` | Learned patterns |
 | Proactive | `behavior_patterns`, `proactive_suggestions` | Behavior mining and predictions |
-| Expert Evolution | `expert_consultations`, `problem_patterns` | Consultation history and learning |
 | Cross-Project | `cross_project_patterns`, `cross_project_preferences` | Privacy-preserving pattern sharing |
 
 ### Embeddings and Search
@@ -412,27 +384,6 @@ Embeddings are optional (OpenAI text-embedding-3-small). Semantic search happens
 in two areas:
 1. **Memory recall** - `vec_memory` queried with cosine distance
 2. **Code search** - Hybrid semantic + keyword search via `vec_code` and `code_fts`
-
-### Experts
-
-Experts use two execution modes:
-
-**Single expert**: A bounded tool-using loop with one role (agentic loop, max 100 iterations).
-
-**Council mode** (multi-expert): A coordinator-driven pipeline:
-- **Plan**: Coordinator creates a research plan assigning tasks to experts
-- **Execute**: Experts run tasks in parallel, recording structured findings via `FindingsStore`
-- **Review**: Coordinator identifies consensus, conflicts, and gaps
-- **Delta rounds**: Up to 2 targeted follow-up rounds to resolve conflicts
-- **Synthesize**: Final output combining all findings
-
-Available roles: Architect, Plan Reviewer, Scope Analyst, Code Reviewer, Security.
-
-Key constraints:
-- Bounded iterations (`MAX_ITERATIONS = 100` per expert)
-- Per-expert timeout (10 minutes), council timeout (15 minutes)
-- Max 3 concurrent experts
-- Graceful fallback to parallel mode if council fails
 
 ### Documentation System
 
@@ -539,7 +490,6 @@ The following were previously planned and are now complete:
 - ✓ Proactive intelligence (behavior tracking, pattern mining)
 - ✓ Cross-project intelligence sharing with privacy protections
 - ✓ Memory evidence with session tracking
-- ✓ Expert consultation history and outcome tracking
 
 ### Recently Implemented (v0.5.0) ✓
 
@@ -547,7 +497,7 @@ The following were previously planned and are now complete:
 - ✓ MCP Elicitation for interactive API key setup
 - ✓ MCP Tasks for async long-running operations
 - ✓ Structured JSON responses via outputSchema
-- ✓ Tool consolidation from ~20 to 11 action-based tools (project, memory, code, goal, index, session, reply_to_mira, expert, documentation, team, finding)
+- ✓ Tool consolidation from ~20 to 9 action-based tools (project, memory, code, goal, index, session, reply_to_mira, documentation, team)
 - ✓ Change Intelligence (outcome tracking, pattern mining, predictive risk)
 - ✓ Entity layer for memory recall boost
 - ✓ Dependency graphs, architectural pattern detection, tech debt scoring

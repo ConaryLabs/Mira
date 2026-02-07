@@ -11,14 +11,12 @@ mod router;
 mod tasks;
 
 use crate::tools::core as tools;
-use client::McpClientManager;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::background::watcher::WatcherHandle;
-use crate::config::{ApiKeys, ExpertGuardrails};
+use crate::config::ApiKeys;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
@@ -50,14 +48,10 @@ pub struct MiraServer {
     pub watcher: Option<WatcherHandle>,
     /// Pending responses for agent collaboration (message_id -> response sender)
     pub pending_responses: tools::PendingResponseMap,
-    /// MCP client manager for connecting to external MCP servers (expert tool access)
-    pub mcp_client_manager: Option<Arc<McpClientManager>>,
     /// Fuzzy fallback cache for non-embedding searches
     pub fuzzy_cache: Arc<FuzzyCache>,
     /// Whether fuzzy fallback is enabled
     pub fuzzy_enabled: bool,
-    /// Expert agentic loop guardrails
-    pub expert_guardrails: ExpertGuardrails,
     /// Cached team membership (per-process, avoids global file race)
     pub team_membership: Arc<RwLock<Option<crate::hooks::session::TeamMembership>>>,
     /// MCP peer for sampling/createMessage fallback (captured on first tool call)
@@ -75,7 +69,6 @@ impl MiraServer {
         embeddings: Option<Arc<EmbeddingClient>>,
         api_keys: &ApiKeys,
         fuzzy_enabled: bool,
-        expert_guardrails: ExpertGuardrails,
     ) -> Self {
         // Create provider factory from pre-loaded keys
         let mut factory = ProviderFactory::from_api_keys(api_keys.clone());
@@ -97,10 +90,8 @@ impl MiraServer {
             ws_tx: None,
             watcher: None,
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
-            mcp_client_manager: None,
             fuzzy_cache: Arc::new(FuzzyCache::new()),
             fuzzy_enabled,
-            expert_guardrails,
             team_membership: Arc::new(RwLock::new(None)),
             peer,
             processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
@@ -119,7 +110,6 @@ impl MiraServer {
             embeddings,
             &ApiKeys::from_env(),
             true,
-            ExpertGuardrails::default(),
         )
     }
 

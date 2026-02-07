@@ -28,7 +28,7 @@ Handles LLM-powered tasks: session summaries, pondering/insights, code health an
 | `outcome_scanner` | slow | Outcome tracking for predictions |
 | `summaries` | slow | Module summary generation |
 | `memory_embeddings` | fast | Memory embedding generation |
-| `knowledge_distillation` | slow | Cross-session insight extraction from expert findings |
+| `knowledge_distillation` | slow | Cross-session insight extraction |
 | `team_monitor` | slow | Team activity monitoring |
 | `watcher` | fast | Filesystem watching for incremental updates |
 

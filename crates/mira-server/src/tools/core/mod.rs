@@ -50,11 +50,6 @@ pub trait ToolContext: Send + Sync {
     /// LLM provider factory for multi-provider support
     fn llm_factory(&self) -> &ProviderFactory;
 
-    /// Expert agentic loop guardrails (configurable via MIRA_EXPERT_* env vars)
-    fn expert_guardrails(&self) -> crate::config::ExpertGuardrails {
-        crate::config::ExpertGuardrails::default()
-    }
-
     // === Project/Session State ===
 
     /// Get current project context (if any)
@@ -126,27 +121,6 @@ pub trait ToolContext: Send + Sync {
         None
     }
 
-    /// List available MCP tools (optional, for expert context)
-    async fn list_mcp_tools(&self) -> Vec<(String, Vec<McpToolInfo>)> {
-        Vec::new()
-    }
-
-    /// Call an MCP tool on a specific server (optional, for expert tool execution)
-    async fn mcp_call_tool(
-        &self,
-        _server_name: &str,
-        _tool_name: &str,
-        _args: serde_json::Value,
-    ) -> Result<String, String> {
-        Err("MCP tool calling not available".to_string())
-    }
-
-    /// Get MCP tools as expert Tool definitions with full schemas (optional)
-    /// Returns tools with prefixed names: mcp__{server}__{tool_name}
-    async fn mcp_expert_tools(&self) -> Vec<crate::llm::Tool> {
-        Vec::new()
-    }
-
     /// Whether the MCP client supports sampling/createMessage
     fn has_sampling(&self) -> bool {
         false
@@ -189,11 +163,9 @@ pub mod code;
 pub mod cross_project;
 pub mod diff;
 pub mod documentation;
-pub mod experts;
 pub mod goals;
 pub mod memory;
 pub mod project;
-pub mod reviews;
 pub mod session;
 pub mod session_notes;
 pub mod tasks;
@@ -209,11 +181,9 @@ pub use code::{
 pub use cross_project::cross_project;
 pub use diff::{analyze_diff_tool, list_diff_analyses};
 pub use documentation::documentation;
-pub use experts::{configure_expert, handle_expert};
 pub use goals::goal;
 pub use memory::{forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
-pub use reviews::finding;
 pub use session::{
     ensure_session, get_session_recap, handle_session, reply_to_mira, session_history,
 };

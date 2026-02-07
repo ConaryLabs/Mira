@@ -31,7 +31,6 @@ pub enum WsEvent {
         content: String,
         complete: bool,
     },
-    Council(CouncilEvent),
 }
 ```
 
@@ -104,49 +103,7 @@ Uses internally tagged representation with `"type"` as the discriminator:
 }
 ```
 
-### Council
-
-Progress events from a multi-expert council consultation. Wraps a `CouncilEvent` enum.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| (inner) | `CouncilEvent` | One of the council progress events below |
-
-#### CouncilEvent Variants
-
-| Variant | Fields | Description |
-|---------|--------|-------------|
-| `PlanCreated` | `task_count`, `roles` | Coordinator created a research plan |
-| `ExpertStarted` | `role`, `task` | An expert began working on their assigned task |
-| `FindingAdded` | `role`, `topic` | An expert recorded a structured finding |
-| `ExpertComplete` | `role`, `finding_count` | An expert finished their task |
-| `ReviewComplete` | `consensus_count`, `conflict_count` | Coordinator reviewed all findings |
-| `DeltaRoundStarted` | `round`, `question_count` | A delta round started to resolve conflicts |
-| `SynthesisStarted` | (none) | Final synthesis phase started |
-| `Complete` | `total_findings`, `rounds` | Council consultation finished |
-
-Serialized with `"phase"` as the discriminator inside a `"type": "council"` wrapper:
-
-```json
-{
-  "type": "council",
-  "phase": "plan_created",
-  "task_count": 3,
-  "roles": ["architect", "code_reviewer", "security"]
-}
-```
-
-```json
-{
-  "type": "council",
-  "phase": "expert_complete",
-  "role": "architect",
-  "finding_count": 4
-}
-```
-
 ## See Also
 
 - [AgentRole](AgentRole.md) - Agent identity enum used in `AgentResponse`
 - [reply_to_mira](../tools/reply_to_mira.md) - Tool that sends `AgentResponse` events
-- [expert](../tools/expert.md) - Tool that triggers council consultations
