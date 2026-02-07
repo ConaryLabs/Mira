@@ -1,8 +1,8 @@
 // background/pondering/
 // Active Reasoning Loops - "Nightly Pondering"
 //
-// Analyzes tool usage and memory patterns during idle time to discover
-// insights about the developer's workflow and codebase.
+// Analyzes project data during idle time to discover
+// actionable insights about goals, code stability, and workflow.
 
 mod heuristic;
 mod llm;
@@ -17,7 +17,7 @@ use crate::utils::ResultExt;
 use rusqlite::params;
 use std::sync::Arc;
 
-/// Minimum number of tool calls needed before pondering
+/// Minimum number of tool calls as fallback gate when project data is empty
 const MIN_TOOL_CALLS: usize = 10;
 
 pub use storage::cleanup_stale_insights;
@@ -47,13 +47,17 @@ pub async fn process_pondering(
             continue;
         }
 
-        // Gather data for pondering
+        // Gather project-aware data (new rich queries)
+        let data = queries::get_project_insight_data(pool, project_id).await?;
+
+        // Gather legacy data (still used as secondary context for LLM)
         let tool_history = queries::get_recent_tool_history(pool, project_id).await?;
         let memories = queries::get_recent_memories(pool, project_id).await?;
 
-        if tool_history.len() < MIN_TOOL_CALLS {
+        // Gate: need either project data OR sufficient tool history
+        if !data.has_data() && tool_history.len() < MIN_TOOL_CALLS {
             tracing::debug!(
-                "Project {} has insufficient activity ({} calls), skipping pondering",
+                "Project {} has insufficient data (no project signals, {} tool calls), skipping pondering",
                 name,
                 tool_history.len()
             );
@@ -63,9 +67,18 @@ pub async fn process_pondering(
         // Generate insights
         let insights = match client {
             Some(c) => {
-                llm::generate_insights(pool, project_id, &name, &tool_history, &memories, c).await?
+                llm::generate_insights(
+                    pool,
+                    project_id,
+                    &name,
+                    &data,
+                    &tool_history,
+                    &memories,
+                    c,
+                )
+                .await?
             }
-            None => heuristic::generate_insights_heuristic(&tool_history, &memories),
+            None => heuristic::generate_insights_heuristic(&data),
         };
 
         // Always advance the timestamp after attempting pondering, even if no

@@ -1,11 +1,12 @@
 // db/insights.rs
-// Unified insights digest — merges pondering, proactive suggestions, and doc gaps
+// Unified insights digest — merges pondering and doc gap insights into a ranked list
 
 use rusqlite::{Connection, params};
 
 use super::types::UnifiedInsight;
 
-/// Query-time merge of all insight sources into a single ranked list.
+/// Query-time merge of insight sources into a single ranked list.
+/// Proactive suggestions are excluded from the digest (available via their own API).
 pub fn get_unified_insights_sync(
     conn: &Connection,
     project_id: i64,
@@ -20,9 +21,6 @@ pub fn get_unified_insights_sync(
 
     if include("pondering") {
         all.extend(fetch_pondering_insights(conn, project_id, days_back)?);
-    }
-    if include("proactive") {
-        all.extend(fetch_proactive_insights(conn, project_id, days_back)?);
     }
     if include("doc_gap") {
         all.extend(fetch_doc_gap_insights(conn, project_id)?);
@@ -41,6 +39,17 @@ pub fn get_unified_insights_sync(
     Ok(all)
 }
 
+/// Compute age in days from a timestamp string (format: "YYYY-MM-DD HH:MM:SS").
+fn compute_age_days(timestamp: &str) -> f64 {
+    use chrono::{NaiveDateTime, Utc};
+    NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M:%S")
+        .map(|t| {
+            let now = Utc::now().naive_utc();
+            (now - t).num_hours() as f64 / 24.0
+        })
+        .unwrap_or(0.0)
+}
+
 /// Pondering insights from behavior_patterns where pattern_type starts with 'insight_'
 fn fetch_pondering_insights(
     conn: &Connection,
@@ -53,6 +62,7 @@ fn fetch_pondering_insights(
            WHERE project_id = ?1
              AND pattern_type LIKE 'insight_%'
              AND last_triggered_at > datetime('now', '-' || ?2 || ' days')
+             AND (dismissed IS NULL OR dismissed = 0)
            ORDER BY last_triggered_at DESC"#,
     )?;
 
@@ -94,54 +104,19 @@ fn fetch_pondering_insights(
             _ => 0.5,
         };
 
+        // Temporal decay: recent insights score higher, floor at 20%
+        let age_days = compute_age_days(&timestamp);
+        let decay = (1.0 - (age_days / 30.0)).max(0.2);
+        let priority_score = confidence * type_weight * decay;
+
         insights.push(UnifiedInsight {
             source: "pondering".to_string(),
             source_type: pattern_type,
             description,
-            priority_score: confidence * type_weight,
+            priority_score,
             confidence,
             timestamp,
             evidence,
-        });
-    }
-
-    Ok(insights)
-}
-
-/// Proactive suggestions that haven't expired
-fn fetch_proactive_insights(
-    conn: &Connection,
-    project_id: i64,
-    days_back: i64,
-) -> rusqlite::Result<Vec<UnifiedInsight>> {
-    let mut stmt = conn.prepare(
-        r#"SELECT trigger_key, suggestion_text, confidence, created_at
-           FROM proactive_suggestions
-           WHERE project_id = ?1
-             AND (expires_at IS NULL OR expires_at > datetime('now'))
-             AND created_at > datetime('now', '-' || ?2 || ' days')
-           ORDER BY confidence DESC"#,
-    )?;
-
-    let rows = stmt.query_map(params![project_id, days_back], |row| {
-        let trigger_key: String = row.get(0)?;
-        let suggestion_text: String = row.get(1)?;
-        let confidence: f64 = row.get::<_, Option<f64>>(2)?.unwrap_or(0.5);
-        let timestamp: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-        Ok((trigger_key, suggestion_text, confidence, timestamp))
-    })?;
-
-    let mut insights = Vec::new();
-    for row in rows {
-        let (trigger_key, suggestion_text, confidence, timestamp) = row?;
-        insights.push(UnifiedInsight {
-            source: "proactive".to_string(),
-            source_type: trigger_key,
-            description: suggestion_text,
-            priority_score: confidence * 0.9,
-            confidence,
-            timestamp,
-            evidence: None,
         });
     }
 

@@ -30,6 +30,26 @@ pub async fn cleanup_stale_insights(
     .str_err()
 }
 
+/// Normalize a description for dedup hashing.
+/// Lowercases, replaces digits with `#`, and collapses whitespace so that
+/// "Module X had 3 reverts" and "Module X had 5 reverts" produce the same key.
+fn normalize_for_dedup(description: &str) -> String {
+    description
+        .to_lowercase()
+        .replace(|c: char| c.is_ascii_digit(), "#")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Compute a 16-hex-char pattern key from a normalized description.
+fn compute_pattern_key(description: &str) -> String {
+    let normalized = normalize_for_dedup(description);
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.as_bytes());
+    format!("{:x}", hasher.finalize())[..16].to_string()
+}
+
 /// Store insights as behavior patterns
 pub(super) async fn store_insights(
     pool: &Arc<DatabasePool>,
@@ -54,12 +74,8 @@ pub(super) async fn store_insights(
         let mut stored = 0;
 
         for insight in &insights_clone {
-            // Generate pattern key from description hash
-            let pattern_key = {
-                let mut hasher = Sha256::new();
-                hasher.update(insight.description.as_bytes());
-                format!("{:x}", hasher.finalize())[..16].to_string()
-            };
+            // Generate pattern key from normalized description hash
+            let pattern_key = compute_pattern_key(&insight.description);
 
             let pattern_data = serde_json::json!({
                 "description": insight.description,
@@ -67,7 +83,7 @@ pub(super) async fn store_insights(
                 "generated_by": "pondering",
             });
 
-            // Upsert pattern - increment occurrence if exists
+            // Upsert pattern - increment occurrence if exists, keep latest evidence
             let result = conn.execute(
                 r#"
                 INSERT INTO behavior_patterns
@@ -77,6 +93,7 @@ pub(super) async fn store_insights(
                 ON CONFLICT(project_id, pattern_type, pattern_key) DO UPDATE SET
                     occurrence_count = occurrence_count + 1,
                     confidence = (confidence + excluded.confidence) / 2,
+                    pattern_data = excluded.pattern_data,
                     last_triggered_at = datetime('now')
                 "#,
                 params![
@@ -98,4 +115,52 @@ pub(super) async fn store_insights(
     })
     .await
     .str_err()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_for_dedup() {
+        // Numbers replaced with #
+        assert_eq!(
+            normalize_for_dedup("Module X had 3 reverts"),
+            "module x had # reverts"
+        );
+        assert_eq!(
+            normalize_for_dedup("Module X had 5 reverts"),
+            "module x had # reverts"
+        );
+
+        // Multi-digit numbers
+        assert_eq!(
+            normalize_for_dedup("Goal 94 stale for 23 days"),
+            "goal ## stale for ## days"
+        );
+        assert_eq!(
+            normalize_for_dedup("Goal 94 stale for 45 days"),
+            "goal ## stale for ## days"
+        );
+
+        // Whitespace collapsed
+        assert_eq!(
+            normalize_for_dedup("  extra   spaces   here  "),
+            "extra spaces here"
+        );
+    }
+
+    #[test]
+    fn test_same_meaning_same_key() {
+        let key1 = compute_pattern_key("Module background/ had 3 reverts in 24h");
+        let key2 = compute_pattern_key("Module background/ had 7 reverts in 24h");
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn test_different_meaning_different_key() {
+        let key1 = compute_pattern_key("Module background/ had reverts");
+        let key2 = compute_pattern_key("Module db/ had reverts");
+        assert_ne!(key1, key2);
+    }
 }

@@ -1,7 +1,7 @@
 // crates/mira-server/src/db/schema/intelligence.rs
 // Proactive intelligence, expert system, and cross-project migrations
 
-use crate::db::migration_helpers::create_table_if_missing;
+use crate::db::migration_helpers::{column_exists, create_table_if_missing};
 use anyhow::Result;
 use rusqlite::Connection;
 
@@ -121,6 +121,15 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
             ON proactive_suggestions(expires_at);
     "#,
     )?;
+
+    // Add shown_count and dismissed columns to behavior_patterns
+    if !column_exists(conn, "behavior_patterns", "shown_count") {
+        tracing::info!("Adding shown_count and dismissed columns to behavior_patterns");
+        conn.execute_batch(
+            "ALTER TABLE behavior_patterns ADD COLUMN shown_count INTEGER DEFAULT 0;
+             ALTER TABLE behavior_patterns ADD COLUMN dismissed INTEGER DEFAULT 0;",
+        )?;
+    }
 
     // Migrate existing pondering patterns to use insight_ prefix
     // This separates pondering insights from prediction patterns

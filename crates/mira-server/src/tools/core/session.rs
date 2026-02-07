@@ -114,20 +114,19 @@ async fn query_insights<C: ToolContext>(
     let items: Vec<InsightItem> = insights
         .iter()
         .map(|insight| {
+            let prefix = if insight.priority_score >= 0.75 {
+                "[!]"
+            } else {
+                "[i]"
+            };
             output.push_str(&format!(
-                "• [{}] {} (score: {:.2}, confidence: {:.0}%)\n",
-                insight.source,
-                insight.description,
-                insight.priority_score,
-                insight.confidence * 100.0,
+                "{} {} ({:.2})\n",
+                prefix, insight.description, insight.priority_score,
             ));
             if let Some(ref evidence) = insight.evidence {
-                output.push_str(&format!("  Evidence: {}\n", evidence));
+                output.push_str(&format!("    {}\n", evidence));
             }
-            output.push_str(&format!(
-                "  Type: {} | {}\n\n",
-                insight.source, insight.source_type
-            ));
+            output.push('\n');
             InsightItem {
                 source: insight.source.clone(),
                 source_type: insight.source_type.clone(),
@@ -138,6 +137,34 @@ async fn query_insights<C: ToolContext>(
             }
         })
         .collect();
+
+    // Fire-and-forget: increment shown_count for pondering insights
+    // TODO: Once UnifiedInsight carries pattern_key, use it directly instead of
+    // matching by description. For now, match pondering insights by description.
+    let pondering_descriptions: Vec<String> = insights
+        .iter()
+        .filter(|i| i.source == "pondering")
+        .map(|i| i.description.clone())
+        .collect();
+    if !pondering_descriptions.is_empty() {
+        let pool = ctx.pool().clone();
+        tokio::spawn(async move {
+            let _ = pool
+                .run(move |conn| {
+                    for desc in &pondering_descriptions {
+                        let _ = conn.execute(
+                            "UPDATE behavior_patterns SET shown_count = COALESCE(shown_count, 0) + 1
+                             WHERE pattern_type LIKE 'insight_%'
+                               AND json_extract(pattern_data, '$.description') = ?1",
+                            rusqlite::params![desc],
+                        );
+                    }
+                    Ok::<_, String>(())
+                })
+                .await;
+        });
+    }
+
     let total = items.len();
     Ok(Json(SessionOutput {
         action: "insights".into(),
