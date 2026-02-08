@@ -48,7 +48,10 @@ fn compute_pattern_key(description: &str) -> String {
     format!("{:x}", hasher.finalize())[..16].to_string()
 }
 
-/// Store insights as behavior patterns
+/// Maximum number of insights to keep per pattern_type per project.
+const MAX_INSIGHTS_PER_TYPE: i64 = 10;
+
+/// Store insights as behavior patterns, then enforce per-type cap.
 pub(super) async fn store_insights(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -70,6 +73,7 @@ pub(super) async fn store_insights(
 
     pool.interact(move |conn| {
         let mut stored = 0;
+        let mut types_touched = std::collections::HashSet::new();
 
         for insight in &insights_clone {
             // Generate pattern key from normalized description hash
@@ -104,8 +108,44 @@ pub(super) async fn store_insights(
             );
 
             match result {
-                Ok(_) => stored += 1,
+                Ok(_) => {
+                    stored += 1;
+                    types_touched.insert(insight.pattern_type.clone());
+                }
                 Err(e) => tracing::warn!("Failed to store insight: {}", e),
+            }
+        }
+
+        // Enforce per-type cap: keep the newest MAX_INSIGHTS_PER_TYPE, evict oldest
+        for pattern_type in &types_touched {
+            let evicted = conn
+                .execute(
+                    r#"
+                    DELETE FROM behavior_patterns
+                    WHERE project_id = ? AND pattern_type = ?
+                      AND id NOT IN (
+                          SELECT id FROM behavior_patterns
+                          WHERE project_id = ? AND pattern_type = ?
+                          ORDER BY last_triggered_at DESC
+                          LIMIT ?
+                      )
+                    "#,
+                    params![
+                        project_id,
+                        pattern_type,
+                        project_id,
+                        pattern_type,
+                        MAX_INSIGHTS_PER_TYPE,
+                    ],
+                )
+                .unwrap_or(0);
+            if evicted > 0 {
+                tracing::info!(
+                    "Evicted {} old '{}' insights (cap: {})",
+                    evicted,
+                    pattern_type,
+                    MAX_INSIGHTS_PER_TYPE,
+                );
             }
         }
 

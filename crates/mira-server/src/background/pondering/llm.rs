@@ -16,6 +16,7 @@ pub(super) async fn generate_insights(
     data: &ProjectInsightData,
     tool_history: &[ToolUsageEntry],
     memories: &[MemoryEntry],
+    existing_insights: &[String],
     client: &Arc<dyn LlmClient>,
 ) -> Result<Vec<PonderingInsight>, String> {
     // If there's no meaningful data, skip the LLM call entirely
@@ -23,7 +24,7 @@ pub(super) async fn generate_insights(
         return Ok(vec![]);
     }
 
-    let prompt = build_prompt(project_name, data, tool_history, memories);
+    let prompt = build_prompt(project_name, data, tool_history, memories, existing_insights);
     let messages = PromptBuilder::for_background().build_messages(prompt);
 
     match chat_with_usage(
@@ -50,6 +51,7 @@ fn build_prompt(
     data: &ProjectInsightData,
     tool_history: &[ToolUsageEntry],
     memories: &[MemoryEntry],
+    existing_insights: &[String],
 ) -> String {
     let mut sections = Vec::new();
 
@@ -180,6 +182,19 @@ fn build_prompt(
         ));
     }
 
+    // Existing insights section — tell the LLM what's already known
+    if !existing_insights.is_empty() {
+        let items: Vec<String> = existing_insights
+            .iter()
+            .enumerate()
+            .map(|(i, desc)| format!("{}. {}", i + 1, desc))
+            .collect();
+        sections.push(format!(
+            "## Existing Insights (DO NOT REPEAT)\n{}",
+            items.join("\n")
+        ));
+    }
+
     let data_block = sections.join("\n\n");
 
     format!(
@@ -188,7 +203,7 @@ fn build_prompt(
 {data_block}
 
 ## Task
-Identify 1-3 SPECIFIC, ACTIONABLE insights. Each MUST:
+Identify 1-3 SPECIFIC, ACTIONABLE insights that are NOT already covered above. Each MUST:
 1. Reference specific files, modules, or goals by name
 2. Explain WHY it's a problem
 3. Suggest a concrete next step
@@ -270,7 +285,7 @@ mod tests {
             untested_hotspots: vec![],
             session_patterns: vec![],
         };
-        let prompt = build_prompt("mira", &data, &[], &[]);
+        let prompt = build_prompt("mira", &data, &[], &[], &[]);
         assert!(prompt.contains("deadpool migration"));
         assert!(prompt.contains("src/db"));
         assert!(prompt.contains("senior engineering advisor"));
@@ -280,7 +295,7 @@ mod tests {
     #[test]
     fn test_build_prompt_empty_data() {
         let data = ProjectInsightData::default();
-        let prompt = build_prompt("mira", &data, &[], &[]);
+        let prompt = build_prompt("mira", &data, &[], &[], &[]);
         // Should still produce a valid prompt, just without data sections
         assert!(prompt.contains("mira"));
         assert!(!prompt.contains("## Goals"));
@@ -295,8 +310,22 @@ mod tests {
             success: true,
             timestamp: "2026-01-01".to_string(),
         }];
-        let prompt = build_prompt("mira", &data, &tools, &[]);
+        let prompt = build_prompt("mira", &data, &tools, &[], &[]);
         assert!(prompt.contains("Recent Tool Activity"));
         assert!(prompt.contains("code_search"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_existing_insights() {
+        let data = ProjectInsightData::default();
+        let existing = vec![
+            "Error handling quality issues".to_string(),
+            "Heavy context switching".to_string(),
+        ];
+        let prompt = build_prompt("mira", &data, &[], &[], &existing);
+        assert!(prompt.contains("Existing Insights (DO NOT REPEAT)"));
+        assert!(prompt.contains("Error handling quality issues"));
+        assert!(prompt.contains("Heavy context switching"));
+        assert!(prompt.contains("NOT already covered above"));
     }
 }

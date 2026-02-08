@@ -550,6 +550,36 @@ pub(super) async fn get_project_insight_data(
     })
 }
 
+/// Get existing insights for a project (to avoid duplicating them).
+pub(super) async fn get_existing_insights(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<Vec<String>, String> {
+    pool.interact(move |conn| {
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT json_extract(pattern_data, '$.description')
+                FROM behavior_patterns
+                WHERE project_id = ?
+                  AND pattern_type LIKE 'insight_%'
+                ORDER BY last_triggered_at DESC
+                LIMIT 20
+            "#,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to prepare existing insights: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![project_id], |row| row.get::<_, String>(0))
+            .map_err(|e| anyhow::anyhow!("Failed to query existing insights: {}", e))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow::anyhow!("Failed to collect existing insights: {}", e))
+    })
+    .await
+    .str_err()
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /// Extract top-level module names from a files_json JSON array.
