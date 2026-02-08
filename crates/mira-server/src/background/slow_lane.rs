@@ -307,7 +307,11 @@ impl SlowLaneWorker {
     /// Dispatch a task to its implementation.
     /// The exhaustive match ensures new `BackgroundTask` variants cause a compile error
     /// until their dispatch logic is added here.
-    async fn dispatch_task(&self, task: BackgroundTask, client: Option<&Arc<dyn LlmClient>>) -> usize {
+    async fn dispatch_task(
+        &self,
+        task: BackgroundTask,
+        client: Option<&Arc<dyn LlmClient>>,
+    ) -> usize {
         let name = task.to_string();
         match task {
             BackgroundTask::StaleSessions => {
@@ -380,7 +384,11 @@ impl SlowLaneWorker {
                 .await
             }
             BackgroundTask::EntityBackfills => {
-                Self::run_task(&name, entity_extraction::process_entity_backfill(&self.pool)).await
+                Self::run_task(
+                    &name,
+                    entity_extraction::process_entity_backfill(&self.pool),
+                )
+                .await
             }
             BackgroundTask::MemoryEmbeddings => {
                 if let Some(ref emb) = self.embeddings {

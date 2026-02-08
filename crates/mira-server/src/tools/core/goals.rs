@@ -31,20 +31,20 @@ struct BulkGoal {
 
 /// Verify a goal belongs to the current project context.
 /// Returns error if both have project IDs that don't match.
-fn verify_goal_project(goal_project_id: Option<i64>, ctx_project_id: Option<i64>) -> Result<(), String> {
-    if let (Some(goal_pid), Some(ctx_pid)) = (goal_project_id, ctx_project_id) {
-        if goal_pid != ctx_pid {
-            return Err("Goal not found or access denied".to_string());
-        }
+fn verify_goal_project(
+    goal_project_id: Option<i64>,
+    ctx_project_id: Option<i64>,
+) -> Result<(), String> {
+    if let (Some(goal_pid), Some(ctx_pid)) = (goal_project_id, ctx_project_id)
+        && goal_pid != ctx_pid
+    {
+        return Err("Goal not found or access denied".to_string());
     }
     Ok(())
 }
 
 /// Fetch a goal by ID and verify project authorization.
-async fn get_authorized_goal<C: ToolContext>(
-    ctx: &C,
-    id: i64,
-) -> Result<crate::db::Goal, String> {
+async fn get_authorized_goal<C: ToolContext>(ctx: &C, id: i64) -> Result<crate::db::Goal, String> {
     let goal = ctx
         .pool()
         .run(move |conn| get_goal_by_id_sync(conn, id))
@@ -111,7 +111,7 @@ async fn action_get<C: ToolContext>(ctx: &C, goal_id: &str) -> Result<Json<GoalO
     if !milestones.is_empty() {
         response.push_str(&format!("\n  Milestones ({}):\n", milestones.len()));
         for m in &milestones {
-            let icon = if m.completed { "v" } else { "o" };
+            let icon = if m.completed { "[x]" } else { "[ ]" };
             response.push_str(&format!(
                 "    {} [{}] {} (weight: {})\n",
                 icon, m.id, m.title, m.weight
@@ -296,10 +296,10 @@ async fn action_list<C: ToolContext>(
         .into_iter()
         .map(|goal| {
             let icon = match goal.status.as_str() {
-                "completed" => "v",
-                "in_progress" => ">",
-                "abandoned" => "x",
-                _ => "o",
+                "completed" => "[x]",
+                "in_progress" => "[>]",
+                "abandoned" => "[-]",
+                _ => "[ ]",
             };
             let ms = milestones_by_goal
                 .get(&goal.id)
@@ -311,7 +311,7 @@ async fn action_list<C: ToolContext>(
             ));
             if !ms.is_empty() {
                 for m in &ms {
-                    let mi = if m.completed { "v" } else { "o" };
+                    let mi = if m.completed { "[x]" } else { "[ ]" };
                     response.push_str(&format!("    {} {} (w:{})\n", mi, m.title, m.weight));
                 }
             }

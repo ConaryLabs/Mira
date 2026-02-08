@@ -64,7 +64,7 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::Tasks => {
             // Handled at router level (returns TasksOutput, not SessionOutput).
             // This arm should never be reached.
-            Err("Tasks action is handled at the router level. Use session(action=\"tasks\") via MCP.".into())
+            Err("Internal routing error — please report this as a bug.".into())
         }
     }
 }
@@ -78,7 +78,10 @@ async fn query_insights<C: ToolContext>(
     limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, String> {
     let project = ctx.get_project().await;
-    let project_id = project.as_ref().map(|p| p.id).ok_or("No active project")?;
+    let project_id = project
+        .as_ref()
+        .map(|p| p.id)
+        .ok_or("No active project. Use project(action=\"start\") first.")?;
 
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.3);
@@ -200,7 +203,10 @@ pub async fn session_history<C: ToolContext>(
         }
         SessionHistoryAction::ListSessions => {
             let project = ctx.get_project().await;
-            let project_id = project.as_ref().map(|p| p.id).ok_or("No active project")?;
+            let project_id = project
+                .as_ref()
+                .map(|p| p.id)
+                .ok_or("No active project. Use project(action=\"start\") first.")?;
 
             let sessions = ctx
                 .pool()

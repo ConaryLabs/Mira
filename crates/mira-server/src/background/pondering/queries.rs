@@ -603,13 +603,18 @@ fn extract_modules_from_files_json(files_json: &str) -> Vec<String> {
 
 /// Check if a file path looks like a test file.
 fn is_test_file(path: &str) -> bool {
-    path.contains("test")
-        || path.contains("spec")
-        || path.ends_with("_test.rs")
-        || path.ends_with("_test.go")
-        || path.ends_with(".test.ts")
-        || path.ends_with(".test.js")
-        || path.ends_with("_spec.rb")
+    path.contains("/test/")
+        || path.contains("/tests/")
+        || path.contains("/spec/")
+        || path.contains("/specs/")
+        || path.contains("_test.")
+        || path.contains(".test.")
+        || path.contains("_spec.")
+        || path.contains(".spec.")
+        || path.contains("/test_")
+        || path.starts_with("test/")
+        || path.starts_with("tests/")
+        || path.starts_with("spec/")
 }
 
 /// Check if a source file has a corresponding test file in the modified set.

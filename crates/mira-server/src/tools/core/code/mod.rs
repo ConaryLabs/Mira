@@ -89,6 +89,21 @@ pub async fn handle_code<C: ToolContext>(
             let file_path = req
                 .file_path
                 .ok_or("file_path is required for action 'symbols'")?;
+            // Validate file_path is within the project directory
+            if let Some(project) = ctx.get_project().await {
+                let project_path = std::path::Path::new(&project.path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| std::path::PathBuf::from(&project.path));
+                let target_path = std::path::Path::new(&file_path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| std::path::PathBuf::from(&file_path));
+                if !target_path.starts_with(&project_path) {
+                    return Err(format!(
+                        "File path must be within the project directory: {}",
+                        project.path
+                    ));
+                }
+            }
             get_symbols(file_path, req.symbol_type)
         }
         CodeAction::Callers => {
@@ -109,10 +124,7 @@ pub async fn handle_code<C: ToolContext>(
         CodeAction::Diff => {
             // Handled at router level (returns DiffOutput, not CodeOutput).
             // This arm should never be reached.
-            Err(
-                "Diff action is handled at the router level. Use code(action=\"diff\") via MCP."
-                    .into(),
-            )
+            Err("Internal routing error — please report this as a bug.".into())
         }
     }
 }

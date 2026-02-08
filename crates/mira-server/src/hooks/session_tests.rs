@@ -207,7 +207,7 @@ async fn test_goal_context_for_project() {
     .await;
 
     let goals = db(&pool, move |conn| {
-        crate::db::get_active_goals_sync(conn, Some(project_id), 3).map_err(Into::into)
+        crate::db::get_active_goals_sync(conn, Some(project_id), 3)
     })
     .await;
 

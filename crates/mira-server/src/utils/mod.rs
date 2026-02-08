@@ -218,9 +218,7 @@ mod tests {
     /// Helper to extract a file name from a path string using either separator.
     /// This mirrors logic that might be used in cross-platform path handling.
     fn extract_filename(path: &str) -> &str {
-        path.rsplit(|c| c == '/' || c == '\\')
-            .next()
-            .unwrap_or(path)
+        path.rsplit(['/', '\\']).next().unwrap_or(path)
     }
 
     #[test]

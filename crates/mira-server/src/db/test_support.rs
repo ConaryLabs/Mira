@@ -92,6 +92,7 @@ pub fn store_memory_helper(
 }
 
 /// Store a test memory with session tracking
+#[allow(clippy::too_many_arguments)]
 pub fn store_memory_with_session_helper(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,

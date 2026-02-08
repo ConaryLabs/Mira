@@ -19,7 +19,7 @@ pub async fn cross_project<C: ToolContext>(
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No project set. Call session_start first.")?;
+        .ok_or("No active project. Use project(action=\"start\") first.")?;
 
     match action {
         CrossProjectAction::GetPreferences | CrossProjectAction::Status => {

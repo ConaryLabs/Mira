@@ -75,46 +75,43 @@ pub fn expand_context_with_conn(
         && let Some((kind, name)) = parse_symbol_header(chunk_content)
         && let Some((start_line, end_line)) =
             lookup_symbol_bounds_sync(conn, project_id, file_path, &name)
+        && let Some(full_path) = safe_join(Path::new(proj_path), file_path)
+        && let Ok(file_content) = std::fs::read_to_string(&full_path)
     {
-        if let Some(full_path) = safe_join(Path::new(proj_path), file_path)
-            && let Ok(file_content) = std::fs::read_to_string(&full_path)
-        {
-            let all_lines: Vec<&str> = file_content.lines().collect();
+        let all_lines: Vec<&str> = file_content.lines().collect();
 
-            // Convert 1-indexed lines to 0-indexed
-            let start = (start_line.saturating_sub(1)) as usize;
-            let end = std::cmp::min(end_line as usize, all_lines.len());
+        // Convert 1-indexed lines to 0-indexed
+        let start = (start_line.saturating_sub(1)) as usize;
+        let end = std::cmp::min(end_line as usize, all_lines.len());
 
-            if start < all_lines.len() {
-                let full_symbol = all_lines[start..end].join("\n");
-                let header = format!("// {} {} (lines {}-{})", kind, name, start_line, end_line);
-                return Some((Some(header), full_symbol));
-            }
+        if start < all_lines.len() {
+            let full_symbol = all_lines[start..end].join("\n");
+            let header = format!("// {} {} (lines {}-{})", kind, name, start_line, end_line);
+            return Some((Some(header), full_symbol));
         }
     }
 
     // Fallback: use original +-5 line approach
-    if let Some(proj_path) = project_path {
-        if let Some(full_path) = safe_join(Path::new(proj_path), file_path)
-            && let Ok(file_content) = std::fs::read_to_string(&full_path)
-        {
-            let search_content = if chunk_content.starts_with("// ") {
-                chunk_content.lines().skip(1).collect::<Vec<_>>().join("\n")
-            } else {
-                chunk_content.to_string()
-            };
+    if let Some(proj_path) = project_path
+        && let Some(full_path) = safe_join(Path::new(proj_path), file_path)
+        && let Ok(file_content) = std::fs::read_to_string(&full_path)
+    {
+        let search_content = if chunk_content.starts_with("// ") {
+            chunk_content.lines().skip(1).collect::<Vec<_>>().join("\n")
+        } else {
+            chunk_content.to_string()
+        };
 
-            if let Some(pos) = file_content.find(&search_content) {
-                let lines_before = file_content[..pos].matches('\n').count();
-                let all_lines: Vec<&str> = file_content.lines().collect();
-                let match_lines = search_content.matches('\n').count() + 1;
+        if let Some(pos) = file_content.find(&search_content) {
+            let lines_before = file_content[..pos].matches('\n').count();
+            let all_lines: Vec<&str> = file_content.lines().collect();
+            let match_lines = search_content.matches('\n').count() + 1;
 
-                let start_line = lines_before.saturating_sub(5);
-                let end_line = std::cmp::min(lines_before + match_lines + 5, all_lines.len());
+            let start_line = lines_before.saturating_sub(5);
+            let end_line = std::cmp::min(lines_before + match_lines + 5, all_lines.len());
 
-                let context_code = all_lines[start_line..end_line].join("\n");
-                return Some((symbol_info, context_code));
-            }
+            let context_code = all_lines[start_line..end_line].join("\n");
+            return Some((symbol_info, context_code));
         }
     }
 

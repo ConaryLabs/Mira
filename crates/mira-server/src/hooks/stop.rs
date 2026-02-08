@@ -451,7 +451,7 @@ struct GoalInfo {
 fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<GoalInfo> {
     let sql = r#"
         SELECT g.title, g.progress_percent,
-               (SELECT title FROM goal_milestones
+               (SELECT title FROM milestones
                 WHERE goal_id = g.id AND completed_at IS NULL
                 ORDER BY id LIMIT 1) as next_milestone
         FROM goals g

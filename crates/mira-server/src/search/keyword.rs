@@ -5,8 +5,8 @@ use super::utils::{Locatable, deduplicate_by_location};
 use crate::db::{
     SymbolSearchResult, chunk_like_search_sync, fts_search_sync, symbol_like_search_sync,
 };
-use rusqlite::Connection;
 use crate::utils::safe_join;
+use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 

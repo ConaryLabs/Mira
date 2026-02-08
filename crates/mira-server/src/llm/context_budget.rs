@@ -160,7 +160,7 @@ mod tests {
     fn test_truncate_with_explicit_budget() {
         let messages = vec![
             Message::system("System"),
-            Message::user(&"x".repeat(1000)), // ~250 tokens
+            Message::user("x".repeat(1000)), // ~250 tokens
         ];
         // Budget of 100 tokens should trigger truncation
         let result = truncate_messages_to_budget(messages, 100);

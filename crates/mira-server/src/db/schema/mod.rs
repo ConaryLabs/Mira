@@ -211,8 +211,7 @@ fn applied_versions(conn: &Connection) -> Result<HashSet<u32>> {
     let mut stmt = conn.prepare("SELECT version FROM schema_versions")?;
     let versions = stmt
         .query_map([], |row| row.get::<_, u32>(0))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<std::result::Result<HashSet<_>, _>>()?;
     Ok(versions)
 }
 

@@ -6,12 +6,22 @@ use crate::background::diff_analysis::DiffStats;
 use std::collections::HashSet;
 use std::path::Path;
 
+/// Validate that a git ref doesn't look like a CLI flag (defense-in-depth)
+fn validate_ref(r: &str) -> Result<(), String> {
+    if r.starts_with('-') {
+        return Err(format!("Invalid git ref: '{}'", r));
+    }
+    Ok(())
+}
+
 /// Get unified diff between two refs
 pub fn get_unified_diff(
     project_path: &Path,
     from_ref: &str,
     to_ref: &str,
 ) -> Result<String, String> {
+    validate_ref(from_ref)?;
+    validate_ref(to_ref)?;
     git_cmd(project_path, &["diff", "--unified=3", from_ref, to_ref])
 }
 
@@ -56,6 +66,8 @@ pub fn parse_diff_stats(
     from_ref: &str,
     to_ref: &str,
 ) -> Result<DiffStats, String> {
+    validate_ref(from_ref)?;
+    validate_ref(to_ref)?;
     let output = git_cmd(project_path, &["diff", "--numstat", from_ref, to_ref]);
     match output {
         Ok(stdout) => Ok(parse_numstat_output(&stdout)),
