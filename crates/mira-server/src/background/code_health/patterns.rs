@@ -1,6 +1,7 @@
 // background/code_health/patterns.rs
 // Heuristic detection of architectural patterns from symbol/import/naming data
 
+use crate::utils::ResultExt;
 use rusqlite::Connection;
 use serde::Serialize;
 
@@ -334,7 +335,7 @@ struct SymbolInfo {
 fn get_modules(conn: &Connection, project_id: i64) -> Result<Vec<ModuleBasic>, String> {
     let mut stmt = conn
         .prepare("SELECT module_id, name, path FROM codebase_modules WHERE project_id = ?")
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let modules = stmt
         .query_map([project_id], |row| {
@@ -344,7 +345,7 @@ fn get_modules(conn: &Connection, project_id: i64) -> Result<Vec<ModuleBasic>, S
                 path: row.get(2)?,
             })
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(crate::db::log_and_discard)
         .collect();
 
@@ -363,7 +364,7 @@ fn get_module_symbols(
             "SELECT name, symbol_type, signature FROM code_symbols
              WHERE project_id = ? AND file_path LIKE ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let symbols = stmt
         .query_map(rusqlite::params![project_id, pattern], |row| {
@@ -373,7 +374,7 @@ fn get_module_symbols(
                 signature: row.get(2)?,
             })
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(crate::db::log_and_discard)
         .collect();
 
@@ -392,13 +393,13 @@ fn get_module_imports(
             "SELECT DISTINCT import_path FROM imports
              WHERE project_id = ? AND file_path LIKE ?",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let imports = stmt
         .query_map(rusqlite::params![project_id, pattern], |row| {
             row.get::<_, String>(0)
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(crate::db::log_and_discard)
         .collect();
 
@@ -428,7 +429,7 @@ fn update_module_patterns(
         "UPDATE codebase_modules SET detected_patterns = ? WHERE project_id = ? AND module_id = ?",
         rusqlite::params![patterns_json, project_id, module_id],
     )
-    .map_err(|e| e.to_string())?;
+    .str_err()?;
     Ok(())
 }
 
@@ -530,7 +531,7 @@ pub fn get_all_module_patterns(
              WHERE project_id = ? AND detected_patterns IS NOT NULL AND detected_patterns != ''
              ORDER BY module_id",
         )
-        .map_err(|e| e.to_string())?;
+        .str_err()?;
 
     let results = stmt
         .query_map([project_id], |row| {
@@ -540,7 +541,7 @@ pub fn get_all_module_patterns(
                 row.get::<_, String>(2)?,
             ))
         })
-        .map_err(|e| e.to_string())?
+        .str_err()?
         .filter_map(crate::db::log_and_discard)
         .collect();
 
