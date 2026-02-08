@@ -23,7 +23,7 @@ pub async fn list_doc_tasks(
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Use project(action=\"start\") first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     let tasks = ctx
         .pool()
@@ -130,7 +130,7 @@ pub async fn get_doc_task_details(
     let current_project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Use project(action=\"start\") first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     // Get task
     let task = ctx
@@ -270,7 +270,7 @@ pub async fn complete_doc_task(
     let current_project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Use project(action=\"start\") first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     // Verify task exists and is pending
     let task = ctx
@@ -316,7 +316,7 @@ pub async fn skip_doc_task(
     let current_project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Use project(action=\"start\") first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     // Verify task exists and belongs to current project
     let task = ctx
@@ -348,7 +348,8 @@ pub async fn show_doc_inventory(
     ctx: &(impl ToolContext + ?Sized),
 ) -> Result<Json<DocOutput>, String> {
     let project_id_opt = ctx.project_id().await;
-    let project_id = project_id_opt.ok_or("No active project")?;
+    let project_id =
+        project_id_opt.ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     let inventory = ctx
         .pool()
@@ -431,7 +432,8 @@ pub async fn scan_documentation(
     ctx: &(impl ToolContext + ?Sized),
 ) -> Result<Json<DocOutput>, String> {
     let project_id_opt = ctx.project_id().await;
-    let project_id = project_id_opt.ok_or("No active project")?;
+    let project_id =
+        project_id_opt.ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     // Clear the scan marker to force new scan
     ctx.pool()

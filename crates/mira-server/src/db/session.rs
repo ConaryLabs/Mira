@@ -130,12 +130,7 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
     } else {
         "Welcome back!".to_string()
     };
-    recap_parts.push(format!(
-        "╔══════════════════════════════════════╗\n\
-         ║   {}      ║\n\
-         ╚══════════════════════════════════════╝",
-        welcome
-    ));
+    recap_parts.push(format!("--- {} ---", welcome));
 
     // Time since last chat
     if let Ok(Some(last_chat_time)) = get_last_chat_time_sync(conn)

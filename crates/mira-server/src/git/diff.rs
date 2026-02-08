@@ -104,6 +104,7 @@ pub fn derive_stats_from_unified_diff(diff: &str) -> DiffStats {
 
 /// Resolve a git ref to a commit hash
 pub fn resolve_ref(project_path: &Path, ref_name: &str) -> Result<String, String> {
+    validate_ref(ref_name)?;
     git_cmd(project_path, &["rev-parse", "--short", ref_name])
 }
 

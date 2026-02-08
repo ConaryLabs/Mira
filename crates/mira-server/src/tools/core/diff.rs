@@ -31,7 +31,11 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     let pi = get_project_info(ctx).await;
     let project_path = match pi.path {
         Some(ref p) => p.clone(),
-        None => return Err("No active project. Call session_start first.".to_string()),
+        None => {
+            return Err(
+                "No active project. Use project(action=\"start\") to initialize.".to_string(),
+            );
+        }
     };
     let project_id = pi.id;
     let context_header = pi.header;

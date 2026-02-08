@@ -195,6 +195,7 @@ impl DatabasePool {
         let pool = cfg
             .builder(Runtime::Tokio1)
             .context("Failed to create pool builder")?
+            .max_size(8)
             .post_create(hook)
             .build()
             .context("Failed to build connection pool")?;

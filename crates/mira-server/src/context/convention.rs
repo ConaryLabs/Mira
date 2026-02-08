@@ -5,6 +5,7 @@
 // Uses session context (recent file access) rather than user message text.
 
 use crate::db::pool::DatabasePool;
+use crate::utils::truncate_at_boundary;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -262,10 +263,12 @@ fn format_conventions(modules: &[WorkingModule], conventions: &[ConventionRow]) 
         }
     }
 
-    // Truncate if still over limit
+    // Truncate if still over limit (UTF-8 safe)
     if output.len() > MAX_CONVENTION_CHARS {
-        output.truncate(MAX_CONVENTION_CHARS - 3);
-        output.push_str("...");
+        output = format!(
+            "{}...",
+            truncate_at_boundary(&output, MAX_CONVENTION_CHARS - 3)
+        );
     }
 
     output

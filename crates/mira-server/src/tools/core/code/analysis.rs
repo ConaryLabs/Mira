@@ -14,7 +14,7 @@ pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Call project(action='start') first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     let deps = ctx
         .code_pool()
@@ -102,7 +102,7 @@ pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Call project(action='start') first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     let patterns = ctx
         .code_pool()
@@ -186,7 +186,7 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Call project(action='start') first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     let scores = ctx
         .pool()

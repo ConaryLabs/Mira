@@ -83,7 +83,7 @@ pub async fn handle_code<C: ToolContext>(
     match req.action {
         CodeAction::Search => {
             let query = req.query.ok_or("query is required for action 'search'")?;
-            search_code(ctx, query, req.language, req.limit).await
+            search_code(ctx, query, req.limit).await
         }
         CodeAction::Symbols => {
             let file_path = req

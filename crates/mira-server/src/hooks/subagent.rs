@@ -5,6 +5,7 @@ use crate::db::pool::DatabasePool;
 use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
+use crate::utils::truncate_at_boundary;
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -128,7 +129,8 @@ pub async fn run_start() -> Result<()> {
             context_parts.join("\n\n")
         );
         if context.len() > MAX_CONTEXT_CHARS {
-            context.truncate(MAX_CONTEXT_CHARS);
+            // UTF-8 safe truncation
+            context = truncate_at_boundary(&context, MAX_CONTEXT_CHARS).to_string();
             // Find last newline to avoid mid-line truncation
             if let Some(pos) = context.rfind('\n') {
                 context.truncate(pos);

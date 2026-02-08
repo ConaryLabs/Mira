@@ -56,7 +56,7 @@ const AUTO_MEMORY_NOISE_PATTERNS: &[&str] = &[
 pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, String> {
     let project = ctx.get_project().await;
     let Some(project) = project else {
-        return Err("No active project. Call session_start first.".to_string());
+        return Err("No active project. Use project(action=\"start\") to initialize.".to_string());
     };
 
     let project_id = project.id;

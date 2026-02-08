@@ -5,7 +5,7 @@ use super::{HEURISTIC_PREFIX, is_fallback_content};
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
-use crate::utils::{ResultExt, truncate};
+use crate::utils::{ResultExt, truncate, truncate_at_boundary};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -329,7 +329,7 @@ fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -
     let mut result = format!(
         "{}{} commit{}. Latest: {}",
         HEURISTIC_PREFIX,
-        total_commits.min(FALLBACK_MAX_COMMITS),
+        total_commits,
         if total_commits == 1 { "" } else { "s" },
         latest_msg,
     );
@@ -345,10 +345,12 @@ fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -
         result.push_str(&format!(". {}", stats));
     }
 
-    // Cap total output length
+    // Cap total output length (UTF-8 safe)
     if result.len() > FALLBACK_MAX_LENGTH {
-        result.truncate(FALLBACK_MAX_LENGTH - 3);
-        result.push_str("...");
+        result = format!(
+            "{}...",
+            truncate_at_boundary(&result, FALLBACK_MAX_LENGTH - 3)
+        );
     }
 
     result
@@ -406,7 +408,7 @@ mod tests {
             log.push_str(&format!("abc{:04} commit {}", i, i));
         }
         let result = generate_briefing_fallback(Some(&log), None);
-        assert!(result.contains("5 commits"));
+        assert!(result.contains("10 commits"));
         assert!(result.contains("(+5 more)"));
     }
 

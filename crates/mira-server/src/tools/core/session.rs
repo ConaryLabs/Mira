@@ -81,7 +81,7 @@ async fn query_insights<C: ToolContext>(
     let project_id = project
         .as_ref()
         .map(|p| p.id)
-        .ok_or("No active project. Use project(action=\"start\") first.")?;
+        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.3);
@@ -206,7 +206,7 @@ pub async fn session_history<C: ToolContext>(
             let project_id = project
                 .as_ref()
                 .map(|p| p.id)
-                .ok_or("No active project. Use project(action=\"start\") first.")?;
+                .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
 
             let sessions = ctx
                 .pool()

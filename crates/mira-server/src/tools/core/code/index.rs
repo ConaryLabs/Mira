@@ -217,7 +217,11 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
     let project = ctx.get_project().await;
     let (project_id, project_path) = match project.as_ref() {
         Some(p) => (p.id, p.path.clone()),
-        None => return Err("No active project. Call session_start first.".to_string()),
+        None => {
+            return Err(
+                "No active project. Use project(action=\"start\") to initialize.".to_string(),
+            );
+        }
     };
 
     // Get LLM client (optional — falls back to heuristic)
@@ -331,7 +335,11 @@ pub async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput
     let project = ctx.get_project().await;
     let (project_id, project_path) = match project.as_ref() {
         Some(p) => (p.id, p.path.clone()),
-        None => return Err("No active project. Call project(action='start') first.".to_string()),
+        None => {
+            return Err(
+                "No active project. Use project(action=\"start\") to initialize.".to_string(),
+            );
+        }
     };
 
     // Guard: ensure the project has been indexed

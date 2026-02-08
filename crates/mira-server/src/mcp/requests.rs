@@ -213,8 +213,6 @@ pub struct CodeRequest {
     pub file_path: Option<String>,
     #[schemars(description = "Function name (required for callers/callees)")]
     pub function_name: Option<String>,
-    #[schemars(description = "Language filter")]
-    pub language: Option<String>,
     #[schemars(description = "Symbol type filter")]
     pub symbol_type: Option<String>,
     #[schemars(description = "Max results")]
@@ -287,12 +285,6 @@ pub struct IndexRequest {
     pub action: IndexAction,
     #[schemars(description = "Path")]
     pub path: Option<String>,
-    #[schemars(description = "Commit limit")]
-    pub commit_limit: Option<i64>,
-    #[schemars(description = "Parallel")]
-    pub parallel: Option<bool>,
-    #[schemars(description = "Max workers")]
-    pub max_workers: Option<i64>,
     #[schemars(description = "Skip embedding generation (faster indexing)")]
     pub skip_embed: Option<bool>,
 }

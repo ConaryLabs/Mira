@@ -21,7 +21,6 @@ use super::{query_callees, query_callers, query_search_code};
 pub async fn search_code<C: ToolContext>(
     ctx: &C,
     query: String,
-    _language: Option<String>,
     limit: Option<i64>,
 ) -> Result<Json<CodeOutput>, String> {
     let limit = limit.unwrap_or(10) as usize;

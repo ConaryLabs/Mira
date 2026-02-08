@@ -200,7 +200,7 @@ pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>,
         })),
         None => Ok(Json(ProjectOutput {
             action: "get".into(),
-            message: "No active project. Call set_project first.".into(),
+            message: "No active project. Use project(action=\"start\") to initialize.".into(),
             data: None,
         })),
     }

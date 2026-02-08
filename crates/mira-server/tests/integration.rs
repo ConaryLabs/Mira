@@ -317,7 +317,7 @@ async fn test_search_code_empty() {
     .await
     .expect("session_start failed");
 
-    let result = search_code(&ctx, "function foo".to_string(), None, Some(10)).await;
+    let result = search_code(&ctx, "function foo".to_string(), Some(10)).await;
     assert!(result.is_ok(), "search_code failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(
