@@ -8,9 +8,9 @@ mod test_utils;
 use mira::mcp::requests::{GoalAction, GoalRequest, IndexAction, SessionHistoryAction};
 use mira::mcp::responses::*;
 use mira::tools::core::{
-    ToolContext, ensure_session, find_function_callees, find_function_callers, forget, get_project,
-    get_session_recap, get_symbols, goal, index, recall, remember, reply_to_mira, search_code,
-    session_history, session_start, set_project, summarize_codebase,
+    ToolContext, archive, ensure_session, find_function_callees, find_function_callers, forget,
+    get_project, get_session_recap, get_symbols, goal, index, recall, remember, reply_to_mira,
+    search_code, session_history, session_start, set_project, summarize_codebase,
 };
 use std::sync::Arc;
 use test_utils::TestContext;
@@ -2157,5 +2157,741 @@ async fn test_tasks_cancel_running() {
         msg!(output).contains("cancelled"),
         "Expected 'cancelled' status after cancel, got: {}",
         msg!(output)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Goal Tests (Phase 1)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Helper to create a goal and return its ID
+async fn create_test_goal(ctx: &TestContext, title: &str) -> i64 {
+    let output = goal(
+        ctx,
+        GoalRequest {
+            action: GoalAction::Create,
+            goal_id: None,
+            title: Some(title.to_string()),
+            description: Some(format!("Description for {}", title)),
+            status: Some("planning".to_string()),
+            priority: Some("high".to_string()),
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal create failed");
+
+    match &output.0.data {
+        Some(GoalData::Created(data)) => data.goal_id,
+        other => panic!("Expected Created data, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_goal_get() {
+    let ctx = TestContext::new().await;
+    session_start(&ctx, "/tmp/test_goal_get".into(), Some("Goal Get".into()), None)
+        .await
+        .expect("session_start failed");
+
+    let goal_id = create_test_goal(&ctx, "Get test goal").await;
+
+    let output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::Get,
+            goal_id: Some(goal_id.to_string()),
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal get failed");
+
+    assert!(msg!(output).contains("Get test goal"), "Output: {}", msg!(output));
+    assert!(msg!(output).contains("planning"), "Output: {}", msg!(output));
+    assert!(msg!(output).contains("Description for"), "Output: {}", msg!(output));
+
+    match &output.0.data {
+        Some(GoalData::Get(data)) => {
+            assert_eq!(data.id, goal_id);
+            assert_eq!(data.title, "Get test goal");
+            assert_eq!(data.status, "planning");
+            assert_eq!(data.priority, "high");
+        }
+        other => panic!("Expected Get data, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_goal_update() {
+    let ctx = TestContext::new().await;
+    session_start(&ctx, "/tmp/test_goal_update".into(), Some("Goal Update".into()), None)
+        .await
+        .expect("session_start failed");
+
+    let goal_id = create_test_goal(&ctx, "Update test goal").await;
+
+    // Update title and status
+    let output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::Update,
+            goal_id: Some(goal_id.to_string()),
+            title: Some("Updated title".to_string()),
+            description: None,
+            status: Some("in_progress".to_string()),
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal update failed");
+
+    assert!(msg!(output).contains("Updated"), "Output: {}", msg!(output));
+
+    // Verify via get
+    let get_output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::Get,
+            goal_id: Some(goal_id.to_string()),
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal get failed");
+
+    match &get_output.0.data {
+        Some(GoalData::Get(data)) => {
+            assert_eq!(data.title, "Updated title");
+            assert_eq!(data.status, "in_progress");
+        }
+        other => panic!("Expected Get data, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_goal_delete() {
+    let ctx = TestContext::new().await;
+    session_start(&ctx, "/tmp/test_goal_delete".into(), Some("Goal Delete".into()), None)
+        .await
+        .expect("session_start failed");
+
+    let goal_id = create_test_goal(&ctx, "Delete test goal").await;
+
+    // Delete
+    let output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::Delete,
+            goal_id: Some(goal_id.to_string()),
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal delete failed");
+
+    assert!(
+        msg!(output).contains("Deleted") || msg!(output).contains("deleted"),
+        "Output: {}",
+        msg!(output)
+    );
+
+    // Verify list is empty
+    let list_output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::List,
+            goal_id: None,
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: Some(false),
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: Some(10),
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal list failed");
+
+    assert!(
+        !msg!(list_output).contains("Delete test goal"),
+        "Deleted goal should not appear: {}",
+        msg!(list_output)
+    );
+}
+
+#[tokio::test]
+async fn test_goal_milestone_lifecycle() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_goal_milestone".into(),
+        Some("Goal Milestone".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let goal_id = create_test_goal(&ctx, "Milestone test goal").await;
+
+    // Add milestone
+    let add_output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::AddMilestone,
+            goal_id: Some(goal_id.to_string()),
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: Some("First milestone".to_string()),
+            weight: Some(1),
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("add milestone failed");
+
+    assert!(msg!(add_output).contains("milestone"), "Output: {}", msg!(add_output));
+
+    // Extract milestone ID
+    let milestone_id = match &add_output.0.data {
+        Some(GoalData::MilestoneProgress(data)) => data.milestone_id,
+        other => panic!("Expected MilestoneProgress data, got: {:?}", other),
+    };
+
+    // Complete milestone
+    let complete_output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::CompleteMilestone,
+            goal_id: None,
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: Some(milestone_id.to_string()),
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("complete milestone failed");
+
+    assert!(
+        msg!(complete_output).contains("Completed") || msg!(complete_output).contains("completed"),
+        "Output: {}",
+        msg!(complete_output)
+    );
+
+    // Verify progress auto-calculated to 100%
+    match &complete_output.0.data {
+        Some(GoalData::MilestoneProgress(data)) => {
+            assert_eq!(data.progress_percent, Some(100));
+        }
+        other => panic!("Expected MilestoneProgress data, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_goal_list_with_milestones() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_goal_list_ms".into(),
+        Some("Goal List Milestones".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let goal_id = create_test_goal(&ctx, "List milestones goal").await;
+
+    // Add 2 milestones
+    for title in &["Milestone A", "Milestone B"] {
+        goal(
+            &ctx,
+            GoalRequest {
+                action: GoalAction::AddMilestone,
+                goal_id: Some(goal_id.to_string()),
+                title: None,
+                description: None,
+                status: None,
+                priority: None,
+                progress_percent: None,
+                include_finished: None,
+                milestone_id: None,
+                milestone_title: Some(title.to_string()),
+                weight: Some(1),
+                limit: None,
+                goals: None,
+            },
+        )
+        .await
+        .expect("add milestone failed");
+    }
+
+    // List goals - milestones should appear inline
+    let list_output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::List,
+            goal_id: None,
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: Some(10),
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal list failed");
+
+    assert!(
+        msg!(list_output).contains("List milestones goal"),
+        "Output: {}",
+        msg!(list_output)
+    );
+    assert!(
+        msg!(list_output).contains("Milestone A"),
+        "Output should contain milestone A: {}",
+        msg!(list_output)
+    );
+    assert!(
+        msg!(list_output).contains("Milestone B"),
+        "Output should contain milestone B: {}",
+        msg!(list_output)
+    );
+
+    // Verify structured data has milestones
+    match &list_output.0.data {
+        Some(GoalData::List(data)) => {
+            assert_eq!(data.goals.len(), 1);
+            assert_eq!(data.goals[0].milestones.len(), 2);
+        }
+        other => panic!("Expected List data, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_goal_bulk_create() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_goal_bulk".into(),
+        Some("Goal Bulk".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let goals_json = serde_json::json!([
+        {"title": "Bulk goal 1", "priority": "high"},
+        {"title": "Bulk goal 2", "priority": "medium"},
+        {"title": "Bulk goal 3"}
+    ])
+    .to_string();
+
+    let output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::BulkCreate,
+            goal_id: None,
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: Some(goals_json),
+        },
+    )
+    .await
+    .expect("bulk create failed");
+
+    assert!(
+        msg!(output).contains("Created 3") || msg!(output).contains("3 goals"),
+        "Output: {}",
+        msg!(output)
+    );
+
+    match &output.0.data {
+        Some(GoalData::BulkCreated(data)) => {
+            assert_eq!(data.goals.len(), 3);
+            assert_eq!(data.goals[0].title, "Bulk goal 1");
+            assert_eq!(data.goals[1].title, "Bulk goal 2");
+            assert_eq!(data.goals[2].title, "Bulk goal 3");
+        }
+        other => panic!("Expected BulkCreated data, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_goal_progress_update() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_goal_progress".into(),
+        Some("Goal Progress".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let goal_id = create_test_goal(&ctx, "Progress test goal").await;
+
+    // Set progress to 50%
+    let output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::Progress,
+            goal_id: Some(goal_id.to_string()),
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: Some(50),
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal progress failed");
+
+    assert!(
+        msg!(output).contains("50") || msg!(output).contains("Updated") || msg!(output).contains("progress"),
+        "Output: {}",
+        msg!(output)
+    );
+
+    // Verify via get
+    let get_output = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::Get,
+            goal_id: Some(goal_id.to_string()),
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal get failed");
+
+    match &get_output.0.data {
+        Some(GoalData::Get(data)) => {
+            assert_eq!(data.progress_percent, 50);
+        }
+        other => panic!("Expected Get data, got: {:?}", other),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Memory Tests (Phase 2)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_memory_archive() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_memory_archive".into(),
+        Some("Memory Archive".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Store a memory
+    let remember_output = remember(
+        &ctx,
+        "Archivable memory content".to_string(),
+        None,
+        Some("general".to_string()),
+        None,
+        Some(0.8),
+        None,
+    )
+    .await
+    .expect("remember failed");
+
+    let memory_id = match &remember_output.0.data {
+        Some(MemoryData::Remember(data)) => data.id,
+        other => panic!("Expected Remember data, got: {:?}", other),
+    };
+
+    // Archive it
+    let archive_output = archive(&ctx, memory_id.to_string())
+        .await
+        .expect("archive failed");
+
+    assert!(
+        msg!(archive_output).contains("archived") || msg!(archive_output).contains("Archive"),
+        "Output: {}",
+        msg!(archive_output)
+    );
+
+    // Verify status in DB
+    let status: String = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT status FROM memory_facts WHERE id = ?",
+                [memory_id],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .expect("Failed to query status");
+
+    assert_eq!(status, "archived", "Memory status should be 'archived'");
+}
+
+#[tokio::test]
+async fn test_memory_secret_rejection() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_memory_secret".into(),
+        Some("Memory Secret".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Try to store an AWS key
+    let result = remember(
+        &ctx,
+        "My AWS key is AKIAIOSFODNN7EXAMPLE".to_string(),
+        None,
+        Some("general".to_string()),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(result.is_err(), "Should reject content with AWS key");
+    let err = result.err().expect("should be Err");
+    assert!(
+        err.contains("secret") || err.contains("Secret"),
+        "Error should mention secret: {}",
+        err
+    );
+    assert!(
+        err.contains("AWS key"),
+        "Error should identify pattern as AWS key: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_memory_remember_with_scope() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_memory_scope".into(),
+        Some("Memory Scope".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Store with personal scope
+    let output = remember(
+        &ctx,
+        "Personal preference: dark mode".to_string(),
+        Some("personal_pref".to_string()),
+        Some("preference".to_string()),
+        None,
+        Some(0.9),
+        Some("personal".to_string()),
+    )
+    .await
+    .expect("remember with scope failed");
+
+    assert!(msg!(output).contains("Stored memory"), "Output: {}", msg!(output));
+
+    let memory_id = match &output.0.data {
+        Some(MemoryData::Remember(data)) => data.id,
+        other => panic!("Expected Remember data, got: {:?}", other),
+    };
+
+    // Verify scope in DB
+    let scope: String = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT scope FROM memory_facts WHERE id = ?",
+                [memory_id],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .expect("Failed to query scope");
+
+    assert_eq!(scope, "personal", "Scope should be 'personal'");
+}
+
+#[tokio::test]
+async fn test_memory_remember_upsert() {
+    let ctx = TestContext::new().await;
+    session_start(
+        &ctx,
+        "/tmp/test_memory_upsert".into(),
+        Some("Memory Upsert".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    let key = "upsert_test_key".to_string();
+
+    // Store first version
+    let output1 = remember(
+        &ctx,
+        "First version of this memory".to_string(),
+        Some(key.clone()),
+        Some("general".to_string()),
+        None,
+        Some(0.8),
+        None,
+    )
+    .await
+    .expect("first remember failed");
+
+    let _id1 = match &output1.0.data {
+        Some(MemoryData::Remember(data)) => data.id,
+        other => panic!("Expected Remember data, got: {:?}", other),
+    };
+
+    // Store second version with same key (should upsert)
+    let output2 = remember(
+        &ctx,
+        "Updated version of this memory".to_string(),
+        Some(key.clone()),
+        Some("general".to_string()),
+        None,
+        Some(0.9),
+        None,
+    )
+    .await
+    .expect("second remember (upsert) failed");
+
+    let id2 = match &output2.0.data {
+        Some(MemoryData::Remember(data)) => data.id,
+        other => panic!("Expected Remember data, got: {:?}", other),
+    };
+
+    // Verify only 1 memory with this key exists (status is 'candidate' for new memories)
+    let count: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE key = ?",
+                [&key],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .expect("Failed to count memories");
+
+    assert_eq!(count, 1, "Should have exactly 1 memory with this key (upsert)");
+
+    // The ID may or may not change depending on implementation, but content should be updated
+    let content: String = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT content FROM memory_facts WHERE id = ?",
+                [id2],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .expect("Failed to query content");
+
+    assert!(
+        content.contains("Updated version"),
+        "Content should be the updated version: {}",
+        content
     );
 }
