@@ -32,13 +32,15 @@ async fn log_behavior(pool: &Arc<DatabasePool>, project_id: i64, session_id: &st
         .await;
 }
 
-/// Get proactive context predictions (hybrid: pre-generated + on-the-fly)
+/// Get proactive context predictions (hybrid: pre-generated + on-the-fly + pondering insights)
 async fn get_proactive_context(
     pool: &Arc<DatabasePool>,
     project_id: i64,
     project_path: Option<&str>,
+    session_id: Option<&str>,
 ) -> Option<String> {
     let project_path_owned = project_path.map(|s| s.to_string());
+    let session_id_owned = session_id.map(|s| s.to_string());
     pool.interact(move |conn| {
         let config =
             crate::proactive::get_proactive_config(conn, None, project_id).unwrap_or_default();
@@ -103,16 +105,33 @@ async fn get_proactive_context(
             });
         }
 
-        if predictions.is_empty() {
-            return Ok(None);
+        let mut context_lines: Vec<String> = Vec::new();
+
+        // On-the-fly prediction context (file/tool patterns)
+        if !predictions.is_empty() {
+            let suggestions = predictor::predictions_to_interventions(&predictions, &config);
+            context_lines.extend(suggestions.iter().take(2).map(|s| s.to_context_string()));
         }
 
-        let suggestions = predictor::predictions_to_interventions(&predictions, &config);
-        let context_lines: Vec<String> = suggestions
-            .iter()
-            .take(2)
-            .map(|s| s.to_context_string())
-            .collect();
+        // 3. Pondering-based insights (behavior_patterns + documentation interventions)
+        let remaining_slots = 2usize.saturating_sub(context_lines.len());
+        if remaining_slots > 0 {
+            if let Ok(pending) = crate::proactive::interventions::get_pending_interventions_sync(
+                conn, project_id, &config,
+            ) {
+                for intervention in pending.iter().take(remaining_slots) {
+                    context_lines.push(format!("[Insight] {}", intervention.format()));
+
+                    // Record that we showed this intervention (for cooldown/dedup/feedback)
+                    let _ = crate::proactive::interventions::record_intervention_sync(
+                        conn,
+                        project_id,
+                        session_id_owned.as_deref(),
+                        intervention,
+                    );
+                }
+            }
+        }
 
         if context_lines.is_empty() {
             Ok(None)
@@ -214,8 +233,19 @@ pub async fn run() -> Result<()> {
         .await;
 
     // Get proactive predictions if enabled
+    let session_id_for_proactive = if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id)
+    };
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
-        get_proactive_context(&pool, project_id, project_path.as_deref()).await
+        get_proactive_context(
+            &pool,
+            project_id,
+            project_path.as_deref(),
+            session_id_for_proactive,
+        )
+        .await
     } else {
         None
     };

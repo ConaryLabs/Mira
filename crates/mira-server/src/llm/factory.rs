@@ -2,6 +2,7 @@
 // Provider factory for managing multiple LLM clients
 
 use crate::config::{ApiKeys, MiraConfig};
+use crate::llm::circuit_breaker::CircuitBreaker;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::ollama::OllamaClient;
 use crate::llm::provider::{LlmClient, Provider};
@@ -10,7 +11,7 @@ use rmcp::service::{Peer, RoleServer};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Factory for creating and managing LLM provider clients
 pub struct ProviderFactory {
@@ -20,6 +21,7 @@ pub struct ProviderFactory {
     background_fallback_order: Vec<Provider>,
     // MCP sampling peer — last-resort fallback when no API keys are configured
     sampling_peer: Option<Arc<RwLock<Option<Peer<RoleServer>>>>>,
+    circuit_breaker: CircuitBreaker,
 }
 
 impl ProviderFactory {
@@ -89,6 +91,7 @@ impl ProviderFactory {
             background_provider,
             background_fallback_order,
             sampling_peer: None,
+            circuit_breaker: CircuitBreaker::new(),
         }
     }
 
@@ -100,17 +103,23 @@ impl ProviderFactory {
 
     /// Get a client for background tasks (summaries, briefings, capabilities, etc.)
     /// Priority: background_provider config -> default_provider -> fallback chain
+    ///
+    /// Respects the circuit breaker — providers with tripped circuits are skipped
+    /// and the next available provider in the fallback chain is used instead.
     pub fn client_for_background(&self) -> Option<Arc<dyn LlmClient>> {
         // Try background provider first
         if let Some(ref provider) = self.background_provider {
-            if let Some(client) = self.clients.get(provider) {
-                return Some(client.clone());
+            if self.circuit_breaker.is_available(*provider) {
+                if let Some(client) = self.clients.get(provider) {
+                    return Some(client.clone());
+                }
             }
-            warn!(provider = %provider, "Configured background provider not available");
+            // If circuit is open, fall through silently to the fallback chain
         }
 
         // Fall back to default provider
         if let Some(ref provider) = self.default_provider
+            && self.circuit_breaker.is_available(*provider)
             && let Some(client) = self.clients.get(provider)
         {
             return Some(client.clone());
@@ -118,12 +127,29 @@ impl ProviderFactory {
 
         // Fall back through the chain (includes Ollama for background tasks)
         for provider in &self.background_fallback_order {
-            if let Some(client) = self.clients.get(provider) {
-                return Some(client.clone());
+            if self.circuit_breaker.is_available(*provider) {
+                if let Some(client) = self.clients.get(provider) {
+                    return Some(client.clone());
+                }
             }
         }
 
         None
+    }
+
+    /// Record a successful LLM call — resets the provider's circuit breaker.
+    pub fn record_success(&self, provider: Provider) {
+        self.circuit_breaker.record_success(provider);
+    }
+
+    /// Record a failed LLM call — may trip the provider's circuit breaker.
+    pub fn record_failure(&self, provider: Provider) {
+        self.circuit_breaker.record_failure(provider);
+    }
+
+    /// Get a reference to the circuit breaker (for testing or diagnostics).
+    pub fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.circuit_breaker
     }
 
     /// Get a specific provider client (if available)
@@ -169,9 +195,9 @@ mod tests {
             clients: HashMap::new(),
             default_provider: None,
             background_provider: None,
-
             background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
             sampling_peer: None,
+            circuit_breaker: CircuitBreaker::new(),
         }
     }
 
@@ -206,9 +232,9 @@ mod tests {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-
             background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
             sampling_peer: None,
+            circuit_breaker: CircuitBreaker::new(),
         };
         assert_eq!(factory.default_provider(), Some(Provider::DeepSeek));
     }

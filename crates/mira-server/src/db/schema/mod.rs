@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use rusqlite::Connection;
+use std::collections::HashSet;
 
 pub mod code;
 mod entities;
@@ -21,82 +22,119 @@ pub use fts::{rebuild_code_fts, rebuild_code_fts_for_project};
 // Re-export code schema migrations for the code database pool
 pub use code::run_code_migrations;
 
+/// A versioned migration entry: (version, name, function).
+/// Version numbers are sequential and must never be reordered or reused.
+type MigrationFn = fn(&Connection) -> Result<()>;
+
+struct Migration {
+    version: u32,
+    name: &'static str,
+    func: MigrationFn,
+}
+
+/// Registry of all versioned migrations. New migrations go at the end with the
+/// next sequential version number.
+fn migration_registry() -> Vec<Migration> {
+    vec![
+        Migration { version: 1,  name: "vec_tables",                    func: |c| vectors::migrate_vec_tables(c) },
+        Migration { version: 2,  name: "tool_history_full_result",      func: session::migrate_tool_history_full_result },
+        Migration { version: 3,  name: "chat_summaries_project_id",     func: session::migrate_chat_summaries_project_id },
+        Migration { version: 4,  name: "chat_messages_summary_id",      func: session::migrate_chat_messages_summary_id },
+        Migration { version: 5,  name: "memory_facts_has_embedding",    func: memory::migrate_memory_facts_has_embedding },
+        Migration { version: 6,  name: "memory_facts_evidence_tracking",func: memory::migrate_memory_facts_evidence_tracking },
+        Migration { version: 7,  name: "system_prompts_provider",       func: system::migrate_system_prompts_provider },
+        Migration { version: 8,  name: "system_prompts_strip_suffix",   func: system::migrate_system_prompts_strip_tool_suffix },
+        Migration { version: 9,  name: "documentation_tables",          func: memory::migrate_documentation_tables },
+        Migration { version: 10, name: "documentation_impact_analysis", func: memory::migrate_documentation_impact_analysis },
+        Migration { version: 11, name: "users_table",                   func: memory::migrate_users_table },
+        Migration { version: 12, name: "memory_user_scope",             func: memory::migrate_memory_user_scope },
+        Migration { version: 13, name: "drop_teams_tables",             func: memory::migrate_drop_teams_tables },
+        Migration { version: 14, name: "corrections_learning_columns",  func: reviews::migrate_corrections_learning_columns },
+        Migration { version: 15, name: "embeddings_usage_table",        func: reviews::migrate_embeddings_usage_table },
+        Migration { version: 16, name: "diff_analyses_table",           func: reviews::migrate_diff_analyses_table },
+        Migration { version: 17, name: "diff_analyses_files_json",      func: reviews::migrate_diff_analyses_files_json },
+        Migration { version: 18, name: "diff_outcomes_table",           func: reviews::migrate_diff_outcomes_table },
+        Migration { version: 19, name: "llm_usage_table",               func: reviews::migrate_llm_usage_table },
+        Migration { version: 20, name: "proactive_intelligence_tables", func: intelligence::migrate_proactive_intelligence_tables },
+        Migration { version: 21, name: "cross_project_intelligence",    func: intelligence::migrate_cross_project_intelligence_tables },
+        Migration { version: 22, name: "memory_facts_branch",           func: memory::migrate_memory_facts_branch },
+        Migration { version: 23, name: "sessions_branch",               func: session::migrate_sessions_branch },
+        Migration { version: 24, name: "remove_capability_data",        func: memory::migrate_remove_capability_data },
+        Migration { version: 25, name: "tech_debt_scores",              func: migrate_tech_debt_scores },
+        Migration { version: 26, name: "module_conventions",            func: migrate_module_conventions },
+        Migration { version: 27, name: "entity_tables",                 func: entities::migrate_entity_tables },
+        Migration { version: 28, name: "session_tasks_tables",          func: session_tasks::migrate_session_tasks_tables },
+        Migration { version: 29, name: "sessions_resume",               func: session::migrate_sessions_resume },
+        Migration { version: 30, name: "team_tables",                   func: team::migrate_team_tables },
+        Migration { version: 31, name: "session_snapshots",             func: session::migrate_session_snapshots_table },
+    ]
+}
+
+/// Ensure the schema_versions tracking table exists.
+fn ensure_schema_versions_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS schema_versions (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )"
+    )?;
+    Ok(())
+}
+
+/// Query which migration versions have already been applied.
+fn applied_versions(conn: &Connection) -> Result<HashSet<u32>> {
+    let mut stmt = conn.prepare("SELECT version FROM schema_versions")?;
+    let versions = stmt.query_map([], |row| row.get::<_, u32>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(versions)
+}
+
+/// Record a migration as applied.
+fn record_migration(conn: &Connection, version: u32, name: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_versions (version, name) VALUES (?1, ?2)",
+        rusqlite::params![version, name],
+    )?;
+    Ok(())
+}
+
 /// Run all schema setup and migrations.
 ///
-/// Called during database initialization. This function is idempotent -
-/// it checks for existing tables/columns before making changes.
+/// Called during database initialization. Uses a schema_versions table to track
+/// which migrations have been applied, skipping already-applied ones. On first
+/// run (or upgrade from unversioned), all migrations execute and then get recorded.
 pub fn run_all_migrations(conn: &Connection) -> Result<()> {
-    // Create base tables
+    // Create base tables (always idempotent via IF NOT EXISTS)
     conn.execute_batch(SCHEMA)?;
 
-    // Run migrations in order
-    // Note: code-DB-specific migrations (vec_code, pending_embeddings, code_fts, imports)
-    // are handled by run_code_migrations() on the separate code database.
-    vectors::migrate_vec_tables(conn)?;
-    session::migrate_tool_history_full_result(conn)?;
-    session::migrate_chat_summaries_project_id(conn)?;
-    session::migrate_chat_messages_summary_id(conn)?;
-    memory::migrate_memory_facts_has_embedding(conn)?;
-    memory::migrate_memory_facts_evidence_tracking(conn)?;
-    system::migrate_system_prompts_provider(conn)?;
-    system::migrate_system_prompts_strip_tool_suffix(conn)?;
-    memory::migrate_documentation_tables(conn)?;
-    memory::migrate_documentation_impact_analysis(conn)?;
-    memory::migrate_users_table(conn)?;
-    memory::migrate_memory_user_scope(conn)?;
-    memory::migrate_drop_teams_tables(conn)?;
+    // Ensure version tracking table exists
+    ensure_schema_versions_table(conn)?;
 
-    // Add learning columns to corrections table
-    reviews::migrate_corrections_learning_columns(conn)?;
+    // Get already-applied versions
+    let applied = applied_versions(conn)?;
 
-    // Add embeddings usage tracking table
-    reviews::migrate_embeddings_usage_table(conn)?;
+    // Run each migration in order, skipping already-applied ones
+    let registry = migration_registry();
+    let mut ran = 0u32;
+    for migration in &registry {
+        if applied.contains(&migration.version) {
+            continue;
+        }
+        tracing::info!(
+            "Running migration v{}: {}",
+            migration.version,
+            migration.name
+        );
+        (migration.func)(conn)?;
+        record_migration(conn, migration.version, migration.name)?;
+        ran += 1;
+    }
 
-    // Add diff analyses table for semantic diff analysis
-    reviews::migrate_diff_analyses_table(conn)?;
-
-    // Add files_json column to diff_analyses for outcome tracking
-    reviews::migrate_diff_analyses_files_json(conn)?;
-
-    // Add diff_outcomes table for tracking change outcomes
-    reviews::migrate_diff_outcomes_table(conn)?;
-
-    // Add LLM usage tracking table for cost analytics
-    reviews::migrate_llm_usage_table(conn)?;
-
-    // Add proactive intelligence tables for behavior tracking
-    intelligence::migrate_proactive_intelligence_tables(conn)?;
-
-    // Add cross-project intelligence tables for pattern sharing
-    intelligence::migrate_cross_project_intelligence_tables(conn)?;
-
-    // Add branch column for branch-aware context switching
-    memory::migrate_memory_facts_branch(conn)?;
-    session::migrate_sessions_branch(conn)?;
-
-    // Remove orphaned capability data (check_capability tool removed)
-    memory::migrate_remove_capability_data(conn)?;
-
-    // Add tech debt scores table for per-module debt tracking
-    migrate_tech_debt_scores(conn)?;
-
-    // Add module conventions table for convention-aware context injection
-    migrate_module_conventions(conn)?;
-
-    // Add entity tables for memory entity linking (recall boost)
-    entities::migrate_entity_tables(conn)?;
-
-    // Add session_tasks tables for Claude Code task persistence bridge
-    session_tasks::migrate_session_tasks_tables(conn)?;
-
-    // Add source and resumed_from columns for session resume tracking
-    session::migrate_sessions_resume(conn)?;
-
-    // Add team intelligence layer tables (after drop guard for old tables)
-    team::migrate_team_tables(conn)?;
-
-    // Add session_snapshots table for resume context
-    session::migrate_session_snapshots_table(conn)?;
+    if ran > 0 {
+        tracing::info!("Applied {} new migration(s)", ran);
+    }
 
     Ok(())
 }

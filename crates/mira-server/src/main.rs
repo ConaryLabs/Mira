@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
                 mira::hooks::permission::run().await?;
             }
             HookAction::SessionStart => {
-                mira::hooks::session::run()?;
+                mira::hooks::session::run().await?;
             }
             HookAction::PreCompact => {
                 mira::hooks::precompact::run().await?;

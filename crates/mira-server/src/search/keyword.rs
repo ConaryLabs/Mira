@@ -92,7 +92,7 @@ pub fn keyword_search(
         if !terms.is_empty() {
             let like_patterns: Vec<String> = terms
                 .iter()
-                .map(|t| format!("%{}%", t.to_lowercase()))
+                .map(|t| format!("%{}%", strip_like_wildcards(&t.to_lowercase())))
                 .collect();
             let symbol_results = symbol_like_search_sync(conn, &like_patterns, pid, fetch_limit);
             for sym in symbol_results {
@@ -111,7 +111,7 @@ pub fn keyword_search(
         if !terms.is_empty() {
             let like_patterns: Vec<String> = terms
                 .iter()
-                .map(|t| format!("%{}%", t.to_lowercase()))
+                .map(|t| format!("%{}%", strip_like_wildcards(&t.to_lowercase())))
                 .collect();
             let remaining = fetch_limit - all_results.len();
             let chunk_results = chunk_like_search_sync(conn, &like_patterns, pid, remaining);
@@ -229,6 +229,15 @@ fn build_fts_query(query: &str) -> FtsQueryPlan {
         relaxed: Some(cleaned.join(" OR ")),
         proximity,
     }
+}
+
+/// Strip SQL LIKE wildcards (%, _, \) from user-supplied terms to prevent
+/// wildcard injection in LIKE patterns. Stripping rather than escaping
+/// avoids the need for an `ESCAPE` clause in every downstream SQL query.
+fn strip_like_wildcards(term: &str) -> String {
+    term.chars()
+        .filter(|c| *c != '%' && *c != '_' && *c != '\\')
+        .collect()
 }
 
 /// Escape special FTS5 characters

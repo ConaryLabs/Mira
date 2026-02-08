@@ -66,7 +66,7 @@ impl SourceInfo {
 /// Handle SessionStart hook from Claude Code
 /// Extracts session_id, cwd, and source from stdin JSON and writes to files
 /// On resume, injects context about previous session work
-pub fn run() -> Result<()> {
+pub async fn run() -> Result<()> {
     let input = super::read_hook_input()?;
 
     // Log hook input keys for debugging
@@ -138,9 +138,6 @@ pub fn run() -> Result<()> {
         eprintln!("[mira] Captured Claude task list: {}", list_id);
     }
 
-    // Create a single tokio runtime for all async DB operations in this hook
-    let rt = tokio::runtime::Runtime::new()?;
-
     // Detect team membership and register in DB
     if let Some(sid) = session_id {
         let detection = detect_team_membership(&input, Some(sid), cwd);
@@ -160,7 +157,7 @@ pub fn run() -> Result<()> {
             let sid_owned = sid.to_string();
             let cwd_owned = cwd.map(String::from);
 
-            let membership = rt.block_on(async {
+            let membership = async {
                 let pool = match DatabasePool::open(&db_path).await {
                     Ok(p) => Arc::new(p),
                     Err(_) => return None,
@@ -220,7 +217,8 @@ pub fn run() -> Result<()> {
                     role: det_role,
                     config_path: det_config_path,
                 })
-            });
+            }
+            .await;
 
             if let Some(ref m) = membership {
                 let _ = write_team_membership(sid, m);
@@ -231,13 +229,11 @@ pub fn run() -> Result<()> {
 
     // On resume, inject context about previous work
     if source == "resume" {
-        // Run async context injection using the existing runtime
         let cwd_owned = cwd.map(String::from);
         let session_id_owned = session_id.map(String::from);
 
-        let context = rt.block_on(async {
-            build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await
-        });
+        let context =
+            build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await;
 
         if let Some(ctx) = context {
             let output = serde_json::json!({

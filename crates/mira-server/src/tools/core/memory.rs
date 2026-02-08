@@ -240,6 +240,16 @@ pub async fn remember<C: ToolContext>(
     confidence: Option<f64>,
     scope: Option<String>,
 ) -> Result<Json<MemoryOutput>, String> {
+    // Input validation: reject oversized content (10KB limit)
+    const MAX_MEMORY_BYTES: usize = 10 * 1024;
+    if content.len() > MAX_MEMORY_BYTES {
+        return Err(format!(
+            "Memory content too large ({} bytes). Maximum allowed is {} bytes (10KB).",
+            content.len(),
+            MAX_MEMORY_BYTES
+        ));
+    }
+
     // Security: warn if content looks like it contains secrets
     if let Some(pattern_name) = detect_secret(&content) {
         return Err(format!(

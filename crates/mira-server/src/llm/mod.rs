@@ -1,6 +1,7 @@
 // crates/mira-server/src/llm/mod.rs
 // LLM inference clients (DeepSeek)
 
+mod circuit_breaker;
 mod context_budget;
 mod deepseek;
 mod factory;
@@ -15,6 +16,7 @@ pub mod sampling;
 mod types;
 mod zhipu;
 
+pub use circuit_breaker::CircuitBreaker;
 pub use context_budget::{
     CONTEXT_BUDGET, estimate_message_tokens, estimate_tokens, truncate_messages_to_budget,
     truncate_messages_to_default_budget,
