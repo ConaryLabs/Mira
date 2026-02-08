@@ -130,7 +130,7 @@ fn filter_results<T: RecallResult>(
     limit: usize,
 ) -> Vec<T> {
     if category.is_none() && fact_type.is_none() {
-        return results;
+        return results.into_iter().take(limit).collect();
     }
     results
         .into_iter()

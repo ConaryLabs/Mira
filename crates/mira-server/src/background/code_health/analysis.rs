@@ -6,7 +6,7 @@ use crate::db::{
     StoreMemoryParams, get_error_heavy_functions_sync, get_large_functions_sync, store_memory_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
-use crate::utils::{ResultExt, truncate_at_boundary};
+use crate::utils::{ResultExt, safe_join, truncate_at_boundary};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -56,7 +56,7 @@ fn extract_function_code(
     start_line: i64,
     end_line: i64,
 ) -> Option<String> {
-    let full_path = Path::new(project_path).join(file_path);
+    let full_path = safe_join(Path::new(project_path), file_path)?;
     let source = match std::fs::read_to_string(&full_path) {
         Ok(s) => s,
         Err(_) => return None,
@@ -379,7 +379,9 @@ fn get_error_heavy_functions(
     let mut results = Vec::new();
 
     for (name, file_path, start_line, end_line) in functions {
-        let full_path = Path::new(project_path).join(&file_path);
+        let Some(full_path) = safe_join(Path::new(project_path), &file_path) else {
+            continue;
+        };
         let source = match fs::read_to_string(&full_path) {
             Ok(s) => s,
             Err(_) => continue,

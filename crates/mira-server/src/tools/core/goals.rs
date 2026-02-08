@@ -4,7 +4,8 @@
 use crate::db::{
     complete_milestone_sync, create_goal_sync, create_milestone_sync, delete_goal_sync,
     delete_milestone_sync, get_active_goals_sync, get_goal_by_id_sync, get_goals_sync,
-    get_milestones_for_goal_sync, update_goal_progress_from_milestones_sync, update_goal_sync,
+    get_milestone_by_id_sync, get_milestones_for_goal_sync,
+    update_goal_progress_from_milestones_sync, update_goal_sync,
 };
 use crate::mcp::requests::{GoalAction, GoalRequest};
 use crate::mcp::responses::Json;
@@ -25,6 +26,63 @@ struct BulkGoal {
 }
 
 // ============================================================================
+// Authorization helpers
+// ============================================================================
+
+/// Verify a goal belongs to the current project context.
+/// Returns error if both have project IDs that don't match.
+fn verify_goal_project(goal_project_id: Option<i64>, ctx_project_id: Option<i64>) -> Result<(), String> {
+    if let (Some(goal_pid), Some(ctx_pid)) = (goal_project_id, ctx_project_id) {
+        if goal_pid != ctx_pid {
+            return Err("Goal not found or access denied".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Fetch a goal by ID and verify project authorization.
+async fn get_authorized_goal<C: ToolContext>(
+    ctx: &C,
+    id: i64,
+) -> Result<crate::db::Goal, String> {
+    let goal = ctx
+        .pool()
+        .run(move |conn| get_goal_by_id_sync(conn, id))
+        .await?
+        .ok_or_else(|| "Goal not found or access denied".to_string())?;
+
+    let ctx_project_id = ctx.project_id().await;
+    verify_goal_project(goal.project_id, ctx_project_id)?;
+
+    Ok(goal)
+}
+
+/// Look up a milestone's parent goal_id and verify project authorization.
+async fn verify_milestone_project<C: ToolContext>(
+    ctx: &C,
+    milestone_id: i64,
+) -> Result<(), String> {
+    let milestone = ctx
+        .pool()
+        .run(move |conn| get_milestone_by_id_sync(conn, milestone_id))
+        .await?
+        .ok_or_else(|| "Milestone not found or access denied".to_string())?;
+
+    if let Some(goal_id) = milestone.goal_id {
+        let goal = ctx
+            .pool()
+            .run(move |conn| get_goal_by_id_sync(conn, goal_id))
+            .await?
+            .ok_or_else(|| "Goal not found or access denied".to_string())?;
+
+        let ctx_project_id = ctx.project_id().await;
+        verify_goal_project(goal.project_id, ctx_project_id)?;
+    }
+
+    Ok(())
+}
+
+// ============================================================================
 // Action-specific functions
 // ============================================================================
 
@@ -32,11 +90,7 @@ struct BulkGoal {
 async fn action_get<C: ToolContext>(ctx: &C, goal_id: &str) -> Result<Json<GoalOutput>, String> {
     let id: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
 
-    let goal = ctx
-        .pool()
-        .run(move |conn| get_goal_by_id_sync(conn, id))
-        .await?
-        .ok_or_else(|| format!("Goal {} not found", id))?;
+    let goal = get_authorized_goal(ctx, id).await?;
 
     let mut response = format!("Goal [{}]: {}\n", goal.id, goal.title);
     response.push_str(&format!("  Status: {}\n", goal.status));
@@ -294,6 +348,8 @@ async fn action_update<C: ToolContext>(
 ) -> Result<Json<GoalOutput>, String> {
     let id: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
 
+    get_authorized_goal(ctx, id).await?;
+
     ctx.pool()
         .run(move |conn| {
             update_goal_sync(
@@ -319,6 +375,8 @@ async fn action_update<C: ToolContext>(
 async fn action_delete<C: ToolContext>(ctx: &C, goal_id: &str) -> Result<Json<GoalOutput>, String> {
     let id: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
 
+    get_authorized_goal(ctx, id).await?;
+
     ctx.pool()
         .run(move |conn| delete_goal_sync(conn, id))
         .await?;
@@ -338,6 +396,9 @@ async fn action_add_milestone<C: ToolContext>(
     weight: Option<i32>,
 ) -> Result<Json<GoalOutput>, String> {
     let gid: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
+
+    get_authorized_goal(ctx, gid).await?;
+
     let mtitle_for_result = milestone_title.clone();
 
     let mid = ctx
@@ -365,6 +426,8 @@ async fn action_complete_milestone<C: ToolContext>(
     milestone_id: &str,
 ) -> Result<Json<GoalOutput>, String> {
     let mid: i64 = milestone_id.parse().map_err(|_| "Invalid milestone ID")?;
+
+    verify_milestone_project(ctx, mid).await?;
 
     let goal_id_result = ctx
         .pool()
@@ -408,6 +471,8 @@ async fn action_delete_milestone<C: ToolContext>(
     milestone_id: &str,
 ) -> Result<Json<GoalOutput>, String> {
     let mid: i64 = milestone_id.parse().map_err(|_| "Invalid milestone ID")?;
+
+    verify_milestone_project(ctx, mid).await?;
 
     let goal_id_result = ctx
         .pool()

@@ -6,6 +6,7 @@ use crate::db::{
     SymbolSearchResult, chunk_like_search_sync, fts_search_sync, symbol_like_search_sync,
 };
 use rusqlite::Connection;
+use crate::utils::safe_join;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -280,7 +281,7 @@ fn read_symbol_content(
 ) -> String {
     if let Some(proj_path) = project_path {
         let cached = file_cache.entry(sym.file_path.clone()).or_insert_with(|| {
-            let full_path = Path::new(proj_path).join(&sym.file_path);
+            let full_path = safe_join(Path::new(proj_path), &sym.file_path)?;
             std::fs::read_to_string(&full_path).ok()
         });
 

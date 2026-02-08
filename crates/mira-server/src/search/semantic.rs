@@ -9,7 +9,7 @@ use crate::db::pool::DatabasePool;
 use crate::db::semantic_code_search_sync;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
-use crate::utils::{truncate, truncate_at_boundary};
+use crate::utils::{safe_join, truncate, truncate_at_boundary};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -169,7 +169,9 @@ fn rerank_results_with_intent(
             if cache.contains_key(&result.file_path) {
                 continue;
             }
-            let full_path = Path::new(proj_path).join(&result.file_path);
+            let Some(full_path) = safe_join(Path::new(proj_path), &result.file_path) else {
+                continue;
+            };
             if let Ok(metadata) = std::fs::metadata(&full_path)
                 && let Ok(modified) = metadata.modified()
             {

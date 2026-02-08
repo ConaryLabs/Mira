@@ -190,24 +190,26 @@ pub fn update_task_sync(
     status: Option<&str>,
     priority: Option<&str>,
 ) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
     if let Some(title) = title {
-        conn.execute(
+        tx.execute(
             "UPDATE tasks SET title = ? WHERE id = ?",
             params![title, id],
         )?;
     }
     if let Some(status) = status {
-        conn.execute(
+        tx.execute(
             "UPDATE tasks SET status = ? WHERE id = ?",
             params![status, id],
         )?;
     }
     if let Some(priority) = priority {
-        conn.execute(
+        tx.execute(
             "UPDATE tasks SET priority = ? WHERE id = ?",
             params![priority, id],
         )?;
     }
+    tx.commit()?;
     Ok(())
 }
 
@@ -303,36 +305,38 @@ pub fn update_goal_sync(
     priority: Option<&str>,
     progress: Option<i64>,
 ) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
     if let Some(title) = title {
-        conn.execute(
+        tx.execute(
             "UPDATE goals SET title = ? WHERE id = ?",
             params![title, id],
         )?;
     }
     if let Some(description) = description {
-        conn.execute(
+        tx.execute(
             "UPDATE goals SET description = ? WHERE id = ?",
             params![description, id],
         )?;
     }
     if let Some(status) = status {
-        conn.execute(
+        tx.execute(
             "UPDATE goals SET status = ? WHERE id = ?",
             params![status, id],
         )?;
     }
     if let Some(priority) = priority {
-        conn.execute(
+        tx.execute(
             "UPDATE goals SET priority = ? WHERE id = ?",
             params![priority, id],
         )?;
     }
     if let Some(progress) = progress {
-        conn.execute(
+        tx.execute(
             "UPDATE goals SET progress_percent = ? WHERE id = ?",
             params![progress, id],
         )?;
     }
+    tx.commit()?;
     Ok(())
 }
 

@@ -48,9 +48,49 @@ enum TaskPriority {
     Low = 2,
 }
 
+/// Enumeration of all background task types.
+/// Using an enum ensures compile-time exhaustiveness — adding a new task variant
+/// without handling it in `dispatch_task` will cause a compiler error.
+#[derive(Debug, Clone, Copy)]
+enum BackgroundTask {
+    StaleSessions,
+    MemoryEmbeddings,
+    Summaries,
+    Briefings,
+    HealthIssues,
+    ProactiveItems,
+    EntityBackfills,
+    TeamMonitor,
+    DocumentationTasks,
+    PonderingInsights,
+    InsightCleanup,
+    ProactiveCleanup,
+    DiffOutcomes,
+}
+
+impl std::fmt::Display for BackgroundTask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StaleSessions => write!(f, "stale sessions"),
+            Self::MemoryEmbeddings => write!(f, "memory embeddings"),
+            Self::Summaries => write!(f, "summaries"),
+            Self::Briefings => write!(f, "briefings"),
+            Self::HealthIssues => write!(f, "health issues"),
+            Self::ProactiveItems => write!(f, "proactive items"),
+            Self::EntityBackfills => write!(f, "entity backfills"),
+            Self::TeamMonitor => write!(f, "team monitor"),
+            Self::DocumentationTasks => write!(f, "documentation tasks"),
+            Self::PonderingInsights => write!(f, "pondering insights"),
+            Self::InsightCleanup => write!(f, "insight cleanup"),
+            Self::ProactiveCleanup => write!(f, "proactive cleanup"),
+            Self::DiffOutcomes => write!(f, "diff outcomes"),
+        }
+    }
+}
+
 /// A scheduled background task with metadata for priority ordering.
 struct ScheduledTask {
-    name: &'static str,
+    task: BackgroundTask,
     priority: TaskPriority,
     /// None = run every cycle; Some(n) = run every nth cycle
     cycle_interval: Option<u64>,
@@ -71,69 +111,69 @@ fn task_schedule() -> Vec<ScheduledTask> {
     vec![
         // Critical: always run
         ScheduledTask {
-            name: "stale sessions",
+            task: BackgroundTask::StaleSessions,
             priority: TaskPriority::Critical,
             cycle_interval: None,
         },
         ScheduledTask {
-            name: "memory embeddings",
+            task: BackgroundTask::MemoryEmbeddings,
             priority: TaskPriority::Critical,
             cycle_interval: None,
         },
         // Normal: standard cadence
         ScheduledTask {
-            name: "summaries",
+            task: BackgroundTask::Summaries,
             priority: TaskPriority::Normal,
             cycle_interval: None,
         },
         ScheduledTask {
-            name: "briefings",
+            task: BackgroundTask::Briefings,
             priority: TaskPriority::Normal,
             cycle_interval: None,
         },
         ScheduledTask {
-            name: "health issues",
+            task: BackgroundTask::HealthIssues,
             priority: TaskPriority::Normal,
             cycle_interval: None,
         },
         ScheduledTask {
-            name: "proactive items",
+            task: BackgroundTask::ProactiveItems,
             priority: TaskPriority::Normal,
             cycle_interval: None,
         },
         ScheduledTask {
-            name: "entity backfills",
+            task: BackgroundTask::EntityBackfills,
             priority: TaskPriority::Normal,
             cycle_interval: None,
         },
         ScheduledTask {
-            name: "team monitor",
+            task: BackgroundTask::TeamMonitor,
             priority: TaskPriority::Normal,
             cycle_interval: Some(TEAM_MONITOR_CYCLE_INTERVAL),
         },
         // Low: deferrable under load
         ScheduledTask {
-            name: "documentation tasks",
+            task: BackgroundTask::DocumentationTasks,
             priority: TaskPriority::Low,
             cycle_interval: Some(DOCUMENTATION_CYCLE_INTERVAL),
         },
         ScheduledTask {
-            name: "pondering insights",
+            task: BackgroundTask::PonderingInsights,
             priority: TaskPriority::Low,
             cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
         },
         ScheduledTask {
-            name: "insight cleanup",
+            task: BackgroundTask::InsightCleanup,
             priority: TaskPriority::Low,
             cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
         },
         ScheduledTask {
-            name: "proactive cleanup",
+            task: BackgroundTask::ProactiveCleanup,
             priority: TaskPriority::Low,
             cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
         },
         ScheduledTask {
-            name: "diff outcomes",
+            task: BackgroundTask::DiffOutcomes,
             priority: TaskPriority::Low,
             cycle_interval: Some(OUTCOME_SCAN_CYCLE_INTERVAL),
         },
@@ -254,39 +294,42 @@ impl SlowLaneWorker {
 
             // Skip low-priority tasks when under load
             if skip_low && task.priority == TaskPriority::Low {
-                tracing::debug!("Slow lane: skipping low-priority task '{}'", task.name);
+                tracing::debug!("Slow lane: skipping low-priority task '{}'", task.task);
                 continue;
             }
 
-            processed += self.dispatch_task(task.name, client).await;
+            processed += self.dispatch_task(task.task, client).await;
         }
 
         processed
     }
 
-    /// Dispatch a named task to its implementation.
-    async fn dispatch_task(&self, name: &str, client: Option<&Arc<dyn LlmClient>>) -> usize {
-        match name {
-            "stale sessions" => {
+    /// Dispatch a task to its implementation.
+    /// The exhaustive match ensures new `BackgroundTask` variants cause a compile error
+    /// until their dispatch logic is added here.
+    async fn dispatch_task(&self, task: BackgroundTask, client: Option<&Arc<dyn LlmClient>>) -> usize {
+        let name = task.to_string();
+        match task {
+            BackgroundTask::StaleSessions => {
                 Self::run_task(
-                    name,
+                    &name,
                     session_summaries::process_stale_sessions(&self.pool, client),
                 )
                 .await
             }
-            "summaries" => {
+            BackgroundTask::Summaries => {
                 Self::run_task(
-                    name,
+                    &name,
                     summaries::process_queue(&self.code_pool, &self.pool, client),
                 )
                 .await
             }
-            "briefings" => {
-                Self::run_task(name, briefings::process_briefings(&self.pool, client)).await
+            BackgroundTask::Briefings => {
+                Self::run_task(&name, briefings::process_briefings(&self.pool, client)).await
             }
-            "documentation tasks" => {
+            BackgroundTask::DocumentationTasks => {
                 Self::run_task(
-                    name,
+                    &name,
                     documentation::process_documentation(
                         &self.pool,
                         &self.code_pool,
@@ -295,39 +338,39 @@ impl SlowLaneWorker {
                 )
                 .await
             }
-            "health issues" => {
+            BackgroundTask::HealthIssues => {
                 Self::run_task(
-                    name,
+                    &name,
                     code_health::process_code_health(&self.pool, &self.code_pool, client),
                 )
                 .await
             }
-            "pondering insights" => {
-                Self::run_task(name, pondering::process_pondering(&self.pool, client)).await
+            BackgroundTask::PonderingInsights => {
+                Self::run_task(&name, pondering::process_pondering(&self.pool, client)).await
             }
-            "insight cleanup" => {
-                Self::run_task(name, pondering::cleanup_stale_insights(&self.pool)).await
+            BackgroundTask::InsightCleanup => {
+                Self::run_task(&name, pondering::cleanup_stale_insights(&self.pool)).await
             }
-            "proactive cleanup" => {
+            BackgroundTask::ProactiveCleanup => {
                 Self::run_task(
-                    name,
+                    &name,
                     crate::proactive::background::cleanup_expired_suggestions(&self.pool),
                 )
                 .await
             }
-            "diff outcomes" => {
+            BackgroundTask::DiffOutcomes => {
                 Self::run_task(
-                    name,
+                    &name,
                     outcome_scanner::process_outcome_scanning(&self.pool, &self.code_pool),
                 )
                 .await
             }
-            "team monitor" => {
-                Self::run_task(name, team_monitor::process_team_monitor(&self.pool)).await
+            BackgroundTask::TeamMonitor => {
+                Self::run_task(&name, team_monitor::process_team_monitor(&self.pool)).await
             }
-            "proactive items" => {
+            BackgroundTask::ProactiveItems => {
                 Self::run_task(
-                    name,
+                    &name,
                     crate::proactive::background::process_proactive(
                         &self.pool,
                         client,
@@ -336,23 +379,19 @@ impl SlowLaneWorker {
                 )
                 .await
             }
-            "entity backfills" => {
-                Self::run_task(name, entity_extraction::process_entity_backfill(&self.pool)).await
+            BackgroundTask::EntityBackfills => {
+                Self::run_task(&name, entity_extraction::process_entity_backfill(&self.pool)).await
             }
-            "memory embeddings" => {
+            BackgroundTask::MemoryEmbeddings => {
                 if let Some(ref emb) = self.embeddings {
                     Self::run_task(
-                        name,
+                        &name,
                         memory_embeddings::process_memory_embeddings(&self.pool, emb),
                     )
                     .await
                 } else {
                     0
                 }
-            }
-            _ => {
-                tracing::warn!("Slow lane: unknown task '{}'", name);
-                0
             }
         }
     }

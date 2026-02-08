@@ -40,7 +40,10 @@ pub async fn resolve_project(
         Ok::<_, anyhow::Error>((result, path))
     })
     .await
-    .unwrap_or_default()
+    .unwrap_or_else(|e| {
+        tracing::warn!("Failed to resolve project: {e}");
+        (None, None)
+    })
 }
 
 /// Resolve only the active project ID (convenience wrapper).

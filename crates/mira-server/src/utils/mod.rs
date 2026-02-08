@@ -4,7 +4,7 @@
 pub mod json;
 
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Extension trait for Result to simplify error conversion to String.
 ///
@@ -28,6 +28,21 @@ pub trait ResultExt<T, E> {
 impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
     fn str_err(self) -> Result<T, String> {
         self.map_err(|e| e.to_string())
+    }
+}
+
+/// Safely join a relative path to a base directory, preventing path traversal.
+///
+/// Returns `None` if the resulting path escapes the base directory (e.g. via `../`).
+/// Both paths are canonicalized before comparison, so symlinks are resolved.
+pub fn safe_join(base: &Path, relative: &str) -> Option<PathBuf> {
+    let joined = base.join(relative);
+    let canonical = joined.canonicalize().ok()?;
+    let base_canonical = base.canonicalize().ok()?;
+    if canonical.starts_with(&base_canonical) {
+        Some(canonical)
+    } else {
+        None
     }
 }
 

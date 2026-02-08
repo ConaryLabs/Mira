@@ -28,7 +28,11 @@ use rmcp::{
     task_manager::OperationProcessor,
 };
 
-/// MCP Server state
+/// MCP Server state.
+///
+/// All fields are `Arc`-wrapped so that `Clone` produces a shallow handle to shared state
+/// rather than duplicating it. This is intentional: cloned handles are passed into spawned
+/// async tasks and tool handlers that need concurrent access to the same server state.
 #[derive(Clone)]
 pub struct MiraServer {
     /// Async connection pool for main database operations (memory, sessions, goals, etc.)

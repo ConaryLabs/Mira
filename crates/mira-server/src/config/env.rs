@@ -4,7 +4,7 @@
 use tracing::{debug, info, warn};
 
 /// API keys loaded from environment variables
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct ApiKeys {
     /// DeepSeek API key (DEEPSEEK_API_KEY)
     pub deepseek: Option<String>,
@@ -16,6 +16,24 @@ pub struct ApiKeys {
     pub openai: Option<String>,
     /// Brave Search API key (BRAVE_API_KEY)
     pub brave: Option<String>,
+}
+
+impl std::fmt::Debug for ApiKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn redact(opt: &Option<String>) -> &str {
+            match opt {
+                Some(_) => "Some(<redacted>)",
+                None => "None",
+            }
+        }
+        f.debug_struct("ApiKeys")
+            .field("deepseek", &redact(&self.deepseek))
+            .field("zhipu", &redact(&self.zhipu))
+            .field("ollama", &redact(&self.ollama))
+            .field("openai", &redact(&self.openai))
+            .field("brave", &redact(&self.brave))
+            .finish()
+    }
 }
 
 impl ApiKeys {

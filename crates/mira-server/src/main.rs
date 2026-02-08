@@ -13,15 +13,12 @@ use cli::{Cli, Commands, HookAction};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env files (global first, then project - project overrides)
+    // Load .env from ~/.mira/.env only (never from CWD — a malicious repo could override API keys)
     if let Some(home) = dirs::home_dir()
         && let Err(e) = dotenvy::from_path(home.join(".mira/.env"))
     {
         tracing::debug!("Failed to load global .env file: {}", e);
     }
-    if let Err(e) = dotenvy::dotenv() {
-        tracing::debug!("Failed to load local .env file: {}", e);
-    } // Load .env from current directory
 
     let cli = Cli::parse();
 

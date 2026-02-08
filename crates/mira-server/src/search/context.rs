@@ -2,6 +2,7 @@
 // Context expansion for search results
 
 use crate::db::get_symbol_bounds_sync;
+use crate::utils::safe_join;
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -75,8 +76,9 @@ pub fn expand_context_with_conn(
         && let Some((start_line, end_line)) =
             lookup_symbol_bounds_sync(conn, project_id, file_path, &name)
     {
-        let full_path = Path::new(proj_path).join(file_path);
-        if let Ok(file_content) = std::fs::read_to_string(&full_path) {
+        if let Some(full_path) = safe_join(Path::new(proj_path), file_path)
+            && let Ok(file_content) = std::fs::read_to_string(&full_path)
+        {
             let all_lines: Vec<&str> = file_content.lines().collect();
 
             // Convert 1-indexed lines to 0-indexed
@@ -93,8 +95,9 @@ pub fn expand_context_with_conn(
 
     // Fallback: use original +-5 line approach
     if let Some(proj_path) = project_path {
-        let full_path = Path::new(proj_path).join(file_path);
-        if let Ok(file_content) = std::fs::read_to_string(&full_path) {
+        if let Some(full_path) = safe_join(Path::new(proj_path), file_path)
+            && let Ok(file_content) = std::fs::read_to_string(&full_path)
+        {
             let search_content = if chunk_content.starts_with("// ") {
                 chunk_content.lines().skip(1).collect::<Vec<_>>().join("\n")
             } else {
