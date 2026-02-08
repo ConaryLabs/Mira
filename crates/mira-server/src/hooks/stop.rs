@@ -469,7 +469,7 @@ fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<Go
             next_milestone: row.get(2)?,
         })
     })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
     .unwrap_or_default()
 }
 
@@ -505,7 +505,7 @@ fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Resul
                     Ok(serde_json::json!({"name": name, "count": count}))
                 })
                 .ok()
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
             })
             .unwrap_or_default()
     };

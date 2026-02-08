@@ -196,7 +196,7 @@ fn get_module_line_counts(
             })
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(modules)

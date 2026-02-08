@@ -345,7 +345,7 @@ fn get_modules(conn: &Connection, project_id: i64) -> Result<Vec<ModuleBasic>, S
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(modules)
@@ -374,7 +374,7 @@ fn get_module_symbols(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(symbols)
@@ -399,7 +399,7 @@ fn get_module_imports(
             row.get::<_, String>(0)
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(imports)
@@ -541,7 +541,7 @@ pub fn get_all_module_patterns(
             ))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(results)

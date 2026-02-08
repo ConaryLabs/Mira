@@ -58,7 +58,7 @@ impl GoalAwareInjector {
                     params.iter().map(|p| p.as_ref()).collect();
                 let goals = stmt
                     .query_map(param_refs.as_slice(), crate::db::parse_goal_row)?
-                    .filter_map(|r| r.ok())
+                    .filter_map(crate::db::log_and_discard)
                     .collect::<Vec<_>>();
                 Ok::<_, anyhow::Error>(goals)
             })

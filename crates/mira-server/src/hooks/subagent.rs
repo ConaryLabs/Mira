@@ -304,7 +304,7 @@ async fn get_active_goals(pool: &Arc<DatabasePool>, project_id: i64) -> Vec<Stri
                     let progress: i32 = row.get(2)?;
                     Ok(format!("- {} [{}] ({}%)", title, status, progress))
                 })?
-                .filter_map(|r| r.ok())
+                .filter_map(crate::db::log_and_discard)
                 .collect();
 
             Ok::<_, anyhow::Error>(goals)
@@ -473,7 +473,7 @@ async fn get_keyword_memories(
                     };
                     Ok(format!("{} {}", prefix, content))
                 })?
-                .filter_map(|r| r.ok())
+                .filter_map(crate::db::log_and_discard)
                 .collect();
 
             Ok::<_, anyhow::Error>(memories)

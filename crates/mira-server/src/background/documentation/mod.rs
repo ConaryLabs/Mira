@@ -267,7 +267,7 @@ async fn get_current_signatures(
                         sig.unwrap_or_else(|| "no signature".to_string())
                     ))
                 })?
-                .filter_map(|r| r.ok())
+                .filter_map(crate::db::log_and_discard)
                 .collect();
 
             if rows.is_empty() {

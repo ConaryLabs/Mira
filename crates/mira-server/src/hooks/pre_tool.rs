@@ -198,7 +198,7 @@ async fn query_relevant_memories(
                     };
                     Ok(format!("{} {}", prefix, content))
                 })?
-                .filter_map(|r| r.ok())
+                .filter_map(crate::db::log_and_discard)
                 .collect();
 
             Ok::<_, anyhow::Error>(memories)

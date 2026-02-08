@@ -173,7 +173,7 @@ fn gather_team_memories(
             category: row.get(2)?,
         })
     })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
     .unwrap_or_default()
 }
 
@@ -195,7 +195,7 @@ fn gather_team_files(conn: &rusqlite::Connection, team_id: i64) -> Vec<(String, 
     stmt.query_map(rusqlite::params![team_id], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
     .unwrap_or_default()
 }
 

@@ -414,7 +414,7 @@ fn get_modules_needing_extraction(
             })
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(modules)
@@ -439,7 +439,7 @@ fn get_module_chunks(
             row.get::<_, String>(0)
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(chunks)
@@ -467,7 +467,7 @@ fn get_module_imports(
             })
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(imports)
@@ -495,7 +495,7 @@ fn get_module_symbols(
             })
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(symbols)

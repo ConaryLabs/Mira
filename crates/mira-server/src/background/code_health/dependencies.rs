@@ -149,7 +149,7 @@ fn get_module_paths(conn: &Connection, project_id: i64) -> Result<Vec<ModuleInfo
             })
         })
         .str_err()?
-        .filter_map(|r| r.ok())
+        .filter_map(crate::db::log_and_discard)
         .collect();
 
     Ok(modules)

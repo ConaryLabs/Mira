@@ -90,7 +90,7 @@ pub fn get_session_modified_files_sync(
         .and_then(|mut stmt| {
             stmt.query_map([session_id], |row| row.get::<_, String>(0))
                 .ok()
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
         })
         .unwrap_or_default()
 }

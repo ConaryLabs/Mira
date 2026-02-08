@@ -101,7 +101,7 @@ fn get_active_team_ids(conn: &rusqlite::Connection) -> Vec<i64> {
     };
 
     stmt.query_map([], |row| row.get::<_, i64>(0))
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
         .unwrap_or_default()
 }
 
@@ -131,7 +131,7 @@ fn detect_team_file_conflicts(
         let editors: Vec<String> = editors_str.split(',').map(|s| s.to_string()).collect();
         Ok((file_path, editors))
     })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
     .unwrap_or_default()
 }
 

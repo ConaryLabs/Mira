@@ -387,7 +387,7 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
                 .query_map(rusqlite::params![tid], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                 })?
-                .filter_map(|r| r.ok())
+                .filter_map(crate::db::log_and_discard)
                 .collect();
             Ok::<_, anyhow::Error>(rows)
         })
