@@ -44,6 +44,8 @@ pub struct GoalSummary {
     pub status: String,
     pub priority: String,
     pub progress_percent: i32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub milestones: Vec<MilestoneInfo>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -59,7 +61,7 @@ pub struct GoalGetData {
     pub milestones: Vec<MilestoneInfo>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct MilestoneInfo {
     pub id: i64,
     pub title: String,

@@ -208,6 +208,35 @@ async fn action_list<C: ToolContext>(
         }));
     }
 
+    // Fetch milestones for all goals in one pass
+    let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
+    let milestones_by_goal = {
+        let ids = goal_ids.clone();
+        ctx.pool()
+            .run(move |conn| -> rusqlite::Result<std::collections::HashMap<i64, Vec<MilestoneInfo>>> {
+                let mut map = std::collections::HashMap::new();
+                for gid in ids {
+                    let milestones = get_milestones_for_goal_sync(conn, gid)?;
+                    if !milestones.is_empty() {
+                        map.insert(
+                            gid,
+                            milestones
+                                .into_iter()
+                                .map(|m| MilestoneInfo {
+                                    id: m.id,
+                                    title: m.title,
+                                    weight: m.weight,
+                                    completed: m.completed,
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+                Ok(map)
+            })
+            .await?
+    };
+
     let mut response = format!("{} goals:\n", goals.len());
     let items: Vec<GoalSummary> = goals
         .into_iter()
@@ -218,16 +247,27 @@ async fn action_list<C: ToolContext>(
                 "abandoned" => "x",
                 _ => "o",
             };
+            let ms = milestones_by_goal
+                .get(&goal.id)
+                .cloned()
+                .unwrap_or_default();
             response.push_str(&format!(
                 "  {} {} ({}%) - {} [{}]\n",
                 icon, goal.title, goal.progress_percent, goal.priority, goal.id
             ));
+            if !ms.is_empty() {
+                for m in &ms {
+                    let mi = if m.completed { "v" } else { "o" };
+                    response.push_str(&format!("    {} {} (w:{})\n", mi, m.title, m.weight));
+                }
+            }
             GoalSummary {
                 id: goal.id,
                 title: goal.title,
                 status: goal.status,
                 priority: goal.priority,
                 progress_percent: goal.progress_percent,
+                milestones: ms,
             }
         })
         .collect();
