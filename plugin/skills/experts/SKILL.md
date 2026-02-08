@@ -18,7 +18,7 @@ Get expert opinions on code, architecture, security, or plans using a team of AI
 
 2. **Parse arguments** (optional):
    - `--roles architect,security` → Only spawn these specific experts
-   - No arguments → spawn all 5 experts
+   - No arguments → spawn all 6 experts
    - Any other text → use as the context/question for the experts
 
 3. **Determine context**: The user's question, the code they want reviewed, or the plan they want analyzed. If no context is obvious, ask the user what they'd like experts to review.
@@ -61,16 +61,16 @@ Get expert opinions on code, architecture, security, or plans using a team of AI
 
 ```
 /mira:experts
-→ Prompts for what to review, then spawns all 5 experts
+→ Prompts for what to review, then spawns all 6 experts
 
 /mira:experts --roles architect,security
 → Only spawns architect and security experts
 
 /mira:experts Review the authentication flow in src/auth/
-→ All 5 experts review the auth code
+→ All 6 experts review the auth code
 
 /mira:experts Is this migration plan safe?
-→ All 5 experts analyze the plan in context
+→ All 6 experts analyze the plan in context
 ```
 
 ## Expert Roles
@@ -81,4 +81,5 @@ Get expert opinions on code, architecture, security, or plans using a team of AI
 | code-reviewer | Bugs, logic errors, code quality |
 | security | Vulnerabilities, attack vectors |
 | scope-analyst | Missing requirements, edge cases |
+| ux-strategist | UX, developer experience, API ergonomics |
 | plan-reviewer | Plan completeness, risks, gaps |

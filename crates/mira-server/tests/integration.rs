@@ -2952,9 +2952,11 @@ async fn test_recipe_list() {
 
     match output.0.data {
         Some(RecipeData::List(data)) => {
-            assert_eq!(data.recipes.len(), 1);
+            assert_eq!(data.recipes.len(), 2);
             assert_eq!(data.recipes[0].name, "expert-review");
-            assert_eq!(data.recipes[0].member_count, 5);
+            assert_eq!(data.recipes[0].member_count, 6);
+            assert_eq!(data.recipes[1].name, "full-cycle");
+            assert_eq!(data.recipes[1].member_count, 8);
         }
         _ => panic!("Expected RecipeData::List"),
     }
@@ -2972,14 +2974,15 @@ async fn test_recipe_get() {
     match output.0.data {
         Some(RecipeData::Get(data)) => {
             assert_eq!(data.name, "expert-review");
-            assert_eq!(data.members.len(), 5);
-            assert_eq!(data.tasks.len(), 5);
+            assert_eq!(data.members.len(), 6);
+            assert_eq!(data.tasks.len(), 6);
             // Verify all expected roles are present
             let member_names: Vec<&str> = data.members.iter().map(|m| m.name.as_str()).collect();
             assert!(member_names.contains(&"architect"));
             assert!(member_names.contains(&"code-reviewer"));
             assert!(member_names.contains(&"security"));
             assert!(member_names.contains(&"scope-analyst"));
+            assert!(member_names.contains(&"ux-strategist"));
             assert!(member_names.contains(&"plan-reviewer"));
             // Coordination instructions should be non-empty
             assert!(!data.coordination.is_empty());
