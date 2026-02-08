@@ -95,6 +95,7 @@ See `.env.example` for all options.
 | `/mira:remember <content>` | Quick memory storage |
 | `/mira:insights` | Surface background analysis and predictions |
 | `/mira:diff` | Semantic analysis of code changes |
+| `/mira:experts` | Expert consultation via Agent Teams |
 
 ## Hook Integration
 

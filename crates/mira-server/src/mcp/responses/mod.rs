@@ -16,6 +16,7 @@ mod memory;
 mod project;
 mod session;
 mod tasks;
+mod recipe;
 pub mod team;
 
 // Re-export all domain types (preserves existing import paths)
@@ -25,6 +26,7 @@ pub use documentation::*;
 pub use goal::*;
 pub use index::*;
 pub use memory::*;
+pub use recipe::*;
 pub use project::*;
 pub use session::*;
 pub use tasks::*;
@@ -137,6 +139,10 @@ mod tests {
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
         assert!(schema_for_output::<ReplyOutput>().is_ok(), "ReplyOutput");
         assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");
+        assert!(
+            schema_for_output::<RecipeOutput>().is_ok(),
+            "RecipeOutput"
+        );
         assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");
     }
 }

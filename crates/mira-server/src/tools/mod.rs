@@ -24,6 +24,7 @@ pub use core::{
     goal,
     handle_code,
     handle_memory,
+    handle_recipe,
     handle_session,
     handle_team,
     index,

@@ -395,6 +395,23 @@ pub struct TeamRequest {
     pub teammate: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RecipeAction {
+    /// List available recipes
+    List,
+    /// Get full recipe details
+    Get,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RecipeRequest {
+    #[schemars(description = "Action: list (available recipes), get (full recipe details)")]
+    pub action: RecipeAction,
+    #[schemars(description = "Recipe name (required for get action)")]
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeDiffRequest {
     #[schemars(

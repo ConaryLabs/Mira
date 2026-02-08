@@ -23,6 +23,7 @@
     "./skills/search",
     "./skills/remember",
     "./skills/insights",
-    "./skills/diff"
+    "./skills/diff",
+    "./skills/experts"
   ]
 }

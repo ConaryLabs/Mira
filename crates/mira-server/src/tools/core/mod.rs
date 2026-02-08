@@ -166,6 +166,7 @@ pub mod documentation;
 pub mod goals;
 pub mod memory;
 pub mod project;
+pub mod recipe;
 pub mod session;
 pub mod session_notes;
 pub mod tasks;
@@ -187,5 +188,6 @@ pub use project::{get_project, project, session_start, set_project};
 pub use session::{
     ensure_session, get_session_recap, handle_session, reply_to_mira, session_history,
 };
+pub use recipe::handle_recipe;
 pub use team::handle_team;
 pub use usage::usage;

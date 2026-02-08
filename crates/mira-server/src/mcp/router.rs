@@ -177,6 +177,18 @@ impl MiraServer {
         tool_result(tools::handle_team(self, req).await)
     }
 
+    #[tool(
+        description = "Get reusable team recipes for common workflows. Actions: list (available recipes), get (full recipe with members/tasks/prompts). Recipes define team blueprints for Agent Teams.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::RecipeOutput>()
+            .expect("RecipeOutput schema")
+    )]
+    async fn recipe(
+        &self,
+        Parameters(req): Parameters<RecipeRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_recipe(req).await)
+    }
+
 }
 
 impl MiraServer {
