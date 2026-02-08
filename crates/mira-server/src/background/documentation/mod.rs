@@ -197,8 +197,8 @@ SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
                     let content = result.content.as_deref().unwrap_or("");
                     let (impact, summary) = parse_impact_response(content);
 
-                    // Record LLM usage
-                    let _ = record_llm_usage(
+                    // Record LLM usage (handles errors internally)
+                    record_llm_usage(
                         main_pool,
                         client.provider_type(),
                         &client.model_name(),

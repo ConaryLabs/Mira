@@ -319,7 +319,7 @@ async fn persist_session<C: ToolContext>(
             set_server_state_sync(conn, "active_session_id", &sid_owned).str_err()?;
 
             if let Some(ref content) = system_context {
-                let _ = store_memory_sync(
+                if let Err(e) = store_memory_sync(
                     conn,
                     StoreMemoryParams {
                         project_id: None,
@@ -334,14 +334,18 @@ async fn persist_session<C: ToolContext>(
                         branch: None,
                         team_id: None,
                     },
-                );
+                ) {
+                    tracing::warn!("Failed to store system_context memory: {}", e);
+                }
             }
 
             let briefing = get_project_briefing_sync(conn, project_id)
                 .ok()
                 .flatten()
                 .and_then(|b| b.briefing_text);
-            let _ = mark_session_for_briefing_sync(conn, project_id);
+            if let Err(e) = mark_session_for_briefing_sync(conn, project_id) {
+                tracing::warn!("Failed to mark session for briefing: {}", e);
+            }
 
             Ok::<_, String>(briefing)
         })
@@ -466,20 +470,25 @@ pub async fn session_start<C: ToolContext>(
     if !pending_interventions.is_empty() {
         let interventions_to_record = pending_interventions.clone();
         let sid_for_record = sid.clone();
-        let _ = ctx
+        if let Err(e) = ctx
             .pool()
             .run(move |conn| {
                 for intervention in &interventions_to_record {
-                    let _ = interventions::record_intervention_sync(
+                    if let Err(e) = interventions::record_intervention_sync(
                         conn,
                         project_id,
                         Some(&sid_for_record),
                         intervention,
-                    );
+                    ) {
+                        tracing::warn!("Failed to record intervention: {}", e);
+                    }
                 }
                 Ok::<_, String>(())
             })
-            .await;
+            .await
+        {
+            tracing::warn!("Failed to record shown interventions: {}", e);
+        }
     }
 
     // Phase 5: Codebase map

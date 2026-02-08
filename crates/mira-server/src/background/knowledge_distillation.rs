@@ -107,7 +107,7 @@ pub fn distill_team_session_sync(
             finding.category,
             hash_content(&finding.content)
         );
-        let _ = store_memory_sync(
+        if let Err(e) = store_memory_sync(
             conn,
             StoreMemoryParams {
                 project_id,
@@ -122,7 +122,9 @@ pub fn distill_team_session_sync(
                 branch: None,
                 team_id: Some(team_id),
             },
-        );
+        ) {
+            tracing::warn!("Failed to store distilled finding: {}", e);
+        }
     }
 
     Ok(Some(DistillationResult {

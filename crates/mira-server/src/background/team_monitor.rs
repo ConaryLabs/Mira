@@ -58,7 +58,7 @@ pub async fn process_team_monitor(pool: &Arc<DatabasePool>) -> Result<usize, Str
                     );
 
                     let key = format!("convergence:files:{}", team_id);
-                    let _ = crate::db::store_memory_sync(
+                    if let Err(e) = crate::db::store_memory_sync(
                         conn,
                         crate::db::StoreMemoryParams {
                             project_id: None,
@@ -73,7 +73,9 @@ pub async fn process_team_monitor(pool: &Arc<DatabasePool>) -> Result<usize, Str
                             branch: None,
                             team_id: Some(team_id),
                         },
-                    );
+                    ) {
+                        tracing::warn!("Failed to store convergence alert: {}", e);
+                    }
                     processed += 1;
                     tracing::info!(
                         "Team monitor: {} file conflict(s) for team {}",

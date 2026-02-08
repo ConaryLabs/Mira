@@ -45,7 +45,7 @@ pub fn snapshot_native_tasks_sync(
 
     for task in tasks {
         let (goal_id, milestone_id) = parse_link_tags(&task.subject);
-        let raw = serde_json::to_string(task).unwrap_or_default();
+        let raw = serde_json::to_string(task)?;
 
         stmt.execute(params![
             project_id,

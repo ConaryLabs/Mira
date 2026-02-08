@@ -236,12 +236,15 @@ pub async fn run_session_end() -> Result<()> {
 
             let pool_clone = pool.clone();
             let sid = session_id.to_string();
-            let _ = pool_clone
+            if let Err(e) = pool_clone
                 .interact(move |conn| {
                     crate::db::deactivate_team_session_sync(conn, &sid)
                         .map_err(|e| anyhow::anyhow!("{}", e))
                 })
-                .await;
+                .await
+            {
+                eprintln!("[mira] Failed to deactivate team session: {}", e);
+            }
             eprintln!(
                 "[mira] Deactivated team session (team: {})",
                 membership.team_name

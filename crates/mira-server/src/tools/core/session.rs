@@ -153,7 +153,9 @@ async fn query_insights<C: ToolContext>(
                          WHERE id IN ({})",
                         placeholders
                     );
-                    let _ = conn.execute(&sql, rusqlite::params_from_iter(row_ids.iter()));
+                    if let Err(e) = conn.execute(&sql, rusqlite::params_from_iter(row_ids.iter())) {
+                        tracing::warn!("Failed to update insight shown_count: {}", e);
+                    }
                     Ok::<_, String>(())
                 })
                 .await;

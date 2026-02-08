@@ -258,7 +258,12 @@ impl ServerHandler for MiraServer {
                         if let Some(tcr) = boxed.as_any().downcast_ref::<ToolCallTaskResult>() {
                             let value = match &tcr.result {
                                 Ok(call_result) => {
-                                    serde_json::to_value(call_result).unwrap_or_default()
+                                    serde_json::to_value(call_result).map_err(|e| {
+                                        ErrorData::internal_error(
+                                            format!("Failed to serialize task result: {}", e),
+                                            None,
+                                        )
+                                    })?
                                 }
                                 Err(e) => serde_json::json!({ "error": e.message }),
                             };
