@@ -72,11 +72,6 @@ pub use cartographer::{
     get_modules_needing_summaries_sync, update_module_purposes_sync, upsert_module_sync,
 };
 pub use chat::get_last_chat_time_sync;
-pub use config::{
-    ExpertConfig, delete_custom_prompt_sync, get_expert_config_sync, list_custom_prompts_sync,
-    set_expert_config_sync,
-};
-// Note: ExpertConfig and related functions retained for database config storage
 pub use diff_analysis::{
     DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync,
     get_recent_diff_analyses_sync, store_diff_analysis_sync,

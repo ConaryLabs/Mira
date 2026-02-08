@@ -68,7 +68,7 @@ impl PromptBuilder {
         }
     }
 
-    /// Include tool usage guidance (for expert consultations and tool-using tasks)
+    /// Include tool usage guidance (for tool-using tasks)
     pub fn with_tool_guidance(mut self) -> Self {
         self.include_tool_guidance = true;
         self
@@ -94,27 +94,6 @@ impl PromptBuilder {
             Message::system(self.build_system_prompt()),
             Message::user(user_content),
         ]
-    }
-
-    /// Factory method for expert consultations
-    pub fn for_expert(role_name: &str, role_description: &str) -> Self {
-        let instructions = format!(
-            r#"You are a {role_name}.
-
-Your role:
-{role_description}
-
-When responding:
-1. Start with key recommendation
-2. Explain reasoning
-3. Present alternatives with tradeoffs
-4. Be specific - reference patterns or technologies
-5. Prioritize issues by impact
-
-You are advisory - analyze and recommend, not implement."#
-        );
-
-        Self::new(instructions).with_tool_guidance()
     }
 
     /// Factory method for code health analysis (complexity)
@@ -309,18 +288,6 @@ mod tests {
     // ============================================================================
     // Factory method tests
     // ============================================================================
-
-    #[test]
-    fn test_for_expert() {
-        let builder =
-            PromptBuilder::for_expert("Security Expert", "Analyze code for vulnerabilities");
-        let prompt = builder.build_system_prompt();
-
-        assert!(prompt.contains("Security Expert"));
-        assert!(prompt.contains("Analyze code for vulnerabilities"));
-        assert!(prompt.contains("advisory")); // Expert role mentions being advisory
-        assert!(builder.include_tool_guidance);
-    }
 
     #[test]
     fn test_for_code_health_complexity() {

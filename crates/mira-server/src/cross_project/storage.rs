@@ -416,54 +416,5 @@ pub fn extract_and_store_patterns(
         }
     }
 
-    // Extract problem patterns from expert system
-    let problem_sql = r#"
-        SELECT expert_role, pattern_signature, pattern_description,
-               successful_approaches, recommended_tools, success_rate
-        FROM problem_patterns
-        WHERE success_rate >= ?
-        LIMIT 50
-    "#;
-
-    let mut stmt = conn.prepare(problem_sql)?;
-    let problem_rows = stmt.query_map([config.min_confidence], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, f64>(5)?,
-        ))
-    })?;
-
-    for row in problem_rows.filter_map(crate::db::log_and_discard) {
-        let (expert_role, _signature, _description, approaches_json, tools_json, success_rate) =
-            row;
-
-        let approaches: Vec<String> = serde_json::from_str(&approaches_json).unwrap_or_default();
-        let tools: Vec<String> = serde_json::from_str(&tools_json).unwrap_or_default();
-
-        // Extract problem category from signature (format: "role:category")
-        let category = _signature.split(':').nth(1).unwrap_or("general");
-
-        if let Ok(anonymized) = anonymizer.anonymize_problem_pattern(
-            &expert_role,
-            category,
-            &approaches,
-            &tools,
-            success_rate,
-        ) && store_pattern(
-            conn,
-            project_id,
-            &anonymized,
-            config.k_anonymity_threshold as i64,
-        )
-        .is_ok()
-        {
-            stored_count += 1;
-        }
-    }
-
     Ok(stored_count)
 }

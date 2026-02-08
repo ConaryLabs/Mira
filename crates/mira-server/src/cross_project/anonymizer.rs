@@ -120,67 +120,6 @@ impl PatternAnonymizer {
         })
     }
 
-    /// Anonymize a problem pattern from expert consultations
-    pub fn anonymize_problem_pattern(
-        &self,
-        expert_role: &str,
-        problem_category: &str,
-        approaches: &[String],
-        tools: &[String],
-        success_rate: f64,
-    ) -> Result<AnonymizedPattern> {
-        // Generalize approaches (remove specific file/variable names)
-        let generalized_approaches: Vec<String> =
-            approaches.iter().map(|a| self.generalize_text(a)).collect();
-
-        let noisy_success = self.add_laplace_noise(success_rate);
-
-        let pattern_hash =
-            self.hash_problem_pattern(expert_role, problem_category, &generalized_approaches);
-
-        Ok(AnonymizedPattern {
-            pattern_type: CrossPatternType::ProblemPattern,
-            pattern_hash,
-            anonymized_data: serde_json::json!({
-                "expert_role": expert_role,
-                "problem_category": problem_category,
-                "approaches": generalized_approaches,
-                "tools": tools,
-            }),
-            category: Some(problem_category.to_string()),
-            confidence: noisy_success.clamp(0.0, 1.0),
-            noise_added: self.noise_scale(),
-            anonymization_level: self.min_level,
-        })
-    }
-
-    /// Anonymize a collaboration pattern
-    pub fn anonymize_collaboration_pattern(
-        &self,
-        domains: &[String],
-        experts: &[String],
-        mode: &str,
-        success_rate: f64,
-    ) -> Result<AnonymizedPattern> {
-        let noisy_success = self.add_laplace_noise(success_rate);
-
-        let pattern_hash = self.hash_collaboration_pattern(domains, experts, mode);
-
-        Ok(AnonymizedPattern {
-            pattern_type: CrossPatternType::Collaboration,
-            pattern_hash,
-            anonymized_data: serde_json::json!({
-                "domains": domains,
-                "experts": experts,
-                "mode": mode,
-            }),
-            category: domains.first().cloned(),
-            confidence: noisy_success.clamp(0.0, 1.0),
-            noise_added: self.noise_scale(),
-            anonymization_level: self.min_level,
-        })
-    }
-
     /// Generalize a file path to remove project-specific information
     fn generalize_file_path(&self, path: &str) -> String {
         // Extract meaningful parts: extension, common directory names
@@ -261,47 +200,6 @@ impl PatternAnonymizer {
         // Just return extension-based name
         let ext = filename.rsplit('.').next().unwrap_or("unknown");
         format!("file.{}", ext)
-    }
-
-    /// Generalize text to remove specific identifiers
-    fn generalize_text(&self, text: &str) -> String {
-        // Simple heuristic: remove things that look like identifiers
-        // This is a basic implementation - could be more sophisticated
-        let result = text.to_string();
-
-        // Remove camelCase and snake_case identifiers that are too specific
-        // Keep common programming terms
-        let common_terms = [
-            "function",
-            "class",
-            "method",
-            "variable",
-            "type",
-            "struct",
-            "interface",
-            "module",
-            "error",
-            "result",
-            "option",
-            "async",
-            "await",
-            "return",
-            "if",
-            "else",
-            "for",
-            "while",
-            "match",
-        ];
-
-        // For now, keep the text but note this could be enhanced
-        for term in &common_terms {
-            if result.to_lowercase().contains(term) {
-                // Keep these terms as they're generic
-                continue;
-            }
-        }
-
-        result
     }
 
     /// Detect category from generalized file sequence
@@ -407,46 +305,6 @@ impl PatternAnonymizer {
         format!("{:x}", hasher.finalize())[..16].to_string()
     }
 
-    /// Hash a problem pattern
-    fn hash_problem_pattern(
-        &self,
-        expert_role: &str,
-        problem_category: &str,
-        approaches: &[String],
-    ) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(expert_role.as_bytes());
-        hasher.update(b":");
-        hasher.update(problem_category.as_bytes());
-        hasher.update(b":");
-        for approach in approaches {
-            hasher.update(approach.as_bytes());
-            hasher.update(b"|");
-        }
-        format!("{:x}", hasher.finalize())[..16].to_string()
-    }
-
-    /// Hash a collaboration pattern
-    fn hash_collaboration_pattern(
-        &self,
-        domains: &[String],
-        experts: &[String],
-        mode: &str,
-    ) -> String {
-        let mut hasher = Sha256::new();
-        for domain in domains {
-            hasher.update(domain.as_bytes());
-            hasher.update(b",");
-        }
-        hasher.update(b":");
-        for expert in experts {
-            hasher.update(expert.as_bytes());
-            hasher.update(b",");
-        }
-        hasher.update(b":");
-        hasher.update(mode.as_bytes());
-        format!("{:x}", hasher.finalize())[..16].to_string()
-    }
 }
 
 #[cfg(test)]

@@ -160,7 +160,7 @@ pub async fn request_api_key(client: &ElicitationClient) -> Option<(Provider, St
     let schema = api_key_schema();
     let outcome = client
         .request(
-            "Expert consultation requires an LLM API key (DeepSeek). \
+            "Background tasks require an LLM API key (DeepSeek). \
              Would you like to provide one now?",
             schema,
         )

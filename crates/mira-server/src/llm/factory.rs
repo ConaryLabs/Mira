@@ -35,12 +35,9 @@ impl ProviderFactory {
         // Load config file for provider preferences
         let config = MiraConfig::load();
 
-        // Check for expert provider: config file first, then env var
-        let default_provider = config.expert_provider().or_else(|| {
-            std::env::var("DEFAULT_LLM_PROVIDER")
-                .ok()
-                .and_then(|s| Provider::from_str(&s))
-        });
+        let default_provider = std::env::var("DEFAULT_LLM_PROVIDER")
+            .ok()
+            .and_then(|s| Provider::from_str(&s));
 
         // Check for background provider from config
         let background_provider = config.background_provider();
@@ -95,7 +92,7 @@ impl ProviderFactory {
         }
     }
 
-    /// Set the MCP sampling peer for zero-key expert fallback.
+    /// Set the MCP sampling peer for zero-key LLM fallback.
     /// Called once the peer is captured from the first tool call.
     pub fn set_sampling_peer(&mut self, peer: Arc<RwLock<Option<Peer<RoleServer>>>>) {
         self.sampling_peer = Some(peer);

@@ -103,38 +103,7 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         println!("Running in non-interactive mode (--yes).");
         println!("Skipping API key prompts. Detecting Ollama...");
     } else {
-        // Step 2: Expert provider
-        println!("\n--- Expert Provider (reasoning, code review) ---");
-        let expert_choices = &["DeepSeek (recommended)", "Zhipu GLM-4.7", "Skip"];
-        let expert_sel = Select::new()
-            .with_prompt("Choose expert provider")
-            .items(expert_choices)
-            .default(0)
-            .interact()?;
-
-        match expert_sel {
-            0 => {
-                if let Some(key) = prompt_api_key(
-                    "DeepSeek",
-                    "DEEPSEEK_API_KEY",
-                    existing.get("DEEPSEEK_API_KEY"),
-                )
-                .await?
-                {
-                    keys.insert("DEEPSEEK_API_KEY".into(), key);
-                }
-            }
-            1 => {
-                if let Some(key) =
-                    prompt_api_key("Zhipu", "ZHIPU_API_KEY", existing.get("ZHIPU_API_KEY")).await?
-                {
-                    keys.insert("ZHIPU_API_KEY".into(), key);
-                }
-            }
-            _ => println!("Skipping expert provider."),
-        }
-
-        // Step 3: Embeddings
+        // Step 2: Embeddings
         println!("\n--- Embeddings (semantic search) ---");
         let embed_choices = &["OpenAI (required for semantic search)", "Skip"];
         let embed_sel = Select::new()
@@ -154,7 +123,7 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         }
 
         // Step 4: Web search
-        println!("\n--- Web Search (expert consultations) ---");
+        println!("\n--- Web Search ---");
         let web_choices = &["Brave Search", "Skip"];
         let web_sel = Select::new()
             .with_prompt("Choose web search provider")
@@ -400,9 +369,6 @@ async fn run_check() -> Result<()> {
 
     // config.toml settings
     let file_config = mira::config::file::MiraConfig::load();
-    if let Some(ep) = file_config.expert_provider() {
-        println!("  Expert provider (config.toml): {}", ep);
-    }
     if let Some(bp) = file_config.background_provider() {
         println!("  Background provider (config.toml): {}", bp);
     }

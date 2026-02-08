@@ -1,42 +1,9 @@
 // crates/mira-server/src/db/schema/reviews.rs
-// Review findings and embeddings usage tracking migrations
+// Corrections, embeddings usage, diff analysis, and LLM usage tracking migrations
 
 use crate::db::migration_helpers::{column_exists, create_table_if_missing, table_exists};
 use anyhow::Result;
 use rusqlite::Connection;
-
-/// Migrate to add review_findings table for code review learning loop
-pub fn migrate_review_findings_table(conn: &Connection) -> Result<()> {
-    create_table_if_missing(
-        conn,
-        "review_findings",
-        r#"
-        CREATE TABLE IF NOT EXISTS review_findings (
-            id INTEGER PRIMARY KEY,
-            project_id INTEGER REFERENCES projects(id),
-            expert_role TEXT NOT NULL,
-            file_path TEXT,
-            finding_type TEXT NOT NULL,
-            severity TEXT DEFAULT 'medium',
-            content TEXT NOT NULL,
-            code_snippet TEXT,
-            suggestion TEXT,
-            status TEXT DEFAULT 'pending',
-            feedback TEXT,
-            confidence REAL DEFAULT 0.5,
-            user_id TEXT,
-            reviewed_by TEXT,
-            session_id TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            reviewed_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_review_findings_project ON review_findings(project_id, status);
-        CREATE INDEX IF NOT EXISTS idx_review_findings_expert ON review_findings(expert_role);
-        CREATE INDEX IF NOT EXISTS idx_review_findings_file ON review_findings(file_path);
-        CREATE INDEX IF NOT EXISTS idx_review_findings_status ON review_findings(status);
-    "#,
-    )
-}
 
 /// Migrate corrections table to add learning columns
 pub fn migrate_corrections_learning_columns(conn: &Connection) -> Result<()> {

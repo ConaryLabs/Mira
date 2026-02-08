@@ -36,9 +36,9 @@ pub enum CrossPatternType {
     FileSequence,
     /// Tool usage chains (e.g., "grep then read then edit")
     ToolChain,
-    /// Problem patterns from expert consultations
+    /// Problem patterns from code analysis
     ProblemPattern,
-    /// Expert collaboration patterns
+    /// Cross-project collaboration patterns
     Collaboration,
     /// Behavior patterns (general)
     Behavior,

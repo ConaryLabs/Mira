@@ -19,7 +19,7 @@ use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::ResultExt;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Query Core — shared by MCP handlers and expert tools
+// Query Core — shared by MCP handlers
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Search code semantically. Returns raw search results without MCP formatting.

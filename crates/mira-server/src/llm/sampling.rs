@@ -17,7 +17,7 @@ use super::{Message, Tool};
 
 /// LLM client that delegates to the MCP host via sampling/createMessage.
 ///
-/// This enables expert consultation without any API keys — the host client
+/// This enables LLM calls without API keys — the host client
 /// (e.g. Claude Code) handles the actual LLM call. Limitations:
 /// - No tool support (MCP sampling spec has no tool calling)
 /// - Single-shot only (no agentic loops)

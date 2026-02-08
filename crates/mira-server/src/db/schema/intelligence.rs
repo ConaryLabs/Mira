@@ -1,5 +1,5 @@
 // crates/mira-server/src/db/schema/intelligence.rs
-// Proactive intelligence, expert system, and cross-project migrations
+// Proactive intelligence and cross-project migrations
 
 use crate::db::migration_helpers::{column_exists, create_table_if_missing};
 use anyhow::Result;

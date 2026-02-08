@@ -46,9 +46,6 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     memory::migrate_memory_user_scope(conn)?;
     memory::migrate_drop_teams_tables(conn)?;
 
-    // Add review findings table for code review learning loop
-    reviews::migrate_review_findings_table(conn)?;
-
     // Add learning columns to corrections table
     reviews::migrate_corrections_learning_columns(conn)?;
 
