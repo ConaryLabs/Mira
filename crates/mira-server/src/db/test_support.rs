@@ -220,11 +220,13 @@ pub fn seed_call_edge(conn: &Connection, caller_id: i64, callee_name: &str) {
 }
 
 /// Seed a team. Returns team ID.
+#[allow(dead_code)]
 pub fn seed_team(conn: &Connection, name: &str, project_id: i64) -> i64 {
     super::get_or_create_team_sync(conn, name, Some(project_id), "/test/config.json").unwrap()
 }
 
 /// Seed a team member registration.
+#[allow(dead_code)]
 pub fn seed_team_member(conn: &Connection, team_id: i64, session_id: &str, name: &str, role: &str) {
     super::register_team_session_sync(conn, team_id, session_id, name, role, None).unwrap();
 }
