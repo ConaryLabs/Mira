@@ -40,11 +40,11 @@ End-to-end expert review with automatic implementation and QA verification.
      name=member.name,
      team_name="full-cycle-{timestamp}",
      prompt=member.prompt + "\n\n## Context\n\n" + user_context,
-     run_in_background=true,
-     mode="bypassPermissions"
+     run_in_background=true
    )
    ```
    Spawn all discovery experts in parallel (multiple Task calls in one message).
+   IMPORTANT: Do NOT use `mode="bypassPermissions"` for discovery agents — they are read-only explorers.
 
 6. **Create and assign discovery tasks**: For each discovery task in the recipe:
    ```
@@ -66,7 +66,7 @@ End-to-end expert review with automatic implementation and QA verification.
 
    IMPORTANT: Preserve genuine disagreements. Do NOT force consensus.
 
-9. **Present synthesis to user**: Show the unified report and confirm they want to proceed with implementation.
+9. **Present synthesis to user** and WAIT for their approval before proceeding to implementation. Do not auto-proceed.
 
 10. **Create implementation tasks** from the action items. Group tasks by file ownership to prevent merge conflicts between agents.
 
@@ -76,7 +76,7 @@ End-to-end expert review with automatic implementation and QA verification.
       subagent_type="general-purpose",
       name="fixer-{group-name}",
       team_name="full-cycle-{timestamp}",
-      prompt="You are a teammate on an implementation team. Your job is to implement fixes in the codebase at {project_path}.\n\nIMPORTANT: NEVER use cargo build --release or cargo test --release. Always use debug mode.\n\n" + task_descriptions,
+      prompt="You are a teammate on an implementation team...\n\nIMPORTANT:\n- NEVER use cargo build --release or cargo test --release. Always use debug mode.\n- Verify your changes with `cargo clippy --all-targets --all-features -- -D warnings` AND `cargo fmt`, not just `cargo build`.\n- When fixing pattern issues (e.g., inconsistent error messages), search the ENTIRE codebase for all instances, not just the files listed.\n\n" + task_descriptions,
       run_in_background=true,
       mode="bypassPermissions"
     )

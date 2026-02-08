@@ -133,7 +133,7 @@ const FULL_CYCLE_MEMBERS: &[RecipeMember] = &[
     RecipeMember {
         name: "code-reviewer",
         agent_type: "general-purpose",
-        prompt: "You are a code reviewer on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Bugs, logic errors, runtime issues, and code quality.\n\nInstructions:\n1. List issues by severity (critical/major/minor)\n2. For each issue: cite the location (file:line), explain why it's a problem, provide a specific fix\n3. If you found no issues in an area, say so explicitly\n\nEvery finding must cite specific evidence — line numbers, function names, concrete code references. Do not report issues you cannot demonstrate.\n\nWhen done, send your findings to the team lead via SendMessage.",
+        prompt: "You are a code reviewer on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Bugs, logic errors, runtime issues, and code quality.\n\nInstructions:\n1. List issues by severity (critical/major/minor)\n2. For each issue: cite the location (file:line), explain why it's a problem, provide a specific fix\n3. If you found no issues in an area, say so explicitly\n4. When you find a pattern issue (e.g., inconsistent error messages, repeated anti-pattern), search the ENTIRE codebase and list ALL instances — not just examples\n\nEvery finding must cite specific evidence — line numbers, function names, concrete code references. Do not report issues you cannot demonstrate.\n\nWhen done, send your findings to the team lead via SendMessage.",
     },
     RecipeMember {
         name: "security",
@@ -148,18 +148,18 @@ const FULL_CYCLE_MEMBERS: &[RecipeMember] = &[
     RecipeMember {
         name: "ux-strategist",
         agent_type: "general-purpose",
-        prompt: "You are a UX strategist on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: User experience, developer experience, API ergonomics, and feature opportunities.\n\nInstructions:\n1. Evaluate the project from the end-user's perspective — how intuitive is the API surface, CLI, or interface?\n2. Check error messages and feedback: are they clear, actionable, and helpful?\n3. Identify friction points: confusing configuration, missing defaults, unnecessary complexity\n4. Suggest feature opportunities or UX improvements, prioritized by user impact\n5. Review naming conventions: are tool/function/parameter names self-explanatory?\n\nFocus on what real users encounter. Reference specific code, messages, and interfaces. Distinguish between \"annoying but workable\" and \"genuinely confusing.\"\n\nWhen done, send your findings to the team lead via SendMessage.",
+        prompt: "You are a UX strategist on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: User experience, developer experience, API ergonomics, and feature opportunities.\n\nInstructions:\n1. Evaluate the project from the end-user's perspective — how intuitive is the API surface, CLI, or interface?\n2. Check error messages and feedback: are they clear, actionable, and helpful?\n3. Identify friction points: confusing configuration, missing defaults, unnecessary complexity\n4. Suggest feature opportunities or UX improvements, prioritized by user impact\n5. Review naming conventions: are tool/function/parameter names self-explanatory?\n6. When you find inconsistent patterns (e.g., error messages that vary across files), search the ENTIRE codebase and list ALL instances\n\nFocus on what real users encounter. Reference specific code, messages, and interfaces. Distinguish between \"annoying but workable\" and \"genuinely confusing.\"\n\nWhen done, send your findings to the team lead via SendMessage.",
     },
     RecipeMember {
         name: "plan-reviewer",
         agent_type: "general-purpose",
-        prompt: "You are a technical lead reviewing implementation plans on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Plan completeness, risks, gaps, and blockers.\n\nInstructions:\n1. Give overall assessment (ready / needs work / major concerns)\n2. List specific risks or gaps with evidence\n3. Suggest improvements or clarifications needed\n4. Flag anything you couldn't fully evaluate rather than skipping it\n\nThis plan will be implemented as-is if you approve. Flag uncertainties explicitly.\n\nWhen done, send your findings to the team lead via SendMessage.",
+        prompt: "You are a technical lead reviewing project health on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob, Bash) to explore the codebase.\n\nYour focus: Project health, CI/CD, dependencies, build quality, and documentation.\n\nInstructions:\n1. Give overall assessment (healthy / needs work / major concerns)\n2. Check dependency health (Cargo.toml versions, look for outdated or vulnerable deps)\n3. Review CI/CD configuration for gaps (missing checks, loose settings)\n4. Check for compiler warnings and clippy lint suppressions — run `cargo clippy --all-targets --all-features -- -D warnings` (NEVER use --release)\n5. Review documentation quality (README, CONTRIBUTING, inline docs)\n6. Run `cargo fmt --all -- --check` to verify formatting\n7. Flag anything you couldn't fully evaluate rather than skipping it\n\nDo NOT run `cargo test` — that is the QA test-runner's responsibility.\n\nWhen done, send your findings to the team lead via SendMessage.",
     },
     // Phase 3: QA agents
     RecipeMember {
         name: "test-runner",
         agent_type: "general-purpose",
-        prompt: "You are a QA engineer on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob, Bash) to verify changes.\n\nYour focus: Test verification, regression detection, and build validation.\n\nInstructions:\n1. Run the full test suite (`cargo test` — NEVER use --release)\n2. Check for new compiler warnings\n3. If tests fail, identify the root cause and report which change likely caused it\n4. If all tests pass, confirm the count and note any tests that were skipped/ignored\n5. Run `cargo clippy` if available to catch lint issues\n\nReport pass/fail status with specific details. Do not fix issues — report them to the team lead.\n\nWhen done, send your results to the team lead via SendMessage.",
+        prompt: "You are a QA engineer on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob, Bash) to verify changes.\n\nYour focus: Test verification, regression detection, and build validation.\n\nInstructions:\n1. Run the full test suite: `cargo test` (NEVER use --release)\n2. Run clippy with strict mode: `cargo clippy --all-targets --all-features -- -D warnings` (NEVER use --release)\n3. Check formatting: `cargo fmt --all -- --check`\n4. If tests fail, identify the root cause and report which change likely caused it\n5. If clippy has errors, list each one with file:line\n6. If all checks pass, confirm test count and note any skipped/ignored tests\n\nReport pass/fail status with specific details. Do not fix issues — report them to the team lead.\n\nWhen done, send your results to the team lead via SendMessage.",
     },
     RecipeMember {
         name: "ux-reviewer",
@@ -196,8 +196,8 @@ const FULL_CYCLE_TASKS: &[RecipeTask] = &[
         assignee: "ux-strategist",
     },
     RecipeTask {
-        subject: "Plan and risk review",
-        description: "Validate completeness, identify risks and gaps, check for blockers.",
+        subject: "Project health review",
+        description: "Check CI/CD, dependencies, build quality, clippy, formatting, and documentation.",
         assignee: "plan-reviewer",
     },
     // Phase 3: QA
@@ -233,11 +233,12 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
    - Tensions (where experts disagree — preserve both sides)
    - Prioritized action items
 
-7. **Create implementation tasks** from action items, grouped by file ownership to avoid conflicts
-8. **Spawn implementation agents** (dynamic — as many as needed based on task groupings). Use `general-purpose` agent type with `mode="bypassPermissions"`
-9. **Assign tasks** to implementation agents via `TaskUpdate`
-10. **Monitor** build diagnostics and send hints to agents if compilation errors appear
-11. **Wait** for all implementation agents to complete, then shut them down
+7. **Present synthesis to user** and WAIT for approval before proceeding to implementation
+8. **Create implementation tasks** from action items, grouped by file ownership to avoid conflicts
+9. **Spawn implementation agents** (dynamic — as many as needed based on task groupings). Use `general-purpose` agent type with `mode="bypassPermissions"`
+10. **Assign tasks** to implementation agents via `TaskUpdate`
+11. **Monitor** build diagnostics and send hints to agents if compilation errors appear
+12. **Wait** for all implementation agents to complete, then shut them down
 
 ### Phase 3: QA (parallel)
 
@@ -255,8 +256,10 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
 
 ### Important Notes
 
-- Discovery experts are READ-ONLY — they explore and report, they don't modify code
+- Discovery experts are READ-ONLY — they explore and report, they don't modify code. Do NOT give them `mode="bypassPermissions"`
 - Implementation agents get `mode="bypassPermissions"` so they can edit files and run builds
+- Implementation agents must verify with `cargo clippy --all-targets --all-features -- -D warnings` AND `cargo fmt`, not just `cargo build`
+- When giving implementation agents pattern-fix instructions (e.g., "standardize error messages"), tell them to search for ALL instances in the codebase, not just the specific files identified by discovery
 - Group implementation tasks by file ownership to prevent merge conflicts between agents
 - QA agents run AFTER implementation to verify the changes
 - NEVER use `cargo build --release` or `cargo test --release` — always use debug mode
