@@ -104,13 +104,7 @@ impl MiraServer {
         code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
     ) -> Self {
-        Self::from_api_keys(
-            pool,
-            code_pool,
-            embeddings,
-            &ApiKeys::from_env(),
-            true,
-        )
+        Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env(), true)
     }
 
     /// Auto-initialize project from Claude's cwd if not already set or mismatched

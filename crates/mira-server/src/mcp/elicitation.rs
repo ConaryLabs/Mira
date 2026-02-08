@@ -128,9 +128,7 @@ pub fn api_key_schema() -> ElicitationSchema {
 
     ElicitationSchema::builder()
         .title("API Key Setup")
-        .description(
-            "Provide an LLM API key for background tasks (summaries, pondering, etc.).",
-        )
+        .description("Provide an LLM API key for background tasks (summaries, pondering, etc.).")
         .required_property("provider", PrimitiveSchema::Enum(provider_enum))
         .required_string_property("api_key", |s| {
             s.description("API key for the selected provider")

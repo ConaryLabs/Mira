@@ -70,21 +70,73 @@ impl ScheduledTask {
 fn task_schedule() -> Vec<ScheduledTask> {
     vec![
         // Critical: always run
-        ScheduledTask { name: "stale sessions",     priority: TaskPriority::Critical, cycle_interval: None },
-        ScheduledTask { name: "memory embeddings",  priority: TaskPriority::Critical, cycle_interval: None },
+        ScheduledTask {
+            name: "stale sessions",
+            priority: TaskPriority::Critical,
+            cycle_interval: None,
+        },
+        ScheduledTask {
+            name: "memory embeddings",
+            priority: TaskPriority::Critical,
+            cycle_interval: None,
+        },
         // Normal: standard cadence
-        ScheduledTask { name: "summaries",          priority: TaskPriority::Normal,   cycle_interval: None },
-        ScheduledTask { name: "briefings",          priority: TaskPriority::Normal,   cycle_interval: None },
-        ScheduledTask { name: "health issues",      priority: TaskPriority::Normal,   cycle_interval: None },
-        ScheduledTask { name: "proactive items",    priority: TaskPriority::Normal,   cycle_interval: None },
-        ScheduledTask { name: "entity backfills",   priority: TaskPriority::Normal,   cycle_interval: None },
-        ScheduledTask { name: "team monitor",       priority: TaskPriority::Normal,   cycle_interval: Some(TEAM_MONITOR_CYCLE_INTERVAL) },
+        ScheduledTask {
+            name: "summaries",
+            priority: TaskPriority::Normal,
+            cycle_interval: None,
+        },
+        ScheduledTask {
+            name: "briefings",
+            priority: TaskPriority::Normal,
+            cycle_interval: None,
+        },
+        ScheduledTask {
+            name: "health issues",
+            priority: TaskPriority::Normal,
+            cycle_interval: None,
+        },
+        ScheduledTask {
+            name: "proactive items",
+            priority: TaskPriority::Normal,
+            cycle_interval: None,
+        },
+        ScheduledTask {
+            name: "entity backfills",
+            priority: TaskPriority::Normal,
+            cycle_interval: None,
+        },
+        ScheduledTask {
+            name: "team monitor",
+            priority: TaskPriority::Normal,
+            cycle_interval: Some(TEAM_MONITOR_CYCLE_INTERVAL),
+        },
         // Low: deferrable under load
-        ScheduledTask { name: "documentation tasks",priority: TaskPriority::Low,      cycle_interval: Some(DOCUMENTATION_CYCLE_INTERVAL) },
-        ScheduledTask { name: "pondering insights", priority: TaskPriority::Low,      cycle_interval: Some(PONDERING_CYCLE_INTERVAL) },
-        ScheduledTask { name: "insight cleanup",    priority: TaskPriority::Low,      cycle_interval: Some(PONDERING_CYCLE_INTERVAL) },
-        ScheduledTask { name: "proactive cleanup",  priority: TaskPriority::Low,      cycle_interval: Some(PONDERING_CYCLE_INTERVAL) },
-        ScheduledTask { name: "diff outcomes",      priority: TaskPriority::Low,      cycle_interval: Some(OUTCOME_SCAN_CYCLE_INTERVAL) },
+        ScheduledTask {
+            name: "documentation tasks",
+            priority: TaskPriority::Low,
+            cycle_interval: Some(DOCUMENTATION_CYCLE_INTERVAL),
+        },
+        ScheduledTask {
+            name: "pondering insights",
+            priority: TaskPriority::Low,
+            cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
+        },
+        ScheduledTask {
+            name: "insight cleanup",
+            priority: TaskPriority::Low,
+            cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
+        },
+        ScheduledTask {
+            name: "proactive cleanup",
+            priority: TaskPriority::Low,
+            cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
+        },
+        ScheduledTask {
+            name: "diff outcomes",
+            priority: TaskPriority::Low,
+            cycle_interval: Some(OUTCOME_SCAN_CYCLE_INTERVAL),
+        },
     ]
 }
 
@@ -213,11 +265,7 @@ impl SlowLaneWorker {
     }
 
     /// Dispatch a named task to its implementation.
-    async fn dispatch_task(
-        &self,
-        name: &str,
-        client: Option<&Arc<dyn LlmClient>>,
-    ) -> usize {
+    async fn dispatch_task(&self, name: &str, client: Option<&Arc<dyn LlmClient>>) -> usize {
         match name {
             "stale sessions" => {
                 Self::run_task(
@@ -234,11 +282,7 @@ impl SlowLaneWorker {
                 .await
             }
             "briefings" => {
-                Self::run_task(
-                    name,
-                    briefings::process_briefings(&self.pool, client),
-                )
-                .await
+                Self::run_task(name, briefings::process_briefings(&self.pool, client)).await
             }
             "documentation tasks" => {
                 Self::run_task(
@@ -259,18 +303,10 @@ impl SlowLaneWorker {
                 .await
             }
             "pondering insights" => {
-                Self::run_task(
-                    name,
-                    pondering::process_pondering(&self.pool, client),
-                )
-                .await
+                Self::run_task(name, pondering::process_pondering(&self.pool, client)).await
             }
             "insight cleanup" => {
-                Self::run_task(
-                    name,
-                    pondering::cleanup_stale_insights(&self.pool),
-                )
-                .await
+                Self::run_task(name, pondering::cleanup_stale_insights(&self.pool)).await
             }
             "proactive cleanup" => {
                 Self::run_task(
@@ -287,11 +323,7 @@ impl SlowLaneWorker {
                 .await
             }
             "team monitor" => {
-                Self::run_task(
-                    name,
-                    team_monitor::process_team_monitor(&self.pool),
-                )
-                .await
+                Self::run_task(name, team_monitor::process_team_monitor(&self.pool)).await
             }
             "proactive items" => {
                 Self::run_task(
@@ -305,11 +337,7 @@ impl SlowLaneWorker {
                 .await
             }
             "entity backfills" => {
-                Self::run_task(
-                    name,
-                    entity_extraction::process_entity_backfill(&self.pool),
-                )
-                .await
+                Self::run_task(name, entity_extraction::process_entity_backfill(&self.pool)).await
             }
             "memory embeddings" => {
                 if let Some(ref emb) = self.embeddings {

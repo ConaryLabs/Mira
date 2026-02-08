@@ -108,13 +108,11 @@ impl ProviderFactory {
     /// and the next available provider in the fallback chain is used instead.
     pub fn client_for_background(&self) -> Option<Arc<dyn LlmClient>> {
         // Try background provider first
-        if let Some(ref provider) = self.background_provider {
-            if self.circuit_breaker.is_available(*provider) {
-                if let Some(client) = self.clients.get(provider) {
-                    return Some(client.clone());
-                }
-            }
-            // If circuit is open, fall through silently to the fallback chain
+        if let Some(ref provider) = self.background_provider
+            && self.circuit_breaker.is_available(*provider)
+            && let Some(client) = self.clients.get(provider)
+        {
+            return Some(client.clone());
         }
 
         // Fall back to default provider
@@ -127,10 +125,10 @@ impl ProviderFactory {
 
         // Fall back through the chain (includes Ollama for background tasks)
         for provider in &self.background_fallback_order {
-            if self.circuit_breaker.is_available(*provider) {
-                if let Some(client) = self.clients.get(provider) {
-                    return Some(client.clone());
-                }
+            if self.circuit_breaker.is_available(*provider)
+                && let Some(client) = self.clients.get(provider)
+            {
+                return Some(client.clone());
             }
         }
 
@@ -176,7 +174,6 @@ impl ProviderFactory {
     pub fn has_providers(&self) -> bool {
         !self.clients.is_empty() || self.sampling_peer.is_some()
     }
-
 }
 
 impl Default for ProviderFactory {
@@ -248,5 +245,4 @@ mod tests {
         assert_eq!(factory.background_fallback_order[1], Provider::Zhipu);
         assert_eq!(factory.background_fallback_order[2], Provider::Ollama);
     }
-
 }

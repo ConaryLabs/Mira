@@ -185,9 +185,9 @@ pub use documentation::documentation;
 pub use goals::goal;
 pub use memory::{archive, forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
+pub use recipe::handle_recipe;
 pub use session::{
     ensure_session, get_session_recap, handle_session, reply_to_mira, session_history,
 };
-pub use recipe::handle_recipe;
 pub use team::handle_team;
 pub use usage::usage;

@@ -395,24 +395,23 @@ pub(super) async fn get_untested_hotspots(
             let (event_data, session_id) = row.map_err(|e| anyhow::anyhow!("Row error: {}", e))?;
 
             // event_data is JSON, extract file_path
-            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event_data) {
-                if let Some(file_path) = data
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event_data)
+                && let Some(file_path) = data
                     .get("file_path")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-                {
-                    // Track test files separately
-                    if is_test_file(&file_path) {
-                        test_files_modified.insert(file_path);
-                        continue;
-                    }
-
-                    let entry = file_stats
-                        .entry(file_path)
-                        .or_insert((0, Default::default()));
-                    entry.0 += 1;
-                    entry.1.insert(session_id);
+            {
+                // Track test files separately
+                if is_test_file(&file_path) {
+                    test_files_modified.insert(file_path);
+                    continue;
                 }
+
+                let entry = file_stats
+                    .entry(file_path)
+                    .or_insert((0, Default::default()));
+                entry.0 += 1;
+                entry.1.insert(session_id);
             }
         }
 

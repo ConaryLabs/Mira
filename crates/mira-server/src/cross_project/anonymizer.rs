@@ -304,7 +304,6 @@ impl PatternAnonymizer {
         }
         format!("{:x}", hasher.finalize())[..16].to_string()
     }
-
 }
 
 #[cfg(test)]

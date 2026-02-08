@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "mira-server"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "mira-types"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "serde",
  "serde_json",

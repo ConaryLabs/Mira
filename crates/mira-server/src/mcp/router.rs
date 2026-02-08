@@ -188,7 +188,6 @@ impl MiraServer {
     ) -> Result<CallToolResult, ErrorData> {
         tool_result(tools::handle_recipe(req).await)
     }
-
 }
 
 impl MiraServer {

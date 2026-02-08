@@ -55,7 +55,9 @@ impl CircuitBreaker {
     /// (allowing a single probe). Returns `false` if the circuit is Open
     /// and cooldown has not yet elapsed.
     pub fn is_available(&self, provider: Provider) -> bool {
-        let mut states = self.states.lock().unwrap();
+        let Ok(mut states) = self.states.lock() else {
+            return true; // If mutex is poisoned, allow the request
+        };
         let state = states.entry(provider).or_default();
 
         match state {
@@ -79,7 +81,9 @@ impl CircuitBreaker {
 
     /// Record a successful request — resets the circuit to Closed.
     pub fn record_success(&self, provider: Provider) {
-        let mut states = self.states.lock().unwrap();
+        let Ok(mut states) = self.states.lock() else {
+            return;
+        };
         let state = states.entry(provider).or_default();
 
         let was_half_open = matches!(state, State::HalfOpen);
@@ -94,7 +98,9 @@ impl CircuitBreaker {
 
     /// Record a failed request — may trip the circuit.
     pub fn record_failure(&self, provider: Provider) {
-        let mut states = self.states.lock().unwrap();
+        let Ok(mut states) = self.states.lock() else {
+            return;
+        };
         let state = states.entry(provider).or_default();
         let now = Instant::now();
 

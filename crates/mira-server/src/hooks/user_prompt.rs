@@ -115,21 +115,21 @@ async fn get_proactive_context(
 
         // 3. Pondering-based insights (behavior_patterns + documentation interventions)
         let remaining_slots = 2usize.saturating_sub(context_lines.len());
-        if remaining_slots > 0 {
-            if let Ok(pending) = crate::proactive::interventions::get_pending_interventions_sync(
+        if remaining_slots > 0
+            && let Ok(pending) = crate::proactive::interventions::get_pending_interventions_sync(
                 conn, project_id, &config,
-            ) {
-                for intervention in pending.iter().take(remaining_slots) {
-                    context_lines.push(format!("[Insight] {}", intervention.format()));
+            )
+        {
+            for intervention in pending.iter().take(remaining_slots) {
+                context_lines.push(format!("[Insight] {}", intervention.format()));
 
-                    // Record that we showed this intervention (for cooldown/dedup/feedback)
-                    let _ = crate::proactive::interventions::record_intervention_sync(
-                        conn,
-                        project_id,
-                        session_id_owned.as_deref(),
-                        intervention,
-                    );
-                }
+                // Record that we showed this intervention (for cooldown/dedup/feedback)
+                let _ = crate::proactive::interventions::record_intervention_sync(
+                    conn,
+                    project_id,
+                    session_id_owned.as_deref(),
+                    intervention,
+                );
             }
         }
 

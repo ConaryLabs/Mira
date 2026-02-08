@@ -36,37 +36,161 @@ struct Migration {
 /// next sequential version number.
 fn migration_registry() -> Vec<Migration> {
     vec![
-        Migration { version: 1,  name: "vec_tables",                    func: |c| vectors::migrate_vec_tables(c) },
-        Migration { version: 2,  name: "tool_history_full_result",      func: session::migrate_tool_history_full_result },
-        Migration { version: 3,  name: "chat_summaries_project_id",     func: session::migrate_chat_summaries_project_id },
-        Migration { version: 4,  name: "chat_messages_summary_id",      func: session::migrate_chat_messages_summary_id },
-        Migration { version: 5,  name: "memory_facts_has_embedding",    func: memory::migrate_memory_facts_has_embedding },
-        Migration { version: 6,  name: "memory_facts_evidence_tracking",func: memory::migrate_memory_facts_evidence_tracking },
-        Migration { version: 7,  name: "system_prompts_provider",       func: system::migrate_system_prompts_provider },
-        Migration { version: 8,  name: "system_prompts_strip_suffix",   func: system::migrate_system_prompts_strip_tool_suffix },
-        Migration { version: 9,  name: "documentation_tables",          func: memory::migrate_documentation_tables },
-        Migration { version: 10, name: "documentation_impact_analysis", func: memory::migrate_documentation_impact_analysis },
-        Migration { version: 11, name: "users_table",                   func: memory::migrate_users_table },
-        Migration { version: 12, name: "memory_user_scope",             func: memory::migrate_memory_user_scope },
-        Migration { version: 13, name: "drop_teams_tables",             func: memory::migrate_drop_teams_tables },
-        Migration { version: 14, name: "corrections_learning_columns",  func: reviews::migrate_corrections_learning_columns },
-        Migration { version: 15, name: "embeddings_usage_table",        func: reviews::migrate_embeddings_usage_table },
-        Migration { version: 16, name: "diff_analyses_table",           func: reviews::migrate_diff_analyses_table },
-        Migration { version: 17, name: "diff_analyses_files_json",      func: reviews::migrate_diff_analyses_files_json },
-        Migration { version: 18, name: "diff_outcomes_table",           func: reviews::migrate_diff_outcomes_table },
-        Migration { version: 19, name: "llm_usage_table",               func: reviews::migrate_llm_usage_table },
-        Migration { version: 20, name: "proactive_intelligence_tables", func: intelligence::migrate_proactive_intelligence_tables },
-        Migration { version: 21, name: "cross_project_intelligence",    func: intelligence::migrate_cross_project_intelligence_tables },
-        Migration { version: 22, name: "memory_facts_branch",           func: memory::migrate_memory_facts_branch },
-        Migration { version: 23, name: "sessions_branch",               func: session::migrate_sessions_branch },
-        Migration { version: 24, name: "remove_capability_data",        func: memory::migrate_remove_capability_data },
-        Migration { version: 25, name: "tech_debt_scores",              func: migrate_tech_debt_scores },
-        Migration { version: 26, name: "module_conventions",            func: migrate_module_conventions },
-        Migration { version: 27, name: "entity_tables",                 func: entities::migrate_entity_tables },
-        Migration { version: 28, name: "session_tasks_tables",          func: session_tasks::migrate_session_tasks_tables },
-        Migration { version: 29, name: "sessions_resume",               func: session::migrate_sessions_resume },
-        Migration { version: 30, name: "team_tables",                   func: team::migrate_team_tables },
-        Migration { version: 31, name: "session_snapshots",             func: session::migrate_session_snapshots_table },
+        Migration {
+            version: 1,
+            name: "vec_tables",
+            func: |c| vectors::migrate_vec_tables(c),
+        },
+        Migration {
+            version: 2,
+            name: "tool_history_full_result",
+            func: session::migrate_tool_history_full_result,
+        },
+        Migration {
+            version: 3,
+            name: "chat_summaries_project_id",
+            func: session::migrate_chat_summaries_project_id,
+        },
+        Migration {
+            version: 4,
+            name: "chat_messages_summary_id",
+            func: session::migrate_chat_messages_summary_id,
+        },
+        Migration {
+            version: 5,
+            name: "memory_facts_has_embedding",
+            func: memory::migrate_memory_facts_has_embedding,
+        },
+        Migration {
+            version: 6,
+            name: "memory_facts_evidence_tracking",
+            func: memory::migrate_memory_facts_evidence_tracking,
+        },
+        Migration {
+            version: 7,
+            name: "system_prompts_provider",
+            func: system::migrate_system_prompts_provider,
+        },
+        Migration {
+            version: 8,
+            name: "system_prompts_strip_suffix",
+            func: system::migrate_system_prompts_strip_tool_suffix,
+        },
+        Migration {
+            version: 9,
+            name: "documentation_tables",
+            func: memory::migrate_documentation_tables,
+        },
+        Migration {
+            version: 10,
+            name: "documentation_impact_analysis",
+            func: memory::migrate_documentation_impact_analysis,
+        },
+        Migration {
+            version: 11,
+            name: "users_table",
+            func: memory::migrate_users_table,
+        },
+        Migration {
+            version: 12,
+            name: "memory_user_scope",
+            func: memory::migrate_memory_user_scope,
+        },
+        Migration {
+            version: 13,
+            name: "drop_teams_tables",
+            func: memory::migrate_drop_teams_tables,
+        },
+        Migration {
+            version: 14,
+            name: "corrections_learning_columns",
+            func: reviews::migrate_corrections_learning_columns,
+        },
+        Migration {
+            version: 15,
+            name: "embeddings_usage_table",
+            func: reviews::migrate_embeddings_usage_table,
+        },
+        Migration {
+            version: 16,
+            name: "diff_analyses_table",
+            func: reviews::migrate_diff_analyses_table,
+        },
+        Migration {
+            version: 17,
+            name: "diff_analyses_files_json",
+            func: reviews::migrate_diff_analyses_files_json,
+        },
+        Migration {
+            version: 18,
+            name: "diff_outcomes_table",
+            func: reviews::migrate_diff_outcomes_table,
+        },
+        Migration {
+            version: 19,
+            name: "llm_usage_table",
+            func: reviews::migrate_llm_usage_table,
+        },
+        Migration {
+            version: 20,
+            name: "proactive_intelligence_tables",
+            func: intelligence::migrate_proactive_intelligence_tables,
+        },
+        Migration {
+            version: 21,
+            name: "cross_project_intelligence",
+            func: intelligence::migrate_cross_project_intelligence_tables,
+        },
+        Migration {
+            version: 22,
+            name: "memory_facts_branch",
+            func: memory::migrate_memory_facts_branch,
+        },
+        Migration {
+            version: 23,
+            name: "sessions_branch",
+            func: session::migrate_sessions_branch,
+        },
+        Migration {
+            version: 24,
+            name: "remove_capability_data",
+            func: memory::migrate_remove_capability_data,
+        },
+        Migration {
+            version: 25,
+            name: "tech_debt_scores",
+            func: migrate_tech_debt_scores,
+        },
+        Migration {
+            version: 26,
+            name: "module_conventions",
+            func: migrate_module_conventions,
+        },
+        Migration {
+            version: 27,
+            name: "entity_tables",
+            func: entities::migrate_entity_tables,
+        },
+        Migration {
+            version: 28,
+            name: "session_tasks_tables",
+            func: session_tasks::migrate_session_tasks_tables,
+        },
+        Migration {
+            version: 29,
+            name: "sessions_resume",
+            func: session::migrate_sessions_resume,
+        },
+        Migration {
+            version: 30,
+            name: "team_tables",
+            func: team::migrate_team_tables,
+        },
+        Migration {
+            version: 31,
+            name: "session_snapshots",
+            func: session::migrate_session_snapshots_table,
+        },
     ]
 }
 
@@ -77,7 +201,7 @@ fn ensure_schema_versions_table(conn: &Connection) -> Result<()> {
             version INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
             applied_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )"
+        )",
     )?;
     Ok(())
 }
@@ -85,7 +209,8 @@ fn ensure_schema_versions_table(conn: &Connection) -> Result<()> {
 /// Query which migration versions have already been applied.
 fn applied_versions(conn: &Connection) -> Result<HashSet<u32>> {
     let mut stmt = conn.prepare("SELECT version FROM schema_versions")?;
-    let versions = stmt.query_map([], |row| row.get::<_, u32>(0))?
+    let versions = stmt
+        .query_map([], |row| row.get::<_, u32>(0))?
         .filter_map(|r| r.ok())
         .collect();
     Ok(versions)

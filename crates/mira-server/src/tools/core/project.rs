@@ -318,8 +318,8 @@ async fn persist_session<C: ToolContext>(
 
             set_server_state_sync(conn, "active_session_id", &sid_owned).str_err()?;
 
-            if let Some(ref content) = system_context {
-                if let Err(e) = store_memory_sync(
+            if let Some(ref content) = system_context
+                && let Err(e) = store_memory_sync(
                     conn,
                     StoreMemoryParams {
                         project_id: None,
@@ -334,9 +334,9 @@ async fn persist_session<C: ToolContext>(
                         branch: None,
                         team_id: None,
                     },
-                ) {
-                    tracing::warn!("Failed to store system_context memory: {}", e);
-                }
+                )
+            {
+                tracing::warn!("Failed to store system_context memory: {}", e);
             }
 
             let briefing = get_project_briefing_sync(conn, project_id)

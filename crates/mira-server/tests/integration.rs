@@ -654,7 +654,6 @@ async fn test_goal_create_and_list() {
     );
 }
 
-
 #[tokio::test]
 async fn test_get_session_recap() {
     let ctx = TestContext::new().await;
@@ -2198,9 +2197,14 @@ async fn create_test_goal(ctx: &TestContext, title: &str) -> i64 {
 #[tokio::test]
 async fn test_goal_get() {
     let ctx = TestContext::new().await;
-    session_start(&ctx, "/tmp/test_goal_get".into(), Some("Goal Get".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_goal_get".into(),
+        Some("Goal Get".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let goal_id = create_test_goal(&ctx, "Get test goal").await;
 
@@ -2225,9 +2229,21 @@ async fn test_goal_get() {
     .await
     .expect("goal get failed");
 
-    assert!(msg!(output).contains("Get test goal"), "Output: {}", msg!(output));
-    assert!(msg!(output).contains("planning"), "Output: {}", msg!(output));
-    assert!(msg!(output).contains("Description for"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("Get test goal"),
+        "Output: {}",
+        msg!(output)
+    );
+    assert!(
+        msg!(output).contains("planning"),
+        "Output: {}",
+        msg!(output)
+    );
+    assert!(
+        msg!(output).contains("Description for"),
+        "Output: {}",
+        msg!(output)
+    );
 
     match &output.0.data {
         Some(GoalData::Get(data)) => {
@@ -2243,9 +2259,14 @@ async fn test_goal_get() {
 #[tokio::test]
 async fn test_goal_update() {
     let ctx = TestContext::new().await;
-    session_start(&ctx, "/tmp/test_goal_update".into(), Some("Goal Update".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_goal_update".into(),
+        Some("Goal Update".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let goal_id = create_test_goal(&ctx, "Update test goal").await;
 
@@ -2307,9 +2328,14 @@ async fn test_goal_update() {
 #[tokio::test]
 async fn test_goal_delete() {
     let ctx = TestContext::new().await;
-    session_start(&ctx, "/tmp/test_goal_delete".into(), Some("Goal Delete".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_goal_delete".into(),
+        Some("Goal Delete".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     let goal_id = create_test_goal(&ctx, "Delete test goal").await;
 
@@ -2406,7 +2432,11 @@ async fn test_goal_milestone_lifecycle() {
     .await
     .expect("add milestone failed");
 
-    assert!(msg!(add_output).contains("milestone"), "Output: {}", msg!(add_output));
+    assert!(
+        msg!(add_output).contains("milestone"),
+        "Output: {}",
+        msg!(add_output)
+    );
 
     // Extract milestone ID
     let milestone_id = match &add_output.0.data {
@@ -2631,7 +2661,9 @@ async fn test_goal_progress_update() {
     .expect("goal progress failed");
 
     assert!(
-        msg!(output).contains("50") || msg!(output).contains("Updated") || msg!(output).contains("progress"),
+        msg!(output).contains("50")
+            || msg!(output).contains("Updated")
+            || msg!(output).contains("progress"),
         "Output: {}",
         msg!(output)
     );
@@ -2790,7 +2822,11 @@ async fn test_memory_remember_with_scope() {
     .await
     .expect("remember with scope failed");
 
-    assert!(msg!(output).contains("Stored memory"), "Output: {}", msg!(output));
+    assert!(
+        msg!(output).contains("Stored memory"),
+        "Output: {}",
+        msg!(output)
+    );
 
     let memory_id = match &output.0.data {
         Some(MemoryData::Remember(data)) => data.id,
@@ -2876,7 +2912,10 @@ async fn test_memory_remember_upsert() {
         .await
         .expect("Failed to count memories");
 
-    assert_eq!(count, 1, "Should have exactly 1 memory with this key (upsert)");
+    assert_eq!(
+        count, 1,
+        "Should have exactly 1 memory with this key (upsert)"
+    );
 
     // The ID may or may not change depending on implementation, but content should be updated
     let content: String = ctx

@@ -232,8 +232,7 @@ pub async fn run() -> Result<()> {
         let cwd_owned = cwd.map(String::from);
         let session_id_owned = session_id.map(String::from);
 
-        let context =
-            build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await;
+        let context = build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await;
 
         if let Some(ctx) = context {
             let output = serde_json::json!({

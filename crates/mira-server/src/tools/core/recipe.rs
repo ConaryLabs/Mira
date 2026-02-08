@@ -3,8 +3,8 @@
 
 use crate::mcp::requests::{RecipeAction, RecipeRequest};
 use crate::mcp::responses::{
-    Json, RecipeData, RecipeGetData, RecipeListData, RecipeListItem, RecipeMemberData, RecipeOutput,
-    RecipeTaskData, ToolOutput,
+    Json, RecipeData, RecipeGetData, RecipeListData, RecipeListItem, RecipeMemberData,
+    RecipeOutput, RecipeTaskData, ToolOutput,
 };
 
 /// Static recipe data model (not stored in DB).
@@ -145,17 +145,14 @@ fn action_list() -> Result<Json<RecipeOutput>, String> {
 fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, String> {
     let name = name.ok_or_else(|| "Recipe name is required for get action.".to_string())?;
 
-    let recipe = ALL_RECIPES
-        .iter()
-        .find(|r| r.name == name)
-        .ok_or_else(|| {
-            let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
-            format!(
-                "Recipe '{}' not found. Available: {}",
-                name,
-                available.join(", ")
-            )
-        })?;
+    let recipe = ALL_RECIPES.iter().find(|r| r.name == name).ok_or_else(|| {
+        let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
+        format!(
+            "Recipe '{}' not found. Available: {}",
+            name,
+            available.join(", ")
+        )
+    })?;
 
     let members: Vec<RecipeMemberData> = recipe
         .members

@@ -87,7 +87,13 @@ fn canonical_json(value: &serde_json::Value) -> String {
             sorted.sort_by_key(|(k, _)| *k);
             let entries: Vec<String> = sorted
                 .into_iter()
-                .map(|(k, v)| format!("{}:{}", serde_json::to_string(k).unwrap_or_default(), canonical_json(v)))
+                .map(|(k, v)| {
+                    format!(
+                        "{}:{}",
+                        serde_json::to_string(k).unwrap_or_default(),
+                        canonical_json(v)
+                    )
+                })
                 .collect();
             format!("{{{}}}", entries.join(","))
         }
@@ -208,7 +214,11 @@ mod tests {
         let candidates = build_match_candidates(&input);
 
         // Should include canonical JSON
-        assert!(candidates.iter().any(|c| c.contains("action") && c.contains("recall")));
+        assert!(
+            candidates
+                .iter()
+                .any(|c| c.contains("action") && c.contains("recall"))
+        );
         // Should include individual field values
         assert!(candidates.contains(&"recall".to_string()));
         assert!(candidates.contains(&"auth patterns".to_string()));
@@ -233,7 +243,11 @@ mod tests {
         let candidates = build_match_candidates(&input);
 
         // Should match the "query" field value via glob
-        assert!(candidates.iter().any(|c| matches_rule("/home/*", "glob", c)));
+        assert!(
+            candidates
+                .iter()
+                .any(|c| matches_rule("/home/*", "glob", c))
+        );
     }
 
     #[test]
@@ -241,7 +255,15 @@ mod tests {
         let input = json!({"action": "remember", "content": "test"});
         let candidates = build_match_candidates(&input);
 
-        assert!(candidates.iter().any(|c| matches_rule("remember", "exact", c)));
-        assert!(!candidates.iter().any(|c| matches_rule("recall", "exact", c)));
+        assert!(
+            candidates
+                .iter()
+                .any(|c| matches_rule("remember", "exact", c))
+        );
+        assert!(
+            !candidates
+                .iter()
+                .any(|c| matches_rule("recall", "exact", c))
+        );
     }
 }

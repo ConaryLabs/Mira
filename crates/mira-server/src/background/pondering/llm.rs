@@ -9,6 +9,7 @@ use crate::utils::truncate;
 use std::sync::Arc;
 
 /// Generate insights using LLM with project-aware data.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn generate_insights(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -24,7 +25,13 @@ pub(super) async fn generate_insights(
         return Ok(vec![]);
     }
 
-    let prompt = build_prompt(project_name, data, tool_history, memories, existing_insights);
+    let prompt = build_prompt(
+        project_name,
+        data,
+        tool_history,
+        memories,
+        existing_insights,
+    );
     let messages = PromptBuilder::for_background().build_messages(prompt);
 
     match chat_with_usage(

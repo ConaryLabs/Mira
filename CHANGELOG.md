@@ -80,6 +80,36 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-02-08
+
+### Added
+- **Proactive intelligence delivery** -- Pondering insights now surface automatically via the UserPromptSubmit hook with slot-based limiting, confidence thresholds, and cooldown/dedup tracking.
+- **LLM provider circuit breaker** -- Three-state circuit breaker (Closed/Open/HalfOpen) automatically skips failing providers after 3 failures in 5 minutes, with 2-minute cooldown and probe recovery.
+- **Migration versioning system** -- `schema_versions` table tracks all 31 migrations by version number, skipping already-applied migrations on startup.
+- **Slow lane priority ordering** -- Background tasks now have Critical/Normal/Low priorities. Low-priority tasks are automatically skipped when the previous cycle exceeded 60 seconds.
+- **Recipe system** -- Reusable team blueprints for Agent Teams. Built-in `expert-review` recipe with 5 roles (architect, code-reviewer, security, scope-analyst, plan-reviewer).
+- **Status line** -- Shell status line integration (`mira statusline`) showing project info, session stats, and unread insights.
+- **Insight system overhaul** -- Project-aware pondering with actionable outputs, proper dedup by row ID, and daily-scoped unread counts.
+- **Inline milestones** -- Goal list responses now include milestones inline for richer context.
+
+### Fixed
+- **LIKE wildcard injection** -- Keyword search now strips `%`, `_`, and `\` from user-supplied terms before LIKE pattern construction.
+- **Nested tokio runtime** -- Session hook now uses async like all other hooks instead of creating a second runtime.
+- **Permission hook fragility** -- Permission rules now use canonical JSON serialization (sorted keys) and field-level matching instead of depending on serialization order.
+- **Memory input validation** -- Added 10KB max length check on memory content to prevent unbounded storage.
+- **Silent error swallowing** -- Replaced `.filter_map(|r| r.ok())` with `log_and_discard()` across the codebase, and stopped silently swallowing errors in fire-and-forget operations.
+- **Duplicate pondering insights** -- Context injection and per-type caps prevent repeated insights.
+- **Cross-project goal leakage** -- Rewrote task/goal queries to UNION ALL for index-friendly scoping; fixed async lock contention and dedup correctness.
+- **Revert cluster timespan** -- Uses SQLite epoch seconds correctly.
+- **Insight accumulation** -- Stopped insight count from accumulating indefinitely; scoped to daily unread.
+
+### Changed
+- **Comprehensive code audit** -- 42 files cleaned up: removed unused code, hardened DB operations, optimized query paths.
+- **Expert system removal** -- Removed legacy expert system (tools, db, docs, skills) in favor of recipe-based Agent Teams approach.
+
+### Removed
+- **Dead code cleanup** -- Removed `db/chat.rs.backup`, unused `SessionPattern.pattern_type` field, and expert system leftovers.
+
 ## [0.6.2] - 2026-02-06
 
 ### Fixed

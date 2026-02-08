@@ -185,7 +185,6 @@ fn migrate_pondering_pattern_types(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-
 /// Migrate to add cross-project intelligence tables for pattern sharing
 pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()> {
     // Cross-project patterns - anonymized patterns that can be shared
