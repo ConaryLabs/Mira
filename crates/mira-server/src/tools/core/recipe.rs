@@ -237,7 +237,7 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
 8. **Create implementation tasks** from action items, grouped by file ownership to avoid conflicts
 9. **Spawn implementation agents** (dynamic — as many as needed based on task groupings). Use `general-purpose` agent type with `mode="bypassPermissions"`
 10. **Assign tasks** to implementation agents via `TaskUpdate`
-11. **Monitor** build diagnostics and send hints to agents if compilation errors appear
+11. **Monitor** build diagnostics actively. When you see compile errors, send targeted hints to the responsible agent via SendMessage with the exact error and fix suggestion. This unblocks agents within one turn instead of letting them struggle
 12. **Wait** for all implementation agents to complete, then shut them down
 
 ### Phase 2.5: Dependency Updates (sequential)
@@ -267,6 +267,8 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
 - **For type/schema changes:** Search ALL files including `tests/` for usages of the changed type and update them all.
 - **Verification command is `cargo test --no-run`**, not `cargo build`. This compiles all targets including tests and catches type mismatches in test files that `cargo build` misses.
 - **Parallel build awareness:** Other agents are editing the codebase in parallel. If you see compile errors in files you didn't touch, ignore them — they're from another agent's in-progress work. Only verify YOUR files compile cleanly.
+- **Import cleanup:** When removing a code block, check whether its imports are used elsewhere in the file before removing them. Use Grep/search within the file for each import symbol to verify.
+- **Struct pattern renaming:** In Rust, to rename a field in struct destructuring, use `field_name: ref new_name` syntax (not `ref new_name` alone). The original field name must appear on the left side of the colon.
 
 ### Important Notes
 
