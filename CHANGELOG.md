@@ -97,6 +97,16 @@ Where it all began - a personal AI assistant with memory.
 - **CI concurrency control** -- Added `concurrency` group to `ci.yml` to cancel stale PR runs, saving runner minutes.
 - **Full-cycle recipe improvements** -- Added import cleanup rule, struct pattern rename syntax guide, diagnostic monitoring guidance, and documentation freshness checks for both plan-reviewer and ux-reviewer roles.
 - **diff_outcomes UNIQUE constraint** -- Fixed duplicate key constraint on `(diff_analysis_id, outcome_type, evidence_commit)` that could cause insert failures.
+- **MemoryRequest.id type** -- Changed from `String` to `i64`, removing runtime parse step.
+- **Error message consistency** -- Standardized 30 error messages to `"<param> is required for <tool>(action=<action>)"` format.
+- **Bulk goal atomicity** -- `bulk_create` goals now wrapped in a single transaction.
+- **Goal/milestone auth** -- Fail-closed when project context is `None` instead of silently proceeding.
+
+### Documentation
+- **Comprehensive documentation audit** -- Fixed parameter types (`id`/`goal_id`/`milestone_id` are `i64` not `String`), removed nonexistent params, corrected tool counts, added missing skills to `plugin.json`, created `docs/tools/recipe.md`.
+- **CLAUDE.md and rules fixes** -- Removed `--release` from build command, fixed anti-pattern file references, added `/mira:full-cycle` skill, added `forget`/`archive` actions to memory rules.
+- **Module docs accuracy** -- Fixed CONFIGURATION.md, DATABASE.md schema, DESIGN.md paths, and tool references across 6 doc files.
+- **hooks.json.example synced** -- Added 5 missing hooks (PermissionRequest, PreToolUse, SessionEnd, SubagentStart, SubagentStop) and `async: true` on PostToolUse and PreCompact.
 
 ## [0.6.4] - 2026-02-08
 
