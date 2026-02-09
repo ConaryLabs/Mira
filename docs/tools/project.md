@@ -66,7 +66,7 @@ Current project:
   ID: 5
 ```
 
-Or if no project is active: `No active project. Call set_project first.`
+Or if no project is active: `No active project. Use project(action="start") to initialize.`
 
 ## Examples
 
@@ -111,9 +111,9 @@ The `start` and `set` actions auto-detect project metadata:
 |------|--------------|-------------|
 | `Cargo.toml` | rust | `[package] name` |
 | `package.json` | node | `"name"` field |
-| `pyproject.toml` | python | `[project] name` |
-| `go.mod` | go | module path |
-| `pom.xml` | java | artifact ID |
+| `pyproject.toml` | python | directory name |
+| `go.mod` | go | directory name |
+| `pom.xml` | java | directory name |
 | *(none)* | unknown | directory name |
 
 ## Errors

@@ -1,3 +1,8 @@
+---
+name: context7
+description: Look up external library documentation using Context7 to get current API references instead of guessing from training data.
+---
+
 # Context7: External Library Documentation
 
 Use Context7 to look up current library APIs instead of guessing from training data.

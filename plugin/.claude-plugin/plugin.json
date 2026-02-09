@@ -24,6 +24,7 @@
     "./skills/remember",
     "./skills/insights",
     "./skills/diff",
-    "./skills/experts"
+    "./skills/experts",
+    "./skills/full-cycle"
   ]
 }

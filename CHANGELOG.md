@@ -95,6 +95,8 @@ Where it all began - a personal AI assistant with memory.
 - **Prepared statement optimization** -- Co-change gap mining now prepares the SQL statement once before the loop instead of re-parsing on each of up to 50 file pairs.
 - **Dead code removal** -- Removed unused `PartialOrd, Ord` derives from `TaskPriority` enum and fixed misleading "higher priority runs first" comment.
 - **CI concurrency control** -- Added `concurrency` group to `ci.yml` to cancel stale PR runs, saving runner minutes.
+- **Full-cycle recipe improvements** -- Added import cleanup rule, struct pattern rename syntax guide, diagnostic monitoring guidance, and documentation freshness checks for both plan-reviewer and ux-reviewer roles.
+- **diff_outcomes UNIQUE constraint** -- Fixed duplicate key constraint on `(diff_analysis_id, outcome_type, evidence_commit)` that could cause insert failures.
 
 ## [0.6.4] - 2026-02-08
 
@@ -120,7 +122,7 @@ Where it all began - a personal AI assistant with memory.
 - **LLM provider circuit breaker** -- Three-state circuit breaker (Closed/Open/HalfOpen) automatically skips failing providers after 3 failures in 5 minutes, with 2-minute cooldown and probe recovery.
 - **Migration versioning system** -- `schema_versions` table tracks all 31 migrations by version number, skipping already-applied migrations on startup.
 - **Slow lane priority ordering** -- Background tasks now have Critical/Normal/Low priorities. Low-priority tasks are automatically skipped when the previous cycle exceeded 60 seconds.
-- **Recipe system** -- Reusable team blueprints for Agent Teams. Built-in `expert-review` recipe with 5 roles (architect, code-reviewer, security, scope-analyst, plan-reviewer).
+- **Recipe system** -- Reusable team blueprints for Agent Teams. Built-in `expert-review` recipe with 6 roles (architect, code-reviewer, security, scope-analyst, ux-strategist, plan-reviewer).
 - **Status line** -- Shell status line integration (`mira statusline`) showing project info, session stats, and unread insights.
 - **Insight system overhaul** -- Project-aware pondering with actionable outputs, proper dedup by row ID, and daily-scoped unread counts.
 - **Inline milestones** -- Goal list responses now include milestones inline for richer context.

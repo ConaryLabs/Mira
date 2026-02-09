@@ -1,6 +1,11 @@
+---
+name: tools-reference
+description: Reference for all Mira MCP tool signatures, parameters, and workflows.
+---
+
 # Mira Consolidated Tools Reference
 
-Mira uses 9 action-based tools. Reference for tool signatures and workflows.
+Mira uses 10 action-based tools. Reference for tool signatures and workflows.
 
 ## `project` — Project/Session Management
 
@@ -15,8 +20,8 @@ project(action="get")                                     # Show current project
 ```
 memory(action="remember", content="...", fact_type="decision", category="...")
 memory(action="recall", query="...", limit=10, category="...", fact_type="...")
-memory(action="forget", id="42")
-memory(action="archive", id="42")                         # Exclude from auto-export
+memory(action="forget", id=42)
+memory(action="archive", id=42)                            # Exclude from auto-export
 ```
 
 ## `code` — Code Intelligence
@@ -56,13 +61,13 @@ session(action="tasks", tasks_action="cancel", task_id="abc123")  # Cancel task
 goal(action="create", title="...", description="...", priority="high")
 goal(action="bulk_create", goals='[{"title": "...", "priority": "medium"}]')
 goal(action="list", include_finished=false, limit=10)
-goal(action="get", goal_id="1")
-goal(action="update", goal_id="1", status="in_progress")
-goal(action="delete", goal_id="1")
-goal(action="add_milestone", goal_id="1", milestone_title="...", weight=2)
-goal(action="complete_milestone", milestone_id="1")
-goal(action="delete_milestone", milestone_id="1")
-goal(action="progress", goal_id="1")
+goal(action="get", goal_id=1)
+goal(action="update", goal_id=1, status="in_progress")
+goal(action="delete", goal_id=1)
+goal(action="add_milestone", goal_id=1, milestone_title="...", weight=2)
+goal(action="complete_milestone", milestone_id=1)
+goal(action="delete_milestone", milestone_id=1)
+goal(action="progress", goal_id=1)
 ```
 
 ## `documentation` — Documentation Management
@@ -96,6 +101,14 @@ index(action="health")                      # Full code health scan (background 
 team(action="status")                       # Team overview: members, files, conflicts
 team(action="review", teammate="agent-1")   # Review a teammate's modified files
 team(action="distill")                      # Extract key findings into team-scoped memories
+```
+
+## `recipe` — Team Recipes
+
+```
+recipe(action="list")                              # List available recipes
+recipe(action="get", name="expert-review")         # Get full recipe details
+recipe(action="get", name="full-cycle")
 ```
 
 ## Other Tools

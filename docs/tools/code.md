@@ -23,7 +23,6 @@ Code intelligence. Actions: `search` (semantic), `symbols` (file structure), `ca
 | file_path | String | For symbols | Path to the file to analyze |
 | function_name | String | For callers/callees | Function name to trace |
 | symbol_type | String | No | Filter symbols by type (e.g. `function`, `struct`) |
-| language | String | No | Language filter |
 | limit | Integer | No | Max results (default varies by action) |
 | from_ref | String | No | Starting git ref for `diff` (commit, branch, tag). Default: `HEAD~1` or staged/working changes if present |
 | to_ref | String | No | Ending git ref for `diff`. Default: `HEAD` |

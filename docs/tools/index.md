@@ -20,9 +20,6 @@ Index codebase. Actions: `project` (full index), `file` (single file), `status` 
 | action | String | Yes | `project`, `file`, `status`, `compact`, `summarize`, or `health` |
 | path | String | No | Path to index (defaults to current project) |
 | skip_embed | Boolean | No | Skip embedding generation for faster indexing (default: false) |
-| parallel | Boolean | No | Parsed but not yet used |
-| max_workers | Integer | No | Parsed but not yet used |
-| commit_limit | Integer | No | Parsed but not yet used |
 
 ## Actions
 

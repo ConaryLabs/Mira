@@ -180,6 +180,8 @@ All data stored locally in `~/.mira/`. No cloud storage, no external databases. 
 | `/mira:remember <text>` | Quick memory storage |
 | `/mira:diff` | Semantic analysis of recent changes |
 | `/mira:insights` | Surface background analysis |
+| `/mira:experts` | Expert consultation via Agent Teams |
+| `/mira:full-cycle` | End-to-end review, implementation, and QA |
 
 ## Troubleshooting
 

@@ -29,7 +29,7 @@ Manage persistent memories. Actions: `remember` (store), `recall` (search), `for
 | scope | String | No | `personal`, `project` (default), or `team` |
 | query | String | For recall | Search query for semantic similarity |
 | limit | Integer | No | Max results for recall (default: 10) |
-| id | String | For forget/archive | Memory ID to delete or archive |
+| id | Integer | For forget/archive | Memory ID to delete or archive |
 
 ## Actions
 
@@ -51,7 +51,7 @@ Stores a memory with optional metadata. Supports upsert via `key`.
 }
 ```
 
-Returns: `Memory stored successfully with ID: 123` or `Memory updated successfully (ID: 123)`
+Returns: `Stored memory (id: 123)` or `Stored memory (id: 123) with key`
 
 ### `recall` — Search memories
 
@@ -80,7 +80,7 @@ Removes a memory from both the SQL database and vector index.
   "name": "memory",
   "arguments": {
     "action": "forget",
-    "id": "42"
+    "id": 42
   }
 }
 ```
@@ -96,7 +96,7 @@ Archives a memory so it is excluded from CLAUDE.local.md auto-export but kept in
   "name": "memory",
   "arguments": {
     "action": "archive",
-    "id": "42"
+    "id": 42
   }
 }
 ```
@@ -108,7 +108,7 @@ Returns: Confirmation that the memory was archived.
 - **Invalid action**: Must be `remember`, `recall`, `forget`, or `archive`
 - **Missing content**: `remember` requires `content`
 - **Missing query**: `recall` requires `query`
-- **Missing id**: `forget` requires `id`
+- **Missing id**: `forget` and `archive` require `id`
 - **Invalid confidence**: Must be 0.0–1.0
 - **Invalid scope**: Must be `personal`, `project`, or `team`
 - **Secret detection**: Blocks storage of API keys, tokens, and passwords

@@ -70,10 +70,12 @@ claude --plugin-dir /path/to/Mira/plugin
 | `/mira:diff [--from REF] [--to REF]` | Semantic diff analysis |
 | `/mira:insights` | Surface background analysis |
 | `/mira:remember <content>` | Quick memory storage |
+| `/mira:experts` | Expert consultation via Agent Teams |
+| `/mira:full-cycle` | End-to-end review, implementation, and QA |
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 9 action-based tools:
+The plugin bundles the Mira MCP server with 10 action-based tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
@@ -85,6 +87,7 @@ The plugin bundles the Mira MCP server with 9 action-based tools:
 | `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
 | `index` | project, file, status, compact, summarize, health | Code indexing and health |
 | `team` | status, review, distill | Agent team intelligence |
+| `recipe` | list, get | Reusable team blueprints for Agent Teams |
 | `reply_to_mira` | — | Send a response back during collaboration |
 
 All tools return structured JSON via MCP outputSchema.

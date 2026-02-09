@@ -124,7 +124,7 @@ End-to-end expert review with automatic implementation and QA verification.
 -> All 6 experts review the DB layer, findings are implemented, QA verifies
 
 /mira:full-cycle --discovery-only
--> Only runs Phase 1 (equivalent to /mira:experts with ux-strategist added)
+-> Only runs Phase 1 (equivalent to /mira:experts)
 
 /mira:full-cycle --skip-qa
 -> Runs discovery + implementation but skips QA phase
