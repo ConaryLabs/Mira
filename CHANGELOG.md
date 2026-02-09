@@ -80,6 +80,23 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-02-08
+
+### Fixed
+- **Entity upsert no-op bug** -- `upsert_entity_sync` ON CONFLICT clause used unqualified `COALESCE(display_name, ?)` which always resolved to the existing row's value, making updates a no-op. Now correctly uses `COALESCE(memory_entities.display_name, excluded.display_name)`.
+- **Memory import duplicates** -- `import_confirmed_memory_sync` used plain INSERT, creating duplicate rows when re-importing from CLAUDE.local.md. Now upserts by key.
+- **Scheduler panic guard** -- Added `Some(0)` guard in slow lane `should_run()` to prevent `is_multiple_of(0)` panic that would crash the background worker in a tight restart loop.
+- **Silent error swallowing** -- Replaced 10 instances of `.ok().flatten()` and silent `Err(_) => return` patterns with `tracing::warn!` logging across `db/team.rs`, `hooks/mod.rs`, and `hooks/stop.rs`. Errors are still gracefully handled but no longer invisible.
+- **RecallRow doc comment** -- Removed contradictory duplicate doc comment on the `RecallRow` type alias.
+- **Error message consistency** -- Standardized error messages in `tasks.rs` and `recipe.rs` to match the `"X is required for action 'Y'"` convention used everywhere else.
+- **`.env.example` clarity** -- Commented out `DEEPSEEK_API_KEY` to match other optional keys and avoid implying it's required.
+
+### Changed
+- **Transactional migrations** -- Each schema migration is now wrapped in a SAVEPOINT/RELEASE transaction. Partial migration failures roll back cleanly instead of leaving the database in a broken state.
+- **Defense-in-depth for git refs** -- Added explicit `validate_ref()` calls in `briefings.rs` before git operations, consistent with `git/commit.rs` and `git/diff.rs`.
+- **Ref length limit** -- `from_ref` and `to_ref` parameters in the diff tool are now capped at 256 characters.
+- **HashSet optimization** -- `detect_followup_fixes` in outcome scanner now uses `HashSet` for O(1) file overlap checks instead of O(n) Vec scans.
+
 ## [0.6.3] - 2026-02-08
 
 ### Added
