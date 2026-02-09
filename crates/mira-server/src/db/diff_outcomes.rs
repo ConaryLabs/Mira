@@ -53,7 +53,7 @@ pub struct StoreDiffOutcomeParams<'a> {
 pub fn store_diff_outcome_sync(
     conn: &Connection,
     p: &StoreDiffOutcomeParams,
-) -> rusqlite::Result<i64> {
+) -> rusqlite::Result<Option<i64>> {
     conn.execute(
         "INSERT INTO diff_outcomes (
             diff_analysis_id, project_id, outcome_type,
@@ -71,7 +71,11 @@ pub fn store_diff_outcome_sync(
             p.detected_by,
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    if conn.changes() > 0 {
+        Ok(Some(conn.last_insert_rowid()))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Get all outcomes for a specific diff analysis
@@ -119,8 +123,9 @@ pub fn mark_clean_outcomes_sync(
     project_id: i64,
     age_days: i64,
 ) -> rusqlite::Result<usize> {
-    let sql = "INSERT INTO diff_outcomes (diff_analysis_id, project_id, outcome_type, detected_by)
-               SELECT da.id, da.project_id, 'clean', 'aging'
+    debug_assert!(age_days > 0, "age_days must be positive");
+    let sql = "INSERT INTO diff_outcomes (diff_analysis_id, project_id, outcome_type, evidence_commit, detected_by)
+               SELECT da.id, da.project_id, 'clean', '', 'aging'
                FROM diff_analyses da
                WHERE da.project_id = ?
                  AND da.created_at < datetime('now', ? || ' days')

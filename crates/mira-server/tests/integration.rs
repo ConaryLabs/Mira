@@ -276,7 +276,7 @@ async fn test_remember_with_key() {
     };
 
     // Try to forget the memory
-    let forget_result = forget(&ctx, memory_id.to_string()).await;
+    let forget_result = forget(&ctx, memory_id).await;
     assert!(
         forget_result.is_ok(),
         "forget failed: {:?}",
@@ -291,15 +291,11 @@ async fn test_forget_invalid_id() {
     let ctx = TestContext::new().await;
 
     // Forget with negative ID
-    let result = forget(&ctx, "-5".to_string()).await;
+    let result = forget(&ctx, -5).await;
     assert!(result.is_err(), "Expected error for negative ID");
 
-    // Forget with non-numeric ID
-    let result = forget(&ctx, "abc".to_string()).await;
-    assert!(result.is_err(), "Expected error for non-numeric ID");
-
     // Forget with zero ID
-    let result = forget(&ctx, "0".to_string()).await;
+    let result = forget(&ctx, 0).await;
     assert!(result.is_err(), "Expected error for zero ID");
 }
 
@@ -829,14 +825,8 @@ async fn test_pool_error_handling() {
         "recall should handle missing project gracefully"
     );
 
-    // Try forget with invalid ID
-    let result = forget(&ctx, "invalid".to_string()).await;
-    assert!(result.is_err(), "forget should fail with invalid ID");
-    let err = result.err().expect("should be Err");
-    assert!(err.contains("Invalid"), "Error should mention invalid ID");
-
     // Try forget with non-existent ID
-    let result = forget(&ctx, "999999".to_string()).await;
+    let result = forget(&ctx, 999999).await;
     assert!(
         result.is_ok(),
         "forget should handle non-existent ID gracefully"
@@ -2733,9 +2723,7 @@ async fn test_memory_archive() {
     };
 
     // Archive it
-    let archive_output = archive(&ctx, memory_id.to_string())
-        .await
-        .expect("archive failed");
+    let archive_output = archive(&ctx, memory_id).await.expect("archive failed");
 
     assert!(
         msg!(archive_output).contains("archived") || msg!(archive_output).contains("Archive"),

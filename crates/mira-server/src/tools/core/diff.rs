@@ -59,13 +59,13 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     let include_impact = include_impact.unwrap_or(true);
 
     // Determine what to analyze
-    let (from, to, _analysis_type) = match (from_ref.as_deref(), to_ref.as_deref()) {
+    let (from, to) = match (from_ref.as_deref(), to_ref.as_deref()) {
         // Explicit refs provided
-        (Some(from), Some(to)) => (from.to_string(), to.to_string(), "commit"),
+        (Some(from), Some(to)) => (from.to_string(), to.to_string()),
         // Only from_ref: compare from_ref to HEAD
         (Some(from), None) => {
             let head = get_head_commit(path)?;
-            (from.to_string(), head, "commit")
+            (from.to_string(), head)
         }
         // No refs: analyze last commit (HEAD~1..HEAD)
         (None, None) => {
@@ -102,12 +102,12 @@ pub async fn analyze_diff_tool<C: ToolContext>(
             // Default to last commit
             let head = get_head_commit(path)?;
             let parent = resolve_ref(path, "HEAD~1").unwrap_or_else(|_| head.clone());
-            (parent, head, "commit")
+            (parent, head)
         }
         // Only to_ref is unusual, treat as HEAD..to_ref
         (None, Some(to)) => {
             let head = get_head_commit(path)?;
-            (head, to.to_string(), "commit")
+            (head, to.to_string())
         }
     };
 
@@ -205,6 +205,10 @@ async fn analyze_staged_or_working<C: ToolContext>(
             Ok::<_, String>(result)
         })
         .await
+        .map_err(|e| {
+            tracing::warn!("Impact graph lookup failed: {e}");
+            e
+        })
         .ok()
     } else {
         None

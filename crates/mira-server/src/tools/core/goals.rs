@@ -35,12 +35,16 @@ fn verify_goal_project(
     goal_project_id: Option<i64>,
     ctx_project_id: Option<i64>,
 ) -> Result<(), String> {
-    if let (Some(goal_pid), Some(ctx_pid)) = (goal_project_id, ctx_project_id)
-        && goal_pid != ctx_pid
-    {
-        return Err("Goal not found or access denied".to_string());
+    match (goal_project_id, ctx_project_id) {
+        // Both have project IDs — must match
+        (Some(goal_pid), Some(ctx_pid)) if goal_pid != ctx_pid => {
+            Err("Goal not found or access denied".to_string())
+        }
+        // Goal has a project but no context project — deny access
+        (Some(_), None) => Err("Goal not found or access denied".to_string()),
+        // Both match, goal is global, or both are None — allow
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// Fetch a goal by ID and verify project authorization.
@@ -68,16 +72,18 @@ async fn verify_milestone_project<C: ToolContext>(
         .await?
         .ok_or_else(|| "Milestone not found or access denied".to_string())?;
 
-    if let Some(goal_id) = milestone.goal_id {
-        let goal = ctx
-            .pool()
-            .run(move |conn| get_goal_by_id_sync(conn, goal_id))
-            .await?
-            .ok_or_else(|| "Goal not found or access denied".to_string())?;
+    let goal_id = milestone
+        .goal_id
+        .ok_or_else(|| "Milestone has no associated goal".to_string())?;
 
-        let ctx_project_id = ctx.project_id().await;
-        verify_goal_project(goal.project_id, ctx_project_id)?;
-    }
+    let goal = ctx
+        .pool()
+        .run(move |conn| get_goal_by_id_sync(conn, goal_id))
+        .await?
+        .ok_or_else(|| "Goal not found or access denied".to_string())?;
+
+    let ctx_project_id = ctx.project_id().await;
+    verify_goal_project(goal.project_id, ctx_project_id)?;
 
     Ok(())
 }
@@ -190,32 +196,36 @@ async fn action_bulk_create<C: ToolContext>(
         return Err("goals array cannot be empty".to_string());
     }
 
-    let mut created = Vec::new();
-    let mut entries = Vec::new();
-    for g in bulk_goals {
-        let title = g.title.clone();
-        let description = g.description.clone();
-        let status = g.status.clone();
-        let priority = g.priority.clone();
-
-        let id = ctx
-            .pool()
-            .run(move |conn| {
-                create_goal_sync(
-                    conn,
+    let results = ctx
+        .pool()
+        .run(move |conn| {
+            let tx = conn.unchecked_transaction()?;
+            let mut entries = Vec::new();
+            for g in &bulk_goals {
+                let id = create_goal_sync(
+                    &tx,
                     project_id,
-                    &title,
-                    description.as_deref(),
-                    status.as_deref(),
-                    priority.as_deref(),
+                    &g.title,
+                    g.description.as_deref(),
+                    g.status.as_deref(),
+                    g.priority.as_deref(),
                     None,
-                )
-            })
-            .await?;
+                )?;
+                entries.push((id, g.title.clone()));
+            }
+            tx.commit()?;
+            Ok::<_, rusqlite::Error>(entries)
+        })
+        .await?;
 
-        created.push(format!("[{}] {}", id, g.title));
-        entries.push(GoalCreatedEntry { id, title: g.title });
-    }
+    let created: Vec<String> = results
+        .iter()
+        .map(|(id, t)| format!("[{}] {}", id, t))
+        .collect();
+    let entries: Vec<GoalCreatedEntry> = results
+        .into_iter()
+        .map(|(id, title)| GoalCreatedEntry { id, title })
+        .collect();
 
     Ok(Json(GoalOutput {
         action: "bulk_create".into(),
@@ -237,17 +247,16 @@ async fn action_list<C: ToolContext>(
     include_finished: bool,
     limit: i64,
 ) -> Result<Json<GoalOutput>, String> {
+    let limit_usize = limit as usize;
     let goals = if include_finished {
         ctx.pool()
             .run(move |conn| get_goals_sync(conn, project_id, None))
             .await?
     } else {
         ctx.pool()
-            .run(move |conn| get_active_goals_sync(conn, project_id, 100))
+            .run(move |conn| get_active_goals_sync(conn, project_id, limit_usize))
             .await?
     };
-
-    let goals: Vec<_> = goals.into_iter().take(limit as usize).collect();
 
     if goals.is_empty() {
         return Ok(Json(GoalOutput {
@@ -509,11 +518,15 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
 
     match req.action {
         GoalAction::Get => {
-            let id = req.goal_id.ok_or("goal_id is required for action 'get'")?;
+            let id = req
+                .goal_id
+                .ok_or("goal_id is required for goal(action=get)")?;
             action_get(ctx, id).await
         }
         GoalAction::Create => {
-            let t = req.title.ok_or("title is required for action 'create'")?;
+            let t = req
+                .title
+                .ok_or("title is required for goal(action=create)")?;
             action_create(
                 ctx,
                 project_id,
@@ -528,7 +541,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
         GoalAction::BulkCreate => {
             let g = req
                 .goals
-                .ok_or("goals is required for action 'bulk_create'")?;
+                .ok_or("goals is required for goal(action=bulk_create)")?;
             action_bulk_create(ctx, project_id, &g).await
         }
         GoalAction::List => {
@@ -548,7 +561,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             };
             let id = req
                 .goal_id
-                .ok_or_else(|| format!("goal_id is required for action '{}'", action_name))?;
+                .ok_or_else(|| format!("goal_id is required for goal(action={})", action_name))?;
             action_update(
                 ctx,
                 id,
@@ -563,28 +576,28 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
         GoalAction::Delete => {
             let id = req
                 .goal_id
-                .ok_or("goal_id is required for action 'delete'")?;
+                .ok_or("goal_id is required for goal(action=delete)")?;
             action_delete(ctx, id).await
         }
         GoalAction::AddMilestone => {
             let gid = req
                 .goal_id
-                .ok_or("goal_id is required for action 'add_milestone'")?;
+                .ok_or("goal_id is required for goal(action=add_milestone)")?;
             let mt = req
                 .milestone_title
-                .ok_or("milestone_title is required for action 'add_milestone'")?;
+                .ok_or("milestone_title is required for goal(action=add_milestone)")?;
             action_add_milestone(ctx, gid, mt, req.weight).await
         }
         GoalAction::CompleteMilestone => {
             let mid = req
                 .milestone_id
-                .ok_or("milestone_id is required for action 'complete_milestone'")?;
+                .ok_or("milestone_id is required for goal(action=complete_milestone)")?;
             action_complete_milestone(ctx, mid).await
         }
         GoalAction::DeleteMilestone => {
             let mid = req
                 .milestone_id
-                .ok_or("milestone_id is required for action 'delete_milestone'")?;
+                .ok_or("milestone_id is required for goal(action=delete_milestone)")?;
             action_delete_milestone(ctx, mid).await
         }
     }

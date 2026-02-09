@@ -461,15 +461,15 @@ pub async fn documentation<C: ToolContext>(
     match action {
         DocumentationAction::List => list_doc_tasks(ctx, status, doc_type, priority).await,
         DocumentationAction::Get => {
-            let id = task_id.ok_or("task_id is required for action 'get'")?;
+            let id = task_id.ok_or("task_id is required for documentation(action=get)")?;
             get_doc_task_details(ctx, id).await
         }
         DocumentationAction::Complete => {
-            let id = task_id.ok_or("task_id is required for action 'complete'")?;
+            let id = task_id.ok_or("task_id is required for documentation(action=complete)")?;
             complete_doc_task(ctx, id).await
         }
         DocumentationAction::Skip => {
-            let id = task_id.ok_or("task_id is required for action 'skip'")?;
+            let id = task_id.ok_or("task_id is required for documentation(action=skip)")?;
             skip_doc_task(ctx, id, reason).await
         }
         DocumentationAction::Inventory => show_doc_inventory(ctx).await,

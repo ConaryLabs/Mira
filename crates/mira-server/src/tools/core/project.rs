@@ -84,19 +84,12 @@ fn detect_project_name(path: &str) -> Option<String> {
     // Try package.json for Node projects
     let package_json = path.join("package.json");
     if package_json.exists()
-        && let Ok(content) = std::fs::read_to_string(&package_json)
+        && let Ok(contents) = std::fs::read_to_string(&package_json)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents)
+        && let Some(name) = value["name"].as_str()
+        && !name.is_empty()
     {
-        for line in content.lines() {
-            let line = line.trim();
-            if line.starts_with("\"name\"")
-                && let Some(name) = line.split(':').nth(1)
-            {
-                let name = name.trim().trim_matches(',').trim_matches('"').trim();
-                if !name.is_empty() {
-                    return Some(name.to_string());
-                }
-            }
-        }
+        return Some(name.to_string());
     }
 
     // Fall back to directory name
@@ -635,11 +628,11 @@ pub async fn project<C: ToolContext>(
 ) -> Result<Json<ProjectOutput>, String> {
     match action {
         ProjectAction::Start => {
-            let path = project_path.ok_or("project_path is required for action 'start'")?;
+            let path = project_path.ok_or("project_path is required for project(action=start)")?;
             session_start(ctx, path, name, session_id).await
         }
         ProjectAction::Set => {
-            let path = project_path.ok_or("project_path is required for action 'set'")?;
+            let path = project_path.ok_or("project_path is required for project(action=set)")?;
             set_project(ctx, path, name).await
         }
         ProjectAction::Get => get_project(ctx).await,

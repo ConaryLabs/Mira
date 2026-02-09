@@ -373,11 +373,6 @@ async fn run_check() -> Result<()> {
         println!("  Background provider (config.toml): {}", bp);
     }
 
-    // Project-level .env
-    if std::path::Path::new(".env").exists() {
-        println!("\n  Project .env: .env (exists, overrides global)");
-    }
-
     // Validation
     if !validation.warnings.is_empty() || !validation.errors.is_empty() {
         println!("\n{}", validation.report());

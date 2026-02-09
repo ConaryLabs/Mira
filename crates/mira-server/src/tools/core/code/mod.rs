@@ -82,13 +82,15 @@ pub async fn handle_code<C: ToolContext>(
     use crate::mcp::requests::CodeAction;
     match req.action {
         CodeAction::Search => {
-            let query = req.query.ok_or("query is required for action 'search'")?;
+            let query = req
+                .query
+                .ok_or("query is required for code(action=search)")?;
             search_code(ctx, query, req.limit).await
         }
         CodeAction::Symbols => {
             let file_path = req
                 .file_path
-                .ok_or("file_path is required for action 'symbols'")?;
+                .ok_or("file_path is required for code(action=symbols)")?;
             // Validate file_path is within the project directory
             if let Some(project) = ctx.get_project().await {
                 let project_path = std::path::Path::new(&project.path)
@@ -109,21 +111,20 @@ pub async fn handle_code<C: ToolContext>(
         CodeAction::Callers => {
             let function_name = req
                 .function_name
-                .ok_or("function_name is required for action 'callers'")?;
+                .ok_or("function_name is required for code(action=callers)")?;
             find_function_callers(ctx, function_name, req.limit).await
         }
         CodeAction::Callees => {
             let function_name = req
                 .function_name
-                .ok_or("function_name is required for action 'callees'")?;
+                .ok_or("function_name is required for code(action=callees)")?;
             find_function_callees(ctx, function_name, req.limit).await
         }
         CodeAction::Dependencies => get_dependencies(ctx).await,
         CodeAction::Patterns => get_patterns(ctx).await,
         CodeAction::TechDebt => get_tech_debt(ctx).await,
         CodeAction::Diff => {
-            // Handled at router level (returns DiffOutput, not CodeOutput).
-            // This arm should never be reached.
+            // Defensive guard: router intercepts Tasks/Diff actions before reaching this handler
             Err("Internal routing error — please report this as a bug.".into())
         }
     }

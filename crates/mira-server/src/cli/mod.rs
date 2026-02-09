@@ -34,7 +34,7 @@ pub enum Commands {
 
     /// Execute a tool directly
     Tool {
-        /// Tool name (e.g. search_code, remember)
+        /// Tool name (e.g. memory, code, goal, session)
         #[arg(index = 1)]
         name: String,
 

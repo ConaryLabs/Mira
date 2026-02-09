@@ -72,14 +72,14 @@ fn spawn_record_access(
             .interact(move |conn| {
                 for id in ids {
                     if let Err(e) = record_memory_access_sync(conn, id, &session_id) {
-                        tracing::debug!("Failed to record memory access: {}", e);
+                        tracing::warn!("Failed to record memory access: {}", e);
                     }
                 }
                 Ok::<_, anyhow::Error>(())
             })
             .await
         {
-            tracing::debug!("Failed to record memory access (pool error): {}", e);
+            tracing::warn!("Failed to record memory access (pool error): {}", e);
         }
     });
 }
@@ -203,7 +203,7 @@ pub async fn handle_memory<C: ToolContext>(
         MemoryAction::Remember => {
             let content = req
                 .content
-                .ok_or("content is required for action 'remember'")?;
+                .ok_or("content is required for memory(action=remember)")?;
             remember(
                 ctx,
                 content,
@@ -216,15 +216,17 @@ pub async fn handle_memory<C: ToolContext>(
             .await
         }
         MemoryAction::Recall => {
-            let query = req.query.ok_or("query is required for action 'recall'")?;
+            let query = req
+                .query
+                .ok_or("query is required for memory(action=recall)")?;
             recall(ctx, query, req.limit, req.category, req.fact_type).await
         }
         MemoryAction::Forget => {
-            let id = req.id.ok_or("id is required for action 'forget'")?;
+            let id = req.id.ok_or("id is required for memory(action=forget)")?;
             forget(ctx, id).await
         }
         MemoryAction::Archive => {
-            let id = req.id.ok_or("id is required for action 'archive'")?;
+            let id = req.id.ok_or("id is required for memory(action=archive)")?;
             archive(ctx, id).await
         }
     }
@@ -670,10 +672,9 @@ fn verify_memory_access(
 }
 
 /// Delete a memory
-pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOutput>, String> {
+pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutput>, String> {
     use crate::db::{delete_memory_sync, get_memory_scope_sync};
 
-    let id: i64 = id.parse().map_err(|_| "Invalid ID format".to_string())?;
     if id <= 0 {
         return Err("Invalid memory ID: must be positive".to_string());
     }
@@ -722,10 +723,9 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOu
 }
 
 /// Archive a memory (sets status to 'archived', excluding it from auto-export)
-pub async fn archive<C: ToolContext>(ctx: &C, id: String) -> Result<Json<MemoryOutput>, String> {
+pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutput>, String> {
     use crate::db::get_memory_scope_sync;
 
-    let id: i64 = id.parse().map_err(|_| "Invalid ID format".to_string())?;
     if id <= 0 {
         return Err("Invalid memory ID: must be positive".to_string());
     }

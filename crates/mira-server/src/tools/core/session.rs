@@ -28,7 +28,7 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::History => {
             let history_action = req
                 .history_action
-                .ok_or("history_action is required for action 'history'")?;
+                .ok_or("history_action is required for session(action=history)")?;
             session_history(ctx, history_action, req.session_id, req.limit).await
         }
         SessionAction::Recap => {
@@ -42,7 +42,7 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::Usage => {
             let usage_action = req
                 .usage_action
-                .ok_or("usage_action is required for action 'usage'")?;
+                .ok_or("usage_action is required for session(action=usage)")?;
             let message =
                 super::usage(ctx, usage_action, req.group_by, req.since_days, req.limit).await?;
             Ok(Json(SessionOutput {
@@ -62,8 +62,7 @@ pub async fn handle_session<C: ToolContext>(
             .await
         }
         SessionAction::Tasks => {
-            // Handled at router level (returns TasksOutput, not SessionOutput).
-            // This arm should never be reached.
+            // Defensive guard: router intercepts Tasks actions before reaching this handler
             Err("Internal routing error — please report this as a bug.".into())
         }
     }

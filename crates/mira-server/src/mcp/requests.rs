@@ -163,7 +163,7 @@ pub struct MemoryRequest {
     #[schemars(description = "Search query (required for recall)")]
     pub query: Option<String>,
     #[schemars(description = "Memory ID to delete (required for forget)")]
-    pub id: Option<String>,
+    pub id: Option<i64>,
     #[schemars(description = "Key for upsert")]
     pub key: Option<String>,
     #[schemars(description = "Type: preference/decision/context/general")]

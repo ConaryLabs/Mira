@@ -27,7 +27,7 @@ pub async fn index<C: ToolContext>(
             let project = ctx.get_project().await;
             let project_path = path
                 .or_else(|| project.as_ref().map(|p| p.path.clone()))
-                .ok_or("No project path specified")?;
+                .ok_or("path is required for index(action=project)")?;
 
             let project_id = project.as_ref().map(|p| p.id);
 

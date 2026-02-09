@@ -168,7 +168,7 @@ pub async fn find_function_callers<C: ToolContext>(
     limit: Option<i64>,
 ) -> Result<Json<CodeOutput>, String> {
     if function_name.is_empty() {
-        return Err("function_name is required".to_string());
+        return Err("function_name is required for code(action=callers)".to_string());
     }
 
     let limit = limit.unwrap_or(20) as usize;
@@ -223,7 +223,7 @@ pub async fn find_function_callees<C: ToolContext>(
     limit: Option<i64>,
 ) -> Result<Json<CodeOutput>, String> {
     if function_name.is_empty() {
-        return Err("function_name is required".to_string());
+        return Err("function_name is required for code(action=callees)".to_string());
     }
 
     let limit = limit.unwrap_or(20) as usize;
