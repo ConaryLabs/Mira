@@ -371,7 +371,13 @@ async fn snapshot_tasks(
 /// Build a session summary from tool history
 fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
     // Get session stats
-    let (tool_count, top_tools) = crate::db::get_session_stats_sync(conn, session_id).ok()?;
+    let (tool_count, top_tools) = match crate::db::get_session_stats_sync(conn, session_id) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("Session stats query failed for {}: {}", session_id, e);
+            return None;
+        }
+    };
 
     if tool_count == 0 {
         return None;

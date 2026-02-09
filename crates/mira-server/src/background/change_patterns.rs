@@ -237,13 +237,16 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
                 COUNT(DISTINCT CASE WHEN do2.outcome_type = 'follow_up_fix' THEN dwo.diff_id END) as fixed
             FROM diff_without_file dwo
             JOIN diff_outcomes do2 ON do2.diff_analysis_id = dwo.diff_id
+            WHERE do2.project_id = ?
         )
         SELECT total, clean, reverted, fixed FROM gap_outcomes
     "#;
 
+    let mut gap_stmt = conn.prepare(gap_sql)?;
+
     for (file_a, file_b, _together_count) in &pairs {
         // Check: A without B
-        if let Ok(Some(stats)) = query_gap_stats(conn, gap_sql, project_id, file_a, file_b)
+        if let Ok(Some(stats)) = query_gap_stats(&mut gap_stmt, project_id, file_a, file_b)
             && stats.total >= MIN_OBSERVATIONS
         {
             let bad_rate = (stats.reverted + stats.follow_up_fix) as f64 / stats.total as f64;
@@ -276,27 +279,68 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
                 }
             }
         }
+
+        // Check: B without A
+        if stored >= MAX_PATTERNS_PER_STRATEGY {
+            break;
+        }
+        if let Ok(Some(stats)) = query_gap_stats(&mut gap_stmt, project_id, file_b, file_a)
+            && stats.total >= MIN_OBSERVATIONS
+        {
+            let bad_rate = (stats.reverted + stats.follow_up_fix) as f64 / stats.total as f64;
+            if bad_rate >= MIN_BAD_RATE {
+                let confidence = compute_confidence(stats.total, bad_rate);
+                let occurrence_count = stats.total;
+                let pattern_key = format!("co_change_gap:{}|{}", file_b, file_a);
+
+                let pattern = BehaviorPattern {
+                    id: None,
+                    project_id,
+                    pattern_type: PatternType::ChangePattern,
+                    pattern_key,
+                    pattern_data: PatternData::ChangePattern {
+                        files: vec![file_b.clone(), file_a.clone()],
+                        module: None,
+                        pattern_subtype: "co_change_gap".to_string(),
+                        outcome_stats: stats,
+                        sample_commits: vec![],
+                    },
+                    confidence,
+                    occurrence_count,
+                };
+
+                crate::proactive::patterns::upsert_pattern(conn, &pattern)?;
+                stored += 1;
+
+                if stored >= MAX_PATTERNS_PER_STRATEGY {
+                    break;
+                }
+            }
+        }
     }
 
     Ok(stored)
 }
 
-/// Helper to query gap outcome stats
+/// Helper to query gap outcome stats using a prepared statement.
+/// Parameters: project_id, file_a (has this file), file_b (missing this file), project_id (for outcome filter).
 fn query_gap_stats(
-    conn: &Connection,
-    sql: &str,
+    stmt: &mut rusqlite::Statement,
     project_id: i64,
     file_a: &str,
     file_b: &str,
 ) -> Result<Option<OutcomeStats>> {
-    let result = conn.query_row(sql, rusqlite::params![project_id, file_a, file_b], |row| {
-        Ok(OutcomeStats {
-            total: row.get(0)?,
-            clean: row.get(1)?,
-            reverted: row.get(2)?,
-            follow_up_fix: row.get(3)?,
-        })
-    });
+    let result = stmt.query_row(
+        rusqlite::params![project_id, file_a, file_b, project_id],
+        |row| {
+            Ok(OutcomeStats {
+                total: row.get(0)?,
+                clean: row.get(1)?,
+                reverted: row.get(2)?,
+                follow_up_fix: row.get(3)?,
+            })
+        },
+    );
 
     match result {
         Ok(stats) if stats.total > 0 => Ok(Some(stats)),

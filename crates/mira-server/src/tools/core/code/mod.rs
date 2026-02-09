@@ -125,7 +125,10 @@ pub async fn handle_code<C: ToolContext>(
         CodeAction::TechDebt => get_tech_debt(ctx).await,
         CodeAction::Diff => {
             // Defensive guard: router intercepts Tasks/Diff actions before reaching this handler
-            Err("Internal routing error — please report this as a bug.".into())
+            Err(
+                "Internal routing error for code(action=diff) — please report this as a bug."
+                    .into(),
+            )
         }
     }
 }

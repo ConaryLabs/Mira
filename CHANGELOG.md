@@ -80,6 +80,22 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-02-08
+
+### Fixed
+- **Asymmetric co-change gap mining** -- `mine_co_change_gaps` only checked A-without-B direction, missing half of all co-change patterns. Now checks both directions.
+- **Missing project_id filter** -- `gap_outcomes` CTE in co-change mining joined `diff_outcomes` without a `project_id` filter, inconsistent with other CTEs. Added `WHERE do2.project_id = ?` for defense-in-depth.
+- **Variable shadowing in impact analysis** -- `compute_historical_risk` destructured `ref files` shadowed the function parameter `files`, making future changes fragile. Renamed to `pattern_files`.
+- **Silent session summary failure** -- `build_session_summary` used `.ok()?` which silently returned `None` on DB errors. Now logs `tracing::warn!` before returning.
+- **Inline embedding latency** -- `remember` tool blocked 200-500ms on inline OpenAI embedding call. Removed in favor of background fast lane worker which already handles un-embedded facts.
+- **Missing input validation** -- Goal/milestone IDs now validated as positive integers. Empty/whitespace-only memory content now rejected with clear error message.
+- **Opaque routing errors** -- Internal routing error messages in `session(action=tasks)` and `code(action=diff)` now include the action name for better bug reports.
+
+### Changed
+- **Prepared statement optimization** -- Co-change gap mining now prepares the SQL statement once before the loop instead of re-parsing on each of up to 50 file pairs.
+- **Dead code removal** -- Removed unused `PartialOrd, Ord` derives from `TaskPriority` enum and fixed misleading "higher priority runs first" comment.
+- **CI concurrency control** -- Added `concurrency` group to `ci.yml` to cancel stale PR runs, saving runner minutes.
+
 ## [0.6.4] - 2026-02-08
 
 ### Fixed

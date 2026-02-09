@@ -37,8 +37,8 @@ const OUTCOME_SCAN_CYCLE_INTERVAL: u64 = 5;
 /// Run team monitoring every Nth cycle
 const TEAM_MONITOR_CYCLE_INTERVAL: u64 = 3;
 
-/// Priority level for background tasks. Higher priority runs first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Priority level for background tasks. Lower numeric value = higher priority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskPriority {
     /// Must always run: session summaries, embeddings
     Critical = 0,

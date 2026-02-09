@@ -63,7 +63,10 @@ pub async fn handle_session<C: ToolContext>(
         }
         SessionAction::Tasks => {
             // Defensive guard: router intercepts Tasks actions before reaching this handler
-            Err("Internal routing error — please report this as a bug.".into())
+            Err(
+                "Internal routing error for session(action=tasks) — please report this as a bug."
+                    .into(),
+            )
         }
     }
 }

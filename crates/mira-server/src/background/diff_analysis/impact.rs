@@ -116,7 +116,7 @@ pub fn compute_historical_risk(
 
     for pattern in &patterns {
         if let PatternData::ChangePattern {
-            ref files,
+            files: ref pattern_files,
             ref module,
             ref pattern_subtype,
             ref outcome_stats,
@@ -150,9 +150,9 @@ pub fn compute_historical_risk(
                     }
                 }
                 "co_change_gap" => {
-                    if files.len() >= 2 {
-                        let file_a = &files[0];
-                        let file_b = &files[1];
+                    if pattern_files.len() >= 2 {
+                        let file_a = &pattern_files[0];
+                        let file_b = &pattern_files[1];
                         // Flag if file_a is in diff but file_b is NOT
                         if file_set.contains(file_a.as_str()) && !file_set.contains(file_b.as_str())
                         {

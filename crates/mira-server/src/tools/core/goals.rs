@@ -88,6 +88,15 @@ async fn verify_milestone_project<C: ToolContext>(
     Ok(())
 }
 
+/// Validate that an ID is positive (non-zero, non-negative).
+fn validate_positive_id(id: i64, field: &str) -> Result<i64, String> {
+    if id <= 0 {
+        Err(format!("Invalid {}: must be positive", field))
+    } else {
+        Ok(id)
+    }
+}
+
 // ============================================================================
 // Action-specific functions
 // ============================================================================
@@ -521,6 +530,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             let id = req
                 .goal_id
                 .ok_or("goal_id is required for goal(action=get)")?;
+            let id = validate_positive_id(id, "goal_id")?;
             action_get(ctx, id).await
         }
         GoalAction::Create => {
@@ -562,6 +572,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             let id = req
                 .goal_id
                 .ok_or_else(|| format!("goal_id is required for goal(action={})", action_name))?;
+            let id = validate_positive_id(id, "goal_id")?;
             action_update(
                 ctx,
                 id,
@@ -577,12 +588,14 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             let id = req
                 .goal_id
                 .ok_or("goal_id is required for goal(action=delete)")?;
+            let id = validate_positive_id(id, "goal_id")?;
             action_delete(ctx, id).await
         }
         GoalAction::AddMilestone => {
             let gid = req
                 .goal_id
                 .ok_or("goal_id is required for goal(action=add_milestone)")?;
+            let gid = validate_positive_id(gid, "goal_id")?;
             let mt = req
                 .milestone_title
                 .ok_or("milestone_title is required for goal(action=add_milestone)")?;
@@ -592,12 +605,14 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             let mid = req
                 .milestone_id
                 .ok_or("milestone_id is required for goal(action=complete_milestone)")?;
+            let mid = validate_positive_id(mid, "milestone_id")?;
             action_complete_milestone(ctx, mid).await
         }
         GoalAction::DeleteMilestone => {
             let mid = req
                 .milestone_id
                 .ok_or("milestone_id is required for goal(action=delete_milestone)")?;
+            let mid = validate_positive_id(mid, "milestone_id")?;
             action_delete_milestone(ctx, mid).await
         }
     }

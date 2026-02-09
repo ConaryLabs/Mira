@@ -1,6 +1,6 @@
 //! Unified memory tools (recall, remember, forget)
 
-use crate::db::{StoreMemoryParams, store_fact_embedding_sync, store_memory_sync};
+use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
 use crate::search::embedding_to_bytes;
@@ -252,6 +252,10 @@ pub async fn remember<C: ToolContext>(
         ));
     }
 
+    if content.trim().is_empty() {
+        return Err("Memory content cannot be empty or whitespace-only.".to_string());
+    }
+
     // Security: warn if content looks like it contains secrets
     if let Some(pattern_name) = detect_secret(&content) {
         return Err(format!(
@@ -303,7 +307,7 @@ pub async fn remember<C: ToolContext>(
     let branch = ctx.get_branch().await;
 
     // Clone only what's needed after the closure; move the rest directly
-    let content_for_later = content.clone(); // needed for embedding + entity extraction
+    let content_for_later = content.clone(); // needed for entity extraction
     let key_for_later = key.clone(); // needed for response message
     let id: i64 = ctx
         .pool()
@@ -324,47 +328,6 @@ pub async fn remember<C: ToolContext>(
             store_memory_sync(conn, params)
         })
         .await?;
-
-    // Store embedding if available
-    if let Some(embeddings) = ctx.embeddings() {
-        // Clean up stale vec_memory and reset has_embedding so background
-        // scanner (find_facts_without_embeddings_sync) will retry
-        let reset_embedding = |pool: std::sync::Arc<crate::db::pool::DatabasePool>,
-                               fact_id: i64| {
-            tokio::spawn(async move {
-                let _ = pool
-                    .run(move |conn| {
-                        conn.execute("DELETE FROM vec_memory WHERE fact_id = ?", [fact_id])?;
-                        conn.execute(
-                            "UPDATE memory_facts SET has_embedding = 0 WHERE id = ?",
-                            [fact_id],
-                        )
-                    })
-                    .await;
-            });
-        };
-
-        match embeddings.embed(&content_for_later).await {
-            Ok(embedding) => {
-                let embedding_bytes = embedding_to_bytes(&embedding);
-                let content_for_embed = content_for_later.clone();
-                let result = ctx
-                    .pool()
-                    .run(move |conn| {
-                        store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
-                    })
-                    .await;
-                if let Err(e) = result {
-                    tracing::warn!("Failed to store embedding: {}", e);
-                    reset_embedding(ctx.pool().clone(), id);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to generate embedding: {}", e);
-                reset_embedding(ctx.pool().clone(), id);
-            }
-        }
-    }
 
     // Extract and link entities in a separate transaction
     // If this fails, the fact is still stored — backfill will pick it up later
