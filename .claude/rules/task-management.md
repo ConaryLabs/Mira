@@ -20,8 +20,8 @@ For work spanning multiple sessions, use Mira's `goal` tool with milestones:
 
 ```
 goal(action="create", title="Implement auth system", priority="high")
-goal(action="add_milestone", goal_id="1", milestone_title="Design API", weight=2)
-goal(action="complete_milestone", milestone_id="1")  # Auto-updates progress
+goal(action="add_milestone", goal_id=1, milestone_title="Design API", weight=2)
+goal(action="complete_milestone", milestone_id=1)  # Auto-updates progress
 goal(action="list")  # Shows goals with progress %
 ```
 

@@ -1,6 +1,6 @@
-# Memory System: Remember & Recall
+# Memory System: Remember, Recall, Forget & Archive
 
-Use `memory(action="remember", ...)` to store decisions and context. Use `memory(action="recall", ...)` to retrieve them.
+Use `memory(action="remember", ...)` to store decisions and context. Use `memory(action="recall", ...)` to retrieve them. Use `memory(action="forget", id=N)` to delete by ID. Use `memory(action="archive", id=N)` to exclude from auto-export while keeping history.
 
 ## Evidence Threshold
 

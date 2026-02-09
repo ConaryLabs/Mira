@@ -19,7 +19,7 @@ For full session context, call `session(action="recap")`. Use `memory(action="re
 | Store secrets in memories | Keep secrets in `.env` only |
 | Guess at MCP tool parameters | Check tool schema or existing usage first |
 | Add dependencies without checking | Run `memory(action="recall", query="dependencies")` first |
-| Change tool handler signatures in `tools/mcp.rs` | Coordinate changes across all tool modules in `tools/core/` |
+| Change tool handler signatures in `mcp/router.rs` | Coordinate changes across all tool modules in `tools/core/` |
 
 ## Tool Selection
 
@@ -51,11 +51,11 @@ See `.claude/rules/tool-selection.md` for the full decision guide.
 ## Build & Test
 
 ```bash
-cargo build --release
+cargo build
 cargo test
 ```
 
-The binary is at `target/release/mira`. Claude Code spawns it via MCP (configured in `.mcp.json`).
+The binary is at `target/debug/mira` (or `target/release/mira` for release builds). Claude Code spawns it via MCP (configured in `.mcp.json`).
 
 ## Debugging
 
@@ -96,6 +96,7 @@ See `.env.example` for all options.
 | `/mira:insights` | Surface background analysis and predictions |
 | `/mira:diff` | Semantic analysis of code changes |
 | `/mira:experts` | Expert consultation via Agent Teams |
+| `/mira:full-cycle` | End-to-end expert review with implementation and QA |
 
 ## Hook Integration
 
