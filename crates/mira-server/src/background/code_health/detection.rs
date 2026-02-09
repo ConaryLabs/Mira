@@ -444,3 +444,367 @@ fn is_acceptable_error_swallow(line: &str) -> bool {
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // is_cfg_test
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cfg_test_simple() {
+        assert!(is_cfg_test("#[cfg(test)]"));
+    }
+
+    #[test]
+    fn test_cfg_test_with_whitespace() {
+        assert!(is_cfg_test("  #[cfg(test)]  "));
+    }
+
+    #[test]
+    fn test_cfg_test_nested_not() {
+        assert!(is_cfg_test("#[cfg(not(test))]"));
+    }
+
+    #[test]
+    fn test_cfg_test_any_with_test() {
+        assert!(is_cfg_test("#[cfg(any(test, feature = \"foo\"))]"));
+    }
+
+    #[test]
+    fn test_cfg_test_all_with_test() {
+        assert!(is_cfg_test("#[cfg(all(test, target_os = \"linux\"))]"));
+    }
+
+    #[test]
+    fn test_cfg_not_test() {
+        assert!(!is_cfg_test("#[cfg(feature = \"serde\")]"));
+    }
+
+    #[test]
+    fn test_cfg_test_no_cfg() {
+        assert!(!is_cfg_test("fn main() {}"));
+    }
+
+    #[test]
+    fn test_cfg_test_empty() {
+        assert!(!is_cfg_test(""));
+    }
+
+    #[test]
+    fn test_cfg_test_partial_word() {
+        // "testing" contains "test" but is a different word
+        assert!(!is_cfg_test("#[cfg(feature = \"testing\")]"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // is_safe_unwrap
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_safe_unwrap_regex() {
+        assert!(is_safe_unwrap("    Regex::new(r\"pattern\").unwrap()"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_mutex_lock() {
+        assert!(is_safe_unwrap("    let guard = data.lock().unwrap();"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_rwlock_read() {
+        assert!(is_safe_unwrap("    let r = rw.read().unwrap();"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_rwlock_write() {
+        assert!(is_safe_unwrap("    let w = rw.write().unwrap();"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_channel_send() {
+        assert!(is_safe_unwrap("    tx.send(msg).unwrap();"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_selector_parse() {
+        assert!(is_safe_unwrap("    Selector::parse(\"div\").unwrap()"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_set_language() {
+        assert!(is_safe_unwrap("    parser.set_language(lang).unwrap()"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_string_literal_at_end() {
+        // Pattern checks for ".unwrap()" — quote immediately before .unwrap()
+        assert!(is_safe_unwrap(r#"    contains(".unwrap()")"#));
+    }
+
+    #[test]
+    fn test_safe_unwrap_string_literal_mid_string_not_caught() {
+        // .unwrap() in middle of string literal doesn't match the heuristic
+        assert!(!is_safe_unwrap(r#"    println!("call .unwrap() here")"#));
+    }
+
+    #[test]
+    fn test_unsafe_unwrap_plain() {
+        assert!(!is_safe_unwrap("    result.unwrap()"));
+    }
+
+    #[test]
+    fn test_unsafe_unwrap_option() {
+        assert!(!is_safe_unwrap("    some_option.unwrap()"));
+    }
+
+    #[test]
+    fn test_safe_unwrap_mutex_expect() {
+        assert!(is_safe_unwrap(
+            "    let guard = data.lock().expect(\"poisoned\");"
+        ));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // check_error_pattern
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_error_silent_db_execute() {
+        let r = check_error_pattern("let _ = conn.execute(\"DELETE FROM foo\", []);");
+        assert!(r.is_some());
+        let (sev, pat, _) = r.unwrap();
+        assert_eq!(sev, "high");
+        assert_eq!(pat, "silent_db");
+    }
+
+    #[test]
+    fn test_error_silent_db_insert() {
+        assert!(check_error_pattern("let _ = conn.insert(data);").is_some());
+    }
+
+    #[test]
+    fn test_error_silent_db_update() {
+        assert!(check_error_pattern("let _ = db.update(row);").is_some());
+    }
+
+    #[test]
+    fn test_error_silent_db_delete() {
+        assert!(check_error_pattern("let _ = db.delete(id);").is_some());
+    }
+
+    #[test]
+    fn test_error_ok_swallow() {
+        let r = check_error_pattern("    let val = something.ok()");
+        assert!(r.is_some());
+        let (sev, pat, _) = r.unwrap();
+        assert_eq!(sev, "medium");
+        assert_eq!(pat, "ok_swallow");
+    }
+
+    #[test]
+    fn test_error_ok_propagation_not_flagged() {
+        // .ok()? is fine
+        assert!(check_error_pattern("    something.ok()?").is_none());
+    }
+
+    #[test]
+    fn test_error_ok_env_var_not_flagged() {
+        assert!(check_error_pattern("    env::var(\"HOME\").ok()").is_none());
+    }
+
+    #[test]
+    fn test_error_ok_parse_not_flagged() {
+        assert!(check_error_pattern("    \"42\".parse::<i32>().ok()").is_none());
+    }
+
+    #[test]
+    fn test_error_ok_chained_not_flagged() {
+        // .ok().map(...) is method chaining, not bare .ok()
+        assert!(check_error_pattern("    val.ok().map(|x| x + 1)").is_none());
+    }
+
+    #[test]
+    fn test_error_send_ignore() {
+        let r = check_error_pattern("let _ = tx.send(msg)");
+        assert!(r.is_some());
+        let (sev, pat, _) = r.unwrap();
+        assert_eq!(sev, "low");
+        assert_eq!(pat, "send_ignore");
+    }
+
+    #[test]
+    fn test_error_send_ignore_with_comment_not_flagged() {
+        assert!(check_error_pattern("let _ = tx.send(msg) // intentional").is_none());
+    }
+
+    #[test]
+    fn test_error_no_pattern() {
+        assert!(check_error_pattern("    let x = foo.bar();").is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // is_acceptable_error_swallow
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_acceptable_logging_error() {
+        assert!(is_acceptable_error_swallow("    error!(\"failed\")"));
+    }
+
+    #[test]
+    fn test_acceptable_logging_warn() {
+        assert!(is_acceptable_error_swallow("    warn!(\"oops\")"));
+    }
+
+    #[test]
+    fn test_acceptable_tracing() {
+        assert!(is_acceptable_error_swallow(
+            "    tracing::warn!(\"failed\")"
+        ));
+    }
+
+    #[test]
+    fn test_acceptable_intentional_comment() {
+        assert!(is_acceptable_error_swallow("    .ok() // intentional"));
+    }
+
+    #[test]
+    fn test_acceptable_ignore_comment() {
+        assert!(is_acceptable_error_swallow("    let _ = x; // ignore"));
+    }
+
+    #[test]
+    fn test_acceptable_ok_to_fail_comment() {
+        assert!(is_acceptable_error_swallow(
+            "    let _ = x; // ok to fail"
+        ));
+    }
+
+    #[test]
+    fn test_acceptable_filter_map() {
+        assert!(is_acceptable_error_swallow(
+            "    results.filter_map(|r| r.ok())"
+        ));
+    }
+
+    #[test]
+    fn test_acceptable_ok_unwrap_or() {
+        assert!(is_acceptable_error_swallow("    val.ok().unwrap_or(0)"));
+    }
+
+    #[test]
+    fn test_acceptable_ok_map() {
+        assert!(is_acceptable_error_swallow("    val.ok().map(|x| x + 1)"));
+    }
+
+    #[test]
+    fn test_acceptable_ok_and_then() {
+        assert!(is_acceptable_error_swallow(
+            "    val.ok().and_then(|x| Some(x))"
+        ));
+    }
+
+    #[test]
+    fn test_acceptable_ok_flatten() {
+        assert!(is_acceptable_error_swallow("    val.ok().flatten()"));
+    }
+
+    #[test]
+    fn test_acceptable_db_get_ok() {
+        assert!(is_acceptable_error_swallow(
+            "    db.get_project(id).ok()"
+        ));
+    }
+
+    #[test]
+    fn test_not_acceptable_bare_discard() {
+        assert!(!is_acceptable_error_swallow("    let _ = conn.execute(q)"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DetectionResults::all_maxed
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_all_maxed_true() {
+        let r = DetectionResults {
+            todos: MAX_TODO_FINDINGS,
+            unimplemented: MAX_UNIMPLEMENTED_FINDINGS,
+            unwraps: MAX_UNWRAP_FINDINGS,
+            error_handling: MAX_ERROR_HANDLING_FINDINGS,
+        };
+        assert!(r.all_maxed());
+    }
+
+    #[test]
+    fn test_all_maxed_false_one_short() {
+        let r = DetectionResults {
+            todos: MAX_TODO_FINDINGS - 1,
+            unimplemented: MAX_UNIMPLEMENTED_FINDINGS,
+            unwraps: MAX_UNWRAP_FINDINGS,
+            error_handling: MAX_ERROR_HANDLING_FINDINGS,
+        };
+        assert!(!r.all_maxed());
+    }
+
+    #[test]
+    fn test_all_maxed_false_zeros() {
+        let r = DetectionResults {
+            todos: 0,
+            unimplemented: 0,
+            unwraps: 0,
+            error_handling: 0,
+        };
+        assert!(!r.all_maxed());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // store_detection_findings
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_store_findings_empty() {
+        let conn = crate::db::test_support::setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/det", Some("test")).unwrap();
+        let count = store_detection_findings(&conn, pid, &[]).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_store_findings_persists() {
+        let conn = crate::db::test_support::setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/det", Some("test")).unwrap();
+
+        let findings = vec![
+            DetectionFinding {
+                key: "health:todo:src/main.rs:10".to_string(),
+                content: "[todo] src/main.rs:10 - TODO: fix this".to_string(),
+                category: "todo",
+                confidence: CONFIDENCE_TODO,
+            },
+            DetectionFinding {
+                key: "health:unwrap:src/lib.rs:5".to_string(),
+                content: "[high] .unwrap() at src/lib.rs:5".to_string(),
+                category: "unwrap",
+                confidence: CONFIDENCE_UNWRAP_HIGH,
+            },
+        ];
+
+        let count = store_detection_findings(&conn, pid, &findings).unwrap();
+        assert_eq!(count, 2);
+
+        let stored: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, 2);
+    }
+}

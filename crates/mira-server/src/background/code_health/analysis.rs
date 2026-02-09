@@ -414,3 +414,122 @@ fn get_error_heavy_functions(
 
     Ok(results)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // truncate_function_code
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_truncate_under_limit() {
+        let code = "fn foo() {\n    42\n}";
+        let result = truncate_function_code(code, 1000);
+        assert_eq!(result, code);
+    }
+
+    #[test]
+    fn test_truncate_at_line_boundary() {
+        let code = "line one\nline two\nline three\nline four\n";
+        // Limit to 20 bytes — should cut at a newline boundary
+        let result = truncate_function_code(code, 20);
+        assert!(result.contains("// ... [code truncated,"));
+        assert!(result.contains("bytes total"));
+        // Should not contain partial lines
+        assert!(!result.contains("line four"));
+    }
+
+    #[test]
+    fn test_truncate_exact_limit() {
+        let code = "hello";
+        let result = truncate_function_code(code, 5);
+        assert_eq!(result, code);
+    }
+
+    #[test]
+    fn test_truncate_no_newline() {
+        // Single long line with no newline
+        let code = "a".repeat(100);
+        let result = truncate_function_code(&code, 50);
+        assert!(result.contains("... [code truncated,"));
+    }
+
+    #[test]
+    fn test_truncate_preserves_content_before_cut() {
+        let code = "fn foo() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}";
+        let result = truncate_function_code(code, 30);
+        assert!(result.starts_with("fn foo()"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // extract_function_code
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    fn write_temp_source(dir: &std::path::Path, rel_path: &str, content: &str) {
+        let full = dir.join(rel_path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut f = std::fs::File::create(&full).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn test_extract_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = "line 1\nline 2\nline 3\nline 4\nline 5\n";
+        write_temp_source(dir.path(), "src/main.rs", source);
+
+        let result = extract_function_code(dir.path().to_str().unwrap(), "src/main.rs", 2, 4);
+        assert_eq!(result.unwrap(), "line 2\nline 3\nline 4");
+    }
+
+    #[test]
+    fn test_extract_first_line() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_source(dir.path(), "src/lib.rs", "fn foo() {\n    42\n}\n");
+
+        let result = extract_function_code(dir.path().to_str().unwrap(), "src/lib.rs", 1, 3);
+        assert_eq!(result.unwrap(), "fn foo() {\n    42\n}");
+    }
+
+    #[test]
+    fn test_extract_nonexistent_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let result =
+            extract_function_code(dir.path().to_str().unwrap(), "src/nope.rs", 1, 5);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_stale_line_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_source(dir.path(), "src/lib.rs", "one\ntwo\n");
+
+        // start >= end
+        let result = extract_function_code(dir.path().to_str().unwrap(), "src/lib.rs", 5, 3);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_end_beyond_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_source(dir.path(), "src/lib.rs", "line 1\nline 2\nline 3\n");
+
+        // end_line beyond file length — should clamp
+        let result = extract_function_code(dir.path().to_str().unwrap(), "src/lib.rs", 2, 100);
+        assert_eq!(result.unwrap(), "line 2\nline 3");
+    }
+
+    #[test]
+    fn test_extract_path_traversal_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        // safe_join should block path traversal
+        let result =
+            extract_function_code(dir.path().to_str().unwrap(), "../../../etc/passwd", 1, 5);
+        assert!(result.is_none());
+    }
+}

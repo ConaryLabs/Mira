@@ -750,3 +750,343 @@ async fn scan_unused_functions_sharded(
 fn clear_old_health_issues(conn: &rusqlite::Connection, project_id: i64) -> Result<(), String> {
     clear_old_health_issues_sync(conn, project_id).str_err()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// Create a connection with code DB tables for collect_dependency_data tests.
+    fn setup_code_db() -> Connection {
+        crate::db::pool::ensure_sqlite_vec_registered();
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS code_symbols (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                symbol_type TEXT NOT NULL,
+                start_line INTEGER,
+                end_line INTEGER,
+                signature TEXT,
+                indexed_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS call_graph (
+                id INTEGER PRIMARY KEY,
+                caller_id INTEGER REFERENCES code_symbols(id),
+                callee_name TEXT NOT NULL,
+                callee_id INTEGER REFERENCES code_symbols(id),
+                call_count INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS imports (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                import_path TEXT NOT NULL,
+                is_external INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS codebase_modules (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                module_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                UNIQUE(project_id, module_id)
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_module(conn: &Connection, project_id: i64, module_id: &str, path: &str) {
+        conn.execute(
+            "INSERT INTO codebase_modules (project_id, module_id, name, path) VALUES (?1, ?2, ?2, ?3)",
+            rusqlite::params![project_id, module_id, path],
+        )
+        .unwrap();
+    }
+
+    fn insert_import(conn: &Connection, project_id: i64, file_path: &str, import_path: &str) {
+        conn.execute(
+            "INSERT INTO imports (project_id, file_path, import_path, is_external) VALUES (?1, ?2, ?3, 0)",
+            rusqlite::params![project_id, file_path, import_path],
+        )
+        .unwrap();
+    }
+
+    fn insert_symbol(conn: &Connection, project_id: i64, name: &str, file_path: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line)
+             VALUES (?1, ?2, ?3, 'function', 1, 10)",
+            rusqlite::params![project_id, file_path, name],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn insert_call(conn: &Connection, caller_id: i64, callee_id: i64, call_count: i64) {
+        conn.execute(
+            "INSERT INTO call_graph (caller_id, callee_name, callee_id, call_count)
+             VALUES (?1, 'callee', ?2, ?3)",
+            rusqlite::params![caller_id, callee_id, call_count],
+        )
+        .unwrap();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // collect_dependency_data tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_collect_deps_no_modules() {
+        let conn = setup_code_db();
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_modules_but_no_edges() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_import_only() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].source, "mod_a");
+        assert_eq!(result[0].target, "mod_b");
+        assert_eq!(result[0].dep_type, "import");
+        assert_eq!(result[0].import_count, 1);
+        assert_eq!(result[0].call_count, 0);
+        assert!(!result[0].is_circular);
+    }
+
+    #[test]
+    fn test_collect_deps_call_only() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        let caller = insert_symbol(&conn, 1, "foo", "src/a/main.rs");
+        let callee = insert_symbol(&conn, 1, "bar", "src/b/lib.rs");
+        insert_call(&conn, caller, callee, 3);
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dep_type, "call");
+        assert_eq!(result[0].call_count, 3);
+        assert_eq!(result[0].import_count, 0);
+    }
+
+    #[test]
+    fn test_collect_deps_both_import_and_call() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+        let caller = insert_symbol(&conn, 1, "foo", "src/a/main.rs");
+        let callee = insert_symbol(&conn, 1, "bar", "src/b/lib.rs");
+        insert_call(&conn, caller, callee, 2);
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dep_type, "both");
+        assert_eq!(result[0].call_count, 2);
+        assert_eq!(result[0].import_count, 1);
+    }
+
+    #[test]
+    fn test_collect_deps_circular() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        // A -> B and B -> A
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+        insert_import(&conn, 1, "src/b/main.rs", "src/a/utils.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 2);
+        for edge in &result {
+            assert!(
+                edge.is_circular,
+                "Edge {} -> {} should be circular",
+                edge.source, edge.target
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_deps_same_module_ignored() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        // Import within same module
+        insert_import(&conn, 1, "src/a/main.rs", "src/a/utils.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty(), "Intra-module deps should be ignored");
+    }
+
+    #[test]
+    fn test_collect_deps_external_imports_excluded() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        conn.execute(
+            "INSERT INTO imports (project_id, file_path, import_path, is_external)
+             VALUES (1, 'src/a/main.rs', 'serde::Serialize', 1)",
+            [],
+        )
+        .unwrap();
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_project_isolation() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+
+        // Query for a different project
+        let result = collect_dependency_data(&conn, 2).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_multiple_imports_aggregated() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        // Multiple files in A import from B
+        insert_import(&conn, 1, "src/a/foo.rs", "src/b/utils.rs");
+        insert_import(&conn, 1, "src/a/bar.rs", "src/b/types.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].import_count, 2);
+    }
+
+    #[test]
+    fn test_collect_deps_three_node_cycle() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_module(&conn, 1, "mod_c", "src/c");
+        // A -> B -> C -> A
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/lib.rs");
+        insert_import(&conn, 1, "src/b/main.rs", "src/c/lib.rs");
+        insert_import(&conn, 1, "src/c/main.rs", "src/a/lib.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 3);
+        let circular_count = result.iter().filter(|e| e.is_circular).count();
+        assert_eq!(circular_count, 3, "All edges in cycle should be circular");
+    }
+
+    #[test]
+    fn test_collect_deps_longest_path_match() {
+        let conn = setup_code_db();
+        // Module with longer path should match more specifically
+        insert_module(&conn, 1, "mod_parent", "src");
+        insert_module(&conn, 1, "mod_child", "src/sub");
+        // File in src/sub/ should match mod_child, not mod_parent
+        insert_import(&conn, 1, "src/sub/main.rs", "src/other.rs");
+        insert_module(&conn, 1, "mod_other", "src/other");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        // Should have mod_child -> mod_other, not mod_parent -> mod_other
+        if let Some(edge) = result.iter().find(|e| e.target == "mod_other") {
+            assert_eq!(edge.source, "mod_child", "Should match longest path prefix");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // needs_health_scan / mark tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    fn setup_main_db_with_project() -> (Connection, i64) {
+        let conn = crate::db::test_support::setup_test_connection();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/health", Some("test")).unwrap();
+        (conn, project_id)
+    }
+
+    #[test]
+    fn test_needs_scan_never_scanned() {
+        let (conn, pid) = setup_main_db_with_project();
+        assert!(needs_health_scan(&conn, pid));
+    }
+
+    #[test]
+    fn test_needs_scan_false_after_mark_scanned() {
+        let (conn, pid) = setup_main_db_with_project();
+        mark_health_scanned(&conn, pid).unwrap();
+        assert!(!needs_health_scan(&conn, pid));
+    }
+
+    #[test]
+    fn test_needs_scan_flag_triggers_rescan() {
+        let (conn, pid) = setup_main_db_with_project();
+        mark_health_scanned(&conn, pid).unwrap();
+        assert!(!needs_health_scan(&conn, pid));
+
+        mark_health_scan_needed_sync(&conn, pid).unwrap();
+        assert!(needs_health_scan(&conn, pid));
+    }
+
+    #[test]
+    fn test_mark_scanned_clears_needed_flag() {
+        let (conn, pid) = setup_main_db_with_project();
+        mark_health_scan_needed_sync(&conn, pid).unwrap();
+        assert!(needs_health_scan(&conn, pid));
+
+        mark_health_scanned(&conn, pid).unwrap();
+        assert!(!needs_health_scan(&conn, pid));
+    }
+
+    #[test]
+    fn test_clear_old_health_issues() {
+        let (conn, pid) = setup_main_db_with_project();
+        // Store some health findings
+        crate::db::test_support::store_memory_helper(
+            &conn,
+            Some(pid),
+            Some("health:test:issue1"),
+            "[unused] test finding",
+            "health",
+            Some("unused"),
+            0.5,
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        clear_old_health_issues(&conn, pid).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+}
