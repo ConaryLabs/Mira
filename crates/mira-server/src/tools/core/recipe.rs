@@ -262,15 +262,17 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
 ### Implementation Agent Rules
 
 - **Max 3 fixes per agent.** Split larger groups. Schema/type changes (e.g., changing a field from String to i64) get their own dedicated agent because they have ripple effects across tests.
+- **Type/schema changes MUST be isolated.** Never combine a type change with other fixes. Give it a dedicated agent. The agent prompt must explicitly list all files to update (including test files).
 - **Use only stable Rust.** Do not use nightly or experimental syntax (e.g., `if let` guards in match arms).
 - **For type/schema changes:** Search ALL files including `tests/` for usages of the changed type and update them all.
+- **Verification command is `cargo test --no-run`**, not `cargo build`. This compiles all targets including tests and catches type mismatches in test files that `cargo build` misses.
 - **Parallel build awareness:** Other agents are editing the codebase in parallel. If you see compile errors in files you didn't touch, ignore them — they're from another agent's in-progress work. Only verify YOUR files compile cleanly.
 
 ### Important Notes
 
 - Discovery experts are READ-ONLY — they explore and report, they don't modify code. Do NOT give them `mode="bypassPermissions"`
 - Implementation agents get `mode="bypassPermissions"` so they can edit files and run builds
-- Implementation agents must verify with `cargo clippy --all-targets --all-features -- -D warnings` AND `cargo fmt`, not just `cargo build`
+- Implementation agents must verify with `cargo test --no-run` (compiles all targets including tests), then `cargo clippy --all-targets --all-features -- -D warnings` AND `cargo fmt`. Never use `cargo build` alone — it misses test compilation errors
 - When giving implementation agents pattern-fix instructions (e.g., "standardize error messages"), tell them to search for ALL instances in the codebase, not just the specific files identified by discovery
 - Group implementation tasks by file ownership to prevent merge conflicts between agents
 - QA agents run AFTER implementation to verify the changes
