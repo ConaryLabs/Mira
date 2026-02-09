@@ -17,7 +17,7 @@ Implementation layer for all MCP tool handlers. Each file contains the business 
 | `team.rs` | `team` — status, review, distill |
 | `usage.rs` | LLM usage tracking helpers |
 | `session_notes.rs` | Session notes helpers |
-| `dev.rs` | Development/debug helpers |
+| `recipe.rs` | `recipe` — list, get (reusable team workflow recipes) |
 | `cross_project.rs` | Cross-project patterns (CLI-only, not an MCP tool) |
 | `claude_local.rs` | CLAUDE.local.md export (called via `documentation(action="export_claude_local")`) |
 

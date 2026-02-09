@@ -722,9 +722,12 @@ Change outcome tracking — detects whether changes were reverted or caused issu
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
 | diff_analysis_id | INTEGER FK | Reference to diff_analyses |
+| project_id | INTEGER FK | Reference to projects |
 | outcome_type | TEXT | Type of outcome detected |
 | evidence_commit | TEXT | Git commit providing evidence |
-| details | TEXT | JSON details |
+| evidence_message | TEXT | Commit message of evidence |
+| time_to_outcome_seconds | INTEGER | Time between change and outcome |
+| detected_by | TEXT | Detection method (default: 'git_scan') |
 | created_at | TEXT | Timestamp |
 
 **Unique:** `(diff_analysis_id, outcome_type, evidence_commit)`

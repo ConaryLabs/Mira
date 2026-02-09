@@ -22,7 +22,7 @@ Unified database layer providing sync operations for all Mira features. Built on
 | `session` | Session history and recap |
 | `tasks` | Task and goal management |
 | `milestones` | Goal milestone tracking |
-| `reviews` | Code review findings |
+| `config` | Database configuration settings |
 | `documentation` | Documentation gap tracking |
 | `team` | Team and shared memory |
 | `usage` | LLM/embedding usage tracking |

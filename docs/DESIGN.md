@@ -95,7 +95,7 @@ Key components:
 | LLM Factory | `llm/factory.rs` | DeepSeek, Zhipu, and Ollama providers |
 | Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small) |
 | MCP Sampling | `llm/sampling.rs` | LLM consultation via host client (awaiting Claude Code support) |
-| Elicitation | `elicitation.rs` | Interactive API key setup flow |
+| Elicitation | `mcp/elicitation.rs` | Interactive API key setup flow |
 | Async Tasks | `tools/core/tasks.rs` | Background task management |
 | Change Intelligence | `background/change_patterns.rs` | Outcome tracking, pattern mining, predictive risk |
 | Entity Layer | `entities/mod.rs` | Lightweight entity extraction for recall boost |

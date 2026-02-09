@@ -13,6 +13,7 @@ Command-line interface using clap. Defines subcommands and dispatches to handler
 | `hook` | Handle Claude Code lifecycle hooks |
 | `debug-carto` | Debug cartographer module detection |
 | `debug-session` | Debug session start output |
+| `statusline` | Output status line for shell prompt integration |
 
 ### Setup Flags
 
@@ -31,6 +32,7 @@ Command-line interface using clap. Defines subcommands and dispatches to handler
 | `setup` | Setup wizard with API key validation and Ollama detection |
 | `clients` | Client setup utilities |
 | `debug` | Debug subcommands |
+| `statusline` | Status line output for shell prompts |
 
 ## Key Export
 

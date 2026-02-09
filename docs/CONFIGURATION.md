@@ -33,10 +33,11 @@ Mira uses environment variables for API keys and configuration. These can be set
 
 ### Environment File Loading
 
-Mira loads environment files in this order (later overrides earlier):
+Mira loads only the global environment file:
 
 1. `~/.mira/.env` (Global)
-2. `.env` (Project directory)
+
+Project `.env` files are NOT loaded for security reasons (a malicious repo could override API keys).
 
 ---
 
