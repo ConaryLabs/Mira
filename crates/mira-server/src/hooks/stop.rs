@@ -152,7 +152,10 @@ pub async fn run() -> Result<()> {
         let pid = project_id;
         let _ = pool_clone
             .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+                let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
+                    tracing::warn!("Failed to get last active project: {e}");
+                    None
+                });
                 if let Some(project_path) = path {
                     match crate::tools::core::claude_local::write_claude_local_md_sync(
                         conn,
@@ -462,7 +465,10 @@ fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<Go
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            tracing::warn!("Failed to prepare in-progress goals query: {e}");
+            return Vec::new();
+        }
     };
 
     stmt.query_map([project_id], |row| {
@@ -499,18 +505,20 @@ fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Resul
             ORDER BY cnt DESC
             LIMIT 5
         "#;
-        conn.prepare(sql)
-            .ok()
-            .and_then(|mut stmt| {
-                stmt.query_map(rusqlite::params![session_id], |row| {
+        match conn.prepare(sql) {
+            Ok(mut stmt) => stmt
+                .query_map(rusqlite::params![session_id], |row| {
                     let name: String = row.get(0)?;
                     let count: i64 = row.get(1)?;
                     Ok(serde_json::json!({"name": name, "count": count}))
                 })
-                .ok()
                 .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
-            })
-            .unwrap_or_default()
+                .unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!("Failed to prepare top tools query: {e}");
+                Vec::new()
+            }
+        }
     };
 
     // Get files modified (Write/Edit/NotebookEdit/MultiEdit tool calls)

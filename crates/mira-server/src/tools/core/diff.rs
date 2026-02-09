@@ -28,6 +28,18 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     to_ref: Option<String>,
     include_impact: Option<bool>,
 ) -> Result<Json<DiffOutput>, String> {
+    // Validate ref lengths before any git operations
+    if let Some(ref r) = from_ref
+        && r.len() > 256
+    {
+        return Err("from_ref exceeds maximum length of 256 characters".to_string());
+    }
+    if let Some(ref r) = to_ref
+        && r.len() > 256
+    {
+        return Err("to_ref exceeds maximum length of 256 characters".to_string());
+    }
+
     let pi = get_project_info(ctx).await;
     let project_path = match pi.path {
         Some(ref p) => p.clone(),

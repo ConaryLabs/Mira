@@ -101,6 +101,7 @@ impl ScheduledTask {
     fn should_run(&self, cycle: u64) -> bool {
         match self.cycle_interval {
             None => true,
+            Some(0) => true,
             Some(interval) => cycle.is_multiple_of(interval),
         }
     }

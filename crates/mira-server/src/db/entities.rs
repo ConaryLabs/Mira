@@ -18,7 +18,7 @@ pub fn upsert_entity_sync(
         "INSERT INTO memory_entities (project_id, canonical_name, entity_type, display_name, occurrence_count)
          VALUES (?1, ?2, ?3, ?4, 0)
          ON CONFLICT(project_id, canonical_name, entity_type)
-         DO UPDATE SET display_name = COALESCE(display_name, ?4)",
+         DO UPDATE SET display_name = COALESCE(memory_entities.display_name, excluded.display_name)",
         rusqlite::params![project_id, canonical_name, entity_type, display_name],
     )?;
 

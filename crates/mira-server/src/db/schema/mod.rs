@@ -239,7 +239,13 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     // Get already-applied versions
     let applied = applied_versions(conn)?;
 
-    // Run each migration in order, skipping already-applied ones
+    // Run each migration in order, skipping already-applied ones.
+    // Each migration is wrapped in a SAVEPOINT so that a partial failure
+    // (e.g., table created but index creation fails) rolls back cleanly
+    // without leaving the database in a broken state.
+    // We use SAVEPOINT instead of BEGIN because some migration functions
+    // may use their own transactions internally, and SQLite does not
+    // support nested BEGIN but does support nested SAVEPOINTs.
     let registry = migration_registry();
     let mut ran = 0u32;
     for migration in &registry {
@@ -251,8 +257,19 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
             migration.version,
             migration.name
         );
-        (migration.func)(conn)?;
-        record_migration(conn, migration.version, migration.name)?;
+        let savepoint_name = format!("migration_v{}", migration.version);
+        conn.execute_batch(&format!("SAVEPOINT {savepoint_name}"))?;
+        match (migration.func)(conn) {
+            Ok(()) => {
+                record_migration(conn, migration.version, migration.name)?;
+                conn.execute_batch(&format!("RELEASE {savepoint_name}"))?;
+            }
+            Err(e) => {
+                let _ = conn.execute_batch(&format!("ROLLBACK TO {savepoint_name}"));
+                let _ = conn.execute_batch(&format!("RELEASE {savepoint_name}"));
+                return Err(e);
+            }
+        }
         ran += 1;
     }
 

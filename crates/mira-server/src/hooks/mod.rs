@@ -29,7 +29,10 @@ pub async fn resolve_project(
     pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
 ) -> (Option<i64>, Option<String>) {
     pool.interact(move |conn| {
-        let path = crate::db::get_last_active_project_sync(conn).ok().flatten();
+        let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
+            tracing::warn!("Failed to get last active project: {e}");
+            None
+        });
         let result = if let Some(ref path) = path {
             crate::db::get_or_create_project_sync(conn, path, None)
                 .ok()
@@ -88,14 +91,16 @@ pub fn get_session_modified_files_sync(
         ORDER BY created_at DESC
         LIMIT 10
     "#;
-    conn.prepare(sql)
-        .ok()
-        .and_then(|mut stmt| {
-            stmt.query_map([session_id], |row| row.get::<_, String>(0))
-                .ok()
-                .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
-        })
-        .unwrap_or_default()
+    match conn.prepare(sql) {
+        Ok(mut stmt) => stmt
+            .query_map([session_id], |row| row.get::<_, String>(0))
+            .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
+            .unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("Failed to prepare session modified files query: {e}");
+            Vec::new()
+        }
+    }
 }
 
 /// Timer guard for hook performance monitoring

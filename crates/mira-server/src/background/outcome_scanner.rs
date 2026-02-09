@@ -13,7 +13,7 @@ use crate::db::{
 };
 use crate::git::{CommitWithFiles, get_commits_with_files, get_git_head};
 use crate::utils::{ResultExt, truncate_at_boundary};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -302,6 +302,8 @@ fn detect_followup_fixes<'a>(
             continue;
         }
 
+        let diff_file_set: HashSet<&str> = diff_files.iter().map(|s| s.as_str()).collect();
+
         // Look up original commit timestamp from pre-fetched data
         let commit_ts = match commit_map.get(to_commit.as_str()) {
             Some(c) => c.timestamp,
@@ -324,7 +326,10 @@ fn detect_followup_fixes<'a>(
             }
 
             // Check if the fix touches any of the same files (using pre-fetched file list)
-            let has_overlap = candidate.files.iter().any(|f| diff_files.contains(f));
+            let has_overlap = candidate
+                .files
+                .iter()
+                .any(|f| diff_file_set.contains(f.as_str()));
 
             if has_overlap {
                 let time_delta = candidate.timestamp - commit_ts;

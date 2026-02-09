@@ -118,13 +118,16 @@ pub async fn process_briefings(
     Ok(processed)
 }
 
-use crate::git::{get_git_head, is_ancestor};
+use crate::git::{get_git_head, is_ancestor, validate_ref};
 
 /// Max commits to include in briefing to prevent context overflow
 const MAX_COMMITS: usize = 50;
 
 /// Get git log between two commits (or recent commits if no base)
 fn get_git_changes(project_path: &str, from_commit: Option<&str>) -> Option<String> {
+    if let Some(from) = from_commit {
+        validate_ref(from).ok()?;
+    }
     let args = match from_commit {
         Some(from) if is_ancestor(project_path, from) => {
             // Verified ancestor - safe to use range, but limit to MAX_COMMITS
@@ -174,6 +177,9 @@ fn get_git_changes(project_path: &str, from_commit: Option<&str>) -> Option<Stri
 
 /// Get a summary of files changed
 fn get_files_changed(project_path: &str, from_commit: Option<&str>) -> Option<String> {
+    if let Some(from) = from_commit {
+        validate_ref(from).ok()?;
+    }
     let args = match from_commit {
         Some(from) if is_ancestor(project_path, from) => vec![
             "diff".to_string(),

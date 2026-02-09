@@ -5,8 +5,7 @@ use mira_types::MemoryFact;
 use rusqlite::OptionalExtension;
 use std::sync::LazyLock;
 
-/// (fact_id, content, distance, branch, team_id)
-/// (id, content, distance, category, project_id) tuple from semantic recall
+/// (fact_id, content, distance, branch, team_id) tuple from semantic recall
 pub type RecallRow = (i64, String, f32, Option<String>, Option<i64>);
 
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
@@ -250,7 +249,8 @@ pub fn store_memory_sync(
 }
 
 /// Import a confirmed memory (bypasses evidence-based promotion)
-/// Used for importing from CLAUDE.local.md where entries are already high-confidence
+/// Used for importing from CLAUDE.local.md where entries are already high-confidence.
+/// On re-import, updates existing memories matched by (key, project_id) instead of duplicating.
 pub fn import_confirmed_memory_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
@@ -260,13 +260,32 @@ pub fn import_confirmed_memory_sync(
     category: Option<&str>,
     confidence: f64,
 ) -> rusqlite::Result<i64> {
-    conn.execute(
-        "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-         session_count, first_session_id, last_session_id, status)
-         VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, 'confirmed')",
-        rusqlite::params![project_id, key, content, fact_type, category, confidence],
-    )?;
-    Ok(conn.last_insert_rowid())
+    // Check for existing memory with same key and project_id
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM memory_facts WHERE key = ?1 AND project_id IS ?2",
+            rusqlite::params![key, project_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap_or(None);
+
+    if let Some(id) = existing {
+        conn.execute(
+            "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
+             status = 'confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            rusqlite::params![content, fact_type, category, confidence, id],
+        )?;
+        Ok(id)
+    } else {
+        conn.execute(
+            "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
+             session_count, first_session_id, last_session_id, status)
+             VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, 'confirmed')",
+            rusqlite::params![project_id, key, content, fact_type, category, confidence],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
 }
 
 /// Store embedding for a fact and mark as embedded (sync version for pool.interact())

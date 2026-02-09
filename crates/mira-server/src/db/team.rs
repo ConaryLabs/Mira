@@ -112,8 +112,10 @@ pub fn get_team_for_session_sync(conn: &Connection, session_id: &str) -> Option<
         },
     )
     .optional()
-    .ok()
-    .flatten()
+    .unwrap_or_else(|e| {
+        tracing::warn!("Failed to get team for session: {e}");
+        None
+    })
 }
 
 /// Get full team membership for a session (team info + member details).
@@ -140,8 +142,10 @@ pub fn get_team_membership_for_session_sync(
         },
     )
     .optional()
-    .ok()
-    .flatten()
+    .unwrap_or_else(|e| {
+        tracing::warn!("Failed to get team membership for session: {e}");
+        None
+    })
 }
 
 /// Get active team members.
@@ -153,7 +157,10 @@ pub fn get_active_team_members_sync(conn: &Connection, team_id: i64) -> Vec<Team
          ORDER BY joined_at",
     ) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            tracing::warn!("Failed to prepare active team members query: {e}");
+            return Vec::new();
+        }
     };
 
     stmt.query_map(params![team_id], |row| {
@@ -243,7 +250,10 @@ pub fn get_file_conflicts_sync(
          ORDER BY tfo.timestamp DESC",
     ) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            tracing::warn!("Failed to prepare file conflicts query: {e}");
+            return Vec::new();
+        }
     };
 
     stmt.query_map(params![team_id, session_id], |row| {
@@ -267,7 +277,10 @@ pub fn get_member_files_sync(conn: &Connection, team_id: i64, session_id: &str) 
          ORDER BY timestamp DESC",
     ) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            tracing::warn!("Failed to prepare member files query: {e}");
+            return Vec::new();
+        }
     };
 
     stmt.query_map(params![team_id, session_id], |row| row.get::<_, String>(0))

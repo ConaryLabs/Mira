@@ -19,11 +19,13 @@ pub async fn handle_tasks(
     match req.action {
         TasksAction::List => handle_list(server).await,
         TasksAction::Get => {
-            let task_id = req.task_id.ok_or("task_id is required for get action")?;
+            let task_id = req.task_id.ok_or("task_id is required for action 'get'")?;
             handle_get(server, &task_id).await
         }
         TasksAction::Cancel => {
-            let task_id = req.task_id.ok_or("task_id is required for cancel action")?;
+            let task_id = req
+                .task_id
+                .ok_or("task_id is required for action 'cancel'")?;
             handle_cancel(server, &task_id).await
         }
     }
