@@ -384,7 +384,7 @@ pub fn get_history_after_sync(
          ORDER BY id ASC
          LIMIT ?",
     )?;
-    let rows = stmt.query_map(params![session_id, after_id, limit], |row| {
+    let rows = stmt.query_map(params![session_id, after_id, limit as i64], |row| {
         Ok(ToolHistoryEntry {
             id: row.get(0)?,
             session_id: row.get(1)?,

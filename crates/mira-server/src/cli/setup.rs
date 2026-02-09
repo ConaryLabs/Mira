@@ -122,7 +122,7 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
             println!("Skipping embeddings. Semantic search will be unavailable.");
         }
 
-        // Step 4: Web search
+        // Step 3: Web search
         println!("\n--- Web Search ---");
         let web_choices = &["Brave Search", "Skip"];
         let web_sel = Select::new()
@@ -138,7 +138,7 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         }
     }
 
-    // Step 5: Local LLM (Ollama)
+    // Step 4: Local LLM (Ollama)
     println!("\n--- Local LLM (Ollama) ---");
     let ollama_host = std::env::var("OLLAMA_HOST")
         .ok()
@@ -252,7 +252,7 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         }
     }
 
-    // Step 6: Summary + write
+    // Step 5: Summary + write
     println!("\n--- Summary ---");
     match setup_summary(&existing, &keys) {
         SetupSummary::NoProviders => {

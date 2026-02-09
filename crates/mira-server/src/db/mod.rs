@@ -201,13 +201,15 @@ impl<'a> StatusFilter<'a> {
     /// Parse an optional status filter string, handling "!" prefix for negation.
     pub fn parse(filter: Option<&'a str>) -> Self {
         match filter {
-            Some(s) if s.starts_with('!') => Self {
-                value: Some(&s[1..]),
-                negate: true,
-            },
-            Some(s) => Self {
-                value: Some(s),
-                negate: false,
+            Some(s) => match s.strip_prefix('!') {
+                Some(rest) => Self {
+                    value: Some(rest),
+                    negate: true,
+                },
+                None => Self {
+                    value: Some(s),
+                    negate: false,
+                },
             },
             None => Self {
                 value: None,

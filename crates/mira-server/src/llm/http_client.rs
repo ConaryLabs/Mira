@@ -123,11 +123,13 @@ impl LlmHttpClient {
                     return Ok(response.text().await?);
                 }
                 Err(e) => {
-                    if attempts < self.max_attempts {
+                    // Only retry on connection/timeout errors (safe to retry)
+                    // Don't retry on other errors (request may have been processed)
+                    if attempts < self.max_attempts && (e.is_connect() || e.is_timeout()) {
                         warn!(
                             request_id = %request_id,
                             error = %e,
-                            "Request failed, retrying in {:?}...",
+                            "Request failed (connect/timeout), retrying in {:?}...",
                             backoff
                         );
                         tokio::time::sleep(backoff).await;

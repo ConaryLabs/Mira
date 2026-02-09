@@ -210,13 +210,13 @@ impl PatternAnonymizer {
         let mut go_count = 0;
 
         for f in files {
-            if f.ends_with("rs") {
+            if f.ends_with(".rs") {
                 rust_count += 1;
-            } else if f.ends_with("ts") || f.ends_with("tsx") {
+            } else if f.ends_with(".ts") || f.ends_with(".tsx") {
                 ts_count += 1;
-            } else if f.ends_with("py") {
+            } else if f.ends_with(".py") {
                 py_count += 1;
-            } else if f.ends_with("go") {
+            } else if f.ends_with(".go") {
                 go_count += 1;
             }
         }

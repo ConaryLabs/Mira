@@ -1,7 +1,7 @@
 // crates/mira-server/src/git/commit.rs
 // Git commit operations using CLI
 
-use super::{git_cmd, git_cmd_opt};
+use super::{git_cmd, git_cmd_opt, validate_ref};
 use std::path::Path;
 
 /// A commit from git log with metadata
@@ -24,6 +24,9 @@ pub fn get_git_head(project_path: &str) -> Option<String> {
 
 /// Check if a commit is an ancestor of HEAD (handles rebases, force pushes).
 pub fn is_ancestor(project_path: &str, commit: &str) -> bool {
+    if validate_ref(commit).is_err() {
+        return false;
+    }
     git_cmd(
         Path::new(project_path),
         &["merge-base", "--is-ancestor", commit, "HEAD"],
@@ -48,6 +51,9 @@ pub fn get_commits_in_range(
     after_commit: &str,
     before_timestamp: i64,
 ) -> Vec<GitCommit> {
+    if validate_ref(after_commit).is_err() {
+        return vec![];
+    }
     match git_cmd_opt(
         Path::new(project_path),
         &[
@@ -93,6 +99,7 @@ pub fn parse_commit_lines(output: &str) -> Vec<GitCommit> {
 
 /// Get the unix timestamp for a specific commit
 pub fn get_commit_timestamp(project_path: &str, commit_hash: &str) -> Option<i64> {
+    validate_ref(commit_hash).ok()?;
     git_cmd_opt(
         Path::new(project_path),
         &["log", "-1", "--format=%ct", commit_hash],
@@ -103,6 +110,7 @@ pub fn get_commit_timestamp(project_path: &str, commit_hash: &str) -> Option<i64
 
 /// Get the commit message (subject line) for a specific commit
 pub fn get_commit_message(project_path: &str, commit_hash: &str) -> Option<String> {
+    validate_ref(commit_hash).ok()?;
     let msg = git_cmd_opt(
         Path::new(project_path),
         &["log", "-1", "--format=%s", commit_hash],
@@ -112,6 +120,9 @@ pub fn get_commit_message(project_path: &str, commit_hash: &str) -> Option<Strin
 
 /// Get the list of files changed in a specific commit
 pub fn get_files_for_commit(project_path: &str, commit_hash: &str) -> Vec<String> {
+    if validate_ref(commit_hash).is_err() {
+        return vec![];
+    }
     match git_cmd_opt(
         Path::new(project_path),
         &[

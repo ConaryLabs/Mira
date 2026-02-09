@@ -493,19 +493,22 @@ pub async fn recall<C: ToolContext>(
             .collect();
 
         if !results.is_empty() {
-            // Apply category/fact_type filters via batch metadata lookup
+            // Always fetch metadata for fact_type population (and filtering if needed)
+            let ids_for_meta: Vec<i64> = results.iter().map(|(id, _, _, _, _)| *id).collect();
+            let meta_map = ctx
+                .pool()
+                .run(move |conn| crate::db::get_memory_metadata_sync(conn, &ids_for_meta))
+                .await
+                .unwrap_or_default();
+
+            // Apply category/fact_type filters if requested
             let results = if has_filters {
-                let ids: Vec<i64> = results.iter().map(|(id, _, _, _, _)| *id).collect();
                 let cat = category.clone();
                 let ft = fact_type.clone();
-                let metadata = ctx
-                    .pool()
-                    .run(move |conn| crate::db::get_memory_metadata_sync(conn, &ids))
-                    .await?;
                 results
                     .into_iter()
                     .filter(|(id, _, _, _, _)| {
-                        if let Some((mem_ft, mem_cat)) = metadata.get(id) {
+                        if let Some((mem_ft, mem_cat)) = meta_map.get(id) {
                             let ft_ok = ft.as_ref().is_none_or(|f| f == mem_ft);
                             let cat_ok = cat.as_ref().is_none_or(|c| mem_cat.as_ref() == Some(c));
                             ft_ok && cat_ok
@@ -528,12 +531,15 @@ pub async fn recall<C: ToolContext>(
 
                 let items: Vec<MemoryItem> = results
                     .iter()
-                    .map(|(id, content, distance, branch, _team_id)| MemoryItem {
-                        id: *id,
-                        content: content.clone(),
-                        score: Some(1.0 - distance),
-                        fact_type: None,
-                        branch: branch.clone(),
+                    .map(|(id, content, distance, branch, _team_id)| {
+                        let ft = meta_map.get(id).map(|(ft, _)| ft.clone());
+                        MemoryItem {
+                            id: *id,
+                            content: content.clone(),
+                            score: Some(1.0 - distance),
+                            fact_type: ft,
+                            branch: branch.clone(),
+                        }
                     })
                     .collect();
                 let total = items.len();

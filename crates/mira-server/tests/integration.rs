@@ -2212,7 +2212,7 @@ async fn test_goal_get() {
         &ctx,
         GoalRequest {
             action: GoalAction::Get,
-            goal_id: Some(goal_id.to_string()),
+            goal_id: Some(goal_id),
             title: None,
             description: None,
             status: None,
@@ -2275,7 +2275,7 @@ async fn test_goal_update() {
         &ctx,
         GoalRequest {
             action: GoalAction::Update,
-            goal_id: Some(goal_id.to_string()),
+            goal_id: Some(goal_id),
             title: Some("Updated title".to_string()),
             description: None,
             status: Some("in_progress".to_string()),
@@ -2299,7 +2299,7 @@ async fn test_goal_update() {
         &ctx,
         GoalRequest {
             action: GoalAction::Get,
-            goal_id: Some(goal_id.to_string()),
+            goal_id: Some(goal_id),
             title: None,
             description: None,
             status: None,
@@ -2344,7 +2344,7 @@ async fn test_goal_delete() {
         &ctx,
         GoalRequest {
             action: GoalAction::Delete,
-            goal_id: Some(goal_id.to_string()),
+            goal_id: Some(goal_id),
             title: None,
             description: None,
             status: None,
@@ -2415,7 +2415,7 @@ async fn test_goal_milestone_lifecycle() {
         &ctx,
         GoalRequest {
             action: GoalAction::AddMilestone,
-            goal_id: Some(goal_id.to_string()),
+            goal_id: Some(goal_id),
             title: None,
             description: None,
             status: None,
@@ -2456,7 +2456,7 @@ async fn test_goal_milestone_lifecycle() {
             priority: None,
             progress_percent: None,
             include_finished: None,
-            milestone_id: Some(milestone_id.to_string()),
+            milestone_id: Some(milestone_id),
             milestone_title: None,
             weight: None,
             limit: None,
@@ -2501,7 +2501,7 @@ async fn test_goal_list_with_milestones() {
             &ctx,
             GoalRequest {
                 action: GoalAction::AddMilestone,
-                goal_id: Some(goal_id.to_string()),
+                goal_id: Some(goal_id),
                 title: None,
                 description: None,
                 status: None,
@@ -2643,7 +2643,7 @@ async fn test_goal_progress_update() {
         &ctx,
         GoalRequest {
             action: GoalAction::Progress,
-            goal_id: Some(goal_id.to_string()),
+            goal_id: Some(goal_id),
             title: None,
             description: None,
             status: None,
@@ -2673,7 +2673,7 @@ async fn test_goal_progress_update() {
         &ctx,
         GoalRequest {
             action: GoalAction::Get,
-            goal_id: Some(goal_id.to_string()),
+            goal_id: Some(goal_id),
             title: None,
             description: None,
             status: None,

@@ -87,10 +87,8 @@ async fn verify_milestone_project<C: ToolContext>(
 // ============================================================================
 
 /// Get a goal by ID with its milestones
-async fn action_get<C: ToolContext>(ctx: &C, goal_id: &str) -> Result<Json<GoalOutput>, String> {
-    let id: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
-
-    let goal = get_authorized_goal(ctx, id).await?;
+async fn action_get<C: ToolContext>(ctx: &C, goal_id: i64) -> Result<Json<GoalOutput>, String> {
+    let goal = get_authorized_goal(ctx, goal_id).await?;
 
     let mut response = format!("Goal [{}]: {}\n", goal.id, goal.title);
     response.push_str(&format!("  Status: {}\n", goal.status));
@@ -104,7 +102,7 @@ async fn action_get<C: ToolContext>(ctx: &C, goal_id: &str) -> Result<Json<GoalO
     // Show milestones
     let milestones = ctx
         .pool()
-        .run(move |conn| get_milestones_for_goal_sync(conn, id))
+        .run(move |conn| get_milestones_for_goal_sync(conn, goal_id))
         .await?;
 
     let mut milestone_items = Vec::new();
@@ -339,22 +337,20 @@ async fn action_list<C: ToolContext>(
 /// Update a goal
 async fn action_update<C: ToolContext>(
     ctx: &C,
-    goal_id: &str,
+    goal_id: i64,
     title: Option<String>,
     description: Option<String>,
     status: Option<String>,
     priority: Option<String>,
     progress_percent: Option<i32>,
 ) -> Result<Json<GoalOutput>, String> {
-    let id: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
-
-    get_authorized_goal(ctx, id).await?;
+    get_authorized_goal(ctx, goal_id).await?;
 
     ctx.pool()
         .run(move |conn| {
             update_goal_sync(
                 conn,
-                id,
+                goal_id,
                 title.as_deref(),
                 description.as_deref(),
                 status.as_deref(),
@@ -366,24 +362,22 @@ async fn action_update<C: ToolContext>(
 
     Ok(Json(GoalOutput {
         action: "update".into(),
-        message: format!("Updated goal {}", id),
+        message: format!("Updated goal {}", goal_id),
         data: None,
     }))
 }
 
 /// Delete a goal
-async fn action_delete<C: ToolContext>(ctx: &C, goal_id: &str) -> Result<Json<GoalOutput>, String> {
-    let id: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
-
-    get_authorized_goal(ctx, id).await?;
+async fn action_delete<C: ToolContext>(ctx: &C, goal_id: i64) -> Result<Json<GoalOutput>, String> {
+    get_authorized_goal(ctx, goal_id).await?;
 
     ctx.pool()
-        .run(move |conn| delete_goal_sync(conn, id))
+        .run(move |conn| delete_goal_sync(conn, goal_id))
         .await?;
 
     Ok(Json(GoalOutput {
         action: "delete".into(),
-        message: format!("Deleted goal {}", id),
+        message: format!("Deleted goal {}", goal_id),
         data: None,
     }))
 }
@@ -391,30 +385,28 @@ async fn action_delete<C: ToolContext>(ctx: &C, goal_id: &str) -> Result<Json<Go
 /// Add a milestone to a goal
 async fn action_add_milestone<C: ToolContext>(
     ctx: &C,
-    goal_id: &str,
+    goal_id: i64,
     milestone_title: String,
     weight: Option<i32>,
 ) -> Result<Json<GoalOutput>, String> {
-    let gid: i64 = goal_id.parse().map_err(|_| "Invalid goal ID")?;
-
-    get_authorized_goal(ctx, gid).await?;
+    get_authorized_goal(ctx, goal_id).await?;
 
     let mtitle_for_result = milestone_title.clone();
 
     let mid = ctx
         .pool()
-        .run(move |conn| create_milestone_sync(conn, gid, &milestone_title, weight))
+        .run(move |conn| create_milestone_sync(conn, goal_id, &milestone_title, weight))
         .await?;
 
     Ok(Json(GoalOutput {
         action: "add_milestone".into(),
         message: format!(
             "Added milestone '{}' to goal {} (milestone id: {})",
-            mtitle_for_result, gid, mid
+            mtitle_for_result, goal_id, mid
         ),
         data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
             milestone_id: mid,
-            goal_id: Some(gid),
+            goal_id: Some(goal_id),
             progress_percent: None,
         })),
     }))
@@ -423,15 +415,13 @@ async fn action_add_milestone<C: ToolContext>(
 /// Complete a milestone and update goal progress
 async fn action_complete_milestone<C: ToolContext>(
     ctx: &C,
-    milestone_id: &str,
+    milestone_id: i64,
 ) -> Result<Json<GoalOutput>, String> {
-    let mid: i64 = milestone_id.parse().map_err(|_| "Invalid milestone ID")?;
-
-    verify_milestone_project(ctx, mid).await?;
+    verify_milestone_project(ctx, milestone_id).await?;
 
     let goal_id_result = ctx
         .pool()
-        .run(move |conn| complete_milestone_sync(conn, mid))
+        .run(move |conn| complete_milestone_sync(conn, milestone_id))
         .await?;
 
     if let Some(gid) = goal_id_result {
@@ -444,10 +434,10 @@ async fn action_complete_milestone<C: ToolContext>(
             action: "complete_milestone".into(),
             message: format!(
                 "Completed milestone {}. Goal progress updated to {}%",
-                mid, progress
+                milestone_id, progress
             ),
             data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
-                milestone_id: mid,
+                milestone_id,
                 goal_id: Some(gid),
                 progress_percent: Some(progress),
             })),
@@ -455,9 +445,9 @@ async fn action_complete_milestone<C: ToolContext>(
     } else {
         Ok(Json(GoalOutput {
             action: "complete_milestone".into(),
-            message: format!("Completed milestone {}", mid),
+            message: format!("Completed milestone {}", milestone_id),
             data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
-                milestone_id: mid,
+                milestone_id,
                 goal_id: None,
                 progress_percent: None,
             })),
@@ -468,15 +458,13 @@ async fn action_complete_milestone<C: ToolContext>(
 /// Delete a milestone and update goal progress
 async fn action_delete_milestone<C: ToolContext>(
     ctx: &C,
-    milestone_id: &str,
+    milestone_id: i64,
 ) -> Result<Json<GoalOutput>, String> {
-    let mid: i64 = milestone_id.parse().map_err(|_| "Invalid milestone ID")?;
-
-    verify_milestone_project(ctx, mid).await?;
+    verify_milestone_project(ctx, milestone_id).await?;
 
     let goal_id_result = ctx
         .pool()
-        .run(move |conn| delete_milestone_sync(conn, mid))
+        .run(move |conn| delete_milestone_sync(conn, milestone_id))
         .await?;
 
     if let Some(gid) = goal_id_result {
@@ -489,10 +477,10 @@ async fn action_delete_milestone<C: ToolContext>(
             action: "delete_milestone".into(),
             message: format!(
                 "Deleted milestone {}. Goal progress updated to {}%",
-                mid, progress
+                milestone_id, progress
             ),
             data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
-                milestone_id: mid,
+                milestone_id,
                 goal_id: Some(gid),
                 progress_percent: Some(progress),
             })),
@@ -500,9 +488,9 @@ async fn action_delete_milestone<C: ToolContext>(
     } else {
         Ok(Json(GoalOutput {
             action: "delete_milestone".into(),
-            message: format!("Deleted milestone {}", mid),
+            message: format!("Deleted milestone {}", milestone_id),
             data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
-                milestone_id: mid,
+                milestone_id,
                 goal_id: None,
                 progress_percent: None,
             })),
@@ -521,11 +509,11 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
 
     match req.action {
         GoalAction::Get => {
-            let id = req.goal_id.ok_or("Goal ID is required for get action")?;
-            action_get(ctx, &id).await
+            let id = req.goal_id.ok_or("goal_id is required for action 'get'")?;
+            action_get(ctx, id).await
         }
         GoalAction::Create => {
-            let t = req.title.ok_or("Title is required for create action")?;
+            let t = req.title.ok_or("title is required for action 'create'")?;
             action_create(
                 ctx,
                 project_id,
@@ -540,7 +528,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
         GoalAction::BulkCreate => {
             let g = req
                 .goals
-                .ok_or("goals parameter is required for bulk_create action")?;
+                .ok_or("goals is required for action 'bulk_create'")?;
             action_bulk_create(ctx, project_id, &g).await
         }
         GoalAction::List => {
@@ -553,12 +541,17 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             .await
         }
         GoalAction::Update | GoalAction::Progress => {
+            let action_name = if matches!(req.action, GoalAction::Progress) {
+                "progress"
+            } else {
+                "update"
+            };
             let id = req
                 .goal_id
-                .ok_or("Goal ID is required for update/progress action")?;
+                .ok_or_else(|| format!("goal_id is required for action '{}'", action_name))?;
             action_update(
                 ctx,
-                &id,
+                id,
                 req.title,
                 req.description,
                 req.status,
@@ -568,29 +561,31 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             .await
         }
         GoalAction::Delete => {
-            let id = req.goal_id.ok_or("Goal ID is required for delete action")?;
-            action_delete(ctx, &id).await
+            let id = req
+                .goal_id
+                .ok_or("goal_id is required for action 'delete'")?;
+            action_delete(ctx, id).await
         }
         GoalAction::AddMilestone => {
             let gid = req
                 .goal_id
-                .ok_or("Goal ID is required for add_milestone action")?;
+                .ok_or("goal_id is required for action 'add_milestone'")?;
             let mt = req
                 .milestone_title
-                .ok_or("milestone_title is required for add_milestone action")?;
-            action_add_milestone(ctx, &gid, mt, req.weight).await
+                .ok_or("milestone_title is required for action 'add_milestone'")?;
+            action_add_milestone(ctx, gid, mt, req.weight).await
         }
         GoalAction::CompleteMilestone => {
             let mid = req
                 .milestone_id
-                .ok_or("milestone_id is required for complete_milestone action")?;
-            action_complete_milestone(ctx, &mid).await
+                .ok_or("milestone_id is required for action 'complete_milestone'")?;
+            action_complete_milestone(ctx, mid).await
         }
         GoalAction::DeleteMilestone => {
             let mid = req
                 .milestone_id
-                .ok_or("milestone_id is required for delete_milestone action")?;
-            action_delete_milestone(ctx, &mid).await
+                .ok_or("milestone_id is required for action 'delete_milestone'")?;
+            action_delete_milestone(ctx, mid).await
         }
     }
 }

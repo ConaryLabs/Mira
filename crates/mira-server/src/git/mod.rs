@@ -24,6 +24,14 @@ pub use diff::{
 use std::path::Path;
 use std::process::Command;
 
+/// Validate that a git ref doesn't look like a CLI flag (defense-in-depth)
+pub(crate) fn validate_ref(r: &str) -> Result<(), String> {
+    if r.starts_with('-') {
+        return Err(format!("Invalid git ref: '{}'", r));
+    }
+    Ok(())
+}
+
 /// Run a git command and return trimmed stdout, or an error.
 pub(crate) fn git_cmd(project_path: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")

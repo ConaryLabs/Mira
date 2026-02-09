@@ -236,7 +236,7 @@ pub struct GoalRequest {
     )]
     pub action: GoalAction,
     #[schemars(description = "Goal ID")]
-    pub goal_id: Option<String>,
+    pub goal_id: Option<i64>,
     #[schemars(description = "Title")]
     pub title: Option<String>,
     #[schemars(description = "Description")]
@@ -250,7 +250,7 @@ pub struct GoalRequest {
     #[schemars(description = "Include finished goals")]
     pub include_finished: Option<bool>,
     #[schemars(description = "Milestone ID (for complete_milestone/delete_milestone)")]
-    pub milestone_id: Option<String>,
+    pub milestone_id: Option<i64>,
     #[schemars(description = "Milestone title (for add_milestone)")]
     pub milestone_title: Option<String>,
     #[schemars(description = "Milestone weight (for add_milestone, default: 1)")]

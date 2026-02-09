@@ -240,19 +240,31 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
 11. **Monitor** build diagnostics and send hints to agents if compilation errors appear
 12. **Wait** for all implementation agents to complete, then shut them down
 
+### Phase 2.5: Dependency Updates (sequential)
+
+13. **After** all implementation agents finish, run `cargo update` to pick up compatible dependency patches
+14. This runs AFTER code changes to avoid Cargo.lock conflicts with parallel agents
+
 ### Phase 3: QA (parallel)
 
-12. **Spawn QA agents** (test-runner, ux-reviewer) with context about what changed
-13. **Create and assign QA tasks**
-14. **Wait** for QA results
-15. If QA finds issues, either fix them directly or spawn additional fixers
+15. **Spawn QA agents** (test-runner, ux-reviewer) with context about what changed
+16. **Create and assign QA tasks**
+17. **Wait** for QA results
+18. If QA finds issues, either fix them directly or spawn additional fixers
 
 ### Phase 4: Finalize
 
-16. **Shut down** all remaining agents
-17. **Verify** final build and test status
-18. **Report** summary of all changes to the user
-19. **Cleanup**: `TeamDelete`
+19. **Shut down** all remaining agents
+20. **Verify** final build and test status (cargo clippy, cargo fmt, cargo test)
+21. **Report** summary of all changes to the user
+22. **Cleanup**: `TeamDelete`
+
+### Implementation Agent Rules
+
+- **Max 3 fixes per agent.** Split larger groups. Schema/type changes (e.g., changing a field from String to i64) get their own dedicated agent because they have ripple effects across tests.
+- **Use only stable Rust.** Do not use nightly or experimental syntax (e.g., `if let` guards in match arms).
+- **For type/schema changes:** Search ALL files including `tests/` for usages of the changed type and update them all.
+- **Parallel build awareness:** Other agents are editing the codebase in parallel. If you see compile errors in files you didn't touch, ignore them — they're from another agent's in-progress work. Only verify YOUR files compile cleanly.
 
 ### Important Notes
 
@@ -262,6 +274,7 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
 - When giving implementation agents pattern-fix instructions (e.g., "standardize error messages"), tell them to search for ALL instances in the codebase, not just the specific files identified by discovery
 - Group implementation tasks by file ownership to prevent merge conflicts between agents
 - QA agents run AFTER implementation to verify the changes
+- Dependency updates (`cargo update`) run AFTER implementation, BEFORE QA — never in parallel with code changes
 - NEVER use `cargo build --release` or `cargo test --release` — always use debug mode
 - The team lead (you) stays active throughout all phases to coordinate"#;
 
