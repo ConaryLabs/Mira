@@ -6,8 +6,53 @@ use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const COOLDOWN_SECS: u64 = 3;
+const MAX_RECENT_QUERIES: usize = 5;
+
+#[derive(Serialize, Deserialize, Default)]
+struct CooldownState {
+    last_fired_at: u64,
+    recent_queries: Vec<String>,
+}
+
+fn cooldown_path() -> std::path::PathBuf {
+    let mira_dir = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".mira")
+        .join("tmp");
+    mira_dir.join("pretool_last.json")
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn read_cooldown() -> Option<CooldownState> {
+    let data = std::fs::read_to_string(cooldown_path()).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+fn write_cooldown(query: &str) {
+    let mut state = read_cooldown().unwrap_or_default();
+    state.last_fired_at = unix_now();
+    state.recent_queries.push(query.to_string());
+    if state.recent_queries.len() > MAX_RECENT_QUERIES {
+        state.recent_queries.remove(0);
+    }
+    let path = cooldown_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, serde_json::to_string(&state).unwrap_or_default());
+}
 
 /// PreToolUse hook input from Claude Code
 #[derive(Debug)]
@@ -82,6 +127,21 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Cooldown and dedup check
+    if let Some(state) = read_cooldown() {
+        let now = unix_now();
+        if now - state.last_fired_at < COOLDOWN_SECS {
+            eprintln!("[mira] PreToolUse skipped (cooldown)");
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+        if state.recent_queries.contains(&search_query) {
+            eprintln!("[mira] PreToolUse skipped (duplicate query)");
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    }
+
     // Open database
     let db_path = get_db_path();
     let pool = match DatabasePool::open(&db_path).await {
@@ -100,6 +160,9 @@ pub async fn run() -> Result<()> {
 
     // Query for relevant memories
     let memories = query_relevant_memories(&pool, project_id, &search_query).await;
+
+    // Record this query in cooldown state
+    write_cooldown(&search_query);
 
     // Build output
     let output = if memories.is_empty() {
@@ -180,7 +243,7 @@ async fn query_relevant_memories(
                   AND (content LIKE '%' || ?2 || '%'
                        OR category LIKE '%' || ?2 || '%')
                 ORDER BY created_at DESC
-                LIMIT 3
+                LIMIT 2
             "#;
 
             let mut stmt = conn.prepare(sql)?;
