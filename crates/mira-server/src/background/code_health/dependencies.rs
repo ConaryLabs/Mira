@@ -22,9 +22,7 @@ pub(super) async fn scan_dependencies_sharded(
 ) -> Result<usize, String> {
     // Need both connections simultaneously — get code conn first, then main conn
     let code_conn_result = code_pool
-        .run(move |code_conn| {
-            Ok::<_, String>(collect_dependency_data(code_conn, project_id))
-        })
+        .run(move |code_conn| Ok::<_, String>(collect_dependency_data(code_conn, project_id)))
         .await?;
 
     let dep_data = code_conn_result?;

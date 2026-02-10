@@ -132,14 +132,11 @@ async fn query_insights<C: ToolContext>(
         .iter()
         .map(|insight| {
             let prefix = if insight.priority_score >= 0.75 {
-                "[!]"
+                "[HIGH]"
             } else {
-                "[i]"
+                "[INFO]"
             };
-            output.push_str(&format!(
-                "{} {} ({:.2})\n",
-                prefix, insight.description, insight.priority_score,
-            ));
+            output.push_str(&format!("{} {}\n", prefix, insight.description,));
             if let Some(ref evidence) = insight.evidence {
                 output.push_str(&format!("    {}\n", evidence));
             }

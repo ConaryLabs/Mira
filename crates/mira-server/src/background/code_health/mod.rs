@@ -299,7 +299,8 @@ pub(crate) async fn scan_project_health(
     }
 
     // 9. Module dependency analysis + circular dependency detection
-    let dep_count = dependencies::scan_dependencies_sharded(main_pool, code_pool, project_id).await?;
+    let dep_count =
+        dependencies::scan_dependencies_sharded(main_pool, code_pool, project_id).await?;
     if dep_count > 0 {
         tracing::info!(
             "Code health: computed {} module dependency edges",

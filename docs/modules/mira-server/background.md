@@ -27,10 +27,10 @@ Handles LLM-powered tasks: session summaries, pondering/insights, code health an
 | `entity_extraction` | slow | Entity extraction from memories and code |
 | `outcome_scanner` | slow | Outcome tracking for predictions |
 | `summaries` | slow | Module summary generation |
-| `memory_embeddings` | fast | Memory embedding generation |
-| `knowledge_distillation` | slow | Cross-session insight extraction |
+| `memory_embeddings` | slow | Memory embedding generation |
+| `knowledge_distillation` | on-demand | Cross-session insight extraction |
 | `team_monitor` | slow | Team activity monitoring |
-| `watcher` | fast | Filesystem watching for incremental updates |
+| `watcher` | independent | Filesystem watching for incremental updates |
 
 ## Graceful Degradation
 

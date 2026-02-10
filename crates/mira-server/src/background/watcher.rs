@@ -582,10 +582,19 @@ pub fn spawn(
     };
 
     tokio::spawn(async move {
+        const MAX_PANICS: u32 = 5;
+        const BASE_DELAY_SECS: u64 = 5;
+        const MAX_DELAY_SECS: u64 = 60;
+        const HEALTHY_RUN_SECS: u64 = 60;
+
+        let mut consecutive_panics: u32 = 0;
+
         loop {
             if *shutdown.borrow() {
                 break;
             }
+
+            let start = Instant::now();
 
             let watcher = FileWatcher {
                 pool: pool.clone(),
@@ -601,8 +610,33 @@ pub fn spawn(
             match jh.await {
                 Ok(()) => break, // Normal exit (shutdown)
                 Err(e) if e.is_panic() => {
-                    tracing::error!("File watcher panicked: {:?}. Restarting in 5s...", e);
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    // Reset backoff if the watcher ran long enough to be considered healthy
+                    if start.elapsed() >= Duration::from_secs(HEALTHY_RUN_SECS) {
+                        consecutive_panics = 0;
+                    }
+
+                    consecutive_panics += 1;
+
+                    if consecutive_panics > MAX_PANICS {
+                        tracing::error!(
+                            "File watcher panicked {} times consecutively. Giving up.",
+                            consecutive_panics
+                        );
+                        break;
+                    }
+
+                    let delay_secs = (BASE_DELAY_SECS
+                        * 2u64.saturating_pow(consecutive_panics - 1))
+                    .min(MAX_DELAY_SECS);
+
+                    tracing::error!(
+                        "File watcher panicked ({}/{}): {:?}. Restarting in {}s...",
+                        consecutive_panics,
+                        MAX_PANICS,
+                        e,
+                        delay_secs
+                    );
+                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
                 }
                 Err(e) => {
                     tracing::error!("File watcher failed: {:?}", e);

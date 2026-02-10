@@ -222,21 +222,27 @@ async fn detect_mcp_tool_gaps(
         .map_err(|e| format!("spawn_blocking panicked: {}", e))?
         .map_err(|e| format!("Failed to read mcp/mod.rs: {}", e))?;
 
-    // Extract tool names from #[tool(...)] annotations
+    // Extract tool names from #[tool(...)] annotations — only collect async fn
+    // that are preceded by a #[tool()] attribute, not all async fn in the file.
     let mut tool_names = HashSet::new();
+    let mut saw_tool_attr = false;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("#[tool(") {
-            // Look for the next async fn line to get the tool name
+            saw_tool_attr = true;
             continue;
         }
-        if trimmed.starts_with("async fn ")
-            && let Some(fn_name) = trimmed.strip_prefix("async fn ")
-        {
-            let fn_name = fn_name.split('(').next().unwrap_or("").trim().to_string();
-            if !fn_name.is_empty() {
-                tool_names.insert(fn_name);
+        if trimmed.starts_with("async fn ") {
+            if saw_tool_attr && let Some(fn_name) = trimmed.strip_prefix("async fn ") {
+                let fn_name = fn_name.split('(').next().unwrap_or("").trim().to_string();
+                if !fn_name.is_empty() {
+                    tool_names.insert(fn_name);
+                }
             }
+            saw_tool_attr = false;
+        } else if !trimmed.starts_with("#[") {
+            // Reset flag if we hit a non-attribute line without seeing async fn
+            saw_tool_attr = false;
         }
     }
 

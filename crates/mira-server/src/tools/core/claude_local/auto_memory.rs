@@ -126,8 +126,7 @@ fn build_auto_memory_export(candidates: &[AutoMemoryCandidate]) -> String {
         return String::new();
     }
 
-    let header =
-        "# Mira Memory Cache\n\n<!-- Auto-generated from Mira. High-confidence memories only. -->\n\n";
+    let header = "# Mira Memory Cache\n\n<!-- Auto-generated from Mira. High-confidence memories only. -->\n\n";
 
     // Track line counts per category
     let mut pref_lines = 0usize;
@@ -152,8 +151,7 @@ fn build_auto_memory_export(candidates: &[AutoMemoryCandidate]) -> String {
         let line_count = entry_line.lines().count();
 
         // Classify and check quota
-        let section =
-            super::classify_by_type_and_category(&mem.fact_type, mem.category.as_deref());
+        let section = super::classify_by_type_and_category(&mem.fact_type, mem.category.as_deref());
 
         match section {
             "Preferences" if pref_lines + line_count <= AUTO_MEMORY_PREF_QUOTA => {
@@ -423,12 +421,7 @@ mod tests {
     fn test_build_auto_memory_filters_noise() {
         let candidates = vec![
             make_auto_memory_candidate("Real insight about architecture", "decision", None, 5.0),
-            make_auto_memory_candidate(
-                "Created task #42 for refactoring",
-                "completion",
-                None,
-                5.0,
-            ),
+            make_auto_memory_candidate("Created task #42 for refactoring", "completion", None, 5.0),
             make_auto_memory_candidate("User prefers tabs", "preference", None, 5.0),
         ];
         let result = build_auto_memory_export(&candidates);

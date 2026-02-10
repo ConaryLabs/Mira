@@ -135,9 +135,15 @@ The Intelligence Engine is a background worker system that proactively analyzes 
 |------|--------------|
 | **Module Summaries** | Generates human-readable descriptions of code modules |
 | **Git Briefings** | "What changed since your last session?" summaries |
-| **Code Health** | Scans for complexity issues, poor error handling |
+| **Code Health** | Scans for complexity issues, poor error handling, unused code |
 | **Embeddings** | Indexes code and memories for semantic search |
 | **Pondering** | Active reasoning loops that analyze tool history and generate insights |
+| **Documentation** | Detects documentation gaps and stale docs |
+| **Diff Outcomes** | Tracks whether predicted risks from diffs materialized |
+| **Entity Extraction** | Extracts entities from memories and code for cross-referencing |
+| **Proactive Items** | Generates proactive suggestions based on session context |
+| **Team Monitor** | Monitors team activity in Agent Teams sessions |
+| **Data Retention** | Cleans up old records to keep the database lean |
 
 These tasks run asynchronously during idle time, keeping Mira always up-to-date.
 

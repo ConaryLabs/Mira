@@ -39,7 +39,6 @@ fn resolve_project(conn: &Connection, cwd: &str) -> Option<(i64, String)> {
     .ok()
 }
 
-
 /// Count active goals for a project.
 fn query_goals(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
@@ -171,7 +170,7 @@ pub fn run() -> Result<()> {
         Some((id, name)) => (id, name),
         None => {
             // No project found — show minimal line
-            println!("{DIM}\u{1d5c6}\u{1d5c2}\u{1d5cb}\u{1d5ba}{RESET}");
+            println!("{DIM}\u{1d5c6}\u{1d5c2}\u{1d5cb}\u{1d5ba}{RESET} {DIM}no project{RESET}");
             return Ok(());
         }
     };
@@ -214,16 +213,18 @@ pub fn run() -> Result<()> {
     }
 
     if stale_docs > 0 {
-        parts.push(format!("{YELLOW}{stale_docs} stale docs{RESET}"));
+        parts.push(format!(
+            "{YELLOW}{stale_docs} stale docs{RESET} {DIM}(/mira:insights){RESET}"
+        ));
     }
 
     // Informational / diagnostics
     if bg_stalled {
-        parts.push(format!("{YELLOW}bg stalled{RESET}"));
+        parts.push(format!("{YELLOW}background processing stopped{RESET}"));
     }
 
     if pending > 0 {
-        parts.push(format!("{YELLOW}embedding {pending} chunks{RESET}"));
+        parts.push(format!("{YELLOW}indexing ({pending} pending){RESET}"));
     }
 
     if let Some(age) = &index_age {

@@ -1,4 +1,4 @@
-use crate::db::{fetch_ranked_memories_for_export_sync, RankedMemory};
+use crate::db::{RankedMemory, fetch_ranked_memories_for_export_sync};
 use crate::tools::core::ToolContext;
 use crate::utils::ResultExt;
 use std::path::Path;
@@ -39,12 +39,9 @@ fn export_to_claude_local_md_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
 ) -> Result<String, String> {
-    let memories = fetch_ranked_memories_for_export_sync(
-        conn,
-        project_id,
-        super::RANKED_FETCH_LIMIT,
-    )
-    .str_err()?;
+    let memories =
+        fetch_ranked_memories_for_export_sync(conn, project_id, super::RANKED_FETCH_LIMIT)
+            .str_err()?;
 
     if memories.is_empty() {
         return Ok(String::new());

@@ -50,6 +50,26 @@ fn compute_age_days(timestamp: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Map raw pattern_type strings to human-readable labels for display.
+fn humanize_insight_type(pattern_type: &str) -> String {
+    match pattern_type {
+        "insight_friction" => "Friction Point".to_string(),
+        "insight_revert_cluster" => "Revert Pattern".to_string(),
+        "insight_fragile_code" => "Fragile Code".to_string(),
+        "insight_stale_goal" => "Stale Goal".to_string(),
+        "insight_untested" => "Untested Code".to_string(),
+        "insight_tool_chain" => "Tool Chain".to_string(),
+        "insight_session" => "Session Pattern".to_string(),
+        "insight_workflow" => "Workflow".to_string(),
+        "insight_focus_area" => "Focus Area".to_string(),
+        other => other
+            .strip_prefix("insight_")
+            .unwrap_or(other)
+            .replace('_', " ")
+            .to_string(),
+    }
+}
+
 /// Pondering insights from behavior_patterns where pattern_type starts with 'insight_'
 fn fetch_pondering_insights(
     conn: &Connection,
@@ -117,7 +137,7 @@ fn fetch_pondering_insights(
 
         insights.push(UnifiedInsight {
             source: "pondering".to_string(),
-            source_type: pattern_type,
+            source_type: humanize_insight_type(&pattern_type),
             description,
             priority_score,
             confidence,

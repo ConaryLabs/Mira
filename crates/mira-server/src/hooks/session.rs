@@ -139,43 +139,41 @@ pub async fn run() -> Result<()> {
     }
 
     // Register session in DB so the background loop sees activity
-    if let Some(sid) = session_id {
-        if let Some(cwd_val) = cwd {
-            let db_path = get_db_path();
-            let sid_owned = sid.to_string();
-            let cwd_owned = cwd_val.to_string();
-            let source_owned = source.to_string();
-            if let Ok(pool) = DatabasePool::open(&db_path).await {
-                let pool = Arc::new(pool);
-                let res = pool
-                    .interact(move |conn| {
-                        // Resolve project from cwd
-                        let (project_id, _) =
-                            crate::db::get_or_create_project_sync(conn, &cwd_owned, None)?;
-                        // Create or reactivate session. Uses create_session_ext_sync
-                        // which sets status='active' on conflict, properly reactivating
-                        // completed sessions when Claude Code restarts.
-                        crate::db::create_session_ext_sync(
-                            conn,
-                            &sid_owned,
-                            Some(project_id),
-                            Some(&source_owned),
-                            None,
-                        )?;
-                        // Record source in session history
-                        conn.execute(
-                            "INSERT INTO session_behavior_log (session_id, event_type, event_data) \
-                             VALUES (?1, 'session_start', ?2)",
-                            rusqlite::params![sid_owned, source_owned],
-                        )
-                        .ok(); // best-effort
-                        Ok::<_, anyhow::Error>(())
-                    })
-                    .await;
-                match res {
-                    Ok(()) => eprintln!("[mira] Session registered in DB"),
-                    Err(e) => eprintln!("[mira] Failed to register session: {}", e),
-                }
+    if let (Some(sid), Some(cwd_val)) = (session_id, cwd) {
+        let db_path = get_db_path();
+        let sid_owned = sid.to_string();
+        let cwd_owned = cwd_val.to_string();
+        let source_owned = source.to_string();
+        if let Ok(pool) = DatabasePool::open(&db_path).await {
+            let pool = Arc::new(pool);
+            let res = pool
+                .interact(move |conn| {
+                    // Resolve project from cwd
+                    let (project_id, _) =
+                        crate::db::get_or_create_project_sync(conn, &cwd_owned, None)?;
+                    // Create or reactivate session. Uses create_session_ext_sync
+                    // which sets status='active' on conflict, properly reactivating
+                    // completed sessions when Claude Code restarts.
+                    crate::db::create_session_ext_sync(
+                        conn,
+                        &sid_owned,
+                        Some(project_id),
+                        Some(&source_owned),
+                        None,
+                    )?;
+                    // Record source in session history
+                    conn.execute(
+                        "INSERT INTO session_behavior_log (session_id, event_type, event_data) \
+                         VALUES (?1, 'session_start', ?2)",
+                        rusqlite::params![sid_owned, source_owned],
+                    )
+                    .ok(); // best-effort
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await;
+            match res {
+                Ok(()) => eprintln!("[mira] Session registered in DB"),
+                Err(e) => eprintln!("[mira] Failed to register session: {}", e),
             }
         }
     }
