@@ -5,7 +5,7 @@
 
 set -e
 
-MIRA_VERSION="0.6.6"
+MIRA_VERSION="0.6.7"
 REPO="ConaryLabs/Mira"
 MIRA_HOME="${HOME}/.mira"
 BIN_DIR="${MIRA_HOME}/bin"
