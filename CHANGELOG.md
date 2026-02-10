@@ -80,6 +80,35 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-02-10
+
+### Added
+- **QA hardening team recipe** -- New `qa-hardening` recipe for automated production readiness reviews. 5 parallel read-only agents (test-runner, error-auditor, security, edge-case-hunter, ux-reviewer) with synthesis into prioritized hardening backlog. Includes Phase 3 implementation guidance with file-ownership-grouped agents.
+- **Refactor team recipe** -- New `refactor` recipe for safe code restructuring with parallel agents.
+
+### Fixed
+- **Silent data loss in diff caching** -- `.ok()` on serialization in `diff_analysis/mod.rs` silently dropped failures. Now logs `tracing::warn!` so incomplete cached results are visible.
+- **Triple error suppression in hooks** -- `post_tool.rs` had three nested `let _ =` swallowing all diagnostics from tool use and file access logging. Inner errors now log at debug level.
+- **usize underflow in stop hook** -- `file_names.len() - 3` could panic in debug builds. Replaced with `saturating_sub()`.
+- **Non-atomic CLAUDE.local.md write** -- Direct `fs::write` could leave truncated files on crash. Now uses temp-file-and-rename pattern matching `write_auto_memory_sync()`.
+- **Stale team detection** -- Leftover `.agent-team.json` files from previous sessions could inject phantom team context. Now validates config file exists and is less than 24 hours old.
+- **Cooldown state corruption** -- `pre_tool.rs` used `unwrap_or_default()` on JSON serialization, writing empty strings that corrupt the next parse. Now skips the write on failure.
+- **Unbounded stdin in hooks** -- `read_hook_input()` had no size limit. Added 1MB cap via `Read::take()`.
+- **Unbounded retention DELETE** -- Retention cleanup could hold SQLite write lock on large backlogs. Now uses batched deletes with `LIMIT 10000` in a loop.
+- **Session ID path injection** -- `team_file_path_for_session` used session ID in file paths without format validation. Now rejects non-alphanumeric/hyphen characters.
+- **Git ref validation** -- `validate_ref()` now also rejects null bytes, newlines, and carriage returns.
+- **Bulk goal size limit** -- `bulk_create` now rejects arrays over 100 goals.
+- **MCP tool descriptions** -- Memory tool description now includes `archive` action. Team tool description now includes `distill` action.
+
+### Changed
+- **Error context on pool operations** -- Added descriptive `.map_err()` context to 8 key `pool.run()`/`pool.interact()` calls in memory, goals, and code search tools. Errors now include which operation failed, not just the raw database error.
+- **QA hardening recipe improvements** -- Updated coordination instructions based on real-world usage: task-first creation, file-ownership grouping for implementation agents, Rust-specific build guidance, single-agent documentation consolidation.
+
+### Documentation
+- **CONCEPTS.md** -- Fixed `goal_id`/`milestone_id` shown as strings instead of integers in all examples. Added missing `goal_id` parameter to `progress` action example.
+- **CONFIGURATION.md** -- Added `async: true` to PostToolUse, PreCompact, and SubagentStop in manual hook config. Added `MIRA_PROJECT_PATH` to environment variables table. Added `matcher: "*"` to PreCompact.
+- **README.md** -- Corrected expert consultation description to reference Agent Teams recipes instead of removed MCP Sampling feature.
+
 ## [0.6.6] - 2026-02-09
 
 ### Changed
