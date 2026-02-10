@@ -75,50 +75,65 @@ impl DetectionResults {
     }
 }
 
-/// Check if `test` appears in a cfg expression in a positive position
-/// (not negated by `not(...)`). For example:
-/// - `"test"` -> true
-/// - `"not(test)"` -> false
-/// - `"all(unix, not(test))"` -> false
-/// - `"any(test, feature = \"foo\")"` -> true
-/// - `"all(test, target_os = \"linux\")"` -> true
+/// Check if `test` appears in a cfg expression as a bare predicate (not inside
+/// `not(...)` and not inside a string literal like `feature = "test"`).
 fn has_positive_test(expr: &str) -> bool {
-    // Strip not(...) blocks from the expression, then check if "test" remains
     let stripped = strip_not_blocks(expr);
-    stripped
+    let unquoted = strip_quoted_strings(&stripped);
+    unquoted
         .split(|c: char| !c.is_alphanumeric() && c != '_')
         .any(|part| part == "test")
 }
 
 /// Remove all `not(...)` sub-expressions from a cfg expression string.
+/// Handles optional whitespace between `not` and `(`.
 fn strip_not_blocks(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    let mut buf = String::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
 
-    while let Some(c) = chars.next() {
-        buf.push(c);
-        if buf.ends_with("not(") {
-            // Found a not( — skip everything until the matching close paren
-            buf.truncate(buf.len() - 4);
-            result.push_str(&buf);
-            buf.clear();
-            let mut depth = 1;
-            for inner in chars.by_ref() {
-                match inner {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
+    while i < bytes.len() {
+        // Look for "not" followed by optional whitespace then "("
+        if i + 3 <= bytes.len() && &bytes[i..i + 3] == b"not" {
+            let mut j = i + 3;
+            while j < bytes.len() && bytes[j] == b' ' {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'(' {
+                // Skip the entire not(...) block
+                j += 1;
+                let mut depth = 1;
+                while j < bytes.len() && depth > 0 {
+                    match bytes[j] {
+                        b'(' => depth += 1,
+                        b')' => depth -= 1,
+                        _ => {}
                     }
-                    _ => {}
+                    j += 1;
                 }
+                i = j;
+                continue;
             }
         }
+        result.push(bytes[i] as char);
+        i += 1;
     }
-    result.push_str(&buf);
+    result
+}
+
+/// Remove quoted string contents so token matching doesn't match inside them.
+/// e.g. `feature = "test"` -> `feature = ""`
+fn strip_quoted_strings(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_quote = false;
+    for c in s.chars() {
+        if c == '"' {
+            in_quote = !in_quote;
+            result.push(c);
+        } else if !in_quote {
+            result.push(c);
+        }
+    }
     result
 }
 
@@ -557,6 +572,19 @@ mod tests {
     fn test_cfg_composite_positive_and_negated_test() {
         // test appears both positively and negated — still test-gated
         assert!(is_cfg_test("#[cfg(any(test, not(test)))]"));
+    }
+
+    #[test]
+    fn test_cfg_not_with_whitespace() {
+        // not (test) with space is valid Rust — still production-only
+        assert!(!is_cfg_test("#[cfg(not (test))]"));
+        assert!(!is_cfg_test("#[cfg(all(unix, not (test)))]"));
+    }
+
+    #[test]
+    fn test_cfg_feature_test_is_not_test() {
+        // feature = "test" is a cargo feature, not the test cfg
+        assert!(!is_cfg_test("#[cfg(feature = \"test\")]"));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
