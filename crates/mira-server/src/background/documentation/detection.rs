@@ -244,9 +244,7 @@ async fn detect_mcp_tool_gaps(
             continue;
         }
         if trimmed.starts_with("async fn ") {
-            if saw_tool_attr
-                && let Some(fn_name) = trimmed.strip_prefix("async fn ")
-            {
+            if saw_tool_attr && let Some(fn_name) = trimmed.strip_prefix("async fn ") {
                 let fn_name = fn_name.split('(').next().unwrap_or("").trim().to_string();
                 if !fn_name.is_empty() {
                     tool_names.insert(fn_name);

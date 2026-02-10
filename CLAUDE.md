@@ -104,14 +104,14 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 
 | Hook | What It Injects |
 |------|-----------------|
-| `SessionStart` | Session ID, startup vs resume, task list ID, working directory |
-| `UserPromptSubmit` | Pending tasks, relevant memories, file-aware context |
-| `PreToolUse` | Context before Grep/Glob/Read (suggests semantic alternatives) |
-| `PostToolUse` | Tracks file modifications (async, non-blocking) |
-| `PreCompact` | Preserves important context before summarization |
-| `Stop` | Session snapshot, task export for continuity |
-| `SessionEnd` | Snapshot tasks on user interrupt |
-| `SubagentStart` | Injects relevant context when subagents spawn |
+| `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info |
+| `UserPromptSubmit` | Pending tasks, relevant memories, proactive predictions, team context |
+| `PreToolUse` | Relevant memories before Grep/Glob/Read (keyword-matched from search pattern) |
+| `PostToolUse` | Tracks file modifications, team conflict detection, test file hints (async) |
+| `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |
+| `Stop` | Session snapshot, task export, goal progress check, auto-export to CLAUDE.local.md |
+| `SessionEnd` | Snapshot tasks on user interrupt, team session cleanup |
+| `SubagentStart` | Injects relevant memories and active goals for subagent context |
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PermissionRequest` | Auto-approve tools based on stored rules |
 

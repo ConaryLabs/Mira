@@ -101,9 +101,9 @@ async fn find_project_for_llm_health(
                 let llm_time = get_scan_info_sync(conn, project_id, &key);
 
                 let needs_run = match (&scan_time, &llm_time) {
-                    (Some(_), None) => true, // Scanned but LLM task never ran
+                    (Some(_), None) => true,                   // Scanned but LLM task never ran
                     (Some((_, st)), Some((_, lt))) => st > lt, // Scanned more recently
-                    _ => false, // Never scanned
+                    _ => false,                                // Never scanned
                 };
 
                 if needs_run {
@@ -495,7 +495,11 @@ pub async fn process_health_module_analysis(
     // finalization clearing the flag.
     let fast_scan_done = main_pool
         .interact(move |conn| {
-            Ok::<bool, anyhow::Error>(memory_key_exists_sync(conn, project_id, "health_fast_scan_done"))
+            Ok::<bool, anyhow::Error>(memory_key_exists_sync(
+                conn,
+                project_id,
+                "health_fast_scan_done",
+            ))
         })
         .await
         .str_err()?;
@@ -1079,7 +1083,10 @@ mod tests {
         // Mark LLM task as done
         mark_llm_health_done_sync(&conn, pid, "health_llm_complexity_time").unwrap();
         let llm_time = get_scan_info_sync(&conn, pid, "health_llm_complexity_time");
-        assert!(llm_time.is_some(), "llm time should exist after marking done");
+        assert!(
+            llm_time.is_some(),
+            "llm time should exist after marking done"
+        );
 
         // LLM time should be >= scan time (both set to "now")
         let (_, st) = scan_time.unwrap();
@@ -1144,8 +1151,12 @@ mod tests {
         assert_eq!(count, 1);
 
         // Clear the categories that module analysis clears
-        clear_health_issues_by_categories_sync(&conn, pid, &["architecture", "circular_dependency"])
-            .unwrap();
+        clear_health_issues_by_categories_sync(
+            &conn,
+            pid,
+            &["architecture", "circular_dependency"],
+        )
+        .unwrap();
 
         let count: i64 = conn
             .query_row(

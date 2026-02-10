@@ -80,6 +80,24 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-02-10
+
+### Fixed
+- **Hook dedup now handles all mira executable formats** -- Reinstalling on Windows no longer duplicates hooks. The jq filter matches `mira`, `mira.exe`, absolute Unix paths, quoted Windows paths (e.g., `"C:/Program Files/Mira/mira.exe"`), and backslash paths.
+- **Hook dedup no longer over-matches** -- Regex is anchored to the first command token, so commands like `samira hook ...`, wrapper scripts with mira in arguments, or quoted strings containing "mira hook" are correctly preserved.
+- **Hook merge preserves mixed entries at command level** -- When an entry contains both Mira and non-Mira commands, only the Mira commands are stripped; the entry and its custom commands survive.
+- **Setup wizard .env single-char value panic** -- Parsing a `.env` value like `X=a` no longer panics on the quote-stripping range check.
+- **Setup wizard [llm] section detection** -- Inline TOML comments (e.g., `[llm] # note`) are now recognized, preventing duplicate section creation.
+- **Short API key exposure** -- Keys 12 chars or shorter are now fully masked instead of showing prefix/suffix.
+- **config.toml indentation** -- `background_provider` replacement now preserves existing line indentation.
+
+### Changed
+- **CI: pinned `dtolnay/rust-toolchain` to `@v1` tag** -- All workflows now use the stable tag instead of `@stable` branch ref.
+- **Hook documentation** -- CLAUDE.md hook table updated to accurately describe each hook's behavior, removed inaccurate claims, added undocumented capabilities.
+
+### Added
+- **Hook dedup fixture tests** -- `scripts/test-hook-dedup.sh` covers 10 cases (bare, absolute path, Windows, quoted, backslash, substring, wrapper, quoted arg, mixed entry, empty settings) to prevent future regressions.
+
 ## [0.6.8] - 2026-02-10
 
 ### Fixed

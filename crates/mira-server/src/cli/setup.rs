@@ -268,11 +268,7 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
 
     for (k, v) in &keys {
         let display = if k.contains("KEY") {
-            format!(
-                "{}...{}",
-                &v[..4.min(v.len())],
-                &v[v.len().saturating_sub(4)..]
-            )
+            mask_key(v)
         } else {
             v.clone()
         };
@@ -401,7 +397,8 @@ fn ensure_dir(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Read existing .env file into a key-value map
+/// Read existing .env file into a key-value map.
+/// Strips surrounding quotes from values to match dotenvy runtime behavior.
 fn read_existing_env(path: &PathBuf) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     if let Ok(contents) = std::fs::read_to_string(path) {
@@ -411,7 +408,17 @@ fn read_existing_env(path: &PathBuf) -> BTreeMap<String, String> {
                 continue;
             }
             if let Some((key, val)) = line.split_once('=') {
-                map.insert(key.trim().to_string(), val.trim().to_string());
+                let val = val.trim();
+                // Strip surrounding quotes to match dotenvy behavior
+                let val = if val.len() >= 2
+                    && ((val.starts_with('"') && val.ends_with('"'))
+                        || (val.starts_with('\'') && val.ends_with('\'')))
+                {
+                    &val[1..val.len() - 1]
+                } else {
+                    val
+                };
+                map.insert(key.trim().to_string(), val.to_string());
             }
         }
     }
@@ -425,12 +432,11 @@ async fn prompt_api_key(
     existing: Option<&String>,
 ) -> Result<Option<String>> {
     if let Some(existing_key) = existing {
-        let masked = format!(
-            "{}...{}",
-            &existing_key[..4.min(existing_key.len())],
-            &existing_key[existing_key.len().saturating_sub(4)..]
+        println!(
+            "  Existing {} key found: {}",
+            provider_name,
+            mask_key(existing_key)
         );
-        println!("  Existing {} key found: {}", provider_name, masked);
         if !Confirm::new()
             .with_prompt("Replace existing key?")
             .default(false)
@@ -474,12 +480,7 @@ async fn prompt_api_key(
 /// Prompt for Brave API key (format check only, no API validation)
 fn prompt_brave_key(existing: Option<&String>) -> Result<Option<String>> {
     if let Some(existing_key) = existing {
-        let masked = format!(
-            "{}...{}",
-            &existing_key[..4.min(existing_key.len())],
-            &existing_key[existing_key.len().saturating_sub(4)..]
-        );
-        println!("  Existing Brave key found: {}", masked);
+        println!("  Existing Brave key found: {}", mask_key(existing_key));
         if !Confirm::new()
             .with_prompt("Replace existing key?")
             .default(false)
@@ -596,6 +597,17 @@ fn truncate(s: &str, max: usize) -> &str {
     mira::utils::truncate_at_boundary(s, max)
 }
 
+/// Mask an API key for display. Shows first 4 and last 4 chars only if the key
+/// is long enough (>12 chars) to actually hide something meaningful.
+fn mask_key(key: &str) -> String {
+    if key.len() > 12 {
+        format!("{}...{}", &key[..4], &key[key.len() - 4..])
+    } else {
+        // Key too short to meaningfully mask with prefix/suffix — hide it entirely
+        format!("****({} chars)", key.len())
+    }
+}
+
 enum OllamaStatus {
     Available(Vec<String>),
     NotAvailable,
@@ -669,25 +681,53 @@ fn write_config_toml(path: &PathBuf) -> Result<()> {
     });
 
     if has_active_setting {
-        // Update existing uncommented value
+        // Update existing uncommented value, preserving indentation
         let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
         for line in &mut lines {
             if !line.trim().starts_with('#') && line.trim().starts_with("background_provider") {
-                *line = "background_provider = \"ollama\"".to_string();
+                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                *line = format!("{}background_provider = \"ollama\"", indent);
             }
         }
         std::fs::write(path, lines.join("\n") + "\n")?;
     } else {
-        // Append — create [llm] section if needed
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
+        // Check if [llm] section exists as an actual section header (not in a comment).
+        // Handles "[llm]", "[llm] # comment", etc.
+        let is_llm_header = |line: &str| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                return false;
+            }
+            // Strip inline comment: "[llm] # comment" -> "[llm]"
+            let without_comment = trimmed.split('#').next().unwrap_or(trimmed).trim();
+            without_comment == "[llm]"
+        };
 
-        if !existing.contains("[llm]") {
+        let has_llm_section = existing.lines().any(is_llm_header);
+
+        if has_llm_section {
+            // Insert background_provider right after the [llm] header
+            let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
+            let mut insert_idx = None;
+            for (i, line) in lines.iter().enumerate() {
+                if is_llm_header(line) {
+                    insert_idx = Some(i + 1);
+                    break;
+                }
+            }
+            if let Some(idx) = insert_idx {
+                lines.insert(idx, "background_provider = \"ollama\"".to_string());
+            }
+            std::fs::write(path, lines.join("\n") + "\n")?;
+        } else {
+            // Append new [llm] section with the setting
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?;
             writeln!(file, "\n[llm]")?;
+            writeln!(file, "background_provider = \"ollama\"")?;
         }
-        writeln!(file, "background_provider = \"ollama\"")?;
     }
 
     Ok(())
@@ -773,5 +813,54 @@ mod tests {
             setup_summary(&existing, &new_keys),
             SetupSummary::NewKeysConfigured
         );
+    }
+
+    #[test]
+    fn mask_key_hides_short_keys_entirely() {
+        // Keys <= 12 chars should be fully hidden
+        assert_eq!(mask_key("x"), "****(1 chars)");
+        assert_eq!(mask_key("abcd"), "****(4 chars)");
+        assert_eq!(mask_key("12345678"), "****(8 chars)");
+        assert_eq!(mask_key("123456789012"), "****(12 chars)");
+    }
+
+    #[test]
+    fn mask_key_shows_prefix_suffix_for_long_keys() {
+        // Keys > 12 chars show first 4 and last 4
+        assert_eq!(mask_key("sk-abcdefghijklm"), "sk-a...jklm");
+        let long_key = "sk-proj-1234567890abcdefghij";
+        let masked = mask_key(long_key);
+        assert!(masked.starts_with("sk-p"));
+        assert!(masked.ends_with("ghij"));
+        assert!(masked.contains("..."));
+    }
+
+    #[test]
+    fn read_env_strips_quotes() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+        std::fs::write(
+            &env_path,
+            "DOUBLE=\"quoted-value\"\nSINGLE='single-quoted'\nBARE=bare-value\nEMPTY=\n",
+        )
+        .unwrap();
+        let map = read_existing_env(&env_path.to_path_buf());
+        assert_eq!(map.get("DOUBLE").unwrap(), "quoted-value");
+        assert_eq!(map.get("SINGLE").unwrap(), "single-quoted");
+        assert_eq!(map.get("BARE").unwrap(), "bare-value");
+        assert_eq!(map.get("EMPTY").unwrap(), "");
+    }
+
+    #[test]
+    fn read_env_single_char_quote_no_panic() {
+        // A lone quote character should not panic (Codex finding #2)
+        let dir = tempfile::tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+        std::fs::write(&env_path, "BAD_KEY=\"\nALSO_BAD='\nOK=value\n").unwrap();
+        let map = read_existing_env(&env_path.to_path_buf());
+        // Single quote chars are kept as-is (not stripped, since len < 2)
+        assert_eq!(map.get("BAD_KEY").unwrap(), "\"");
+        assert_eq!(map.get("ALSO_BAD").unwrap(), "'");
+        assert_eq!(map.get("OK").unwrap(), "value");
     }
 }

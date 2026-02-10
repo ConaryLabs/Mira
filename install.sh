@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 # Mira installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
@@ -43,7 +43,11 @@ detect_platform() {
 
 # Get latest release version
 get_latest_version() {
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/'
+    local response
+    response=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest") || {
+        error "Failed to fetch latest release from GitHub (check network or try again)"
+    }
+    echo "$response" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
 # Download and install binary
@@ -62,7 +66,7 @@ install_binary() {
     info "Downloading mira ${version} for ${platform}..."
 
     tmp_dir=$(mktemp -d)
-    trap "rm -rf $tmp_dir" EXIT
+    trap 'rm -rf "$tmp_dir"' EXIT
 
     if [[ "$ext" == "zip" ]]; then
         curl -fsSL "$url" -o "$tmp_dir/mira.zip"
@@ -142,16 +146,16 @@ setup_hooks() {
         warn "Install hooks manually by adding to ~/.claude/settings.json:"
         cat << MANUAL
     "hooks": {
-      "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10}]}],
-      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5}]}],
-      "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3}]}],
-      "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2}]}],
-      "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5, "async": true}]}],
-      "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30, "async": true}]}],
-      "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5}]}],
-      "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5}]}],
-      "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3}]}],
-      "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3, "async": true}]}]
+      "SessionStart": [{"hooks": [{"type": "command", "command": "${mira_bin} hook session-start", "timeout": 10}]}],
+      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "${mira_bin} hook user-prompt", "timeout": 5}]}],
+      "PermissionRequest": [{"hooks": [{"type": "command", "command": "${mira_bin} hook permission", "timeout": 3}]}],
+      "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "${mira_bin} hook pre-tool", "timeout": 2}]}],
+      "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "${mira_bin} hook post-tool", "timeout": 5, "async": true}]}],
+      "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "${mira_bin} hook pre-compact", "timeout": 30, "async": true}]}],
+      "Stop": [{"hooks": [{"type": "command", "command": "${mira_bin} hook stop", "timeout": 5}]}],
+      "SessionEnd": [{"hooks": [{"type": "command", "command": "${mira_bin} hook session-end", "timeout": 5}]}],
+      "SubagentStart": [{"hooks": [{"type": "command", "command": "${mira_bin} hook subagent-start", "timeout": 3}]}],
+      "SubagentStop": [{"hooks": [{"type": "command", "command": "${mira_bin} hook subagent-stop", "timeout": 3, "async": true}]}]
     }
 MANUAL
         return
@@ -284,20 +288,31 @@ EOF
 )
 
     if [ -f "$settings_file" ]; then
-        # File exists - merge hooks
-        local existing_hooks
-        existing_hooks=$(jq '.hooks // {}' "$settings_file" 2>/dev/null || echo '{}')
-
-        # Merge: new hooks take precedence for Mira-specific hooks
-        local merged_hooks
-        merged_hooks=$(echo "$existing_hooks" | jq --argjson new "$hooks_json" '. * $new')
-
-        # Update the settings file
+        # File exists — merge hooks, preserving existing non-Mira entries.
+        # For each hook event: remove old Mira entries (command contains "mira hook"),
+        # then append Mira's new entries. Non-Mira hooks are untouched.
         local updated
-        updated=$(jq --argjson hooks "$merged_hooks" '.hooks = $hooks' "$settings_file")
+        updated=$(jq --argjson new "$hooks_json" '
+            .hooks = (reduce ($new | keys[]) as $event (
+                (.hooks // {});
+                if .[$event] then
+                    # Strip commands where mira/mira.exe is the executable (first token).
+                    # Matches: mira hook, /path/to/mira hook, "C:/Program Files/mira.exe" hook
+                    .[$event] = ([.[$event][] |
+                        .hooks = [(.hooks // [])[] | select(
+                            .command | tostring | test("^(\"[^\"]*[/\\\\]|[^\\s\"]*[/\\\\])?mira(\\.exe)?\"? hook ") | not
+                        )] |
+                        select((.hooks | length) > 0)
+                    ] + $new[$event])
+                else
+                    .[$event] = $new[$event]
+                end
+            ))
+        ' "$settings_file")
+
         echo "$updated" > "$settings_file"
 
-        info "Updated hooks in $settings_file"
+        info "Updated hooks in $settings_file (existing hooks preserved)"
     else
         # Create new settings file with hooks
         echo "{\"hooks\": $hooks_json}" | jq '.' > "$settings_file"
@@ -352,11 +367,22 @@ main() {
 
     local platform version plugin_ok
 
+    # Check for curl
+    if ! command -v curl &> /dev/null; then
+        error "curl is required but not found. Install curl and try again."
+    fi
+
     platform=$(detect_platform)
     info "Detected platform: $platform"
 
     version=$(get_latest_version)
+    if [ -z "$version" ]; then
+        error "Failed to determine latest version (GitHub API may be rate-limited)"
+    fi
     info "Latest version: $version"
+
+    # Ensure install directory exists
+    mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 
     install_binary "$platform" "$version"
     setup_config
