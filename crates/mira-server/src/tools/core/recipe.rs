@@ -358,28 +358,58 @@ This recipe assesses production readiness of working code. All agents run in par
 
 Use this recipe when code is functionally complete but needs hardening before release. It does NOT discover architectural issues or implement fixes — use `expert-review` for architecture and `full-cycle` for end-to-end review with implementation.
 
-### Workflow
+### Phase 1: Discovery (parallel)
 
 1. **Create team**: `TeamCreate(team_name="qa-hardening-{timestamp}")`
-2. **Spawn all 5 agents** in parallel using `Task` tool with `run_in_background=true`
+2. **Create tasks FIRST** using `TaskCreate` for each recipe task — do this BEFORE spawning agents to avoid timing confusion
+3. **Spawn all 5 agents** in parallel using `Task` tool with `run_in_background=true`
    - Append the user's context (what to review, specific areas of concern) to each agent's prompt
-3. **Create and assign tasks** using `TaskCreate` + `TaskUpdate`
-4. **Wait** for all agents to report findings via SendMessage
-5. **Synthesize** findings into a prioritized hardening backlog:
+4. **Assign tasks** to agents using `TaskUpdate` with `owner`
+5. **Wait** for all agents to report findings via SendMessage
+6. **Shut down** agents as they complete — don't wait for all to finish before shutting down idle ones
+
+### Phase 2: Synthesis
+
+7. **Synthesize** findings into a prioritized hardening backlog:
    - **Critical** — Must fix before release (panics in production paths, security holes, data loss risks)
    - **High** — Should fix before release (poor error messages on common paths, resource leaks, missing validation)
    - **Medium** — Fix soon after release (coverage gaps, edge cases in uncommon paths, docs drift)
    - **Low** — Polish (naming consistency, minor UX improvements, nice-to-have tests)
-6. **Cross-reference** findings — when multiple agents flag the same area, elevate priority
-7. **Present** the hardening backlog to the user
-8. **Cleanup**: Send `shutdown_request` to each agent, then `TeamDelete`
+   - **Deferred** — Needs design discussion (architectural changes, API format changes, large refactors)
+8. **Cross-reference** findings — when multiple agents flag the same area, elevate priority
+9. **Present** the hardening backlog to the user
+10. **Cleanup**: `TeamDelete`
+
+### Phase 3: Implementation (optional, on user request)
+
+If the user wants fixes implemented, create a new team and spawn implementation agents:
+
+11. **Create team**: `TeamCreate(team_name="qa-fixes-{timestamp}")`
+12. **Group findings into implementation tasks** by file ownership to prevent merge conflicts:
+    - **One agent for ALL documentation fixes** — doc changes don't conflict, and using multiple doc agents risks changes not persisting
+    - **Code agents: max 3 fixes per agent**, grouped by file proximity
+    - **Type/schema changes get their own dedicated agent** — they have ripple effects across tests
+13. **Create tasks FIRST**, then spawn implementation agents with `mode="bypassPermissions"`
+14. **Monitor build diagnostics** actively. When you see compile errors, send targeted fixes to the responsible agent via SendMessage with the exact error and a suggested fix. This unblocks agents within one turn
+15. **Rust-specific guidance for implementation agents:**
+    - Make ONE change at a time, verify with `cargo test --no-run` after each (NEVER --release)
+    - Prefer simple patterns — `chunks(N)` + `join_all` in a loop beats `buffer_unordered` for avoiding async lifetime issues
+    - `Path` is unsized — use `PathBuf` in collections (`Vec<PathBuf>`, not `Vec<Path>`)
+    - When changing a tuple/struct type, search for ALL destructuring sites and update them
+    - Parallel build awareness: ignore compile errors in files you didn't touch
+16. **After all implementation agents finish**, run `cargo update` to pick up compatible dependency patches
+17. **Spawn a QA verification agent** to run `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo fmt --all -- --check` (all without --release)
+18. **If QA finds issues**, fix them directly or spawn additional fixers
+19. **Cleanup**: Shut down all agents, `TeamDelete`
 
 ### Important Notes
 
-- All agents are READ-ONLY — they explore and report, they don't modify code. Do NOT give them `mode="bypassPermissions"`
-- This recipe does NOT include an implementation phase. After synthesis, the user decides what to fix (manually or by running `full-cycle` on specific findings)
+- Discovery agents are READ-ONLY — do NOT give them `mode="bypassPermissions"`
+- Implementation agents (Phase 3) get `mode="bypassPermissions"` so they can edit files and run builds
 - NEVER use `cargo build --release` or `cargo test --release` — always use debug mode
-- If the user specifies a focus area (e.g., "just check error handling"), you can skip spawning irrelevant agents"#;
+- If the user specifies a focus area (e.g., "just check error handling"), you can skip spawning irrelevant agents
+- Consolidate documentation fixes into a SINGLE agent — multiple doc agents risk losing changes and don't benefit from parallelism
+- Deferred items should be presented to the user separately — they need design discussion, not automated fixes"#;
 
 const QA_HARDENING: Recipe = Recipe {
     name: "qa-hardening",
