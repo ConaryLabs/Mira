@@ -36,6 +36,8 @@ const PONDERING_CYCLE_INTERVAL: u64 = 10;
 const OUTCOME_SCAN_CYCLE_INTERVAL: u64 = 5;
 /// Run team monitoring every Nth cycle
 const TEAM_MONITOR_CYCLE_INTERVAL: u64 = 3;
+/// Run data retention every Nth cycle (~10 min interval at 60s idle)
+const DATA_RETENTION_CYCLE_INTERVAL: u64 = 10;
 
 /// Priority level for background tasks. Lower numeric value = higher priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +68,7 @@ enum BackgroundTask {
     InsightCleanup,
     ProactiveCleanup,
     DiffOutcomes,
+    DataRetention,
 }
 
 impl std::fmt::Display for BackgroundTask {
@@ -84,6 +87,7 @@ impl std::fmt::Display for BackgroundTask {
             Self::InsightCleanup => write!(f, "insight cleanup"),
             Self::ProactiveCleanup => write!(f, "proactive cleanup"),
             Self::DiffOutcomes => write!(f, "diff outcomes"),
+            Self::DataRetention => write!(f, "data retention"),
         }
     }
 }
@@ -177,6 +181,11 @@ fn task_schedule() -> Vec<ScheduledTask> {
             task: BackgroundTask::DiffOutcomes,
             priority: TaskPriority::Low,
             cycle_interval: Some(OUTCOME_SCAN_CYCLE_INTERVAL),
+        },
+        ScheduledTask {
+            task: BackgroundTask::DataRetention,
+            priority: TaskPriority::Low,
+            cycle_interval: Some(DATA_RETENTION_CYCLE_INTERVAL),
         },
     ]
 }
@@ -401,6 +410,18 @@ impl SlowLaneWorker {
                 } else {
                     0
                 }
+            }
+            BackgroundTask::DataRetention => {
+                let pool = self.pool.clone();
+                Self::run_task(&name, async move {
+                    pool.interact(move |conn| {
+                        crate::db::retention::run_data_retention_sync(conn)
+                            .map_err(|e| anyhow::anyhow!(e))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())
+                })
+                .await
             }
         }
     }

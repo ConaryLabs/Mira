@@ -364,145 +364,153 @@ impl FileWatcher {
         full_path: &Path,
         relative_path: &str,
     ) -> Result<(), String> {
-        // Read the file content
-        let content = tokio::fs::read_to_string(full_path)
-            .await
-            .map_err(|e| format!("Failed to read file: {}", e))?;
-
-        // Determine language from extension
-        let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let language = match ext {
-            "rs" => "rust",
-            "py" => "python",
-            "ts" | "tsx" => "typescript",
-            "js" | "jsx" => "javascript",
-            "go" => "go",
-            _ => return Err(format!("Unsupported extension: {}", ext)),
-        };
-
-        // Parse is CPU-bound; move it off the async runtime.
-        let parse_result =
-            tokio::task::spawn_blocking(move || indexer::parse_file(&content, language))
+        #[cfg(not(feature = "parsers"))]
+        {
+            let _ = (project_id, full_path, relative_path);
+            return Err("File parsing requires the 'parsers' feature".to_string());
+        }
+        #[cfg(feature = "parsers")]
+        {
+            // Read the file content
+            let content = tokio::fs::read_to_string(full_path)
                 .await
-                .map_err(|e| format!("Parse task failed: {}", e))?
-                .map_err(|e| format!("Parse error: {}", e))?;
+                .map_err(|e| format!("Failed to read file: {}", e))?;
 
-        // Run DB inserts on pool connection with a transaction for speed
-        let relative_path = relative_path.to_string();
-        let relative_path_for_db = relative_path.clone();
-        let symbol_count = parse_result.symbols.len();
-        let call_count = parse_result.calls.len();
-        let chunk_count = parse_result.chunks.len();
-        self.pool
-            .interact(move |conn| -> Result<(), anyhow::Error> {
-                let relative_path = relative_path_for_db;
-                // Use a transaction for batch inserts (much faster)
-                let tx = conn.unchecked_transaction()?;
-                // Replace index data atomically so parse failures don't drop existing entries.
-                clear_file_index_sync(&tx, project_id, &relative_path)?;
+            // Determine language from extension
+            let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let language = match ext {
+                "rs" => "rust",
+                "py" => "python",
+                "ts" | "tsx" => "typescript",
+                "js" | "jsx" => "javascript",
+                "go" => "go",
+                _ => return Err(format!("Unsupported extension: {}", ext)),
+            };
 
-                // Insert symbols and capture inserted IDs for call-graph linking.
-                let mut symbol_ranges: Vec<(String, u32, u32, i64)> =
-                    Vec::with_capacity(parse_result.symbols.len());
-                for symbol in &parse_result.symbols {
-                    let sym_insert = SymbolInsert {
-                        name: &symbol.name,
-                        symbol_type: &symbol.kind,
-                        start_line: symbol.start_line,
-                        end_line: symbol.end_line,
-                        signature: symbol.signature.as_deref(),
-                    };
-                    let symbol_id =
-                        insert_symbol_sync(&tx, Some(project_id), &relative_path, &sym_insert)?;
-                    symbol_ranges.push((
-                        symbol.name.clone(),
-                        symbol.start_line,
-                        symbol.end_line,
-                        symbol_id,
-                    ));
-                }
+            // Parse is CPU-bound; move it off the async runtime.
+            let parse_result =
+                tokio::task::spawn_blocking(move || indexer::parse_file(&content, language))
+                    .await
+                    .map_err(|e| format!("Parse task failed: {}", e))?
+                    .map_err(|e| format!("Parse error: {}", e))?;
 
-                // Insert imports
-                for import in &parse_result.imports {
-                    let import_insert = ImportInsert {
-                        import_path: &import.path,
-                        is_external: import.is_external,
-                    };
-                    insert_import_sync(&tx, Some(project_id), &relative_path, &import_insert)?;
-                }
+            // Run DB inserts on pool connection with a transaction for speed
+            let relative_path = relative_path.to_string();
+            let relative_path_for_db = relative_path.clone();
+            let symbol_count = parse_result.symbols.len();
+            let call_count = parse_result.calls.len();
+            let chunk_count = parse_result.chunks.len();
+            self.pool
+                .interact(move |conn| -> Result<(), anyhow::Error> {
+                    let relative_path = relative_path_for_db;
+                    // Use a transaction for batch inserts (much faster)
+                    let tx = conn.unchecked_transaction()?;
+                    // Replace index data atomically so parse failures don't drop existing entries.
+                    clear_file_index_sync(&tx, project_id, &relative_path)?;
 
-                // Rebuild call graph edges for this file.
-                for call in &parse_result.calls {
-                    let caller_id = symbol_ranges
-                        .iter()
-                        .find(|(name, start, end, _)| {
-                            name == &call.caller_name
-                                && call.call_line >= *start
-                                && call.call_line <= *end
-                        })
-                        .map(|(_, _, _, id)| *id);
+                    // Insert symbols and capture inserted IDs for call-graph linking.
+                    let mut symbol_ranges: Vec<(String, u32, u32, i64)> =
+                        Vec::with_capacity(parse_result.symbols.len());
+                    for symbol in &parse_result.symbols {
+                        let sym_insert = SymbolInsert {
+                            name: &symbol.name,
+                            symbol_type: &symbol.kind,
+                            start_line: symbol.start_line,
+                            end_line: symbol.end_line,
+                            signature: symbol.signature.as_deref(),
+                        };
+                        let symbol_id =
+                            insert_symbol_sync(&tx, Some(project_id), &relative_path, &sym_insert)?;
+                        symbol_ranges.push((
+                            symbol.name.clone(),
+                            symbol.start_line,
+                            symbol.end_line,
+                            symbol_id,
+                        ));
+                    }
 
-                    if let Some(cid) = caller_id {
-                        let callee_id = symbol_ranges
+                    // Insert imports
+                    for import in &parse_result.imports {
+                        let import_insert = ImportInsert {
+                            import_path: &import.path,
+                            is_external: import.is_external,
+                        };
+                        insert_import_sync(&tx, Some(project_id), &relative_path, &import_insert)?;
+                    }
+
+                    // Rebuild call graph edges for this file.
+                    for call in &parse_result.calls {
+                        let caller_id = symbol_ranges
                             .iter()
-                            .find(|(name, _, _, _)| name == &call.callee_name)
+                            .find(|(name, start, end, _)| {
+                                name == &call.caller_name
+                                    && call.call_line >= *start
+                                    && call.call_line <= *end
+                            })
                             .map(|(_, _, _, id)| *id);
 
-                        insert_call_sync(&tx, cid, &call.callee_name, callee_id)?;
+                        if let Some(cid) = caller_id {
+                            let callee_id = symbol_ranges
+                                .iter()
+                                .find(|(name, _, _, _)| name == &call.callee_name)
+                                .map(|(_, _, _, id)| *id);
+
+                            insert_call_sync(&tx, cid, &call.callee_name, callee_id)?;
+                        }
                     }
-                }
 
-                // Store chunks to code_chunks and queue for background embedding
-                for chunk in &parse_result.chunks {
-                    let rowid = insert_code_chunk_sync(
-                        &tx,
-                        Some(project_id),
-                        &relative_path,
-                        &chunk.content,
-                        chunk.start_line,
-                    )?;
-                    insert_code_fts_entry_sync(
-                        &tx,
-                        rowid,
-                        &relative_path,
-                        &chunk.content,
-                        Some(project_id),
-                        chunk.start_line,
-                    )?;
-                    queue_pending_embedding_sync(
-                        &tx,
-                        Some(project_id),
-                        &relative_path,
-                        &chunk.content,
-                        chunk.start_line,
-                    )?;
-                }
+                    // Store chunks to code_chunks and queue for background embedding
+                    for chunk in &parse_result.chunks {
+                        let rowid = insert_code_chunk_sync(
+                            &tx,
+                            Some(project_id),
+                            &relative_path,
+                            &chunk.content,
+                            chunk.start_line,
+                        )?;
+                        insert_code_fts_entry_sync(
+                            &tx,
+                            rowid,
+                            &relative_path,
+                            &chunk.content,
+                            Some(project_id),
+                            chunk.start_line,
+                        )?;
+                        queue_pending_embedding_sync(
+                            &tx,
+                            Some(project_id),
+                            &relative_path,
+                            &chunk.content,
+                            chunk.start_line,
+                        )?;
+                    }
 
-                tx.commit()?;
-                Ok(())
-            })
-            .await
-            .str_err()?;
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await
+                .str_err()?;
 
-        if let Some(cache) = self.fuzzy_cache.as_ref() {
-            cache.invalidate_code(Some(project_id)).await;
-        }
+            if let Some(cache) = self.fuzzy_cache.as_ref() {
+                cache.invalidate_code(Some(project_id)).await;
+            }
 
-        // Wake fast lane worker to process new embeddings immediately
-        if let Some(ref notify) = self.fast_lane_notify {
-            notify.wake();
-        }
+            // Wake fast lane worker to process new embeddings immediately
+            if let Some(ref notify) = self.fast_lane_notify {
+                notify.wake();
+            }
 
-        tracing::debug!(
-            "Updated file {} in project {}: {} symbols, {} calls, {} chunks queued",
-            relative_path,
-            project_id,
-            symbol_count,
-            call_count,
-            chunk_count
-        );
+            tracing::debug!(
+                "Updated file {} in project {}: {} symbols, {} calls, {} chunks queued",
+                relative_path,
+                project_id,
+                symbol_count,
+                call_count,
+                chunk_count
+            );
 
-        Ok(())
+            Ok(())
+        } // #[cfg(feature = "parsers")]
     }
 }
 

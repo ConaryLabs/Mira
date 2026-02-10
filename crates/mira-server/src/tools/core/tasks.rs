@@ -5,7 +5,7 @@
 // it needs access to the OperationProcessor which is MCP-specific.
 
 use crate::mcp::MiraServer;
-use crate::mcp::requests::{TasksAction, TasksRequest};
+use crate::mcp::requests::SessionAction;
 use crate::mcp::responses::{
     Json, TaskSummary, TasksData, TasksListData, TasksOutput, TasksStatusData,
 };
@@ -14,22 +14,20 @@ use rmcp::task_manager::ToolCallTaskResult;
 
 pub async fn handle_tasks(
     server: &MiraServer,
-    req: TasksRequest,
+    action: SessionAction,
+    task_id: Option<String>,
 ) -> Result<Json<TasksOutput>, String> {
-    match req.action {
-        TasksAction::List => handle_list(server).await,
-        TasksAction::Get => {
-            let task_id = req
-                .task_id
-                .ok_or("task_id is required for tasks(action=get)")?;
+    match action {
+        SessionAction::TasksList => handle_list(server).await,
+        SessionAction::TasksGet => {
+            let task_id = task_id.ok_or("task_id is required for session(action=tasks_get)")?;
             handle_get(server, &task_id).await
         }
-        TasksAction::Cancel => {
-            let task_id = req
-                .task_id
-                .ok_or("task_id is required for tasks(action=cancel)")?;
+        SessionAction::TasksCancel => {
+            let task_id = task_id.ok_or("task_id is required for session(action=tasks_cancel)")?;
             handle_cancel(server, &task_id).await
         }
+        _ => Err("Invalid action for tasks handler".into()),
     }
 }
 

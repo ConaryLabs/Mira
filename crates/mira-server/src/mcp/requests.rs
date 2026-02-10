@@ -46,17 +46,6 @@ pub enum GoalAction {
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum SessionHistoryAction {
-    /// Show current session
-    Current,
-    /// List recent sessions
-    ListSessions,
-    /// Get history for a session
-    GetHistory,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum IndexAction {
     /// Index entire project
     Project,
@@ -70,27 +59,6 @@ pub enum IndexAction {
     Summarize,
     /// Run a full code health scan (dependencies, patterns, tech debt, etc.)
     Health,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CrossProjectAction {
-    /// Get sharing preferences
-    GetPreferences,
-    /// Alias for get_preferences
-    Status,
-    /// Enable pattern sharing
-    EnableSharing,
-    /// Disable pattern sharing
-    DisableSharing,
-    /// Reset privacy budget
-    ResetBudget,
-    /// Get sharing statistics
-    GetStats,
-    /// Extract patterns from project
-    ExtractPatterns,
-    /// Sync patterns with network
-    Sync,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -110,17 +78,6 @@ pub enum DocumentationAction {
     Scan,
     /// Export Mira memories to CLAUDE.local.md
     ExportClaudeLocal,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UsageAction {
-    /// Get usage summary
-    Summary,
-    /// Get usage stats grouped by dimension
-    Stats,
-    /// List recent usage records
-    List,
 }
 
 // ============================================================================
@@ -264,26 +221,10 @@ pub struct GoalRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct CrossProjectRequest {
-    #[schemars(
-        description = "Action: get_preferences/status/enable_sharing/disable_sharing/reset_budget/get_stats/extract_patterns/sync"
-    )]
-    pub action: CrossProjectAction,
-    #[schemars(description = "Enable pattern export (for enable_sharing)")]
-    pub export: Option<bool>,
-    #[schemars(description = "Enable pattern import (for enable_sharing)")]
-    pub import: Option<bool>,
-    #[schemars(description = "Minimum confidence for pattern extraction (default: 0.6)")]
-    pub min_confidence: Option<f64>,
-    #[schemars(description = "Privacy budget epsilon (default: 1.0)")]
-    pub epsilon: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
     #[schemars(description = "Action: project/file/status/compact/summarize/health")]
     pub action: IndexAction,
-    #[schemars(description = "Path")]
+    #[schemars(description = "Project root path (defaults to active project if omitted)")]
     pub path: Option<String>,
     #[schemars(description = "Skip embedding generation (faster indexing)")]
     pub skip_embed: Option<bool>,
@@ -292,36 +233,44 @@ pub struct IndexRequest {
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionAction {
-    /// Query session history (list_sessions, get_history, current via history_action)
-    History,
+    /// Show current session
+    CurrentSession,
+    /// List recent sessions
+    ListSessions,
+    /// Get history for a session
+    GetHistory,
     /// Get session recap (preferences, recent context, goals)
     Recap,
-    /// Query LLM usage analytics (summary, stats, list via usage_action)
-    Usage,
+    /// Get LLM usage summary
+    UsageSummary,
+    /// Get LLM usage stats grouped by dimension
+    UsageStats,
+    /// List recent LLM usage records
+    UsageList,
     /// Query unified insights digest (pondering, proactive, doc gaps)
     Insights,
-    /// Manage async background tasks (list, get, cancel)
-    Tasks,
+    /// List all running and recently completed tasks
+    TasksList,
+    /// Get status and result of a specific task
+    TasksGet,
+    /// Cancel a running task
+    TasksCancel,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
-    #[schemars(description = "Action: history, recap, usage, insights, tasks")]
+    #[schemars(
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, tasks_list, tasks_get, tasks_cancel"
+    )]
     pub action: SessionAction,
-    #[schemars(description = "History sub-action: list_sessions/get_history/current")]
-    pub history_action: Option<SessionHistoryAction>,
-    #[schemars(description = "Usage sub-action: summary/stats/list")]
-    pub usage_action: Option<UsageAction>,
-    #[schemars(description = "Tasks sub-action: list/get/cancel (for action 'tasks')")]
-    pub tasks_action: Option<TasksAction>,
     #[schemars(description = "Session ID (for get_history)")]
     pub session_id: Option<String>,
-    #[schemars(description = "Task ID (for tasks get/cancel)")]
+    #[schemars(description = "Task ID (for tasks_get/tasks_cancel)")]
     pub task_id: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
     #[schemars(
-        description = "Group by: role, provider, model, or provider_model (for usage stats)"
+        description = "Group by: role, provider, model, or provider_model (for usage_stats)"
     )]
     pub group_by: Option<String>,
     #[schemars(description = "Filter to last N days (default: 30)")]
@@ -402,39 +351,4 @@ pub struct RecipeRequest {
     pub action: RecipeAction,
     #[schemars(description = "Recipe name (required for get action)")]
     pub name: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct AnalyzeDiffRequest {
-    #[schemars(
-        description = "Starting git ref (commit, branch, tag). Default: HEAD~1 for commits, or analyzes staged/working changes if present"
-    )]
-    pub from_ref: Option<String>,
-    #[schemars(description = "Ending git ref. Default: HEAD")]
-    pub to_ref: Option<String>,
-    #[schemars(description = "Include impact analysis (find affected callers). Default: true")]
-    pub include_impact: Option<bool>,
-}
-
-// ============================================================================
-// Tasks fallback tool (for clients without native task support)
-// ============================================================================
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TasksAction {
-    /// List all running and recently completed tasks
-    List,
-    /// Get status and result of a specific task
-    Get,
-    /// Cancel a running task
-    Cancel,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct TasksRequest {
-    #[schemars(description = "Action: list, get (by task_id), cancel (by task_id)")]
-    pub action: TasksAction,
-    #[schemars(description = "Task ID (required for get and cancel)")]
-    pub task_id: Option<String>,
 }

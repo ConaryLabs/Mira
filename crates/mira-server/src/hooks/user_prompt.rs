@@ -100,7 +100,13 @@ async fn get_proactive_context(
                     // Canonicalize to resolve .. segments; reject paths escaping project root
                     let ok = joined
                         .canonicalize()
-                        .map(|canon| canon.starts_with(base_path.canonicalize().unwrap_or_else(|_| base_path.to_path_buf())))
+                        .map(|canon| {
+                            canon.starts_with(
+                                base_path
+                                    .canonicalize()
+                                    .unwrap_or_else(|_| base_path.to_path_buf()),
+                            )
+                        })
                         .unwrap_or(false);
                     if !ok {
                         tracing::debug!("Dropping invalid/stale file prediction: {}", p.content);

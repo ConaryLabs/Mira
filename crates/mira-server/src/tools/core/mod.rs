@@ -160,7 +160,6 @@ pub async fn get_project_info<C: ToolContext + ?Sized>(ctx: &C) -> ProjectInfo {
 // Sub-modules with tool implementations
 pub mod claude_local;
 pub mod code;
-pub mod cross_project;
 pub mod diff;
 pub mod documentation;
 pub mod goals;
@@ -179,15 +178,12 @@ pub use code::{
     find_function_callees, find_function_callers, get_symbols, handle_code, index, query_callees,
     query_callers, query_search_code, search_code, summarize_codebase,
 };
-pub use cross_project::cross_project;
 pub use diff::{analyze_diff_tool, list_diff_analyses};
 pub use documentation::documentation;
 pub use goals::goal;
 pub use memory::{archive, forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
 pub use recipe::handle_recipe;
-pub use session::{
-    ensure_session, get_session_recap, handle_session, reply_to_mira, session_history,
-};
+pub use session::{ensure_session, get_session_recap, handle_session, reply_to_mira};
 pub use team::handle_team;
-pub use usage::usage;
+pub use usage::{usage_list, usage_stats, usage_summary};

@@ -12,6 +12,7 @@ use crate::indexer::parsing::{FunctionCall, Import, Symbol, extract_all};
 use crate::indexer::types::{IndexStats, ParsedSymbol};
 use crate::project_files::FileWalker;
 use anyhow::Result;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
@@ -80,8 +81,12 @@ fn parse_files_parallel(
     files: &[std::path::PathBuf],
     base_path: &Path,
 ) -> (Vec<ParsedFile>, usize) {
-    let results: Vec<_> = files
-        .par_iter()
+    #[cfg(feature = "parallel")]
+    let iter = files.par_iter();
+    #[cfg(not(feature = "parallel"))]
+    let iter = files.iter();
+
+    let results: Vec<_> = iter
         .map(|file_path| {
             let relative_path = file_path
                 .strip_prefix(base_path)

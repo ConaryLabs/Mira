@@ -1,6 +1,6 @@
 # session
 
-Session management. Actions: `history` (session/tool logs), `recap` (quick overview), `usage` (LLM analytics), `insights` (unified digest), `tasks` (async task management fallback).
+Session management, analytics, and background task tracking. All actions are flat — no nested sub-actions.
 
 ## Usage
 
@@ -17,13 +17,10 @@ Session management. Actions: `history` (session/tool logs), `recap` (quick overv
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | `history`, `recap`, `usage`, `insights`, or `tasks` |
-| history_action | String | For history | `current`, `list_sessions`, or `get_history` |
-| usage_action | String | For usage | `summary`, `stats`, or `list` |
-| tasks_action | String | For tasks | `list`, `get`, or `cancel` |
+| action | String | Yes | One of: `current_session`, `list_sessions`, `get_history`, `recap`, `usage_summary`, `usage_stats`, `usage_list`, `insights`, `tasks_list`, `tasks_get`, `tasks_cancel` |
 | session_id | String | No | Session ID for `get_history` |
-| task_id | String | For tasks | Task ID for `get` or `cancel` |
-| group_by | String | No | For usage stats: `role`, `provider`, `model`, `provider_model` |
+| task_id | String | For tasks | Task ID for `tasks_get` or `tasks_cancel` |
+| group_by | String | No | For `usage_stats`: `role`, `provider`, `model`, `provider_model` |
 | since_days | Integer | No | Filter to last N days (default: 30) |
 | limit | Integer | No | Max results |
 | insight_source | String | No | Filter insights: `pondering`, `proactive`, `doc_gap` |
@@ -31,50 +28,48 @@ Session management. Actions: `history` (session/tool logs), `recap` (quick overv
 
 ## Actions
 
-### `history` — Query session history
+### `current_session` — Show current session ID
 
-Uses `history_action` sub-parameter:
-
-**`current`** — Show current session ID:
 ```json
-{ "action": "history", "history_action": "current" }
+{ "action": "current_session" }
 ```
 
-**`list_sessions`** — List recent sessions:
+### `list_sessions` — List recent sessions
+
 ```json
-{ "action": "history", "history_action": "list_sessions", "limit": 5 }
+{ "action": "list_sessions", "limit": 5 }
 ```
 
-**`get_history`** — View tool calls for a session:
+### `get_history` — View tool calls for a session
+
 ```json
-{ "action": "history", "history_action": "get_history", "session_id": "a1b2c3d4-..." }
+{ "action": "get_history", "session_id": "a1b2c3d4-..." }
 ```
 
 ### `recap` — Session overview
 
-Returns a formatted recap with recent sessions, active goals, pending tasks, insights, and preferences. No parameters needed.
+Returns a formatted recap with recent sessions, active goals, pending tasks, insights, and preferences.
 
 ```json
 { "action": "recap" }
 ```
 
-### `usage` — LLM usage analytics
+### `usage_summary` — Aggregate LLM usage totals
 
-Uses `usage_action` sub-parameter:
-
-**`summary`** — Aggregate totals:
 ```json
-{ "action": "usage", "usage_action": "summary", "since_days": 7 }
+{ "action": "usage_summary", "since_days": 7 }
 ```
 
-**`stats`** — Grouped statistics:
+### `usage_stats` — Grouped LLM usage statistics
+
 ```json
-{ "action": "usage", "usage_action": "stats", "group_by": "provider_model" }
+{ "action": "usage_stats", "group_by": "provider_model" }
 ```
 
-**`list`** — Recent usage records:
+### `usage_list` — Recent LLM usage records
+
 ```json
-{ "action": "usage", "usage_action": "list", "limit": 100 }
+{ "action": "usage_list", "limit": 100 }
 ```
 
 ### `insights` — Unified insights digest
@@ -85,28 +80,27 @@ Merges pondering insights, proactive suggestions, and documentation gaps into a 
 { "action": "insights", "insight_source": "pondering", "min_confidence": 0.5 }
 ```
 
-### `tasks` — Async task management (fallback)
+### `tasks_list` — Show running and completed tasks
 
-Use when the client does not support MCP native tasks. Uses the `tasks_action` sub-parameter.
-
-**`list`** — Show running and completed tasks:
 ```json
-{ "action": "tasks", "tasks_action": "list" }
+{ "action": "tasks_list" }
 ```
 
-**`get`** — Get a specific task result:
+### `tasks_get` — Get a specific task result
+
 ```json
-{ "action": "tasks", "tasks_action": "get", "task_id": "abc123" }
+{ "action": "tasks_get", "task_id": "abc123" }
 ```
 
-**`cancel`** — Cancel a running task:
+### `tasks_cancel` — Cancel a running task
+
 ```json
-{ "action": "tasks", "tasks_action": "cancel", "task_id": "abc123" }
+{ "action": "tasks_cancel", "task_id": "abc123" }
 ```
 
 ## Errors
 
-- **Invalid action**: Must be `history`, `recap`, `usage`, `insights`, or `tasks`
+- **Invalid action**: Must be one of the 11 supported actions
 - **No active session**: No session has been started yet
 - **No active project**: Some actions require an active project context
 

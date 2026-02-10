@@ -5,6 +5,7 @@ use crate::db::pool::DatabasePool;
 use crate::db::{get_or_create_project_sync, get_server_state_sync};
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 mod analytics;
@@ -176,9 +177,13 @@ impl ContextInjectionManager {
     fn is_simple_command(&self, message: &str) -> bool {
         let trimmed = message.trim();
 
-        // Very short messages (1-2 words)
+        // Very short messages (1 word) that aren't code-related
         let word_count = trimmed.split_whitespace().count();
-        if word_count <= 2 {
+        if word_count <= 1 {
+            return true;
+        }
+        // 2-word messages: skip only if not code-related
+        if word_count == 2 && !self.is_code_related(trimmed) {
             return true;
         }
 
@@ -210,10 +215,11 @@ impl ContextInjectionManager {
             "git", "cargo", "ls", "cd", "pwd", "echo", "cat", "rm", "mkdir", "touch", "mv", "cp",
             "npm", "yarn", "docker", "kubectl", "ps", "grep", "find", "which",
         ];
-        if simple_prefixes
-            .iter()
-            .any(|&prefix| lower.starts_with(prefix))
-        {
+        if simple_prefixes.iter().any(|&prefix| {
+            lower.starts_with(prefix)
+                && (lower.len() == prefix.len()
+                    || lower.as_bytes().get(prefix.len()) == Some(&b' '))
+        }) {
             return true;
         }
 
@@ -357,9 +363,9 @@ impl ContextInjectionManager {
 
         // Probabilistic skip based on sample rate
         if self.config.sample_rate < 1.0 {
-            let hash = user_message
-                .bytes()
-                .fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+            let mut hasher = std::hash::DefaultHasher::new();
+            user_message.hash(&mut hasher);
+            let hash = hasher.finish() as u32;
             let threshold = (self.config.sample_rate * 100.0) as u32;
             if hash % 100 >= threshold {
                 return InjectionResult::skipped("sampled_out");

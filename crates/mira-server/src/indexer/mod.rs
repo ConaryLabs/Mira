@@ -1,10 +1,14 @@
 // crates/mira-server/src/indexer/mod.rs
 // Code indexing for symbol extraction and semantic search
 
+#[cfg(feature = "parsers")]
 mod batch;
 mod chunking;
+#[cfg(feature = "parsers")]
 pub mod parsers;
+#[cfg(feature = "parsers")]
 mod parsing;
+#[cfg(feature = "parsers")]
 mod project;
 mod types;
 
@@ -12,12 +16,15 @@ mod types;
 pub use types::{CodeChunk, FileParseResult, IndexStats, ParsedImport, ParsedSymbol};
 
 // Re-export parser types
+#[cfg(feature = "parsers")]
 pub use parsers::{FunctionCall, Import, Symbol};
 
 // Re-export parsing functions
+#[cfg(feature = "parsers")]
 pub use parsing::{extract_all, extract_symbols, parse_file};
 
 // Re-export project indexing
+#[cfg(feature = "parsers")]
 pub use project::index_project;
 
 #[cfg(test)]

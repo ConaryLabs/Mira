@@ -144,7 +144,7 @@ impl FuzzyCache {
         }
 
         let project_id_for_query =
-            project_id.ok_or("No active project. Use project(action=\"start\") to initialize.")?;
+            project_id.ok_or("No active project. Auto-detection failed \u{2014} call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
         let items: Vec<FuzzyCodeItem> = code_pool
             .run(move |conn| {
                 let mut stmt = conn.prepare(

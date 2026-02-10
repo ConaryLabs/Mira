@@ -192,10 +192,7 @@ mod tests {
     // Returns (TempDir, PathBuf) where PathBuf is the summary.md path
     fn write_note(session_id: &str, content: &str) -> (tempfile::TempDir, PathBuf) {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let session_dir = temp_dir
-            .path()
-            .join(session_id)
-            .join("session-memory");
+        let session_dir = temp_dir.path().join(session_id).join("session-memory");
         std::fs::create_dir_all(&session_dir).unwrap();
         let summary_path = session_dir.join("summary.md");
         std::fs::write(&summary_path, content).unwrap();
@@ -279,14 +276,54 @@ _Timeline._
         assert_eq!(note.session_id, "test-session-id");
         // Title header must contain "title" to be parsed as title
         assert_eq!(note.title.as_deref(), Some("Title: Dark Mode Toggle"));
-        assert!(note.current_state.as_ref().unwrap().contains("CSS variables"));
-        assert!(note.task_specification.as_ref().unwrap().contains("dark mode"));
-        assert!(note.files_and_functions.as_ref().unwrap().contains("ThemeToggle.tsx"));
-        assert!(note.workflow.as_ref().unwrap().contains("Created component"));
-        assert!(note.errors_and_corrections.as_ref().unwrap().contains("rgba"));
-        assert!(note.codebase_documentation.as_ref().unwrap().contains("React 18"));
-        assert!(note.learnings.as_ref().unwrap().contains("CSS custom properties"));
-        assert!(note.key_results.as_ref().unwrap().contains("Dark mode toggle"));
+        assert!(
+            note.current_state
+                .as_ref()
+                .unwrap()
+                .contains("CSS variables")
+        );
+        assert!(
+            note.task_specification
+                .as_ref()
+                .unwrap()
+                .contains("dark mode")
+        );
+        assert!(
+            note.files_and_functions
+                .as_ref()
+                .unwrap()
+                .contains("ThemeToggle.tsx")
+        );
+        assert!(
+            note.workflow
+                .as_ref()
+                .unwrap()
+                .contains("Created component")
+        );
+        assert!(
+            note.errors_and_corrections
+                .as_ref()
+                .unwrap()
+                .contains("rgba")
+        );
+        assert!(
+            note.codebase_documentation
+                .as_ref()
+                .unwrap()
+                .contains("React 18")
+        );
+        assert!(
+            note.learnings
+                .as_ref()
+                .unwrap()
+                .contains("CSS custom properties")
+        );
+        assert!(
+            note.key_results
+                .as_ref()
+                .unwrap()
+                .contains("Dark mode toggle")
+        );
         assert!(note.worklog.as_ref().unwrap().contains("10:00"));
     }
 
@@ -352,7 +389,12 @@ _Timeline._
 
         // Title should not be set to "Session Summary" since it starts with "# Session"
         assert!(note.title.is_none());
-        assert!(note.current_state.as_ref().unwrap().contains("Working on tests"));
+        assert!(
+            note.current_state
+                .as_ref()
+                .unwrap()
+                .contains("Working on tests")
+        );
     }
 
     #[test]
@@ -361,7 +403,12 @@ _Timeline._
         let (_dir, path) = write_note("unknown-section", content);
         let note = parse_session_note(&path).unwrap();
 
-        assert!(note.current_state.as_ref().unwrap().contains("Actual state"));
+        assert!(
+            note.current_state
+                .as_ref()
+                .unwrap()
+                .contains("Actual state")
+        );
     }
 
     #[test]
@@ -395,7 +442,12 @@ _Timeline._
         let content = "# Documentation\nSome docs here.\n";
         let (_dir, path) = write_note("doc-alias", content);
         let note = parse_session_note(&path).unwrap();
-        assert!(note.codebase_documentation.as_ref().unwrap().contains("Some docs here"));
+        assert!(
+            note.codebase_documentation
+                .as_ref()
+                .unwrap()
+                .contains("Some docs here")
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

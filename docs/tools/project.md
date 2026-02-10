@@ -66,7 +66,7 @@ Current project:
   ID: 5
 ```
 
-Or if no project is active: `No active project. Use project(action="start") to initialize.`
+Or if no project is active: `No active project. Auto-detection failed — call project(action="start", project_path="/your/path") to set one explicitly.`
 
 ## Examples
 
@@ -125,6 +125,6 @@ The `start` and `set` actions auto-detect project metadata:
 
 ## See Also
 
-- [**session**](./session.md): Session recap (`action="recap"`) and history (`action="history"`)
+- [**session**](./session.md): Session recap (`action="recap"`) and history (`action="get_history"`)
 - **index**: Index project code for semantic search and symbols
 - **documentation**: Manage documentation tasks for the project

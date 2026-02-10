@@ -130,8 +130,7 @@ mod tests {
 
     const ERROR_LINE: &str = r#"{"reason":"compiler-message","package_id":"mypkg 0.1.0","manifest_path":"/tmp/Cargo.toml","target":{"name":"mypkg"},"message":{"rendered":"error[E0308]","children":[],"code":null,"level":"error","message":"mismatched types","spans":[{"file_name":"src/lib.rs","byte_end":50,"byte_start":40,"column_end":8,"column_start":1,"is_primary":true,"line_end":3,"line_start":3,"text":[]}]}}"#;
 
-    const BUILD_FINISHED: &str =
-        r#"{"reason":"build-finished","success":true}"#;
+    const BUILD_FINISHED: &str = r#"{"reason":"build-finished","success":true}"#;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CargoMessage deserialization

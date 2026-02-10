@@ -6,7 +6,6 @@ use crate::db::{
     get_session_history_sync, get_unified_insights_sync,
 };
 use crate::hooks::session::{read_claude_session_id, read_source_info};
-use crate::mcp::requests::SessionHistoryAction;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     HistoryEntry, InsightItem, InsightsData, ReplyOutput, SessionCurrentData, SessionData,
@@ -25,11 +24,14 @@ pub async fn handle_session<C: ToolContext>(
 ) -> Result<Json<SessionOutput>, String> {
     use crate::mcp::requests::SessionAction;
     match req.action {
-        SessionAction::History => {
-            let history_action = req
-                .history_action
-                .ok_or("history_action is required for session(action=history)")?;
-            session_history(ctx, history_action, req.session_id, req.limit).await
+        SessionAction::CurrentSession => {
+            session_history(ctx, HistoryKind::Current, req.session_id, req.limit).await
+        }
+        SessionAction::ListSessions => {
+            session_history(ctx, HistoryKind::List, req.session_id, req.limit).await
+        }
+        SessionAction::GetHistory => {
+            session_history(ctx, HistoryKind::GetHistory, req.session_id, req.limit).await
         }
         SessionAction::Recap => {
             let message = get_session_recap(ctx).await?;
@@ -39,14 +41,26 @@ pub async fn handle_session<C: ToolContext>(
                 data: None,
             }))
         }
-        SessionAction::Usage => {
-            let usage_action = req
-                .usage_action
-                .ok_or("usage_action is required for session(action=usage)")?;
-            let message =
-                super::usage(ctx, usage_action, req.group_by, req.since_days, req.limit).await?;
+        SessionAction::UsageSummary => {
+            let message = super::usage_summary(ctx, req.since_days, req.limit).await?;
             Ok(Json(SessionOutput {
-                action: "usage".into(),
+                action: "usage_summary".into(),
+                message,
+                data: None,
+            }))
+        }
+        SessionAction::UsageStats => {
+            let message = super::usage_stats(ctx, req.group_by, req.since_days, req.limit).await?;
+            Ok(Json(SessionOutput {
+                action: "usage_stats".into(),
+                message,
+                data: None,
+            }))
+        }
+        SessionAction::UsageList => {
+            let message = super::usage_list(ctx, req.since_days, req.limit).await?;
+            Ok(Json(SessionOutput {
+                action: "usage_list".into(),
                 message,
                 data: None,
             }))
@@ -61,12 +75,10 @@ pub async fn handle_session<C: ToolContext>(
             )
             .await
         }
-        SessionAction::Tasks => {
-            // Defensive guard: router intercepts Tasks actions before reaching this handler
-            Err(
-                "Internal routing error for session(action=tasks) — please report this as a bug."
-                    .into(),
-            )
+        SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
+            // Tasks actions need MiraServer directly, not ToolContext
+            // This branch is unreachable in MCP (router intercepts) but needed for CLI
+            Err("Tasks actions must be handled by the router/CLI dispatcher directly.".into())
         }
     }
 }
@@ -83,7 +95,7 @@ async fn query_insights<C: ToolContext>(
     let project_id = project
         .as_ref()
         .map(|p| p.id)
-        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
+        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
 
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.3);
@@ -178,17 +190,24 @@ async fn query_insights<C: ToolContext>(
     }))
 }
 
+/// Internal kind enum for session history queries (replaces deleted SessionHistoryAction)
+pub(crate) enum HistoryKind {
+    Current,
+    List,
+    GetHistory,
+}
+
 /// Query session history
-pub async fn session_history<C: ToolContext>(
+pub(crate) async fn session_history<C: ToolContext>(
     ctx: &C,
-    action: SessionHistoryAction,
+    action: HistoryKind,
     session_id: Option<String>,
     limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, String> {
     let limit = limit.unwrap_or(20) as usize;
 
     match action {
-        SessionHistoryAction::Current => {
+        HistoryKind::Current => {
             let session_id = ctx.get_session_id().await;
             match session_id {
                 Some(id) => Ok(Json(SessionOutput {
@@ -203,12 +222,12 @@ pub async fn session_history<C: ToolContext>(
                 })),
             }
         }
-        SessionHistoryAction::ListSessions => {
+        HistoryKind::List => {
             let project = ctx.get_project().await;
             let project_id = project
                 .as_ref()
                 .map(|p| p.id)
-                .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
+                .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
 
             let sessions = ctx
                 .pool()
@@ -265,7 +284,7 @@ pub async fn session_history<C: ToolContext>(
                 })),
             }))
         }
-        SessionHistoryAction::GetHistory => {
+        HistoryKind::GetHistory => {
             // Use provided session_id or fall back to current session
             let target_session_id = match session_id {
                 Some(id) => id,

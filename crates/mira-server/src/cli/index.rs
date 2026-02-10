@@ -48,12 +48,19 @@ pub async fn run_index(path: Option<PathBuf>, no_embed: bool, _quiet: bool) -> R
         emb.set_project_id(Some(project_id)).await;
     }
 
-    let stats = mira::indexer::index_project(&path, pool, embeddings, Some(project_id)).await?;
+    #[cfg(not(feature = "parsers"))]
+    {
+        anyhow::bail!("Code indexing requires the 'parsers' feature");
+    }
+    #[cfg(feature = "parsers")]
+    {
+        let stats = mira::indexer::index_project(&path, pool, embeddings, Some(project_id)).await?;
 
-    println!(
-        "Indexed {} files, {} symbols, {} code chunks",
-        stats.files, stats.symbols, stats.chunks
-    );
+        println!(
+            "Indexed {} files, {} symbols, {} code chunks",
+            stats.files, stats.symbols, stats.chunks
+        );
 
-    Ok(())
+        Ok(())
+    }
 }

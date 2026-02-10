@@ -103,7 +103,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session management, analytics, and background task tracking. Actions: history (list/get sessions), recap (preferences + context + goals), usage (LLM analytics: summary/stats/list), insights (pondering/proactive/doc_gap digest), tasks (list/get/cancel async background operations).",
+        description = "Session management, analytics, and background task tracking. Actions: current_session, list_sessions, get_history (session history), recap (preferences + context + goals), usage_summary/usage_stats/usage_list (LLM analytics), insights (pondering/proactive/doc_gap digest), tasks_list/tasks_get/tasks_cancel (async background operations).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
             .expect("SessionOutput schema")
     )]
@@ -112,14 +112,12 @@ impl MiraServer {
         Parameters(req): Parameters<SessionRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         use crate::mcp::requests::SessionAction;
-        if matches!(req.action, SessionAction::Tasks) {
-            let tasks_req = TasksRequest {
-                action: req.tasks_action.unwrap_or(TasksAction::List),
-                task_id: req.task_id.clone(),
-            };
-            return tool_result(tools::tasks::handle_tasks(self, tasks_req).await);
+        match req.action {
+            SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
+                tool_result(tools::tasks::handle_tasks(self, req.action, req.task_id).await)
+            }
+            _ => tool_result(tools::handle_session(self, req).await),
         }
-        tool_result(tools::handle_session(self, req).await)
     }
 
     #[tool(
@@ -343,7 +341,7 @@ impl MiraServer {
         );
 
         let poll_hint = format!(
-            "session(action=\"tasks\", tasks_action=\"get\", task_id=\"{}\")",
+            "session(action=\"tasks_get\", task_id=\"{}\")",
             enqueued.task_id
         );
         Ok(CallToolResult {

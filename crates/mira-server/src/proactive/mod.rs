@@ -141,7 +141,7 @@ pub fn get_proactive_config(
     "#;
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([user_id.unwrap_or(""), &project_id.to_string()], |row| {
+    let rows = stmt.query_map(rusqlite::params![user_id, project_id], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
 

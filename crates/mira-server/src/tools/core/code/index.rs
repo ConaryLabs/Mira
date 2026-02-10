@@ -24,72 +24,79 @@ pub async fn index<C: ToolContext>(
 ) -> Result<Json<IndexOutput>, String> {
     match action {
         IndexAction::Project | IndexAction::File => {
-            let project = ctx.get_project().await;
-            let project_path = path
-                .or_else(|| project.as_ref().map(|p| p.path.clone()))
-                .ok_or("path is required for index(action=project)")?;
-
-            let project_id = project.as_ref().map(|p| p.id);
-
-            let path = Path::new(&project_path);
-            if !path.exists() {
-                return Err(format!("Path not found: {}", project_path));
-            }
-
-            // Index code (skip embeddings if requested for faster indexing)
-            let embeddings = if skip_embed {
-                None
-            } else {
-                ctx.embeddings().cloned()
-            };
-            let stats =
-                indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
-                    .await
-                    .str_err()?;
-            if let Some(cache) = ctx.fuzzy_cache() {
-                cache.invalidate_code(project_id).await;
-            }
-
-            let mut response = format!(
-                "Indexed {} files, {} symbols, {} chunks",
-                stats.files, stats.symbols, stats.chunks
-            );
-
-            // Auto-summarize modules that don't have descriptions yet
-            let mut modules_summarized = None;
-            if let Some(pid) = project_id
-                && let Some(llm_client) = ctx.llm_factory().client_for_background()
+            #[cfg(not(feature = "parsers"))]
             {
-                match auto_summarize_modules(
-                    ctx.code_pool(),
-                    ctx.pool(),
-                    pid,
-                    &project_path,
-                    &*llm_client,
-                )
-                .await
+                return Err("Code indexing requires the 'parsers' feature".to_string());
+            }
+            #[cfg(feature = "parsers")]
+            {
+                let project = ctx.get_project().await;
+                let project_path = path
+                .or_else(|| project.as_ref().map(|p| p.path.clone()))
+                .ok_or("path is required for index(action=project). No active project to fall back on — call project(action=\"start\", project_path=\"/your/path\") first, or provide a path directly.")?;
+
+                let project_id = project.as_ref().map(|p| p.id);
+
+                let path = Path::new(&project_path);
+                if !path.exists() {
+                    return Err(format!("Path not found: {}", project_path));
+                }
+
+                // Index code (skip embeddings if requested for faster indexing)
+                let embeddings = if skip_embed {
+                    None
+                } else {
+                    ctx.embeddings().cloned()
+                };
+                let stats =
+                    indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
+                        .await
+                        .str_err()?;
+                if let Some(cache) = ctx.fuzzy_cache() {
+                    cache.invalidate_code(project_id).await;
+                }
+
+                let mut response = format!(
+                    "Indexed {} files, {} symbols, {} chunks",
+                    stats.files, stats.symbols, stats.chunks
+                );
+
+                // Auto-summarize modules that don't have descriptions yet
+                let mut modules_summarized = None;
+                if let Some(pid) = project_id
+                    && let Some(llm_client) = ctx.llm_factory().client_for_background()
                 {
-                    Ok(count) if count > 0 => {
-                        response.push_str(&format!(", summarized {} modules", count));
-                        modules_summarized = Some(count);
-                    }
-                    Ok(_) => {} // No modules needed summarization
-                    Err(e) => {
-                        tracing::warn!("Auto-summarize failed: {}", e);
+                    match auto_summarize_modules(
+                        ctx.code_pool(),
+                        ctx.pool(),
+                        pid,
+                        &project_path,
+                        &*llm_client,
+                    )
+                    .await
+                    {
+                        Ok(count) if count > 0 => {
+                            response.push_str(&format!(", summarized {} modules", count));
+                            modules_summarized = Some(count);
+                        }
+                        Ok(_) => {} // No modules needed summarization
+                        Err(e) => {
+                            tracing::warn!("Auto-summarize failed: {}", e);
+                        }
                     }
                 }
-            }
 
-            Ok(Json(IndexOutput {
-                action: "project".into(),
-                message: response,
-                data: Some(IndexData::Project(IndexProjectData {
-                    files: stats.files,
-                    symbols: stats.symbols,
-                    chunks: stats.chunks,
-                    modules_summarized,
-                })),
-            }))
+                Ok(Json(IndexOutput {
+                    action: "project".into(),
+                    message: response,
+                    data: Some(IndexData::Project(IndexProjectData {
+                        files: stats.files,
+                        symbols: stats.symbols,
+                        chunks: stats.chunks,
+                        modules_summarized,
+                    })),
+                }))
+            } // #[cfg(feature = "parsers")]
         }
         IndexAction::Compact => {
             let stats = ctx.code_pool().compact_code_db().await.str_err()?;
@@ -219,7 +226,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
         Some(p) => (p.id, p.path.clone()),
         None => {
             return Err(
-                "No active project. Use project(action=\"start\") to initialize.".to_string(),
+                "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".to_string(),
             );
         }
     };
@@ -337,7 +344,7 @@ pub async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput
         Some(p) => (p.id, p.path.clone()),
         None => {
             return Err(
-                "No active project. Use project(action=\"start\") to initialize.".to_string(),
+                "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".to_string(),
             );
         }
     };

@@ -6,8 +6,7 @@ use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
     CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, MemoryRequest,
-    ProjectRequest, RecipeRequest, ReplyToMiraRequest, SessionAction, SessionRequest, TasksAction,
-    TasksRequest, TeamRequest,
+    ProjectRequest, RecipeRequest, ReplyToMiraRequest, SessionAction, SessionRequest, TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -67,18 +66,15 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "session" => {
             let req: SessionRequest = serde_json::from_str(&args)?;
-            if matches!(req.action, SessionAction::Tasks) {
-                let tasks_req = TasksRequest {
-                    action: req.tasks_action.unwrap_or(TasksAction::List),
-                    task_id: req.task_id.clone(),
-                };
-                mira::tools::tasks::handle_tasks(&server, tasks_req)
+            match req.action {
+                SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
+                    mira::tools::tasks::handle_tasks(&server, req.action, req.task_id)
+                        .await
+                        .map(|output| output.0.message)
+                }
+                _ => mira::tools::handle_session(&server, req)
                     .await
-                    .map(|output| output.0.message)
-            } else {
-                mira::tools::handle_session(&server, req)
-                    .await
-                    .map(|output| output.0.message)
+                    .map(|output| output.0.message),
             }
         }
         "reply_to_mira" => {

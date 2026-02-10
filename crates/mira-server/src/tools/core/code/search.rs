@@ -276,69 +276,77 @@ pub fn get_symbols(
     file_path: String,
     symbol_type: Option<String>,
 ) -> Result<Json<CodeOutput>, String> {
-    let path = Path::new(&file_path);
-
-    if !path.exists() {
-        return Err(format!("File not found: {}", file_path));
+    #[cfg(not(feature = "parsers"))]
+    {
+        let _ = (file_path, symbol_type);
+        return Err("Symbol extraction requires the 'parsers' feature".to_string());
     }
+    #[cfg(feature = "parsers")]
+    {
+        let path = Path::new(&file_path);
 
-    // Parse file for symbols
-    let symbols = indexer::extract_symbols(path).str_err()?;
+        if !path.exists() {
+            return Err(format!("File not found: {}", file_path));
+        }
 
-    if symbols.is_empty() {
-        return Ok(Json(CodeOutput {
-            action: "symbols".into(),
-            message: "No symbols found.".to_string(),
-            data: Some(CodeData::Symbols(SymbolsData {
-                symbols: vec![],
-                total: 0,
-            })),
-        }));
-    }
+        // Parse file for symbols
+        let symbols = indexer::extract_symbols(path).str_err()?;
 
-    // Filter by type if specified
-    let symbols: Vec<_> = if let Some(ref filter) = symbol_type {
-        symbols
-            .into_iter()
-            .filter(|s| s.symbol_type.eq_ignore_ascii_case(filter))
-            .collect()
-    } else {
-        symbols
-    };
+        if symbols.is_empty() {
+            return Ok(Json(CodeOutput {
+                action: "symbols".into(),
+                message: "No symbols found.".to_string(),
+                data: Some(CodeData::Symbols(SymbolsData {
+                    symbols: vec![],
+                    total: 0,
+                })),
+            }));
+        }
 
-    let total = symbols.len();
-    let display: Vec<_> = symbols.iter().take(10).collect();
-
-    let mut response = format!("{} symbols:\n", total);
-    for sym in &display {
-        let lines = if sym.start_line == sym.end_line {
-            format!("line {}", sym.start_line)
+        // Filter by type if specified
+        let symbols: Vec<_> = if let Some(ref filter) = symbol_type {
+            symbols
+                .into_iter()
+                .filter(|s| s.symbol_type.eq_ignore_ascii_case(filter))
+                .collect()
         } else {
-            format!("lines {}-{}", sym.start_line, sym.end_line)
+            symbols
         };
-        response.push_str(&format!("  {} ({}) {}\n", sym.name, sym.symbol_type, lines));
-    }
 
-    if total > 10 {
-        response.push_str(&format!("  ... and {} more\n", total - 10));
-    }
+        let total = symbols.len();
+        let display: Vec<_> = symbols.iter().take(10).collect();
 
-    let symbol_items: Vec<SymbolInfo> = symbols
-        .iter()
-        .map(|sym| SymbolInfo {
-            name: sym.name.clone(),
-            symbol_type: sym.symbol_type.clone(),
-            start_line: sym.start_line as usize,
-            end_line: sym.end_line as usize,
-        })
-        .collect();
+        let mut response = format!("{} symbols:\n", total);
+        for sym in &display {
+            let lines = if sym.start_line == sym.end_line {
+                format!("line {}", sym.start_line)
+            } else {
+                format!("lines {}-{}", sym.start_line, sym.end_line)
+            };
+            response.push_str(&format!("  {} ({}) {}\n", sym.name, sym.symbol_type, lines));
+        }
 
-    Ok(Json(CodeOutput {
-        action: "symbols".into(),
-        message: response,
-        data: Some(CodeData::Symbols(SymbolsData {
-            symbols: symbol_items,
-            total,
-        })),
-    }))
+        if total > 10 {
+            response.push_str(&format!("  ... and {} more\n", total - 10));
+        }
+
+        let symbol_items: Vec<SymbolInfo> = symbols
+            .iter()
+            .map(|sym| SymbolInfo {
+                name: sym.name.clone(),
+                symbol_type: sym.symbol_type.clone(),
+                start_line: sym.start_line as usize,
+                end_line: sym.end_line as usize,
+            })
+            .collect();
+
+        Ok(Json(CodeOutput {
+            action: "symbols".into(),
+            message: response,
+            data: Some(CodeData::Symbols(SymbolsData {
+                symbols: symbol_items,
+                total,
+            })),
+        }))
+    } // #[cfg(feature = "parsers")]
 }

@@ -45,7 +45,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
         Some(ref p) => p.clone(),
         None => {
             return Err(
-                "No active project. Use project(action=\"start\") to initialize.".to_string(),
+                "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".to_string(),
             );
         }
     };

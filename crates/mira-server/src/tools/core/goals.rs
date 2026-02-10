@@ -529,7 +529,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
         GoalAction::Get => {
             let id = req
                 .goal_id
-                .ok_or("goal_id is required for goal(action=get)")?;
+                .ok_or("goal_id is required for goal(action=get). Use goal(action=\"list\") to see available goals.")?;
             let id = validate_positive_id(id, "goal_id")?;
             action_get(ctx, id).await
         }
@@ -571,7 +571,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             };
             let id = req
                 .goal_id
-                .ok_or_else(|| format!("goal_id is required for goal(action={})", action_name))?;
+                .ok_or_else(|| format!("goal_id is required for goal(action={}). Use goal(action=\"list\") to see available goals.", action_name))?;
             let id = validate_positive_id(id, "goal_id")?;
             action_update(
                 ctx,
@@ -587,14 +587,14 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
         GoalAction::Delete => {
             let id = req
                 .goal_id
-                .ok_or("goal_id is required for goal(action=delete)")?;
+                .ok_or("goal_id is required for goal(action=delete). Use goal(action=\"list\") to see available goals.")?;
             let id = validate_positive_id(id, "goal_id")?;
             action_delete(ctx, id).await
         }
         GoalAction::AddMilestone => {
             let gid = req
                 .goal_id
-                .ok_or("goal_id is required for goal(action=add_milestone)")?;
+                .ok_or("goal_id is required for goal(action=add_milestone). Use goal(action=\"list\") to see available goals.")?;
             let gid = validate_positive_id(gid, "goal_id")?;
             let mt = req
                 .milestone_title
@@ -604,14 +604,14 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
         GoalAction::CompleteMilestone => {
             let mid = req
                 .milestone_id
-                .ok_or("milestone_id is required for goal(action=complete_milestone)")?;
+                .ok_or("milestone_id is required for goal(action=complete_milestone). Use goal(action=\"get\", goal_id=N) to see milestones.")?;
             let mid = validate_positive_id(mid, "milestone_id")?;
             action_complete_milestone(ctx, mid).await
         }
         GoalAction::DeleteMilestone => {
             let mid = req
                 .milestone_id
-                .ok_or("milestone_id is required for goal(action=delete_milestone)")?;
+                .ok_or("milestone_id is required for goal(action=delete_milestone). Use goal(action=\"get\", goal_id=N) to see milestones.")?;
             let mid = validate_positive_id(mid, "milestone_id")?;
             action_delete_milestone(ctx, mid).await
         }

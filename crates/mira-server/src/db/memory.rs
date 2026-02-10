@@ -194,10 +194,10 @@ pub fn store_memory_sync(
                 conn.execute(
                     "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
                      session_count = session_count + 1, last_session_id = ?, user_id = COALESCE(user_id, ?),
-                     scope = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                     scope = ?, branch = ?, team_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     rusqlite::params![
                         params.content, params.fact_type, params.category, params.confidence,
-                        params.session_id, params.user_id, params.scope, id
+                        params.session_id, params.user_id, params.scope, params.branch, params.team_id, id
                     ],
                 )?;
                 // Check for promotion
@@ -209,10 +209,11 @@ pub fn store_memory_sync(
             } else {
                 conn.execute(
                     "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
-                     user_id = COALESCE(user_id, ?), scope = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                     user_id = COALESCE(user_id, ?), scope = ?, branch = ?, team_id = ?,
+                     updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     rusqlite::params![
                         params.content, params.fact_type, params.category, params.confidence,
-                        params.user_id, params.scope, id
+                        params.user_id, params.scope, params.branch, params.team_id, id
                     ],
                 )?;
             }

@@ -5,14 +5,12 @@
 
 mod test_utils;
 
-use mira::mcp::requests::{
-    GoalAction, GoalRequest, IndexAction, RecipeAction, RecipeRequest, SessionHistoryAction,
-};
+use mira::mcp::requests::{GoalAction, GoalRequest, IndexAction, RecipeAction, RecipeRequest};
 use mira::mcp::responses::*;
 use mira::tools::core::{
     ToolContext, archive, ensure_session, find_function_callees, find_function_callers, forget,
-    get_project, get_session_recap, get_symbols, goal, handle_recipe, index, recall, remember,
-    reply_to_mira, search_code, session_history, session_start, set_project, summarize_codebase,
+    get_project, get_session_recap, get_symbols, goal, handle_recipe, handle_session, index,
+    recall, remember, reply_to_mira, search_code, session_start, set_project, summarize_codebase,
 };
 use std::sync::Arc;
 use test_utils::TestContext;
@@ -502,13 +500,24 @@ async fn test_ensure_session() {
 
 #[tokio::test]
 async fn test_session_history_current() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
     let ctx = TestContext::new().await;
 
     // No active session
-    let result = session_history(&ctx, SessionHistoryAction::Current, None, None).await;
+    let req = SessionRequest {
+        action: SessionAction::CurrentSession,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+    };
+    let result = handle_session(&ctx, req).await;
     assert!(
         result.is_ok(),
-        "session_history current failed: {:?}",
+        "session current_session failed: {:?}",
         result.err()
     );
     let output = result.unwrap();
@@ -529,10 +538,20 @@ async fn test_session_history_current() {
     .await
     .expect("session_start failed");
 
-    let result = session_history(&ctx, SessionHistoryAction::Current, None, None).await;
+    let req = SessionRequest {
+        action: SessionAction::CurrentSession,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+    };
+    let result = handle_session(&ctx, req).await;
     assert!(
         result.is_ok(),
-        "session_history current failed: {:?}",
+        "session current_session failed: {:?}",
         result.err()
     );
     let output = result.unwrap();
@@ -545,6 +564,7 @@ async fn test_session_history_current() {
 
 #[tokio::test]
 async fn test_session_history_list_sessions() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
     let ctx = TestContext::new().await;
 
     let project_path = "/tmp/test_list_sessions".to_string();
@@ -557,11 +577,21 @@ async fn test_session_history_list_sessions() {
     .await
     .expect("session_start failed");
 
-    let result = session_history(&ctx, SessionHistoryAction::ListSessions, None, Some(10)).await;
+    let req = SessionRequest {
+        action: SessionAction::ListSessions,
+        session_id: None,
+        task_id: None,
+        limit: Some(10),
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+    };
+    let result = handle_session(&ctx, req).await;
     // Should succeed even if no sessions in database (maybe there is one now)
     assert!(
         result.is_ok(),
-        "session_history list_sessions failed: {:?}",
+        "session list_sessions failed: {:?}",
         result.err()
     );
     let output = result.unwrap();
@@ -1944,7 +1974,7 @@ async fn test_documentation_list_filter_by_status() {
 // ============================================================================
 
 use mira::mcp::MiraServer;
-use mira::mcp::requests::{TasksAction, TasksRequest};
+use mira::mcp::requests::SessionAction;
 use rmcp::task_manager::{OperationDescriptor, OperationMessage, ToolCallTaskResult};
 
 /// Helper to create a MiraServer with in-memory DBs for task tests
@@ -1965,11 +1995,7 @@ async fn make_task_server() -> MiraServer {
 #[tokio::test]
 async fn test_tasks_list_empty() {
     let server = make_task_server().await;
-    let req = TasksRequest {
-        action: TasksAction::List,
-        task_id: None,
-    };
-    let output = mira::tools::tasks::handle_tasks(&server, req)
+    let output = mira::tools::tasks::handle_tasks(&server, SessionAction::TasksList, None)
         .await
         .expect("tasks list should succeed");
     assert!(
@@ -1982,11 +2008,12 @@ async fn test_tasks_list_empty() {
 #[tokio::test]
 async fn test_tasks_get_not_found() {
     let server = make_task_server().await;
-    let req = TasksRequest {
-        action: TasksAction::Get,
-        task_id: Some("nonexistent-id".to_string()),
-    };
-    let result = mira::tools::tasks::handle_tasks(&server, req).await;
+    let result = mira::tools::tasks::handle_tasks(
+        &server,
+        SessionAction::TasksGet,
+        Some("nonexistent-id".to_string()),
+    )
+    .await;
     let err = result.err().expect("expected error");
     assert!(
         err.contains("not found"),
@@ -1998,11 +2025,12 @@ async fn test_tasks_get_not_found() {
 #[tokio::test]
 async fn test_tasks_cancel_not_found() {
     let server = make_task_server().await;
-    let req = TasksRequest {
-        action: TasksAction::Cancel,
-        task_id: Some("nonexistent-id".to_string()),
-    };
-    let result = mira::tools::tasks::handle_tasks(&server, req).await;
+    let result = mira::tools::tasks::handle_tasks(
+        &server,
+        SessionAction::TasksCancel,
+        Some("nonexistent-id".to_string()),
+    )
+    .await;
     let err = result.err().expect("expected error");
     assert!(
         err.contains("not found"),
@@ -2014,11 +2042,7 @@ async fn test_tasks_cancel_not_found() {
 #[tokio::test]
 async fn test_tasks_get_missing_task_id() {
     let server = make_task_server().await;
-    let req = TasksRequest {
-        action: TasksAction::Get,
-        task_id: None,
-    };
-    let result = mira::tools::tasks::handle_tasks(&server, req).await;
+    let result = mira::tools::tasks::handle_tasks(&server, SessionAction::TasksGet, None).await;
     let err = result.err().expect("expected error");
     assert!(
         err.contains("task_id is required"),
@@ -2057,11 +2081,7 @@ async fn test_tasks_lifecycle() {
     }
 
     // List — should show one working task
-    let req = TasksRequest {
-        action: TasksAction::List,
-        task_id: None,
-    };
-    let output = mira::tools::tasks::handle_tasks(&server, req)
+    let output = mira::tools::tasks::handle_tasks(&server, SessionAction::TasksList, None)
         .await
         .expect("tasks list should succeed");
     assert!(
@@ -2074,13 +2094,10 @@ async fn test_tasks_lifecycle() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Get — should return completed result
-    let req = TasksRequest {
-        action: TasksAction::Get,
-        task_id: Some(task_id.clone()),
-    };
-    let output = mira::tools::tasks::handle_tasks(&server, req)
-        .await
-        .expect("tasks get should succeed");
+    let output =
+        mira::tools::tasks::handle_tasks(&server, SessionAction::TasksGet, Some(task_id.clone()))
+            .await
+            .expect("tasks get should succeed");
     assert!(
         msg!(output).contains("completed"),
         "Expected 'completed' status, got: {}",
@@ -2123,13 +2140,13 @@ async fn test_tasks_cancel_running() {
     }
 
     // Cancel
-    let req = TasksRequest {
-        action: TasksAction::Cancel,
-        task_id: Some(task_id.clone()),
-    };
-    let output = mira::tools::tasks::handle_tasks(&server, req)
-        .await
-        .expect("cancel should succeed");
+    let output = mira::tools::tasks::handle_tasks(
+        &server,
+        SessionAction::TasksCancel,
+        Some(task_id.clone()),
+    )
+    .await
+    .expect("cancel should succeed");
     assert!(
         msg!(output).contains("cancelled"),
         "Expected 'cancelled' message, got: {}",
@@ -2137,13 +2154,10 @@ async fn test_tasks_cancel_running() {
     );
 
     // Get after cancel — should show cancelled status
-    let req = TasksRequest {
-        action: TasksAction::Get,
-        task_id: Some(task_id.clone()),
-    };
-    let output = mira::tools::tasks::handle_tasks(&server, req)
-        .await
-        .expect("get after cancel should succeed");
+    let output =
+        mira::tools::tasks::handle_tasks(&server, SessionAction::TasksGet, Some(task_id.clone()))
+            .await
+            .expect("get after cancel should succeed");
     assert!(
         msg!(output).contains("cancelled"),
         "Expected 'cancelled' status after cancel, got: {}",

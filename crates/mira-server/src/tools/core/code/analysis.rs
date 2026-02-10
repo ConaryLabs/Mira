@@ -14,7 +14,7 @@ pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
+        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
 
     let deps = ctx
         .code_pool()
@@ -102,7 +102,7 @@ pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
+        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
 
     let patterns = ctx
         .code_pool()
@@ -186,7 +186,7 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
     let project_id = ctx
         .project_id()
         .await
-        .ok_or("No active project. Use project(action=\"start\") to initialize.")?;
+        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
 
     let scores = ctx
         .pool()

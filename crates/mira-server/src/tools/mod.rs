@@ -33,11 +33,12 @@ pub use core::{
     remember,
     reply_to_mira,
     search_code,
-    session_history,
     session_start,
     set_project,
     summarize_codebase,
-    usage,
+    usage_list,
+    usage_stats,
+    usage_summary,
 };
 // Sub-module access for tasks (used by CLI and router)
 pub use core::tasks;

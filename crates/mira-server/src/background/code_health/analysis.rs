@@ -499,8 +499,7 @@ mod tests {
     #[test]
     fn test_extract_nonexistent_file() {
         let dir = tempfile::tempdir().unwrap();
-        let result =
-            extract_function_code(dir.path().to_str().unwrap(), "src/nope.rs", 1, 5);
+        let result = extract_function_code(dir.path().to_str().unwrap(), "src/nope.rs", 1, 5);
         assert!(result.is_none());
     }
 

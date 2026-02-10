@@ -565,7 +565,9 @@ mod tests {
     fn test_cfg_composite_not_test() {
         // test only appears under not() — this is production-only code
         assert!(!is_cfg_test("#[cfg(all(unix, not(test)))]"));
-        assert!(!is_cfg_test("#[cfg(any(target_os = \"linux\", not(test)))]"));
+        assert!(!is_cfg_test(
+            "#[cfg(any(target_os = \"linux\", not(test)))]"
+        ));
     }
 
     #[test]
@@ -768,9 +770,7 @@ mod tests {
 
     #[test]
     fn test_acceptable_ok_to_fail_comment() {
-        assert!(is_acceptable_error_swallow(
-            "    let _ = x; // ok to fail"
-        ));
+        assert!(is_acceptable_error_swallow("    let _ = x; // ok to fail"));
     }
 
     #[test]
@@ -804,9 +804,7 @@ mod tests {
 
     #[test]
     fn test_acceptable_db_get_ok() {
-        assert!(is_acceptable_error_swallow(
-            "    db.get_project(id).ok()"
-        ));
+        assert!(is_acceptable_error_swallow("    db.get_project(id).ok()"));
     }
 
     #[test]

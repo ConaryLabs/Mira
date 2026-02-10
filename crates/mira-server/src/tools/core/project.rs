@@ -193,7 +193,7 @@ pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>,
         })),
         None => Ok(Json(ProjectOutput {
             action: "get".into(),
-            message: "No active project. Use project(action=\"start\") to initialize.".into(),
+            message: "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".into(),
             data: None,
         })),
     }
@@ -218,9 +218,7 @@ fn format_recent_sessions(sessions: &[SessionInfo]) -> String {
             out.push_str(&format!("  [{}] {} - (no activity)\n", short_id, timestamp));
         }
     }
-    out.push_str(
-        "  Use session(action=\"history\", history_action=\"get_history\", session_id=\"...\") to view details\n",
-    );
+    out.push_str("  Use session(action=\"get_history\", session_id=\"...\") to view details\n");
     out
 }
 
@@ -837,10 +835,7 @@ mod tests {
     #[test]
     fn test_detect_type_unknown() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(
-            detect_project_type(dir.path().to_str().unwrap()),
-            "unknown"
-        );
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "unknown");
     }
 
     #[test]
@@ -911,7 +906,11 @@ mod tests {
 
     #[test]
     fn test_format_insights_preferences() {
-        let prefs = vec![make_fact("Use tabs not spaces", "preference", Some("coding"))];
+        let prefs = vec![make_fact(
+            "Use tabs not spaces",
+            "preference",
+            Some("coding"),
+        )];
         let result = format_session_insights(&prefs, &[], &[], &[], &[]);
         assert!(result.contains("Preferences:"));
         assert!(result.contains("[coding] Use tabs not spaces"));
@@ -932,7 +931,11 @@ mod tests {
 
     #[test]
     fn test_format_insights_health_alerts() {
-        let alerts = vec![make_fact("[unused] dead function", "health", Some("unused"))];
+        let alerts = vec![make_fact(
+            "[unused] dead function",
+            "health",
+            Some("unused"),
+        )];
         let result = format_session_insights(&[], &[], &alerts, &[], &[]);
         assert!(result.contains("Health alerts:"));
         assert!(result.contains("[unused]"));
