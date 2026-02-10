@@ -617,3 +617,136 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // verify_goal_project
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_verify_same_project() {
+        assert!(verify_goal_project(Some(1), Some(1)).is_ok());
+    }
+
+    #[test]
+    fn test_verify_different_project_denied() {
+        let result = verify_goal_project(Some(1), Some(2));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("access denied"));
+    }
+
+    #[test]
+    fn test_verify_goal_has_project_ctx_none_denied() {
+        // Goal belongs to a project but context has no project — deny
+        let result = verify_goal_project(Some(1), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_global_goal_with_project_ctx() {
+        // Global goal (no project_id) accessible from any project context
+        assert!(verify_goal_project(None, Some(1)).is_ok());
+    }
+
+    #[test]
+    fn test_verify_both_none() {
+        // Global goal with no project context — allow
+        assert!(verify_goal_project(None, None).is_ok());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // validate_positive_id
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_validate_positive() {
+        assert_eq!(validate_positive_id(1, "goal_id").unwrap(), 1);
+        assert_eq!(validate_positive_id(100, "goal_id").unwrap(), 100);
+    }
+
+    #[test]
+    fn test_validate_zero_rejected() {
+        let err = validate_positive_id(0, "goal_id").unwrap_err();
+        assert!(err.contains("goal_id"));
+        assert!(err.contains("must be positive"));
+    }
+
+    #[test]
+    fn test_validate_negative_rejected() {
+        let err = validate_positive_id(-5, "milestone_id").unwrap_err();
+        assert!(err.contains("milestone_id"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BulkGoal deserialization
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_bulk_goal_full() {
+        let json = r#"{"title": "My Goal", "description": "Details", "priority": "high", "status": "planning"}"#;
+        let g: BulkGoal = serde_json::from_str(json).unwrap();
+        assert_eq!(g.title, "My Goal");
+        assert_eq!(g.description.unwrap(), "Details");
+        assert_eq!(g.priority.unwrap(), "high");
+        assert_eq!(g.status.unwrap(), "planning");
+    }
+
+    #[test]
+    fn test_bulk_goal_minimal() {
+        let json = r#"{"title": "Just a title"}"#;
+        let g: BulkGoal = serde_json::from_str(json).unwrap();
+        assert_eq!(g.title, "Just a title");
+        assert!(g.description.is_none());
+        assert!(g.priority.is_none());
+        assert!(g.status.is_none());
+    }
+
+    #[test]
+    fn test_bulk_goal_array() {
+        let json = r#"[{"title": "A"}, {"title": "B", "priority": "low"}]"#;
+        let goals: Vec<BulkGoal> = serde_json::from_str(json).unwrap();
+        assert_eq!(goals.len(), 2);
+        assert_eq!(goals[0].title, "A");
+        assert_eq!(goals[1].priority.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn test_bulk_goal_missing_title_fails() {
+        let json = r#"{"description": "no title"}"#;
+        let result = serde_json::from_str::<BulkGoal>(json);
+        assert!(result.is_err());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GoalRequest dispatcher validation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_goal_action_deserialize() {
+        let actions = [
+            ("get", GoalAction::Get),
+            ("create", GoalAction::Create),
+            ("bulk_create", GoalAction::BulkCreate),
+            ("list", GoalAction::List),
+            ("update", GoalAction::Update),
+            ("progress", GoalAction::Progress),
+            ("delete", GoalAction::Delete),
+            ("add_milestone", GoalAction::AddMilestone),
+            ("complete_milestone", GoalAction::CompleteMilestone),
+            ("delete_milestone", GoalAction::DeleteMilestone),
+        ];
+        for (s, expected) in actions {
+            let json = format!(r#"{{"action": "{}"}}"#, s);
+            let req: GoalRequest = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                std::mem::discriminant(&req.action),
+                std::mem::discriminant(&expected),
+                "Failed for action: {}",
+                s
+            );
+        }
+    }
+}

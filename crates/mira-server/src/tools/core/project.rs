@@ -657,3 +657,302 @@ pub fn detect_project_type(path: &str) -> &'static str {
         "unknown"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_file(dir: &std::path::Path, name: &str, content: &str) {
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+    }
+
+    fn make_fact(content: &str, fact_type: &str, category: Option<&str>) -> MemoryFact {
+        MemoryFact {
+            id: 1,
+            project_id: Some(1),
+            key: None,
+            content: content.to_string(),
+            fact_type: fact_type.to_string(),
+            category: category.map(|s| s.to_string()),
+            confidence: 0.8,
+            created_at: "2026-01-01T00:00:00".to_string(),
+            session_count: 1,
+            first_session_id: None,
+            last_session_id: None,
+            status: "active".to_string(),
+            user_id: None,
+            scope: "project".to_string(),
+            team_id: None,
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // detect_project_name
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_detect_name_cargo_package() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "Cargo.toml",
+            "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\n",
+        );
+        let result = detect_project_name(dir.path().to_str().unwrap());
+        assert_eq!(result.unwrap(), "my-crate");
+    }
+
+    #[test]
+    fn test_detect_name_cargo_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        );
+        // Workspace falls back to directory name
+        let result = detect_project_name(dir.path().to_str().unwrap());
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_detect_name_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "package.json",
+            r#"{"name": "my-app", "version": "1.0.0"}"#,
+        );
+        let result = detect_project_name(dir.path().to_str().unwrap());
+        assert_eq!(result.unwrap(), "my-app");
+    }
+
+    #[test]
+    fn test_detect_name_package_json_empty_name() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "package.json",
+            r#"{"name": "", "version": "1.0.0"}"#,
+        );
+        // Empty name should fall through to directory name
+        let result = detect_project_name(dir.path().to_str().unwrap());
+        assert!(result.is_some());
+        assert_ne!(result.unwrap(), "");
+    }
+
+    #[test]
+    fn test_detect_name_no_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        // Falls back to directory name
+        let result = detect_project_name(dir.path().to_str().unwrap());
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_detect_name_cargo_name_with_quotes() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "Cargo.toml",
+            "[package]\nname = 'single-quoted'\n",
+        );
+        let result = detect_project_name(dir.path().to_str().unwrap());
+        assert_eq!(result.unwrap(), "single-quoted");
+    }
+
+    #[test]
+    fn test_detect_name_cargo_ignores_non_package_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            dir.path(),
+            "Cargo.toml",
+            "[dependencies]\nname = \"serde\"\n\n[package]\nname = \"real-name\"\n",
+        );
+        let result = detect_project_name(dir.path().to_str().unwrap());
+        assert_eq!(result.unwrap(), "real-name");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // detect_project_type
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_detect_type_rust() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "Cargo.toml", "");
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "rust");
+    }
+
+    #[test]
+    fn test_detect_type_node() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "package.json", "{}");
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "node");
+    }
+
+    #[test]
+    fn test_detect_type_python_pyproject() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "pyproject.toml", "");
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "python");
+    }
+
+    #[test]
+    fn test_detect_type_python_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "setup.py", "");
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "python");
+    }
+
+    #[test]
+    fn test_detect_type_go() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "go.mod", "");
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "go");
+    }
+
+    #[test]
+    fn test_detect_type_java_maven() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "pom.xml", "");
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "java");
+    }
+
+    #[test]
+    fn test_detect_type_java_gradle() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "build.gradle", "");
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "java");
+    }
+
+    #[test]
+    fn test_detect_type_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            detect_project_type(dir.path().to_str().unwrap()),
+            "unknown"
+        );
+    }
+
+    #[test]
+    fn test_detect_type_priority_rust_over_node() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "Cargo.toml", "");
+        write_file(dir.path(), "package.json", "{}");
+        // Rust takes priority
+        assert_eq!(detect_project_type(dir.path().to_str().unwrap()), "rust");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // format_recent_sessions
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_format_sessions_with_summary() {
+        let sessions = vec![(
+            "abc12345-6789".to_string(),
+            "2026-01-15T10:30:00".to_string(),
+            Some("Fixed auth bug".to_string()),
+            5,
+            vec!["Read".to_string(), "Edit".to_string()],
+        )];
+        let result = format_recent_sessions(&sessions);
+        assert!(result.contains("[abc12345]"));
+        assert!(result.contains("2026-01-15T10:30"));
+        assert!(result.contains("Fixed auth bug"));
+    }
+
+    #[test]
+    fn test_format_sessions_with_tools_no_summary() {
+        let sessions = vec![(
+            "def67890-abcd".to_string(),
+            "2026-01-15T10:30:00".to_string(),
+            None,
+            3,
+            vec!["Bash".to_string(), "Grep".to_string()],
+        )];
+        let result = format_recent_sessions(&sessions);
+        assert!(result.contains("3 tool calls"));
+        assert!(result.contains("Bash, Grep"));
+    }
+
+    #[test]
+    fn test_format_sessions_no_activity() {
+        let sessions = vec![(
+            "aaa00000-0000".to_string(),
+            "2026-01-15T10:30:00".to_string(),
+            None,
+            0,
+            vec![],
+        )];
+        let result = format_recent_sessions(&sessions);
+        assert!(result.contains("(no activity)"));
+    }
+
+    #[test]
+    fn test_format_sessions_empty() {
+        let result = format_recent_sessions(&[]);
+        assert!(result.contains("Recent sessions:"));
+        assert!(result.contains("session(action="));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // format_session_insights
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_format_insights_preferences() {
+        let prefs = vec![make_fact("Use tabs not spaces", "preference", Some("coding"))];
+        let result = format_session_insights(&prefs, &[], &[], &[], &[]);
+        assert!(result.contains("Preferences:"));
+        assert!(result.contains("[coding] Use tabs not spaces"));
+    }
+
+    #[test]
+    fn test_format_insights_filters_preferences_from_context() {
+        let memories = vec![
+            make_fact("I'm a preference", "preference", None),
+            make_fact("Actual context", "decision", None),
+        ];
+        let result = format_session_insights(&[], &memories, &[], &[], &[]);
+        assert!(result.contains("Recent context:"));
+        assert!(result.contains("Actual context"));
+        // Preferences should be filtered out from context section
+        assert!(!result.contains("I'm a preference"));
+    }
+
+    #[test]
+    fn test_format_insights_health_alerts() {
+        let alerts = vec![make_fact("[unused] dead function", "health", Some("unused"))];
+        let result = format_session_insights(&[], &[], &alerts, &[], &[]);
+        assert!(result.contains("Health alerts:"));
+        assert!(result.contains("[unused]"));
+    }
+
+    #[test]
+    fn test_format_insights_doc_tasks() {
+        let doc_counts = vec![("pending".to_string(), 5)];
+        let result = format_session_insights(&[], &[], &[], &[], &doc_counts);
+        assert!(result.contains("5 items need docs"));
+    }
+
+    #[test]
+    fn test_format_insights_no_pending_docs() {
+        let doc_counts = vec![("completed".to_string(), 3)];
+        let result = format_session_insights(&[], &[], &[], &[], &doc_counts);
+        assert!(!result.contains("items need docs"));
+    }
+
+    #[test]
+    fn test_format_insights_all_empty() {
+        let result = format_session_insights(&[], &[], &[], &[], &[]);
+        assert!(result.is_empty());
+    }
+}
