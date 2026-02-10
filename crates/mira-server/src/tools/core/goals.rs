@@ -261,7 +261,7 @@ async fn action_list<C: ToolContext>(
     include_finished: bool,
     limit: i64,
 ) -> Result<Json<GoalOutput>, String> {
-    let limit_usize = limit as usize;
+    let limit_usize = limit.max(0) as usize;
     let goals = if include_finished {
         ctx.pool()
             .run(move |conn| get_goals_sync(conn, project_id, None))

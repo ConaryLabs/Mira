@@ -19,7 +19,7 @@ The current architecture - a persistent intelligence layer for Claude Code.
 - **Evidence-based memory** - Candidate-to-confirmed promotion system
 - **Cross-project intelligence** - Opt-in pattern sharing across codebases
 - **DatabasePool migration** - Complete async database layer rewrite
-- **Tool consolidation** - 40+ MCP tools reduced to 11 action-based tools
+- **Tool consolidation** - 40+ MCP tools reduced to 10 action-based tools
 - **Goal/milestone tracking** - Replaced tasks with persistent goals
 
 ### Era 6: MCP Transformation (December 2025)
@@ -297,7 +297,7 @@ Where it all began - a personal AI assistant with memory.
 - **MCP Sampling** — Zero-key expert consultation via host client. Experts now use the MCP sampling protocol to consult through the host LLM, eliminating the need for `DEEPSEEK_API_KEY` for expert consultations.
 - **MCP Elicitation** — Interactive API key setup flow. On first run, Mira walks users through configuring API keys via the MCP elicitation protocol instead of requiring manual `.env` file editing.
 - **MCP Tasks** — Async long-running operations (SEP-1686). Tools like `index(action="project")` and `index(action="health")` now run in the background with progress tracking via `tasks(action="list|get|cancel")`.
-- **MCP outputSchema** — Structured JSON responses for all 11 tools. Every tool now returns typed, parseable JSON instead of free-form text, enabling programmatic consumption of results.
+- **MCP outputSchema** — Structured JSON responses for all 10 tools. Every tool now returns typed, parseable JSON instead of free-form text, enabling programmatic consumption of results.
 - **Change Intelligence (Goal 103)** — Outcome tracking for commits, pattern mining across change history, and predictive risk scoring. Tracks whether changes led to follow-up fixes and surfaces risky patterns.
 - **Entity Layer (Goal 104)** — Lightweight entity extraction from memory facts. Automatically identifies projects, technologies, people, and concepts to boost recall relevance.
 - **Context-aware convention injection (Goal 102)** — Automatically injects project conventions (naming, patterns, architecture) into relevant tool responses.

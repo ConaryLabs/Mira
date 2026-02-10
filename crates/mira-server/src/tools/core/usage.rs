@@ -118,7 +118,7 @@ pub async fn usage_list<C: ToolContext>(
     }
 
     let period = format_period(since_days);
-    let limit = limit.unwrap_or(50) as usize;
+    let limit = limit.unwrap_or(50).max(0) as usize;
 
     let mut output = format!("Recent LLM Usage by Role ({}, limit {})\n\n", period, limit);
 

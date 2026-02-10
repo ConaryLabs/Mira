@@ -100,7 +100,7 @@ async fn query_insights<C: ToolContext>(
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.3);
     let days_back = since_days.unwrap_or(30) as i64;
-    let lim = limit.unwrap_or(20) as usize;
+    let lim = limit.unwrap_or(20).max(0) as usize;
 
     let insights = ctx
         .pool()
@@ -204,7 +204,7 @@ pub(crate) async fn session_history<C: ToolContext>(
     session_id: Option<String>,
     limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, String> {
-    let limit = limit.unwrap_or(20) as usize;
+    let limit = limit.unwrap_or(20).max(0) as usize;
 
     match action {
         HistoryKind::Current => {

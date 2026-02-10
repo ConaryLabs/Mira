@@ -139,15 +139,24 @@ pub fn spawn_with_pools(
 
 /// Supervise a background worker, restarting it if it panics.
 /// Stops when the shutdown signal is received.
+/// Uses exponential backoff (5s -> 10s -> 20s -> 40s -> 60s cap) with max 5 consecutive panics.
 async fn supervise_worker<F>(name: &str, shutdown: watch::Receiver<bool>, spawn_fn: F)
 where
     F: Fn() -> tokio::task::JoinHandle<()>,
 {
+    const MAX_RESTARTS: u32 = 5;
+    const BASE_DELAY_SECS: u64 = 5;
+    const MAX_DELAY_SECS: u64 = 60;
+    const HEALTHY_RUN_SECS: u64 = 60;
+
+    let mut consecutive_panics: u32 = 0;
+
     loop {
         if *shutdown.borrow() {
             break;
         }
 
+        let start = tokio::time::Instant::now();
         let handle = spawn_fn();
 
         match handle.await {
@@ -156,12 +165,34 @@ where
                 break;
             }
             Err(e) if e.is_panic() => {
+                // Reset backoff if the worker ran long enough to be considered healthy
+                if start.elapsed() >= Duration::from_secs(HEALTHY_RUN_SECS) {
+                    consecutive_panics = 0;
+                }
+
+                consecutive_panics += 1;
+
+                if consecutive_panics > MAX_RESTARTS {
+                    tracing::error!(
+                        "Background worker '{}' panicked {} times consecutively. Giving up.",
+                        name,
+                        consecutive_panics
+                    );
+                    break;
+                }
+
+                let delay_secs = (BASE_DELAY_SECS * 2u64.saturating_pow(consecutive_panics - 1))
+                    .min(MAX_DELAY_SECS);
+
                 tracing::error!(
-                    "Background worker '{}' panicked: {:?}. Restarting in 5s...",
+                    "Background worker '{}' panicked ({}/{}): {:?}. Restarting in {}s...",
                     name,
-                    e
+                    consecutive_panics,
+                    MAX_RESTARTS,
+                    e,
+                    delay_secs
                 );
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
                 // Loop will restart the worker
             }
             Err(e) => {

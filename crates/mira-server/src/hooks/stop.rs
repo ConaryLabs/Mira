@@ -470,7 +470,7 @@ fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<Go
                 ORDER BY id LIMIT 1) as next_milestone
         FROM goals g
         WHERE g.project_id = ? AND g.status = 'in_progress'
-        ORDER BY g.priority DESC, g.created_at DESC
+        ORDER BY CASE g.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, g.created_at DESC
         LIMIT 5
     "#;
 

@@ -304,7 +304,7 @@ pub async fn list_diff_analyses<C: ToolContext>(
     let project_id = pi.id;
     let context_header = pi.header;
 
-    let limit = limit.unwrap_or(10) as usize;
+    let limit = limit.unwrap_or(10).max(0) as usize;
 
     let analyses = ctx
         .pool()

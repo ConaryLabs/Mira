@@ -438,7 +438,9 @@ pub fn format_results(
         return "No code matches found. Have you run 'index' yet?".to_string();
     }
 
-    let mut response = format!("{} results ({} search):\n\n", results.len(), search_type);
+    let count = results.len();
+    let noun = if count == 1 { "result" } else { "results" };
+    let mut response = format!("{} {} ({} search):\n\n", count, noun, search_type);
 
     for result in results {
         let location = if result.start_line > 0 {
@@ -680,7 +682,7 @@ mod tests {
             start_line: 1,
         }];
         let output = format_results(&results, SearchType::Semantic, None, false);
-        assert!(output.contains("1 results (semantic search)"));
+        assert!(output.contains("1 result (semantic search)"));
         assert!(output.contains("src/main.rs:1"));
         assert!(output.contains("score: 0.85"));
         assert!(output.contains("fn main()"));

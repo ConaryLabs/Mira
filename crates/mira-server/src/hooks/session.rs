@@ -574,7 +574,7 @@ pub fn read_claude_task_list_id() -> Option<String> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Per-session team membership file (avoids cross-session clobbering).
-pub fn team_file_path_for_session(session_id: &str) -> PathBuf {
+pub fn team_file_path_for_session(session_id: &str) -> Option<PathBuf> {
     if !session_id
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-')
@@ -583,17 +583,17 @@ pub fn team_file_path_for_session(session_id: &str) -> PathBuf {
             "Invalid characters in session_id for team file path, skipping: {:?}",
             session_id
         );
-        return PathBuf::new();
+        return None;
     }
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(format!(".mira/claude-team-{}.json", session_id))
+    Some(home.join(format!(".mira/claude-team-{}.json", session_id)))
 }
 
 /// Read team membership for the current session (filesystem-based).
 /// Prefer `read_team_membership_from_db` when a pool and session_id are available.
 pub fn read_team_membership() -> Option<TeamMembership> {
     let session_id = read_claude_session_id()?;
-    let path = team_file_path_for_session(&session_id);
+    let path = team_file_path_for_session(&session_id)?;
     let content = fs::read_to_string(&path).ok()?;
     serde_json::from_str(&content).ok()
 }
@@ -621,7 +621,8 @@ pub async fn read_team_membership_from_db(
 
 /// Write team membership atomically (temp + rename).
 pub fn write_team_membership(session_id: &str, membership: &TeamMembership) -> Result<()> {
-    let path = team_file_path_for_session(session_id);
+    let path = team_file_path_for_session(session_id)
+        .ok_or_else(|| anyhow::anyhow!("Invalid session_id for team file path: {session_id:?}"))?;
     let json = serde_json::to_string(membership)?;
     let temp_path = path.with_extension("tmp");
     fs::write(&temp_path, &json)?;
@@ -631,7 +632,9 @@ pub fn write_team_membership(session_id: &str, membership: &TeamMembership) -> R
 
 /// Clean up per-session team file.
 pub fn cleanup_team_file(session_id: &str) {
-    let path = team_file_path_for_session(session_id);
+    let Some(path) = team_file_path_for_session(session_id) else {
+        return;
+    };
     let _ = fs::remove_file(&path);
 }
 

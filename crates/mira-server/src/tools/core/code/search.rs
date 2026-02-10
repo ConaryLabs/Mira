@@ -23,7 +23,7 @@ pub async fn search_code<C: ToolContext>(
     query: String,
     limit: Option<i64>,
 ) -> Result<Json<CodeOutput>, String> {
-    let limit = limit.unwrap_or(10) as usize;
+    let limit = limit.unwrap_or(10).max(0) as usize;
     let pi = get_project_info(ctx).await;
     let project_id = pi.id;
     let project_path = pi.path.clone();
@@ -173,7 +173,7 @@ pub async fn find_function_callers<C: ToolContext>(
         return Err("function_name is required for code(action=callers)".to_string());
     }
 
-    let limit = limit.unwrap_or(20) as usize;
+    let limit = limit.unwrap_or(20).max(0) as usize;
     let context_header = get_project_info(ctx).await.header;
 
     let results = query_callers(ctx, &function_name, limit).await;
@@ -228,7 +228,7 @@ pub async fn find_function_callees<C: ToolContext>(
         return Err("function_name is required for code(action=callees)".to_string());
     }
 
-    let limit = limit.unwrap_or(20) as usize;
+    let limit = limit.unwrap_or(20).max(0) as usize;
     let context_header = get_project_info(ctx).await.header;
 
     let results = query_callees(ctx, &function_name, limit).await;

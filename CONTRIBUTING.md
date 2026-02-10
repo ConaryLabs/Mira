@@ -38,7 +38,6 @@ crates/
       cli/           # Command-line interface and subcommands
       config/        # Configuration management (config.toml, env loading)
       context/       # Proactive context injection for hooks
-      cross_project/ # Privacy-preserving cross-project pattern sharing
       db/            # Database operations, schema, migrations (SQLite)
       embeddings/    # Embedding queue and OpenAI embedding client
       entities/      # Lightweight entity extraction for recall boost

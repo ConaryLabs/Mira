@@ -21,6 +21,19 @@ fn normalize_base_url(url: &str) -> String {
     url
 }
 
+/// Check if a URL points to a local address (localhost, 127.0.0.1, [::1])
+fn is_local_url(url: &str) -> bool {
+    match url::Url::parse(url) {
+        Ok(parsed) => match parsed.host() {
+            Some(url::Host::Domain(d)) => d == "localhost",
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => true, // No host (e.g. unix socket) — treat as local
+        },
+        Err(_) => true, // Can't parse — don't warn on malformed URLs
+    }
+}
+
 /// Ollama API client (OpenAI-compatible endpoint, no auth required)
 pub struct OllamaClient {
     base_url: String,
@@ -37,8 +50,17 @@ impl OllamaClient {
     /// Create a new Ollama client with custom model
     pub fn with_model(base_url: String, model: String) -> Self {
         let http = LlmHttpClient::new(Duration::from_secs(300), Duration::from_secs(30));
+        let normalized = normalize_base_url(&base_url);
+
+        if !is_local_url(&normalized) {
+            tracing::warn!(
+                "OLLAMA_HOST points to non-local address '{}'. For security, consider using localhost.",
+                normalized
+            );
+        }
+
         Self {
-            base_url: normalize_base_url(&base_url),
+            base_url: normalized,
             model,
             http,
         }
@@ -172,6 +194,16 @@ mod tests {
         let client = OllamaClient::new("http://localhost:11434".into());
         assert_eq!(client.context_budget(), 32_000);
         assert!(client.supports_context_budget());
+    }
+
+    #[test]
+    fn test_is_local_url() {
+        assert!(is_local_url("http://localhost:11434"));
+        assert!(is_local_url("http://127.0.0.1:11434"));
+        assert!(is_local_url("http://[::1]:11434"));
+        assert!(!is_local_url("http://192.168.1.100:11434"));
+        assert!(!is_local_url("http://myhost:11434"));
+        assert!(!is_local_url("https://ollama.example.com:11434"));
     }
 
     #[test]
