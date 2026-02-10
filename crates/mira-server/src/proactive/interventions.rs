@@ -292,6 +292,15 @@ pub fn record_intervention_sync(
         ],
     )?;
 
+    // Also mark the underlying insight as shown so the status line's "new" count
+    // stays consistent with what was surfaced via hooks.
+    if let Some(pid) = intervention.pattern_id {
+        let _ = conn.execute(
+            "UPDATE behavior_patterns SET shown_count = COALESCE(shown_count, 0) + 1 WHERE id = ?",
+            params![pid],
+        );
+    }
+
     Ok(conn.last_insert_rowid())
 }
 
