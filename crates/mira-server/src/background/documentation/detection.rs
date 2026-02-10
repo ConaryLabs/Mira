@@ -203,7 +203,7 @@ async fn detect_gaps_for_project(
     Ok(created)
 }
 
-/// Detect undocumented MCP tools by parsing mcp/mod.rs
+/// Detect undocumented MCP tools by parsing mcp/router.rs
 async fn detect_mcp_tool_gaps(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -211,29 +211,42 @@ async fn detect_mcp_tool_gaps(
 ) -> Result<Vec<DocGap>, String> {
     let mut gaps = Vec::new();
 
-    // Read mcp/mod.rs to find #[tool(...)] declarations
-    let mcp_mod_path = project_path.join("crates/mira-server/src/mcp/mod.rs");
-    if !mcp_mod_path.exists() {
+    // Read mcp/router.rs to find #[tool(...)] declarations
+    let router_path = project_path.join("crates/mira-server/src/mcp/router.rs");
+    if !router_path.exists() {
         return Ok(gaps);
     }
 
-    let content = tokio::task::spawn_blocking(move || read_file_content(&mcp_mod_path))
+    let content = tokio::task::spawn_blocking(move || read_file_content(&router_path))
         .await
         .map_err(|e| format!("spawn_blocking panicked: {}", e))?
-        .map_err(|e| format!("Failed to read mcp/mod.rs: {}", e))?;
+        .map_err(|e| format!("Failed to read mcp/router.rs: {}", e))?;
 
     // Extract tool names from #[tool(...)] annotations — only collect async fn
     // that are preceded by a #[tool()] attribute, not all async fn in the file.
+    // The #[tool()] attribute spans multiple lines, so we track open/close parens.
     let mut tool_names = HashSet::new();
     let mut saw_tool_attr = false;
+    let mut in_tool_attr = false;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("#[tool(") {
             saw_tool_attr = true;
+            // Check if the attribute closes on the same line
+            in_tool_attr = !trimmed.contains(")]");
+            continue;
+        }
+        if in_tool_attr {
+            // Still inside a multi-line #[tool(...)] attribute
+            if trimmed.contains(")]") {
+                in_tool_attr = false;
+            }
             continue;
         }
         if trimmed.starts_with("async fn ") {
-            if saw_tool_attr && let Some(fn_name) = trimmed.strip_prefix("async fn ") {
+            if saw_tool_attr
+                && let Some(fn_name) = trimmed.strip_prefix("async fn ")
+            {
                 let fn_name = fn_name.split('(').next().unwrap_or("").trim().to_string();
                 if !fn_name.is_empty() {
                     tool_names.insert(fn_name);
@@ -264,7 +277,7 @@ async fn detect_mcp_tool_gaps(
                 project_id,
                 doc_type: "api".to_string(),
                 doc_category: "mcp_tool".to_string(),
-                source_file_path: Some("crates/mira-server/src/mcp/mod.rs".to_string()),
+                source_file_path: Some("crates/mira-server/src/mcp/router.rs".to_string()),
                 target_doc_path: doc_path,
                 priority: "high".to_string(),
                 reason: format!("MCP tool '{}' needs documentation", tool_name),
