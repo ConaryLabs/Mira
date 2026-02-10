@@ -80,6 +80,42 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-02-10
+
+### Fixed
+- **Health subtask starvation** -- Fast scans consumed the scan-needed flag, preventing module analysis and LLM tasks from finding work in the same cycle. Now fast scans leave the flag intact and module analysis finalizes it. LLM tasks use independent timestamp tracking.
+- **Module analysis clearing scan flag on fast scan failure** -- When fast scans errored out, module analysis unconditionally cleared `health_scan_needed`, preventing retries. Now gated behind a `health_fast_scan_done` marker that only successful fast scans set.
+- **Stale `health_fast_scan_done` marker** -- A timed-out module analysis could leave a stale marker from a previous cycle, letting a failed fast scan's successor incorrectly consume the scan flag. Marker is now cleared at the start of each fast scan.
+- **Non-deterministic project selection in health subtasks** -- Subtasks independently queried for projects without `ORDER BY`, risking different phases operating on different projects. Added `ORDER BY id` to both project queries.
+- **MCP tool doc-gap detection** -- Was reading `mcp/mod.rs` instead of `mcp/router.rs` where `#[tool()]` methods live. Also fixed parser breaking on multi-line `#[tool(description=..., output_schema=...)]` attributes.
+- **Stale circular dependency findings** -- Module analysis now clears the `circular_dependency` category so findings don't persist after refactors.
+- **Insight shown_count desync** -- When `UserPromptSubmit` hook surfaced a pondering insight, `shown_count` on the underlying `behavior_patterns` row wasn't incremented. Status line "new insights" count is now consistent regardless of surfacing path.
+- **Priority sort in stop hook** -- Lexicographic sort replaced with proper `CASE` ordering.
+- **`team_file_path_for_session` empty path ops** -- Now returns `Option<PathBuf>` to prevent operations on empty paths.
+- **8 negative i64→usize casts** -- Hardened with `.max(0)` to prevent wraparound.
+- **"1 results" grammar** -- Fixed pluralization in semantic search output.
+- **Background service reliability** -- Added exponential backoff + max retries to supervisor, slow lane heartbeat for stall detection, `busy_timeout=1000` on readonly connections, `BufRead::read_line` to avoid blocking on unclosed stdin, shutdown checks between slow lane tasks.
+- **Status line false positives** -- Uses heartbeat (5min threshold) instead of pondering timestamp (24h) to detect stalled background, eliminating false positives from pondering's cooldown gates.
+- **SessionStart hook session registration** -- Upserts session into DB so background loop can discover active projects. Previously only wrote session ID to file, leaving `sessions` table empty.
+- **Background intelligence UX** -- Clippy/formatting CI fixes, "no project" hint in status line, `[HIGH]`/`[INFO]` prefixes on insights, human-readable insight types, tool gap detection now only collects `#[tool]`-annotated functions.
+- **Watcher reliability** -- Exponential backoff + max restart matching supervisor pattern.
+- **Non-localhost OLLAMA_HOST warning** -- Defense-in-depth warning for remote Ollama hosts.
+
+### Changed
+- **Code health scan architecture** -- Split monolithic `scan_project_health()` (12 sequential steps where one timeout killed the rest) into 4 independent `BackgroundTask` variants: `HealthFastScans`, `HealthModuleAnalysis`, `HealthLlmComplexity`, `HealthLlmErrorQuality`. Each has its own timeout, project lookup, and category clearing. LLM tasks run at Low priority so they're skipped under load.
+- **Status line** -- Removed vanity "knowledge" counter. Added stale docs count and background health indicator. Widened insight window from 24h to 7 days with new/seen split. Reordered by actionability.
+- **Refactor recipe** -- Architect → code-reviewer now sequential (reviewer needs the plan). Team lead implements small/medium refactors directly. Test-runner optional for large refactors only.
+
+### Refactored
+- **recipe.rs** -- Split monolithic 773-line file into `recipe/` directory with one file per recipe and handler logic in `mod.rs`.
+- **claude_local.rs** -- Split 1155-line file into `claude_local/` directory: `export.rs`, `import.rs`, `auto_memory.rs`, plus shared helpers in `mod.rs`.
+- **code_health dependencies** -- Extracted `DepEdge`, `collect_dependency_data`, `scan_dependencies_sharded` and all dependency tests from `code_health/mod.rs` (1094 → 580 lines) into `dependencies.rs`. Removed dead `analyze_module_dependencies` code.
+
+### Documentation
+- Added on-ramp note to expert-review recipe pointing to full-cycle.
+- Fixed lane assignments in `background.md`, expanded `CONCEPTS.md` task list.
+- Removed deleted `cross_project/` from `CONTRIBUTING.md`, corrected tool count in CHANGELOG.
+
 ## [0.6.7] - 2026-02-10
 
 ### Added
