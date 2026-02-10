@@ -249,7 +249,7 @@ mod tests {
                 assert_eq!(data.members[1].name, "code-reviewer");
                 assert_eq!(data.members[2].name, "test-runner");
                 assert!(data.coordination.contains("Safe Restructuring"));
-                assert!(data.coordination.contains("Phase 3: Implementation"));
+                assert!(data.coordination.contains("Phase 4: Implementation"));
             }
             _ => panic!("Expected RecipeData::Get"),
         }
