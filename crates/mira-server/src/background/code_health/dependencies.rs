@@ -4,31 +4,209 @@
 use crate::db::dependencies::{
     ModuleDependency, clear_module_dependencies_sync, upsert_module_dependency_sync,
 };
+use crate::db::pool::DatabasePool;
 use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::utils::ResultExt;
-use rusqlite::Connection;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-/// Analyze module dependencies from imports + call_graph + code_symbols + codebase_modules.
-/// Returns the number of dependency edges found.
-pub fn analyze_module_dependencies(
-    code_conn: &Connection,
-    main_conn: &Connection,
+// ============================================================================
+// Sharded scan (async entry point, called from mod.rs orchestration)
+// ============================================================================
+
+/// Scan module dependencies using sharded pools.
+pub(super) async fn scan_dependencies_sharded(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<usize, String> {
-    // Step 1: Build module lookup from codebase_modules (file_path prefix -> module_id)
-    let modules = get_module_paths(code_conn, project_id)?;
-    if modules.is_empty() {
+    // Need both connections simultaneously — get code conn first, then main conn
+    let code_conn_result = code_pool
+        .run(move |code_conn| {
+            Ok::<_, String>(collect_dependency_data(code_conn, project_id))
+        })
+        .await?;
+
+    let dep_data = code_conn_result?;
+
+    if dep_data.is_empty() {
         return Ok(0);
     }
 
-    // Step 2: Count import-based dependencies between modules
-    let import_deps = count_import_dependencies(code_conn, project_id, &modules)?;
+    // Store dependency edges in code DB
+    let edges = dep_data.len();
+    let dep_data_for_code = dep_data.clone();
+    code_pool
+        .run(move |conn| {
+            clear_module_dependencies_sync(conn, project_id).str_err()?;
+            for d in &dep_data_for_code {
+                let dep = ModuleDependency {
+                    source_module_id: d.source.clone(),
+                    target_module_id: d.target.clone(),
+                    dependency_type: d.dep_type.clone(),
+                    call_count: d.call_count,
+                    import_count: d.import_count,
+                    is_circular: d.is_circular,
+                };
+                upsert_module_dependency_sync(conn, project_id, &dep).str_err()?;
+            }
+            Ok::<_, String>(())
+        })
+        .await?;
 
-    // Step 3: Count call-based dependencies between modules
-    let call_deps = count_call_dependencies(code_conn, project_id, &modules)?;
+    // Store circular dependency findings in main DB
+    let circular_findings: Vec<_> = dep_data.iter().filter(|d| d.is_circular).collect();
+    if !circular_findings.is_empty() {
+        let findings = circular_findings
+            .iter()
+            .map(|d| (d.source.clone(), d.target.clone()))
+            .collect::<Vec<_>>();
+        main_pool
+            .run(move |conn| {
+                for (src, tgt) in &findings {
+                    let key = format!("health:circular:{}:{}", src, tgt);
+                    let content = format!(
+                        "[circular-dependency] Circular dependency: {} <-> {}",
+                        src, tgt
+                    );
+                    store_memory_sync(
+                        conn,
+                        StoreMemoryParams {
+                            project_id: Some(project_id),
+                            key: Some(&key),
+                            content: &content,
+                            fact_type: "health",
+                            category: Some("circular_dependency"),
+                            confidence: 0.9,
+                            session_id: None,
+                            user_id: None,
+                            scope: "project",
+                            branch: None,
+                            team_id: None,
+                        },
+                    )
+                    .str_err()?;
+                }
+                Ok::<_, String>(())
+            })
+            .await?;
+    }
 
-    // Step 4: Merge import + call edges
+    Ok(edges)
+}
+
+// ============================================================================
+// Dependency data collection (sync, runs inside pool.run)
+// ============================================================================
+
+/// Intermediate dependency data that can be sent between pool closures
+#[derive(Clone)]
+struct DepEdge {
+    source: String,
+    target: String,
+    dep_type: String,
+    call_count: i64,
+    import_count: i64,
+    is_circular: bool,
+}
+
+/// Collect dependency data from code DB (runs inside pool.run)
+fn collect_dependency_data(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+) -> Result<Vec<DepEdge>, String> {
+    // Get modules
+    let mut stmt = conn
+        .prepare("SELECT module_id, path FROM codebase_modules WHERE project_id = ?")
+        .str_err()?;
+    let modules: Vec<(String, String)> = stmt
+        .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .str_err()?
+        .filter_map(crate::db::log_and_discard)
+        .collect();
+
+    if modules.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Pre-sort modules by path length descending so longest (most specific) match wins first
+    let mut modules_sorted = modules;
+    modules_sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    // Cache file_path -> module_id lookups to avoid repeated linear scans
+    let mut file_mod_cache: HashMap<String, Option<String>> = HashMap::new();
+    let resolve_mod =
+        |cache: &mut HashMap<String, Option<String>>, file_path: &str| -> Option<String> {
+            if let Some(cached) = cache.get(file_path) {
+                return cached.clone();
+            }
+            let result = modules_sorted
+                .iter()
+                .find(|(_, path)| {
+                    file_path.starts_with(path.as_str()) || file_path.contains(path.as_str())
+                })
+                .map(|(id, _)| id.clone());
+            cache.insert(file_path.to_string(), result.clone());
+            result
+        };
+
+    // Count import deps
+    let mut import_deps: HashMap<(String, String), i64> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT file_path, import_path FROM imports WHERE project_id = ? AND is_external = 0")
+            .str_err()?;
+        let rows = stmt
+            .query_map([project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .str_err()?;
+        for row in rows {
+            let (fp, ip) = row.str_err()?;
+            if let (Some(src), Some(tgt)) = (
+                resolve_mod(&mut file_mod_cache, &fp),
+                resolve_mod(&mut file_mod_cache, &ip),
+            ) && src != tgt
+            {
+                *import_deps.entry((src, tgt)).or_default() += 1;
+            }
+        }
+    }
+
+    // Count call deps
+    let mut call_deps: HashMap<(String, String), i64> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT cs1.file_path, cs2.file_path, cg.call_count
+                 FROM call_graph cg
+                 JOIN code_symbols cs1 ON cg.caller_id = cs1.id
+                 JOIN code_symbols cs2 ON cg.callee_id = cs2.id
+                 WHERE cs1.project_id = ? AND cs2.project_id = ?",
+            )
+            .str_err()?;
+        let rows = stmt
+            .query_map([project_id, project_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .str_err()?;
+        for row in rows {
+            let (f1, f2, cnt) = row.str_err()?;
+            if let (Some(src), Some(tgt)) = (
+                resolve_mod(&mut file_mod_cache, &f1),
+                resolve_mod(&mut file_mod_cache, &f2),
+            ) && src != tgt
+            {
+                *call_deps.entry((src, tgt)).or_default() += cnt;
+            }
+        }
+    }
+
+    // Merge
     let mut merged: HashMap<(String, String), (i64, i64)> = HashMap::new();
     for ((src, tgt), count) in &import_deps {
         merged.entry((src.clone(), tgt.clone())).or_default().1 = *count;
@@ -38,18 +216,19 @@ pub fn analyze_module_dependencies(
     }
 
     if merged.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
 
-    // Step 5: Detect circular dependencies via Tarjan's SCC
-    let adj = build_adjacency(&merged);
+    // Tarjan's SCC for circular detection
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for (src, tgt) in merged.keys() {
+        adj.entry(src.clone()).or_default().push(tgt.clone());
+        adj.entry(tgt.clone()).or_default();
+    }
     let sccs = tarjan_scc(&adj);
-
-    // Build set of circular edges for O(1) lookup
     let mut circular_edges: std::collections::HashSet<(String, String)> =
         std::collections::HashSet::new();
     for scc in &sccs {
-        // For all pairs in the SCC that have edges, mark them circular
         for a in scc {
             for b in scc {
                 if a != b && merged.contains_key(&(a.clone(), b.clone())) {
@@ -59,200 +238,33 @@ pub fn analyze_module_dependencies(
         }
     }
 
-    // Step 6: Store results
-    clear_module_dependencies_sync(code_conn, project_id).str_err()?;
-
-    let mut stored = 0;
-    for ((src, tgt), (calls, imports)) in &merged {
-        let is_circular = circular_edges.contains(&(src.clone(), tgt.clone()));
-        let dep_type = match (calls > &0, imports > &0) {
-            (true, true) => "both",
-            (true, false) => "call",
-            (false, true) => "import",
-            (false, false) => continue,
-        };
-
-        let dep = ModuleDependency {
-            source_module_id: src.clone(),
-            target_module_id: tgt.clone(),
-            dependency_type: dep_type.to_string(),
-            call_count: *calls,
-            import_count: *imports,
-            is_circular,
-        };
-
-        upsert_module_dependency_sync(code_conn, project_id, &dep).str_err()?;
-        stored += 1;
-    }
-
-    // Step 7: Store circular dependency findings in memory_facts
-    for scc in &sccs {
-        let modules_str = scc.join(" <-> ");
-        let content = format!(
-            "[circular-dependency] Circular dependency detected between modules: {}",
-            modules_str
-        );
-        // Use first two modules for the key
-        let key = if scc.len() >= 2 {
-            format!("health:circular:{}:{}", scc[0], scc[1])
-        } else {
-            format!("health:circular:{}", scc[0])
-        };
-
-        store_memory_sync(
-            main_conn,
-            StoreMemoryParams {
-                project_id: Some(project_id),
-                key: Some(&key),
-                content: &content,
-                fact_type: "health",
-                category: Some("circular_dependency"),
-                confidence: 0.9,
-                session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
-                team_id: None,
-            },
-        )
-        .map_err(|e| format!("Failed to store circular dep finding: {}", e))?;
-    }
-
-    if !sccs.is_empty() {
-        tracing::info!(
-            "Code health: found {} circular dependency groups ({} total edges)",
-            sccs.len(),
-            circular_edges.len()
-        );
-    }
-
-    Ok(stored)
-}
-
-/// Module path info: (module_id, path_prefix)
-struct ModuleInfo {
-    module_id: String,
-    path: String,
-}
-
-/// Get module id -> path mappings from codebase_modules
-fn get_module_paths(conn: &Connection, project_id: i64) -> Result<Vec<ModuleInfo>, String> {
-    let mut stmt = conn
-        .prepare("SELECT module_id, path FROM codebase_modules WHERE project_id = ?")
-        .str_err()?;
-
-    let modules = stmt
-        .query_map([project_id], |row| {
-            Ok(ModuleInfo {
-                module_id: row.get(0)?,
-                path: row.get(1)?,
-            })
+    // Build result
+    let result: Vec<DepEdge> = merged
+        .iter()
+        .map(|((src, tgt), (calls, imports))| {
+            let dep_type = match (calls > &0, imports > &0) {
+                (true, true) => "both",
+                (true, false) => "call",
+                (false, true) => "import",
+                (false, false) => "import",
+            };
+            DepEdge {
+                source: src.clone(),
+                target: tgt.clone(),
+                dep_type: dep_type.to_string(),
+                call_count: *calls,
+                import_count: *imports,
+                is_circular: circular_edges.contains(&(src.clone(), tgt.clone())),
+            }
         })
-        .str_err()?
-        .filter_map(crate::db::log_and_discard)
         .collect();
 
-    Ok(modules)
+    Ok(result)
 }
 
-/// Map a file_path to its owning module_id using longest prefix match
-fn file_to_module<'a>(file_path: &str, modules: &'a [ModuleInfo]) -> Option<&'a str> {
-    modules
-        .iter()
-        .filter(|m| file_path.starts_with(&m.path) || file_path.contains(&m.path))
-        .max_by_key(|m| m.path.len())
-        .map(|m| m.module_id.as_str())
-}
-
-/// Count import-based dependencies between modules
-fn count_import_dependencies(
-    conn: &Connection,
-    project_id: i64,
-    modules: &[ModuleInfo],
-) -> Result<HashMap<(String, String), i64>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT file_path, import_path FROM imports
-             WHERE project_id = ? AND is_external = 0",
-        )
-        .str_err()?;
-
-    let mut deps: HashMap<(String, String), i64> = HashMap::new();
-
-    let rows = stmt
-        .query_map([project_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .str_err()?;
-
-    for row in rows {
-        let (file_path, import_path) = row.str_err()?;
-        let source_module = file_to_module(&file_path, modules);
-        let target_module = file_to_module(&import_path, modules);
-
-        if let (Some(src), Some(tgt)) = (source_module, target_module)
-            && src != tgt
-        {
-            *deps.entry((src.to_string(), tgt.to_string())).or_default() += 1;
-        }
-    }
-
-    Ok(deps)
-}
-
-/// Count call-based dependencies between modules via call_graph -> code_symbols -> codebase_modules
-fn count_call_dependencies(
-    conn: &Connection,
-    project_id: i64,
-    modules: &[ModuleInfo],
-) -> Result<HashMap<(String, String), i64>, String> {
-    // Join call_graph with code_symbols to get file paths for caller and callee
-    let mut stmt = conn
-        .prepare(
-            "SELECT cs_caller.file_path, cs_callee.file_path, cg.call_count
-             FROM call_graph cg
-             JOIN code_symbols cs_caller ON cg.caller_id = cs_caller.id
-             JOIN code_symbols cs_callee ON cg.callee_id = cs_callee.id
-             WHERE cs_caller.project_id = ? AND cs_callee.project_id = ?",
-        )
-        .str_err()?;
-
-    let mut deps: HashMap<(String, String), i64> = HashMap::new();
-
-    let rows = stmt
-        .query_map([project_id, project_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })
-        .str_err()?;
-
-    for row in rows {
-        let (caller_file, callee_file, call_count) = row.str_err()?;
-        let source_module = file_to_module(&caller_file, modules);
-        let target_module = file_to_module(&callee_file, modules);
-
-        if let (Some(src), Some(tgt)) = (source_module, target_module)
-            && src != tgt
-        {
-            *deps.entry((src.to_string(), tgt.to_string())).or_default() += call_count;
-        }
-    }
-
-    Ok(deps)
-}
-
-/// Build adjacency list from merged dependency edges
-fn build_adjacency(merged: &HashMap<(String, String), (i64, i64)>) -> HashMap<String, Vec<String>> {
-    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
-    for (src, tgt) in merged.keys() {
-        adj.entry(src.clone()).or_default().push(tgt.clone());
-        adj.entry(tgt.clone()).or_default(); // ensure all nodes present
-    }
-    adj
-}
+// ============================================================================
+// Tarjan's SCC algorithm
+// ============================================================================
 
 /// Tarjan's strongly connected components algorithm.
 /// Returns groups of size > 1 (circular dependencies).
@@ -335,6 +347,11 @@ pub fn tarjan_scc(adj: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tarjan's SCC tests
+    // ═══════════════════════════════════════════════════════════════════════════
 
     #[test]
     fn test_tarjan_no_cycles() {
@@ -406,29 +423,259 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_file_to_module_longest_prefix() {
-        let modules = vec![
-            ModuleInfo {
-                module_id: "root".to_string(),
-                path: "src/".to_string(),
-            },
-            ModuleInfo {
-                module_id: "db".to_string(),
-                path: "src/db/".to_string(),
-            },
-            ModuleInfo {
-                module_id: "db_pool".to_string(),
-                path: "src/db/pool/".to_string(),
-            },
-        ];
+    // ═══════════════════════════════════════════════════════════════════════════
+    // collect_dependency_data tests
+    // ═══════════════════════════════════════════════════════════════════════════
 
-        assert_eq!(
-            file_to_module("src/db/pool/mod.rs", &modules),
-            Some("db_pool")
-        );
-        assert_eq!(file_to_module("src/db/memory.rs", &modules), Some("db"));
-        assert_eq!(file_to_module("src/main.rs", &modules), Some("root"));
-        assert_eq!(file_to_module("tests/foo.rs", &modules), None);
+    /// Create a connection with code DB tables for collect_dependency_data tests.
+    fn setup_code_db() -> Connection {
+        crate::db::pool::ensure_sqlite_vec_registered();
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS code_symbols (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                symbol_type TEXT NOT NULL,
+                start_line INTEGER,
+                end_line INTEGER,
+                signature TEXT,
+                indexed_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS call_graph (
+                id INTEGER PRIMARY KEY,
+                caller_id INTEGER REFERENCES code_symbols(id),
+                callee_name TEXT NOT NULL,
+                callee_id INTEGER REFERENCES code_symbols(id),
+                call_count INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS imports (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                import_path TEXT NOT NULL,
+                is_external INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS codebase_modules (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                module_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                UNIQUE(project_id, module_id)
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_module(conn: &Connection, project_id: i64, module_id: &str, path: &str) {
+        conn.execute(
+            "INSERT INTO codebase_modules (project_id, module_id, name, path) VALUES (?1, ?2, ?2, ?3)",
+            rusqlite::params![project_id, module_id, path],
+        )
+        .unwrap();
+    }
+
+    fn insert_import(conn: &Connection, project_id: i64, file_path: &str, import_path: &str) {
+        conn.execute(
+            "INSERT INTO imports (project_id, file_path, import_path, is_external) VALUES (?1, ?2, ?3, 0)",
+            rusqlite::params![project_id, file_path, import_path],
+        )
+        .unwrap();
+    }
+
+    fn insert_symbol(conn: &Connection, project_id: i64, name: &str, file_path: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line)
+             VALUES (?1, ?2, ?3, 'function', 1, 10)",
+            rusqlite::params![project_id, file_path, name],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn insert_call(conn: &Connection, caller_id: i64, callee_id: i64, call_count: i64) {
+        conn.execute(
+            "INSERT INTO call_graph (caller_id, callee_name, callee_id, call_count)
+             VALUES (?1, 'callee', ?2, ?3)",
+            rusqlite::params![caller_id, callee_id, call_count],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_collect_deps_no_modules() {
+        let conn = setup_code_db();
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_modules_but_no_edges() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_import_only() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].source, "mod_a");
+        assert_eq!(result[0].target, "mod_b");
+        assert_eq!(result[0].dep_type, "import");
+        assert_eq!(result[0].import_count, 1);
+        assert_eq!(result[0].call_count, 0);
+        assert!(!result[0].is_circular);
+    }
+
+    #[test]
+    fn test_collect_deps_call_only() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        let caller = insert_symbol(&conn, 1, "foo", "src/a/main.rs");
+        let callee = insert_symbol(&conn, 1, "bar", "src/b/lib.rs");
+        insert_call(&conn, caller, callee, 3);
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dep_type, "call");
+        assert_eq!(result[0].call_count, 3);
+        assert_eq!(result[0].import_count, 0);
+    }
+
+    #[test]
+    fn test_collect_deps_both_import_and_call() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+        let caller = insert_symbol(&conn, 1, "foo", "src/a/main.rs");
+        let callee = insert_symbol(&conn, 1, "bar", "src/b/lib.rs");
+        insert_call(&conn, caller, callee, 2);
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dep_type, "both");
+        assert_eq!(result[0].call_count, 2);
+        assert_eq!(result[0].import_count, 1);
+    }
+
+    #[test]
+    fn test_collect_deps_circular() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        // A -> B and B -> A
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+        insert_import(&conn, 1, "src/b/main.rs", "src/a/utils.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 2);
+        for edge in &result {
+            assert!(
+                edge.is_circular,
+                "Edge {} -> {} should be circular",
+                edge.source, edge.target
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_deps_same_module_ignored() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        // Import within same module
+        insert_import(&conn, 1, "src/a/main.rs", "src/a/utils.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty(), "Intra-module deps should be ignored");
+    }
+
+    #[test]
+    fn test_collect_deps_external_imports_excluded() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        conn.execute(
+            "INSERT INTO imports (project_id, file_path, import_path, is_external)
+             VALUES (1, 'src/a/main.rs', 'serde::Serialize', 1)",
+            [],
+        )
+        .unwrap();
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_project_isolation() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/utils.rs");
+
+        // Query for a different project
+        let result = collect_dependency_data(&conn, 2).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_deps_multiple_imports_aggregated() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        // Multiple files in A import from B
+        insert_import(&conn, 1, "src/a/foo.rs", "src/b/utils.rs");
+        insert_import(&conn, 1, "src/a/bar.rs", "src/b/types.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].import_count, 2);
+    }
+
+    #[test]
+    fn test_collect_deps_three_node_cycle() {
+        let conn = setup_code_db();
+        insert_module(&conn, 1, "mod_a", "src/a");
+        insert_module(&conn, 1, "mod_b", "src/b");
+        insert_module(&conn, 1, "mod_c", "src/c");
+        // A -> B -> C -> A
+        insert_import(&conn, 1, "src/a/main.rs", "src/b/lib.rs");
+        insert_import(&conn, 1, "src/b/main.rs", "src/c/lib.rs");
+        insert_import(&conn, 1, "src/c/main.rs", "src/a/lib.rs");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        assert_eq!(result.len(), 3);
+        let circular_count = result.iter().filter(|e| e.is_circular).count();
+        assert_eq!(circular_count, 3, "All edges in cycle should be circular");
+    }
+
+    #[test]
+    fn test_collect_deps_longest_path_match() {
+        let conn = setup_code_db();
+        // Module with longer path should match more specifically
+        insert_module(&conn, 1, "mod_parent", "src");
+        insert_module(&conn, 1, "mod_child", "src/sub");
+        // File in src/sub/ should match mod_child, not mod_parent
+        insert_import(&conn, 1, "src/sub/main.rs", "src/other.rs");
+        insert_module(&conn, 1, "mod_other", "src/other");
+
+        let result = collect_dependency_data(&conn, 1).unwrap();
+        // Should have mod_child -> mod_other, not mod_parent -> mod_other
+        let edge = result
+            .iter()
+            .find(|e| e.target == "mod_other")
+            .expect("Expected edge targeting mod_other");
+        assert_eq!(edge.source, "mod_child", "Should match longest path prefix");
     }
 }
