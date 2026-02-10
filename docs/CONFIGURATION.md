@@ -21,6 +21,7 @@ Mira uses environment variables for API keys and configuration. These are set in
 | `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek`, `zhipu`, or `ollama` |
 | `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
+| `MIRA_PROJECT_PATH` | Optional | Override project path detection (useful when Claude Code hooks are not present) |
 | `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |
 
 *API keys are optional for core features. Mira's memory, code intelligence, and goal tracking work without any keys. Diff analysis, module summaries, and background insights use heuristic fallbacks (pattern-based parsing, metadata extraction, tool history analysis). Semantic search requires `OPENAI_API_KEY` for embeddings but falls back to fuzzy/keyword search without it.*
@@ -169,11 +170,11 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
     "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
     "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2000}]}],
-    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000}]}],
-    "PreCompact": [{"hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000}]}],
+    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000, "async": true}]}],
+    "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000, "async": true}]}],
     "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
     "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000}]}]
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}]
   }
 }
 ```

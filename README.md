@@ -26,7 +26,7 @@ Mira is a Rust MCP server that gives Claude Code long-term memory and deep code 
 
 **Tracks goals across sessions.** Weighted milestones that persist across conversations, so multi-session work doesn't lose its thread. Goals have priorities, statuses, and progress that auto-updates as milestones complete.
 
-**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. Expert consultation works via MCP Sampling through your host LLM — no separate key needed. Add an OpenAI key for semantic search (recommended), or DeepSeek/Zhipu/Ollama for background intelligence tasks.
+**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. Expert consultation is available via Agent Teams recipes. Add an OpenAI key for semantic search (recommended), or DeepSeek/Zhipu/Ollama for background intelligence tasks.
 
 **Detects documentation gaps.** Finds undocumented APIs and modules, flags stale docs when source changes, classifies impact as significant or minor, and provides writing guidelines so Claude can fill the gaps directly.
 

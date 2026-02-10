@@ -29,6 +29,9 @@ pub(crate) fn validate_ref(r: &str) -> Result<(), String> {
     if r.starts_with('-') {
         return Err(format!("Invalid git ref: '{}'", r));
     }
+    if r.contains('\0') || r.contains('\n') || r.contains('\r') {
+        return Err("Invalid git ref: contains forbidden characters".to_string());
+    }
     Ok(())
 }
 

@@ -87,10 +87,14 @@ pub async fn run() -> Result<()> {
                 let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
 
                 // Log tool use
-                let _ = tracker.log_tool_use(conn, &tool_name, None);
+                if let Err(e) = tracker.log_tool_use(conn, &tool_name, None) {
+                    tracing::debug!("Failed to log tool use: {e}");
+                }
 
                 // Log file access
-                let _ = tracker.log_file_access(conn, &file_path_clone, &tool_name);
+                if let Err(e) = tracker.log_file_access(conn, &file_path_clone, &tool_name) {
+                    tracing::debug!("Failed to log file access: {e}");
+                }
 
                 Ok::<_, anyhow::Error>(())
             })

@@ -179,7 +179,8 @@ async fn action_create<C: ToolContext>(
                 progress_percent.map(|p| p as i64),
             )
         })
-        .await?;
+        .await
+        .map_err(|e| format!("Failed to create goal: {}", e))?;
 
     Ok(Json(GoalOutput {
         action: "create".into(),
@@ -203,6 +204,10 @@ async fn action_bulk_create<C: ToolContext>(
 
     if bulk_goals.is_empty() {
         return Err("goals array cannot be empty".to_string());
+    }
+
+    if bulk_goals.len() > 100 {
+        return Err("Too many goals: maximum 100 per bulk_create call".into());
     }
 
     let results = ctx
@@ -260,11 +265,13 @@ async fn action_list<C: ToolContext>(
     let goals = if include_finished {
         ctx.pool()
             .run(move |conn| get_goals_sync(conn, project_id, None))
-            .await?
+            .await
+            .map_err(|e| format!("Failed to list goals: {}", e))?
     } else {
         ctx.pool()
             .run(move |conn| get_active_goals_sync(conn, project_id, limit_usize))
-            .await?
+            .await
+            .map_err(|e| format!("Failed to list active goals: {}", e))?
     };
 
     if goals.is_empty() {

@@ -347,6 +347,30 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
                 cwd.as_deref(),
             )?;
 
+            // Validate that the detected config file actually exists and is recent
+            // to avoid registering phantom membership from leftover .agent-team.json files
+            let config_path = Path::new(&det.config_path);
+            if !config_path.is_file() {
+                tracing::debug!(
+                    "Lazy team detection skipped: config file does not exist: {}",
+                    det.config_path
+                );
+                return None;
+            }
+            if let Ok(metadata) = config_path.metadata()
+                && let Ok(modified) = metadata.modified()
+            {
+                let age = modified.elapsed().unwrap_or_default();
+                if age > std::time::Duration::from_secs(24 * 60 * 60) {
+                    tracing::debug!(
+                        "Lazy team detection skipped: stale config file ({:.0?} old): {}",
+                        age,
+                        det.config_path
+                    );
+                    return None;
+                }
+            }
+
             // Register in DB
             let pool_clone = pool.clone();
             let team_name = det.team_name.clone();

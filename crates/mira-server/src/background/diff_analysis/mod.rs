@@ -70,12 +70,30 @@ async fn cache_result(
     result: &DiffAnalysisResult,
     analysis_type: &str,
 ) {
-    let changes_json = serde_json::to_string(&result.changes).ok();
+    let changes_json = match serde_json::to_string(&result.changes) {
+        Ok(json) => Some(json),
+        Err(e) => {
+            tracing::warn!("Failed to serialize diff changes: {e}");
+            None
+        }
+    };
     let impact_json = result
         .impact
         .as_ref()
-        .and_then(|i| serde_json::to_string(i).ok());
-    let risk_json = serde_json::to_string(&result.risk).ok();
+        .and_then(|i| match serde_json::to_string(i) {
+            Ok(json) => Some(json),
+            Err(e) => {
+                tracing::warn!("Failed to serialize diff impact: {e}");
+                None
+            }
+        });
+    let risk_json = match serde_json::to_string(&result.risk) {
+        Ok(json) => Some(json),
+        Err(e) => {
+            tracing::warn!("Failed to serialize diff risk: {e}");
+            None
+        }
+    };
     let from = result.from_ref.clone();
     let to = result.to_ref.clone();
     let summary = result.summary.clone();
@@ -88,7 +106,13 @@ async fn cache_result(
     let files_json = if result.files.is_empty() {
         None
     } else {
-        serde_json::to_string(&result.files).ok()
+        match serde_json::to_string(&result.files) {
+            Ok(json) => Some(json),
+            Err(e) => {
+                tracing::warn!("Failed to serialize diff files: {e}");
+                None
+            }
+        }
     };
 
     if let Err(e) = pool

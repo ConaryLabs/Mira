@@ -49,7 +49,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID). Store and retrieve decisions, preferences, patterns, and context across sessions. Scope: personal, project (default), team.",
+        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID), archive (exclude from auto-export, keep for history). Store and retrieve decisions, preferences, patterns, and context across sessions. Scope: personal, project (default), team.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::MemoryOutput>()
             .expect("MemoryOutput schema")
     )]
@@ -164,7 +164,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Team intelligence for Claude Code Agent Teams. Actions: status (active members, files, conflicts), review (teammate's modified files). Requires an active Agent Teams session.",
+        description = "Team intelligence for Claude Code Agent Teams. Actions: status (active members, files, conflicts), review (teammate's modified files), distill (extract key findings into team memories). Requires an active Agent Teams session.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::TeamOutput>()
             .expect("TeamOutput schema")
     )]

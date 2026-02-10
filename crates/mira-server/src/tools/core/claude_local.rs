@@ -346,8 +346,18 @@ pub fn write_claude_local_md_sync(
     }
 
     let claude_local_path = Path::new(project_path).join("CLAUDE.local.md");
-    std::fs::write(&claude_local_path, &content)
-        .map_err(|e| format!("Failed to write CLAUDE.local.md: {}", e))?;
+    let temp_path = Path::new(project_path).join("CLAUDE.local.md.tmp");
+
+    // Atomic write: temp file + rename
+    if let Err(e) = std::fs::write(&temp_path, &content) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Failed to write temp file: {}", e));
+    }
+
+    if let Err(e) = std::fs::rename(&temp_path, &claude_local_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Failed to rename temp file: {}", e));
+    }
 
     // Count entries (lines starting with "- ")
     let count = content.lines().filter(|l| l.starts_with("- ")).count();

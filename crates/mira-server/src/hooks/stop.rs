@@ -441,7 +441,7 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
             parts.push(format!(
                 "Modified: {} (+{} more)",
                 file_names[..3].join(", "),
-                file_names.len() - 3
+                file_names.len().saturating_sub(3)
             ));
         }
     }

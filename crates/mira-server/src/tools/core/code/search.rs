@@ -34,7 +34,8 @@ pub async fn search_code<C: ToolContext>(
     let crossref_result = ctx
         .code_pool()
         .run(move |conn| Ok::<_, String>(crossref_search(conn, &query_clone, project_id, limit)))
-        .await?;
+        .await
+        .map_err(|e| format!("Failed to search code cross-references: {}", e))?;
 
     if let Some((target, ref_type, results)) = crossref_result {
         let direction = match ref_type {
@@ -115,7 +116,8 @@ pub async fn search_code<C: ToolContext>(
                 })
                 .collect())
         })
-        .await?;
+        .await
+        .map_err(|e| format!("Failed to expand code search results: {}", e))?;
 
     let items: Vec<CodeSearchResult> = expanded_results
         .iter()

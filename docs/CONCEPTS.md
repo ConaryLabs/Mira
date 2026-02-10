@@ -301,7 +301,7 @@ High-level objectives that span multiple sessions:
 ```
 goal(action="create", title="v2.0 Release", description="Ship new features")
 goal(action="list")
-goal(action="update", goal_id="1", status="in_progress")
+goal(action="update", goal_id=1, status="in_progress")
 ```
 
 ### Milestones
@@ -312,11 +312,11 @@ Quantifiable steps toward a goal with weighted progress:
 - **Status**: Completed or pending
 
 ```
-goal(action="add_milestone", goal_id="1", milestone_title="Design API", weight=2)
-goal(action="add_milestone", goal_id="1", milestone_title="Implement endpoints", weight=5)
-goal(action="add_milestone", goal_id="1", milestone_title="Write tests", weight=3)
-goal(action="complete_milestone", milestone_id="1")  # Auto-updates goal progress
-goal(action="progress")  # Shows weighted progress percentage
+goal(action="add_milestone", goal_id=1, milestone_title="Design API", weight=2)
+goal(action="add_milestone", goal_id=1, milestone_title="Implement endpoints", weight=5)
+goal(action="add_milestone", goal_id=1, milestone_title="Write tests", weight=3)
+goal(action="complete_milestone", milestone_id=1)  # Auto-updates goal progress
+goal(action="progress", goal_id=1)  # Shows weighted progress percentage
 ```
 
 Progress is calculated from weighted milestones: completing a weight-5 milestone contributes more than a weight-1 milestone.

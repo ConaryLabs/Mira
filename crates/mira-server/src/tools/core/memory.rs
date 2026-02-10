@@ -327,7 +327,8 @@ pub async fn remember<C: ToolContext>(
             };
             store_memory_sync(conn, params)
         })
-        .await?;
+        .await
+        .map_err(|e| format!("Failed to store memory: {}", e))?;
 
     // Extract and link entities in a separate transaction
     // If this fails, the fact is still stored — backfill will pick it up later
@@ -441,7 +442,8 @@ pub async fn recall<C: ToolContext>(
                     fetch_limit,
                 )
             })
-            .await;
+            .await
+            .map_err(|e| format!("Failed to recall memories (semantic): {}", e));
 
         let results = match vec_result {
             Ok(r) => r,
@@ -574,7 +576,8 @@ pub async fn recall<C: ToolContext>(
                 fetch_limit,
             )
         })
-        .await?;
+        .await
+        .map_err(|e| format!("Failed to recall memories (SQL fallback): {}", e))?;
 
     let results = filter_results(results, &category, &fact_type, limit);
 

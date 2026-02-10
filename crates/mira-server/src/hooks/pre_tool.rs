@@ -51,7 +51,9 @@ fn write_cooldown(query: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(path, serde_json::to_string(&state).unwrap_or_default());
+    if let Ok(json) = serde_json::to_string(&state) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 /// PreToolUse hook input from Claude Code

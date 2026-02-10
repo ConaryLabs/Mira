@@ -575,6 +575,16 @@ pub fn read_claude_task_list_id() -> Option<String> {
 
 /// Per-session team membership file (avoids cross-session clobbering).
 pub fn team_file_path_for_session(session_id: &str) -> PathBuf {
+    if !session_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        tracing::warn!(
+            "Invalid characters in session_id for team file path, skipping: {:?}",
+            session_id
+        );
+        return PathBuf::new();
+    }
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(format!(".mira/claude-team-{}.json", session_id))
 }

@@ -100,29 +100,39 @@ pub fn run_data_retention_sync(conn: &Connection) -> Result<usize, String> {
     let mut total_deleted = 0;
 
     for rule in RULES {
+        // Batched deletes: use a subquery with LIMIT to avoid holding SQLite's
+        // write lock for large backlogs. The subquery approach works without
+        // SQLITE_ENABLE_UPDATE_DELETE_LIMIT.
         let sql = format!(
-            "DELETE FROM {table} WHERE {col} < datetime('now', '-{days} days') {extra}",
+            "DELETE FROM {table} WHERE rowid IN \
+             (SELECT rowid FROM {table} WHERE {col} < datetime('now', '-{days} days') {extra} LIMIT 10000)",
             table = rule.table,
             col = rule.time_column,
             days = rule.days,
             extra = rule.extra_filter,
         );
 
-        match conn.execute(&sql, []) {
-            Ok(count) => {
-                if count > 0 {
+        loop {
+            match conn.execute(&sql, []) {
+                Ok(0) => break,
+                Ok(count) => {
+                    total_deleted += count;
                     tracing::info!(
-                        "[retention] Deleted {} rows from {} (>{} days old)",
+                        "[retention] Deleted {} rows from {} (>{} days old, batch)",
                         count,
                         rule.table,
                         rule.days
                     );
+                    // If we deleted fewer than the batch limit, we're done
+                    if count < 10_000 {
+                        break;
+                    }
                 }
-                total_deleted += count;
-            }
-            Err(e) => {
-                // Table might not exist yet (migrations not applied) — log and continue
-                tracing::warn!("[retention] Failed to clean {}: {}", rule.table, e);
+                Err(e) => {
+                    // Table might not exist yet (migrations not applied) — log and continue
+                    tracing::warn!("[retention] Failed to clean {}: {}", rule.table, e);
+                    break;
+                }
             }
         }
     }

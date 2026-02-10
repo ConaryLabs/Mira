@@ -14,6 +14,7 @@ pub mod user_prompt;
 mod session_tests;
 
 use anyhow::Result;
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -62,7 +63,9 @@ const HOOK_PERF_THRESHOLD_MS: u128 = 100;
 /// Read hook input from stdin (Claude Code passes JSON)
 pub fn read_hook_input() -> Result<serde_json::Value> {
     let mut input = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+    std::io::stdin()
+        .take(1_048_576)
+        .read_to_string(&mut input)?;
     let json: serde_json::Value = serde_json::from_str(&input)?;
     Ok(json)
 }
