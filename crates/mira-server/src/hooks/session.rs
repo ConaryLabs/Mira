@@ -152,8 +152,16 @@ pub async fn run() -> Result<()> {
                         // Resolve project from cwd
                         let (project_id, _) =
                             crate::db::get_or_create_project_sync(conn, &cwd_owned, None)?;
-                        // Upsert session (creates if new, updates last_activity if exists)
-                        crate::db::upsert_session_sync(conn, &sid_owned, Some(project_id))?;
+                        // Create or reactivate session. Uses create_session_ext_sync
+                        // which sets status='active' on conflict, properly reactivating
+                        // completed sessions when Claude Code restarts.
+                        crate::db::create_session_ext_sync(
+                            conn,
+                            &sid_owned,
+                            Some(project_id),
+                            Some(&source_owned),
+                            None,
+                        )?;
                         // Record source in session history
                         conn.execute(
                             "INSERT INTO session_behavior_log (session_id, event_type, event_data) \

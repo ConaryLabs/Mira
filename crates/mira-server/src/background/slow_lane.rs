@@ -278,6 +278,20 @@ impl SlowLaneWorker {
         // Increment cycle counter
         self.cycle_count += 1;
 
+        // Write heartbeat so the status line can detect if the background loop is alive.
+        // This runs every cycle (~60s idle, ~10s active) regardless of what tasks run.
+        let pool = self.pool.clone();
+        let _ = pool
+            .interact(move |conn| {
+                crate::db::set_server_state_sync(
+                    conn,
+                    "last_bg_heartbeat",
+                    &chrono::Utc::now().to_rfc3339(),
+                )
+                .map_err(Into::into)
+            })
+            .await;
+
         let skip_low = self.skip_low_priority();
         if skip_low {
             tracing::info!(
@@ -297,6 +311,13 @@ impl SlowLaneWorker {
 
         // Walk the schedule in definition order (already grouped by priority)
         for task in task_schedule() {
+            // Check for shutdown between tasks to avoid running the full schedule
+            // when the server is stopping. Cuts worst-case shutdown from ~28 min to ~2 min.
+            if *self.shutdown.borrow() {
+                tracing::info!("Slow lane: shutdown requested, breaking out of task loop");
+                break;
+            }
+
             // Skip tasks not due this cycle
             if !task.should_run(self.cycle_count) {
                 continue;

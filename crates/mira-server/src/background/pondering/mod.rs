@@ -67,6 +67,9 @@ pub async fn process_pondering(
                 name,
                 tool_history.len()
             );
+            // Update timestamp even when skipping — prevents the per-project
+            // pondering timestamp from going stale on low-activity projects.
+            let _ = update_last_pondering(pool, project_id).await;
             continue;
         }
 

@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use rusqlite::Connection;
+use std::io::BufRead;
 use std::path::PathBuf;
 
 /// ANSI escape codes
@@ -17,9 +18,11 @@ const MAGENTA: &str = "\x1b[35m";
 const DOT: &str = " \x1b[2m\u{00b7}\x1b[0m ";
 
 /// Parse the `cwd` field from the JSON that Claude Code sends on stdin.
+/// Reads a single line instead of read_to_string to avoid blocking if stdin stays open.
 fn parse_cwd_from_stdin() -> Option<String> {
-    let input = std::io::read_to_string(std::io::stdin()).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&input).ok()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&line).ok()?;
     v.get("cwd")?.as_str().map(|s| s.to_string())
 }
 
@@ -92,15 +95,17 @@ fn query_stale_docs(conn: &Connection, project_id: i64) -> i64 {
 }
 
 /// Check if background processing is stalled.
-/// Returns true if last pondering run was >24 hours ago (and has ever run).
-fn query_bg_stalled(conn: &Connection, project_id: i64) -> bool {
+/// Uses the slow lane heartbeat (written every cycle) instead of pondering timestamps,
+/// which have many legitimate reasons to go stale (cooldown, insufficient data, etc.).
+/// Returns true if the heartbeat is >5 minutes old (and has ever been written).
+fn query_bg_stalled(conn: &Connection) -> bool {
     conn.query_row(
         "SELECT CAST((julianday('now') - julianday(value)) * 86400 AS INTEGER) \
-         FROM server_state WHERE key = ?1",
-        [format!("last_pondering_{project_id}")],
+         FROM server_state WHERE key = 'last_bg_heartbeat'",
+        [],
         |r| r.get::<_, i64>(0),
     )
-    .map(|secs| secs > 86400)
+    .map(|secs| secs > 300) // 5 minutes
     .unwrap_or(false) // never ran = don't warn (fresh install)
 }
 
@@ -129,11 +134,14 @@ fn format_duration(seconds: i64) -> String {
 }
 
 fn open_readonly(path: &PathBuf) -> Option<Connection> {
-    Connection::open_with_flags(
+    let conn = Connection::open_with_flags(
         path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .ok()
+    .ok()?;
+    // Set busy_timeout to avoid SQLITE_BUSY during write-heavy workloads (indexing).
+    let _ = conn.execute_batch("PRAGMA busy_timeout = 1000");
+    Some(conn)
 }
 
 /// Print the status line to stdout.
@@ -172,7 +180,7 @@ pub fn run() -> Result<()> {
     let goals = query_goals(&main_conn, project_id);
     let (new_insights, total_insights) = query_insights(&main_conn, project_id);
     let stale_docs = query_stale_docs(&main_conn, project_id);
-    let bg_stalled = query_bg_stalled(&main_conn, project_id);
+    let bg_stalled = query_bg_stalled(&main_conn);
 
     let code_conn = open_readonly(&code_db);
     let index_age = code_conn
