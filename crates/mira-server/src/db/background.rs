@@ -111,6 +111,21 @@ pub fn clear_old_health_issues_sync(conn: &Connection, project_id: i64) -> rusql
     Ok(())
 }
 
+/// Clear health issues for specific categories before refresh
+pub fn clear_health_issues_by_categories_sync(
+    conn: &Connection,
+    project_id: i64,
+    categories: &[&str],
+) -> rusqlite::Result<()> {
+    for category in categories {
+        conn.execute(
+            "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'health' AND category = ?",
+            params![project_id, category],
+        )?;
+    }
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Documentation scanner
 // ═══════════════════════════════════════════════════════════════════════════════

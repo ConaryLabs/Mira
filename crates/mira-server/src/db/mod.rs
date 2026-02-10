@@ -42,6 +42,7 @@ mod types;
 mod usage;
 
 pub use background::{
+    clear_health_issues_by_categories_sync,
     clear_old_health_issues_sync,
     delete_memory_by_key_sync,
     delete_pending_embedding_sync,

@@ -36,6 +36,8 @@ const PONDERING_CYCLE_INTERVAL: u64 = 10;
 const OUTCOME_SCAN_CYCLE_INTERVAL: u64 = 5;
 /// Run team monitoring every Nth cycle
 const TEAM_MONITOR_CYCLE_INTERVAL: u64 = 3;
+/// Run LLM health analysis every Nth cycle (expensive, LLM-dependent)
+const HEALTH_LLM_CYCLE_INTERVAL: u64 = 3;
 /// Run data retention every Nth cycle (~10 min interval at 60s idle)
 const DATA_RETENTION_CYCLE_INTERVAL: u64 = 10;
 
@@ -59,7 +61,10 @@ enum BackgroundTask {
     MemoryEmbeddings,
     Summaries,
     Briefings,
-    HealthIssues,
+    HealthFastScans,
+    HealthLlmComplexity,
+    HealthLlmErrorQuality,
+    HealthModuleAnalysis,
     ProactiveItems,
     EntityBackfills,
     TeamMonitor,
@@ -78,7 +83,10 @@ impl std::fmt::Display for BackgroundTask {
             Self::MemoryEmbeddings => write!(f, "memory embeddings"),
             Self::Summaries => write!(f, "summaries"),
             Self::Briefings => write!(f, "briefings"),
-            Self::HealthIssues => write!(f, "health issues"),
+            Self::HealthFastScans => write!(f, "health: fast scans"),
+            Self::HealthLlmComplexity => write!(f, "health: LLM complexity"),
+            Self::HealthLlmErrorQuality => write!(f, "health: LLM error quality"),
+            Self::HealthModuleAnalysis => write!(f, "health: module analysis"),
             Self::ProactiveItems => write!(f, "proactive items"),
             Self::EntityBackfills => write!(f, "entity backfills"),
             Self::TeamMonitor => write!(f, "team monitor"),
@@ -137,9 +145,24 @@ fn task_schedule() -> Vec<ScheduledTask> {
             cycle_interval: None,
         },
         ScheduledTask {
-            task: BackgroundTask::HealthIssues,
+            task: BackgroundTask::HealthFastScans,
             priority: TaskPriority::Normal,
             cycle_interval: None,
+        },
+        ScheduledTask {
+            task: BackgroundTask::HealthModuleAnalysis,
+            priority: TaskPriority::Normal,
+            cycle_interval: None,
+        },
+        ScheduledTask {
+            task: BackgroundTask::HealthLlmComplexity,
+            priority: TaskPriority::Low,
+            cycle_interval: Some(HEALTH_LLM_CYCLE_INTERVAL),
+        },
+        ScheduledTask {
+            task: BackgroundTask::HealthLlmErrorQuality,
+            priority: TaskPriority::Low,
+            cycle_interval: Some(HEALTH_LLM_CYCLE_INTERVAL),
         },
         ScheduledTask {
             task: BackgroundTask::ProactiveItems,
@@ -373,10 +396,35 @@ impl SlowLaneWorker {
                 )
                 .await
             }
-            BackgroundTask::HealthIssues => {
+            BackgroundTask::HealthFastScans => {
                 Self::run_task(
                     &name,
-                    code_health::process_code_health(&self.pool, &self.code_pool, client),
+                    code_health::process_health_fast_scans(&self.pool, &self.code_pool),
+                )
+                .await
+            }
+            BackgroundTask::HealthLlmComplexity => {
+                Self::run_task(
+                    &name,
+                    code_health::process_health_llm_complexity(&self.pool, &self.code_pool, client),
+                )
+                .await
+            }
+            BackgroundTask::HealthLlmErrorQuality => {
+                Self::run_task(
+                    &name,
+                    code_health::process_health_llm_error_quality(
+                        &self.pool,
+                        &self.code_pool,
+                        client,
+                    ),
+                )
+                .await
+            }
+            BackgroundTask::HealthModuleAnalysis => {
+                Self::run_task(
+                    &name,
+                    code_health::process_health_module_analysis(&self.pool, &self.code_pool),
                 )
                 .await
             }

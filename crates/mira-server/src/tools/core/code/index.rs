@@ -363,7 +363,7 @@ pub async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput
     let llm_client = ctx.llm_factory().client_for_background();
 
     // Run the full health scan (same as background worker, but forced)
-    let issues = crate::background::code_health::scan_project_health(
+    let issues = crate::background::code_health::scan_project_health_full(
         ctx.pool(),
         ctx.code_pool(),
         llm_client.as_ref(),

@@ -11,9 +11,10 @@ pub mod scoring;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    StoreMemoryParams, clear_old_health_issues_sync, get_indexed_project_ids_sync,
-    get_project_paths_by_ids_sync, get_scan_info_sync, get_unused_functions_sync,
-    is_time_older_than_sync, mark_health_scanned_sync, memory_key_exists_sync, store_memory_sync,
+    StoreMemoryParams, clear_health_issues_by_categories_sync, clear_old_health_issues_sync,
+    get_indexed_project_ids_sync, get_project_paths_by_ids_sync, get_scan_info_sync,
+    get_unused_functions_sync, is_time_older_than_sync, mark_health_scanned_sync,
+    memory_key_exists_sync, store_memory_sync,
 };
 use crate::llm::LlmClient;
 use crate::utils::ResultExt;
@@ -25,18 +26,13 @@ const MAX_UNUSED_FINDINGS: usize = 10;
 /// Confidence for unused function findings
 const CONFIDENCE_UNUSED: f64 = 0.5;
 
-/// Check code health for all indexed projects.
-///
-/// - `main_pool`: for reading/writing memory_facts, health markers
-/// - `code_pool`: for reading code_symbols, call_graph
-pub async fn process_code_health(
+/// Find one project that needs a health scan.
+/// Returns `(project_id, project_path)` if found.
+async fn find_project_for_health_scan(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
-) -> Result<usize, String> {
-    tracing::debug!("Code health: checking for projects needing scan");
-
-    // Step 1: Get indexed project IDs from code DB
+) -> Result<Option<(i64, String)>, String> {
+    // Get indexed project IDs from code DB
     let project_ids = code_pool
         .interact(move |conn| {
             get_indexed_project_ids_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
@@ -45,65 +41,442 @@ pub async fn process_code_health(
         .str_err()?;
 
     if project_ids.is_empty() {
-        return Ok(0);
+        return Ok(None);
     }
 
-    // Step 2: Get project paths from main DB and filter by health check needs
-    let ids = project_ids.clone();
-    let projects = main_pool
+    // Get project paths from main DB and filter by health check needs
+    let ids = project_ids;
+    let result = main_pool
         .interact(move |conn| {
             let all_projects =
                 get_project_paths_by_ids_sync(conn, &ids).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-            let mut needing_scan = Vec::new();
             for (project_id, project_path) in all_projects {
-                if needs_health_scan(conn, project_id) {
-                    needing_scan.push((project_id, project_path));
-                    break; // One project per cycle
+                if needs_health_scan(conn, project_id) && Path::new(&project_path).exists() {
+                    return Ok::<_, anyhow::Error>(Some((project_id, project_path)));
                 }
             }
-            Ok::<_, anyhow::Error>(needing_scan)
+            Ok(None)
         })
         .await
         .str_err()?;
 
-    if !projects.is_empty() {
+    Ok(result)
+}
+
+/// Fast scans: cargo check, pattern detection, and unused functions.
+/// Clears categories: warning, todo, unimplemented, unwrap, error_handling, unused.
+/// Consumes the scan-needed flag when done.
+pub async fn process_health_fast_scans(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+) -> Result<usize, String> {
+    tracing::debug!("Code health fast scans: checking for projects needing scan");
+
+    let Some((project_id, project_path)) =
+        find_project_for_health_scan(main_pool, code_pool).await?
+    else {
+        return Ok(0);
+    };
+
+    tracing::info!("Code health fast scans: scanning project {}", project_path);
+
+    // Clear relevant categories
+    main_pool
+        .interact(move |conn| {
+            clear_health_issues_by_categories_sync(
+                conn,
+                project_id,
+                &[
+                    "warning",
+                    "todo",
+                    "unimplemented",
+                    "unwrap",
+                    "error_handling",
+                    "unused",
+                ],
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
+    let mut total = 0;
+
+    // 1. Cargo check warnings (spawns external cargo process)
+    let cargo_path = project_path.clone();
+    let cargo_findings = tokio::task::spawn_blocking(move || {
+        tracing::debug!("Code health: running cargo check for {}", cargo_path);
+        cargo::collect_cargo_warnings(&cargo_path)
+    })
+    .await
+    .map_err(|e| format!("cargo scan join error: {}", e))?
+    .unwrap_or_else(|e| {
+        tracing::warn!("Code health: cargo check failed: {}", e);
+        Vec::new()
+    });
+
+    if !cargo_findings.is_empty() {
+        tracing::info!("Code health: found {} cargo warnings", cargo_findings.len());
+    }
+
+    // 2-5. Single-pass pattern detection (walks filesystem, reads Rust files)
+    let det_path = project_path.clone();
+    let det_output = tokio::task::spawn_blocking(move || detection::collect_detections(&det_path))
+        .await
+        .map_err(|e| format!("detection scan join error: {}", e))?
+        .unwrap_or_else(|e| {
+            tracing::warn!("Code health: detection scan failed: {}", e);
+            detection::DetectionOutput {
+                results: detection::DetectionResults {
+                    todos: 0,
+                    unimplemented: 0,
+                    unwraps: 0,
+                    error_handling: 0,
+                },
+                findings: Vec::new(),
+            }
+        });
+
+    let det = &det_output.results;
+    if det.todos > 0 {
+        tracing::info!("Code health: found {} TODOs", det.todos);
+    }
+    if det.unimplemented > 0 {
         tracing::info!(
-            "Code health: found {} projects needing scan",
-            projects.len()
+            "Code health: found {} unimplemented! macros",
+            det.unimplemented
+        );
+    }
+    if det.unwraps > 0 {
+        tracing::info!(
+            "Code health: found {} unwrap/expect calls in non-test code",
+            det.unwraps
+        );
+    }
+    if det.error_handling > 0 {
+        tracing::info!(
+            "Code health: found {} error handling issues",
+            det.error_handling
         );
     }
 
-    let mut processed = 0;
+    // Batch-write all findings in a single pool.interact() call
+    let warnings_count = cargo_findings.len();
+    let det_count = det_output.findings.len();
+    main_pool
+        .interact(move |conn| -> Result<(), anyhow::Error> {
+            cargo::store_cargo_findings(conn, project_id, &cargo_findings)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            detection::store_detection_findings(conn, project_id, &det_output.findings)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok(())
+        })
+        .await
+        .str_err()?;
 
-    for (project_id, project_path) in projects {
-        if !Path::new(&project_path).exists() {
-            continue;
-        }
+    total += warnings_count + det_count;
 
-        match scan_project_health(main_pool, code_pool, client, project_id, &project_path).await {
-            Ok(count) => {
+    // 6. Unused functions
+    let unused = scan_unused_functions_sharded(main_pool, code_pool, project_id).await?;
+    if unused > 0 {
+        tracing::info!("Code health: found {} potentially unused functions", unused);
+    }
+    total += unused;
+
+    // Consume the scan-needed flag
+    main_pool
+        .interact(move |conn| {
+            mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
+    tracing::info!(
+        "Code health fast scans: found {} issues for project {}",
+        total,
+        project_path
+    );
+
+    Ok(total)
+}
+
+/// LLM-based complexity analysis for large functions.
+/// Clears category: complexity.
+pub async fn process_health_llm_complexity(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    client: Option<&Arc<dyn LlmClient>>,
+) -> Result<usize, String> {
+    let Some(llm) = client else {
+        return Ok(0);
+    };
+
+    let Some((project_id, project_path)) =
+        find_project_for_health_scan(main_pool, code_pool).await?
+    else {
+        return Ok(0);
+    };
+
+    tracing::debug!(
+        "Code health LLM complexity: scanning project {}",
+        project_path
+    );
+
+    // Clear complexity category
+    main_pool
+        .interact(move |conn| {
+            clear_health_issues_by_categories_sync(conn, project_id, &["complexity"])
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
+    let complexity =
+        analysis::scan_complexity(code_pool, main_pool, llm, project_id, &project_path).await?;
+    if complexity > 0 {
+        tracing::info!(
+            "Code health: found {} complexity issues via LLM",
+            complexity
+        );
+    }
+
+    Ok(complexity)
+}
+
+/// LLM-based error handling quality analysis.
+/// Clears category: error_quality.
+pub async fn process_health_llm_error_quality(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    client: Option<&Arc<dyn LlmClient>>,
+) -> Result<usize, String> {
+    let Some(llm) = client else {
+        return Ok(0);
+    };
+
+    let Some((project_id, project_path)) =
+        find_project_for_health_scan(main_pool, code_pool).await?
+    else {
+        return Ok(0);
+    };
+
+    tracing::debug!(
+        "Code health LLM error quality: scanning project {}",
+        project_path
+    );
+
+    // Clear error_quality category
+    main_pool
+        .interact(move |conn| {
+            clear_health_issues_by_categories_sync(conn, project_id, &["error_quality"])
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
+    let error_quality =
+        analysis::scan_error_quality(code_pool, main_pool, llm, project_id, &project_path).await?;
+    if error_quality > 0 {
+        tracing::info!(
+            "Code health: found {} error quality issues via LLM",
+            error_quality
+        );
+    }
+
+    Ok(error_quality)
+}
+
+/// Module-level analysis: dependencies, patterns, tech debt scoring, and conventions.
+/// Clears category: architecture (for patterns).
+/// Dependencies, scoring, and conventions write to their own tables.
+pub async fn process_health_module_analysis(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+) -> Result<usize, String> {
+    let Some((project_id, project_path)) =
+        find_project_for_health_scan(main_pool, code_pool).await?
+    else {
+        return Ok(0);
+    };
+
+    tracing::debug!(
+        "Code health module analysis: scanning project {}",
+        project_path
+    );
+
+    // Clear architecture category (for patterns stored in memory_facts)
+    main_pool
+        .interact(move |conn| {
+            clear_health_issues_by_categories_sync(conn, project_id, &["architecture"])
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
+    let mut total = 0;
+
+    // Dependencies
+    match dependencies::scan_dependencies_sharded(main_pool, code_pool, project_id).await {
+        Ok(dep_count) => {
+            if dep_count > 0 {
                 tracing::info!(
-                    "Found {} health issues for project {} ({})",
-                    count,
-                    project_id,
-                    project_path
+                    "Code health: computed {} module dependency edges",
+                    dep_count
                 );
-                processed += count;
-                main_pool
-                    .interact(move |conn| {
-                        mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-                    })
-                    .await
-                    .str_err()?;
             }
-            Err(e) => {
-                tracing::warn!("Failed to scan health for {}: {}", project_path, e);
-            }
+            total += dep_count;
+        }
+        Err(e) => {
+            tracing::warn!("Code health: dependency analysis failed: {}", e);
         }
     }
 
-    Ok(processed)
+    // Architectural pattern detection
+    match scan_patterns_sharded(main_pool, code_pool, project_id).await {
+        Ok(pattern_count) => {
+            if pattern_count > 0 {
+                tracing::info!(
+                    "Code health: detected {} architectural patterns",
+                    pattern_count
+                );
+            }
+            total += pattern_count;
+        }
+        Err(e) => {
+            tracing::warn!("Code health: pattern detection failed: {}", e);
+        }
+    }
+
+    // Tech debt scoring
+    match scoring::compute_tech_debt_scores(main_pool, code_pool, project_id).await {
+        Ok(scored) => {
+            if scored > 0 {
+                tracing::info!(
+                    "Code health: computed tech debt scores for {} modules",
+                    scored
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Code health: tech debt scoring failed: {}", e);
+        }
+    }
+
+    // Convention extraction
+    match scan_conventions_sharded(main_pool, code_pool, project_id).await {
+        Ok(count) => {
+            if count > 0 {
+                tracing::info!("Code health: extracted conventions for {} modules", count);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Code health: convention extraction failed: {}", e);
+        }
+    }
+
+    Ok(total)
+}
+
+/// Run a full health scan for a specific project (all sub-steps).
+/// Used by the MCP `index(action="health")` tool for forced on-demand scans.
+pub async fn scan_project_health_full(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    client: Option<&Arc<dyn LlmClient>>,
+    project_id: i64,
+    project_path: &str,
+) -> Result<usize, String> {
+    tracing::info!("Code health: full scan for project {}", project_path);
+
+    // Clear all health issues
+    main_pool
+        .interact(move |conn| {
+            clear_old_health_issues(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
+    let mut total = 0;
+
+    // Fast scans: cargo check + detection + unused
+    let project_path_owned = project_path.to_string();
+
+    let cargo_path = project_path_owned.clone();
+    let cargo_findings =
+        tokio::task::spawn_blocking(move || cargo::collect_cargo_warnings(&cargo_path))
+            .await
+            .map_err(|e| format!("cargo scan join error: {}", e))?
+            .unwrap_or_else(|e| {
+                tracing::warn!("Code health: cargo check failed: {}", e);
+                Vec::new()
+            });
+
+    let det_path = project_path_owned.clone();
+    let det_output = tokio::task::spawn_blocking(move || detection::collect_detections(&det_path))
+        .await
+        .map_err(|e| format!("detection scan join error: {}", e))?
+        .unwrap_or_else(|e| {
+            tracing::warn!("Code health: detection scan failed: {}", e);
+            detection::DetectionOutput {
+                results: detection::DetectionResults {
+                    todos: 0,
+                    unimplemented: 0,
+                    unwraps: 0,
+                    error_handling: 0,
+                },
+                findings: Vec::new(),
+            }
+        });
+
+    let warnings_count = cargo_findings.len();
+    let det_count = det_output.findings.len();
+    main_pool
+        .interact(move |conn| -> Result<(), anyhow::Error> {
+            cargo::store_cargo_findings(conn, project_id, &cargo_findings)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            detection::store_detection_findings(conn, project_id, &det_output.findings)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok(())
+        })
+        .await
+        .str_err()?;
+    total += warnings_count + det_count;
+
+    let unused = scan_unused_functions_sharded(main_pool, code_pool, project_id).await?;
+    total += unused;
+
+    // LLM analysis
+    if let Some(llm) = client {
+        match analysis::scan_complexity(code_pool, main_pool, llm, project_id, project_path).await {
+            Ok(c) => total += c,
+            Err(e) => tracing::warn!("Code health: complexity analysis failed: {}", e),
+        }
+        match analysis::scan_error_quality(code_pool, main_pool, llm, project_id, project_path)
+            .await
+        {
+            Ok(c) => total += c,
+            Err(e) => tracing::warn!("Code health: error quality analysis failed: {}", e),
+        }
+    }
+
+    // Module analysis
+    match dependencies::scan_dependencies_sharded(main_pool, code_pool, project_id).await {
+        Ok(c) => total += c,
+        Err(e) => tracing::warn!("Code health: dependency analysis failed: {}", e),
+    }
+    match scan_patterns_sharded(main_pool, code_pool, project_id).await {
+        Ok(c) => total += c,
+        Err(e) => tracing::warn!("Code health: pattern detection failed: {}", e),
+    }
+    if let Err(e) = scoring::compute_tech_debt_scores(main_pool, code_pool, project_id).await {
+        tracing::warn!("Code health: tech debt scoring failed: {}", e);
+    }
+    if let Err(e) = scan_conventions_sharded(main_pool, code_pool, project_id).await {
+        tracing::warn!("Code health: convention extraction failed: {}", e);
+    }
+
+    Ok(total)
 }
 
 /// Check if project needs health scanning
@@ -162,191 +535,6 @@ pub fn mark_health_scan_needed_sync(
     .str_err()?;
     tracing::debug!("Marked project {} for health rescan", project_id);
     Ok(())
-}
-
-/// Scan a project for health issues.
-///
-/// - `main_pool`: for writing findings to memory_facts
-/// - `code_pool`: for reading code_symbols/call_graph
-pub(crate) async fn scan_project_health(
-    main_pool: &Arc<DatabasePool>,
-    code_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
-    project_id: i64,
-    project_path: &str,
-) -> Result<usize, String> {
-    tracing::info!("Code health: scanning project {}", project_path);
-
-    // Clear old health issues (main DB)
-    main_pool
-        .interact(move |conn| {
-            clear_old_health_issues(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
-
-    let mut total = 0;
-
-    // Run file-based scans OUTSIDE pool threads (they do heavy I/O and process spawning),
-    // then batch-write results inside a single pool.interact() call.
-    let project_path_owned = project_path.to_string();
-
-    // 1. Cargo check warnings (spawns external cargo process)
-    let cargo_path = project_path_owned.clone();
-    let cargo_findings = tokio::task::spawn_blocking(move || {
-        tracing::debug!("Code health: running cargo check for {}", cargo_path);
-        cargo::collect_cargo_warnings(&cargo_path)
-    })
-    .await
-    .map_err(|e| format!("cargo scan join error: {}", e))?
-    .unwrap_or_else(|e| {
-        tracing::warn!("Code health: cargo check failed: {}", e);
-        Vec::new()
-    });
-
-    if !cargo_findings.is_empty() {
-        tracing::info!("Code health: found {} cargo warnings", cargo_findings.len());
-    }
-
-    // 2-5. Single-pass pattern detection (walks filesystem, reads Rust files)
-    let det_path = project_path_owned.clone();
-    let det_output = tokio::task::spawn_blocking(move || detection::collect_detections(&det_path))
-        .await
-        .map_err(|e| format!("detection scan join error: {}", e))?
-        .unwrap_or_else(|e| {
-            tracing::warn!("Code health: detection scan failed: {}", e);
-            detection::DetectionOutput {
-                results: detection::DetectionResults {
-                    todos: 0,
-                    unimplemented: 0,
-                    unwraps: 0,
-                    error_handling: 0,
-                },
-                findings: Vec::new(),
-            }
-        });
-
-    let det = &det_output.results;
-    if det.todos > 0 {
-        tracing::info!("Code health: found {} TODOs", det.todos);
-    }
-    if det.unimplemented > 0 {
-        tracing::info!(
-            "Code health: found {} unimplemented! macros",
-            det.unimplemented
-        );
-    }
-    if det.unwraps > 0 {
-        tracing::info!(
-            "Code health: found {} unwrap/expect calls in non-test code",
-            det.unwraps
-        );
-    }
-    if det.error_handling > 0 {
-        tracing::info!(
-            "Code health: found {} error handling issues",
-            det.error_handling
-        );
-    }
-
-    // Batch-write all findings in a single pool.interact() call
-    let warnings_count = cargo_findings.len();
-    let det_count = det_output.findings.len();
-    main_pool
-        .interact(move |conn| -> Result<(), anyhow::Error> {
-            cargo::store_cargo_findings(conn, project_id, &cargo_findings)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            detection::store_detection_findings(conn, project_id, &det_output.findings)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(())
-        })
-        .await
-        .str_err()?;
-
-    total += warnings_count + det_count;
-
-    // 6. Unused functions - reads from code DB (code_symbols/call_graph),
-    //    writes findings to main DB (memory_facts)
-    let unused = scan_unused_functions_sharded(main_pool, code_pool, project_id).await?;
-    if unused > 0 {
-        tracing::info!("Code health: found {} potentially unused functions", unused);
-    }
-    total += unused;
-
-    // 7. LLM complexity analysis (for large functions) - async
-    if let Some(llm) = client {
-        let complexity =
-            analysis::scan_complexity(code_pool, main_pool, llm, project_id, project_path).await?;
-        if complexity > 0 {
-            tracing::info!(
-                "Code health: found {} complexity issues via LLM",
-                complexity
-            );
-        }
-        total += complexity;
-
-        // 8. LLM error handling analysis (for functions with many ? operators) - async
-        let error_quality =
-            analysis::scan_error_quality(code_pool, main_pool, llm, project_id, project_path)
-                .await?;
-        if error_quality > 0 {
-            tracing::info!(
-                "Code health: found {} error quality issues via LLM",
-                error_quality
-            );
-        }
-        total += error_quality;
-    }
-
-    // 9. Module dependency analysis + circular dependency detection
-    let dep_count =
-        dependencies::scan_dependencies_sharded(main_pool, code_pool, project_id).await?;
-    if dep_count > 0 {
-        tracing::info!(
-            "Code health: computed {} module dependency edges",
-            dep_count
-        );
-    }
-    total += dep_count;
-
-    // 10. Architectural pattern detection
-    let pattern_count = scan_patterns_sharded(main_pool, code_pool, project_id).await?;
-    if pattern_count > 0 {
-        tracing::info!(
-            "Code health: detected {} architectural patterns",
-            pattern_count
-        );
-    }
-    total += pattern_count;
-
-    // 11. Tech debt scoring (runs last, aggregates all findings)
-    match scoring::compute_tech_debt_scores(main_pool, code_pool, project_id).await {
-        Ok(scored) => {
-            if scored > 0 {
-                tracing::info!(
-                    "Code health: computed tech debt scores for {} modules",
-                    scored
-                );
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Code health: tech debt scoring failed: {}", e);
-        }
-    }
-
-    // 12. Convention extraction (for context-aware suggestions)
-    match scan_conventions_sharded(main_pool, code_pool, project_id).await {
-        Ok(count) => {
-            if count > 0 {
-                tracing::info!("Code health: extracted conventions for {} modules", count);
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Code health: convention extraction failed: {}", e);
-        }
-    }
-
-    Ok(total)
 }
 
 /// Scan architectural patterns using sharded pools.
