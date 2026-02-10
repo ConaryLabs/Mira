@@ -77,7 +77,11 @@ pub(super) const COORDINATION: &str = r#"## How to use this recipe
 3. **Create tasks**: Use `TaskCreate` for each recipe task, then `TaskUpdate` to assign `owner` to the appropriate teammate
 4. **Wait for completion**: Teammates will send their findings via SendMessage when done
 5. **Synthesize**: Combine findings into a unified report. Preserve genuine disagreements — present both sides with evidence rather than forcing consensus
-6. **Cleanup**: Send `shutdown_request` to each teammate, then `TeamDelete`"#;
+6. **Cleanup**: Send `shutdown_request` to each teammate, then `TeamDelete`
+
+## Want findings implemented?
+
+This recipe is read-only — experts analyze and report, but don't modify code. If you want the findings acted on, use the `full-cycle` recipe instead, which runs the same expert discovery phase followed by parallel implementation and QA verification."#;
 
 pub(super) const RECIPE: Recipe = Recipe {
     name: "expert-review",
