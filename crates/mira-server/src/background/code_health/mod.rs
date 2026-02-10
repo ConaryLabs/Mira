@@ -135,6 +135,21 @@ pub async fn process_health_fast_scans(
 
     tracing::info!("Code health fast scans: scanning project {}", project_path);
 
+    // Clear any stale health_fast_scan_done marker from a previous cycle.
+    // If module analysis timed out last cycle, it would leave this marker behind.
+    // Without clearing it here, a failed fast-scan run would inherit the stale
+    // marker, letting module analysis incorrectly consume health_scan_needed.
+    let mp = main_pool.clone();
+    mp.interact(move |conn| {
+        conn.execute(
+            "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_fast_scan_done'",
+            [project_id],
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))
+    })
+    .await
+    .str_err()?;
+
     // Clear relevant categories
     main_pool
         .interact(move |conn| {
@@ -988,6 +1003,62 @@ mod tests {
         assert!(
             needs_health_scan(&conn, pid),
             "scan-needed flag must survive when fast scans failed"
+        );
+    }
+
+    #[test]
+    fn test_stale_fast_scan_marker_does_not_leak_across_cycles() {
+        // Scenario from codex review: cycle N fast scans succeed (marker set),
+        // module analysis times out (marker NOT cleaned up). Cycle N+1 fast
+        // scans fail. The stale marker from cycle N must not trick module
+        // analysis into consuming health_scan_needed.
+        //
+        // The fix: fast scans clear the marker at start, so a stale marker
+        // from a previous cycle cannot persist into the current one.
+        let (conn, pid) = setup_main_db_with_project();
+        mark_health_scan_needed_sync(&conn, pid).unwrap();
+
+        // Simulate cycle N: fast scans succeed → marker set
+        store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("health_fast_scan_done"),
+                content: "done",
+                fact_type: "system",
+                category: Some("health"),
+                confidence: 1.0,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .unwrap();
+        assert!(memory_key_exists_sync(&conn, pid, "health_fast_scan_done"));
+
+        // Simulate cycle N: module analysis times out → marker NOT cleaned.
+        // (mark_health_scanned was never called)
+
+        // Simulate cycle N+1: fast scans START → must clear stale marker.
+        // This is the new behavior added in the fix.
+        conn.execute(
+            "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_fast_scan_done'",
+            [pid],
+        )
+        .unwrap();
+
+        // Simulate cycle N+1: fast scans FAIL → marker not re-set.
+        assert!(
+            !memory_key_exists_sync(&conn, pid, "health_fast_scan_done"),
+            "stale marker must be gone after fast scan start clears it"
+        );
+
+        // Module analysis checks the marker: not present → does NOT consume flag.
+        assert!(
+            needs_health_scan(&conn, pid),
+            "scan-needed flag must survive when stale marker was cleared and fast scans failed"
         );
     }
 
