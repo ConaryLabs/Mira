@@ -16,15 +16,6 @@ const MAGENTA: &str = "\x1b[35m";
 
 const DOT: &str = " \x1b[2m\u{00b7}\x1b[0m ";
 
-/// Format a count for compact display: 1234 -> "1.2k"
-fn fmt_count(n: i64) -> String {
-    if n >= 1000 {
-        format!("{}.{}k", n / 1000, (n % 1000) / 100)
-    } else {
-        n.to_string()
-    }
-}
-
 /// Parse the `cwd` field from the JSON that Claude Code sends on stdin.
 fn parse_cwd_from_stdin() -> Option<String> {
     let input = std::io::read_to_string(std::io::stdin()).ok()?;
@@ -45,25 +36,6 @@ fn resolve_project(conn: &Connection, cwd: &str) -> Option<(i64, String)> {
     .ok()
 }
 
-/// Count memories for a project.
-fn query_memories(conn: &Connection, project_id: i64) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1",
-        [project_id],
-        |r| r.get(0),
-    )
-    .unwrap_or(0)
-}
-
-/// Count code symbols for a project.
-fn query_symbols(conn: &Connection, project_id: i64) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(*) FROM code_symbols WHERE project_id = ?1",
-        [project_id],
-        |r| r.get(0),
-    )
-    .unwrap_or(0)
-}
 
 /// Count active goals for a project.
 fn query_goals(conn: &Connection, project_id: i64) -> i64 {
@@ -76,19 +48,22 @@ fn query_goals(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Count unseen insights from the last 24 hours.
-fn query_insights(conn: &Connection, project_id: i64) -> i64 {
+/// Count non-dismissed insights from the last 7 days.
+/// Returns (new_count, total_count) where new = shown_count == 0.
+fn query_insights(conn: &Connection, project_id: i64) -> (i64, i64) {
     conn.query_row(
-        "SELECT COUNT(*) FROM behavior_patterns \
+        "SELECT \
+           COALESCE(SUM(CASE WHEN shown_count = 0 THEN 1 ELSE 0 END), 0), \
+           COUNT(*) \
+         FROM behavior_patterns \
          WHERE project_id = ?1 \
            AND pattern_type LIKE 'insight_%' \
-           AND first_seen_at > datetime('now', '-24 hours') \
-           AND shown_count = 0 \
+           AND first_seen_at > datetime('now', '-7 days') \
            AND (dismissed IS NULL OR dismissed = 0)",
         [project_id],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )
-    .unwrap_or(0)
+    .unwrap_or((0, 0))
 }
 
 /// Get how long ago the code index was last updated, as a human-readable string.
@@ -103,6 +78,30 @@ fn query_index_age(conn: &Connection, project_id: i64) -> Option<String> {
         .ok()?;
 
     Some(format_duration(seconds))
+}
+
+/// Count pending/draft documentation tasks for a project.
+fn query_stale_docs(conn: &Connection, project_id: i64) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM documentation_tasks \
+         WHERE project_id = ?1 AND status IN ('pending', 'draft_ready')",
+        [project_id],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// Check if background processing is stalled.
+/// Returns true if last pondering run was >24 hours ago (and has ever run).
+fn query_bg_stalled(conn: &Connection, project_id: i64) -> bool {
+    conn.query_row(
+        "SELECT CAST((julianday('now') - julianday(value)) * 86400 AS INTEGER) \
+         FROM server_state WHERE key = ?1",
+        [format!("last_pondering_{project_id}")],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|secs| secs > 86400)
+    .unwrap_or(false) // never ran = don't warn (fresh install)
 }
 
 /// Count pending embedding chunks.
@@ -170,15 +169,12 @@ pub fn run() -> Result<()> {
     };
 
     // Query stats
-    let memories = query_memories(&main_conn, project_id);
     let goals = query_goals(&main_conn, project_id);
-    let insights = query_insights(&main_conn, project_id);
+    let (new_insights, total_insights) = query_insights(&main_conn, project_id);
+    let stale_docs = query_stale_docs(&main_conn, project_id);
+    let bg_stalled = query_bg_stalled(&main_conn, project_id);
 
     let code_conn = open_readonly(&code_db);
-    let symbols = code_conn
-        .as_ref()
-        .map(|c| query_symbols(c, project_id))
-        .unwrap_or(0);
     let index_age = code_conn
         .as_ref()
         .and_then(|c| query_index_age(c, project_id));
@@ -187,33 +183,43 @@ pub fn run() -> Result<()> {
         .map(|c| query_pending(c, project_id))
         .unwrap_or(0);
 
-    let knowledge = memories + symbols;
-
-    // Build output: ᓚᘏᗢ ProjectName · 4.1k knowledge · 3 goals · indexed 2h ago · 5 insights
+    // Build output: ᓚᘏᗢ ProjectName · 3 goals · indexed 2h ago · 7 insights (2 new)
     let mut parts = Vec::new();
 
     if !project_name.is_empty() {
         parts.push(format!("{CYAN}{project_name}{RESET}"));
     }
 
-    if knowledge > 0 {
-        parts.push(format!("{} knowledge", fmt_count(knowledge)));
-    }
-
     if goals > 0 {
         parts.push(format!("{GREEN}{goals}{RESET} goals"));
     }
 
-    if let Some(age) = &index_age {
-        parts.push(format!("{DIM}indexed {age}{RESET}"));
+    // Actionable items first
+    if total_insights > 0 {
+        if new_insights > 0 {
+            parts.push(format!(
+                "{MAGENTA}{total_insights}{RESET} insights ({MAGENTA}{new_insights} new{RESET})"
+            ));
+        } else {
+            parts.push(format!("{DIM}{total_insights} insights{RESET}"));
+        }
+    }
+
+    if stale_docs > 0 {
+        parts.push(format!("{YELLOW}{stale_docs} stale docs{RESET}"));
+    }
+
+    // Informational / diagnostics
+    if bg_stalled {
+        parts.push(format!("{YELLOW}bg stalled{RESET}"));
     }
 
     if pending > 0 {
         parts.push(format!("{YELLOW}embedding {pending} chunks{RESET}"));
     }
 
-    if insights > 0 {
-        parts.push(format!("{MAGENTA}{insights}{RESET} insights"));
+    if let Some(age) = &index_age {
+        parts.push(format!("{DIM}indexed {age}{RESET}"));
     }
 
     let joined = parts.join(DOT);

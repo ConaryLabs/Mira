@@ -138,6 +138,40 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] Captured Claude task list: {}", list_id);
     }
 
+    // Register session in DB so the background loop sees activity
+    if let Some(sid) = session_id {
+        if let Some(cwd_val) = cwd {
+            let db_path = get_db_path();
+            let sid_owned = sid.to_string();
+            let cwd_owned = cwd_val.to_string();
+            let source_owned = source.to_string();
+            if let Ok(pool) = DatabasePool::open(&db_path).await {
+                let pool = Arc::new(pool);
+                let res = pool
+                    .interact(move |conn| {
+                        // Resolve project from cwd
+                        let (project_id, _) =
+                            crate::db::get_or_create_project_sync(conn, &cwd_owned, None)?;
+                        // Upsert session (creates if new, updates last_activity if exists)
+                        crate::db::upsert_session_sync(conn, &sid_owned, Some(project_id))?;
+                        // Record source in session history
+                        conn.execute(
+                            "INSERT INTO session_behavior_log (session_id, event_type, event_data) \
+                             VALUES (?1, 'session_start', ?2)",
+                            rusqlite::params![sid_owned, source_owned],
+                        )
+                        .ok(); // best-effort
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .await;
+                match res {
+                    Ok(()) => eprintln!("[mira] Session registered in DB"),
+                    Err(e) => eprintln!("[mira] Failed to register session: {}", e),
+                }
+            }
+        }
+    }
+
     // Detect team membership and register in DB
     if let Some(sid) = session_id {
         let detection = detect_team_membership(&input, Some(sid), cwd);
