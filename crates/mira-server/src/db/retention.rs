@@ -57,13 +57,13 @@ const RULES: &[RetentionRule] = &[
     },
     RetentionRule {
         table: "diff_outcomes",
-        time_column: "observed_at",
+        time_column: "created_at",
         days: 60,
         extra_filter: "",
     },
     RetentionRule {
         table: "pattern_sharing_log",
-        time_column: "shared_at",
+        time_column: "created_at",
         days: 60,
         extra_filter: "",
     },
