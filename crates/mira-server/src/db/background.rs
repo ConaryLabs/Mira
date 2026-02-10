@@ -102,6 +102,22 @@ pub fn mark_health_scanned_sync(conn: &Connection, project_id: i64) -> rusqlite:
     Ok(())
 }
 
+/// Mark an LLM health subtask as completed for a project.
+/// Stores a per-task timestamp so the subtask knows not to re-run until the next
+/// fast scan cycle updates `health_scan_time` to a newer value.
+pub fn mark_llm_health_done_sync(
+    conn: &Connection,
+    project_id: i64,
+    task_key: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO memory_facts (project_id, key, content, fact_type, category, confidence, created_at, updated_at)
+         VALUES (?, ?, 'scanned', 'system', 'health', 1.0, datetime('now'), datetime('now'))",
+        params![project_id, task_key],
+    )?;
+    Ok(())
+}
+
 /// Clear old health issues before refresh
 pub fn clear_old_health_issues_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
     conn.execute(

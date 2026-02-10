@@ -64,7 +64,7 @@ pub use background::{
     is_time_older_than_sync,
     // Diff analysis
     map_files_to_symbols_sync,
-    mark_health_scanned_sync,
+    mark_health_scanned_sync, mark_llm_health_done_sync,
     memory_key_exists_sync,
     store_code_embedding_sync,
 };

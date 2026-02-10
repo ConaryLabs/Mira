@@ -14,7 +14,7 @@ use crate::db::{
     StoreMemoryParams, clear_health_issues_by_categories_sync, clear_old_health_issues_sync,
     get_indexed_project_ids_sync, get_project_paths_by_ids_sync, get_scan_info_sync,
     get_unused_functions_sync, is_time_older_than_sync, mark_health_scanned_sync,
-    memory_key_exists_sync, store_memory_sync,
+    mark_llm_health_done_sync, memory_key_exists_sync, store_memory_sync,
 };
 use crate::llm::LlmClient;
 use crate::utils::ResultExt;
@@ -53,6 +53,60 @@ async fn find_project_for_health_scan(
 
             for (project_id, project_path) in all_projects {
                 if needs_health_scan(conn, project_id) && Path::new(&project_path).exists() {
+                    return Ok::<_, anyhow::Error>(Some((project_id, project_path)));
+                }
+            }
+            Ok(None)
+        })
+        .await
+        .str_err()?;
+
+    Ok(result)
+}
+
+/// Find a project that needs LLM health analysis for the given subtask.
+/// Returns a project where `health_scan_time` is more recent than the subtask's
+/// own timestamp (`task_key`), meaning fast scans have run since this LLM task
+/// last completed. This decouples LLM tasks from the scan-needed flag so they
+/// can run on a slower cadence without being starved by fast scans.
+async fn find_project_for_llm_health(
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    task_key: &str,
+) -> Result<Option<(i64, String)>, String> {
+    let project_ids = code_pool
+        .interact(move |conn| {
+            get_indexed_project_ids_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
+    if project_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let key = task_key.to_string();
+    let ids = project_ids;
+    let result = main_pool
+        .interact(move |conn| {
+            let all_projects =
+                get_project_paths_by_ids_sync(conn, &ids).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            for (project_id, project_path) in all_projects {
+                if !Path::new(&project_path).exists() {
+                    continue;
+                }
+                // Check if fast scans have completed more recently than this LLM task
+                let scan_time = get_scan_info_sync(conn, project_id, "health_scan_time");
+                let llm_time = get_scan_info_sync(conn, project_id, &key);
+
+                let needs_run = match (&scan_time, &llm_time) {
+                    (Some(_), None) => true, // Scanned but LLM task never ran
+                    (Some((_, st)), Some((_, lt))) => st > lt, // Scanned more recently
+                    _ => false, // Never scanned
+                };
+
+                if needs_run {
                     return Ok::<_, anyhow::Error>(Some((project_id, project_path)));
                 }
             }
@@ -184,13 +238,9 @@ pub async fn process_health_fast_scans(
     }
     total += unused;
 
-    // Consume the scan-needed flag
-    main_pool
-        .interact(move |conn| {
-            mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+    // NOTE: Do NOT consume the scan-needed flag here. Module analysis
+    // (the last core health task) will call mark_health_scanned to finalize.
+    // This prevents starvation of subtasks that run later in the same cycle.
 
     tracing::info!(
         "Code health fast scans: found {} issues for project {}",
@@ -203,6 +253,8 @@ pub async fn process_health_fast_scans(
 
 /// LLM-based complexity analysis for large functions.
 /// Clears category: complexity.
+/// Uses its own timestamp tracking (independent of the scan-needed flag)
+/// so it can run on a slower cadence without starving or being starved.
 pub async fn process_health_llm_complexity(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
@@ -213,7 +265,7 @@ pub async fn process_health_llm_complexity(
     };
 
     let Some((project_id, project_path)) =
-        find_project_for_health_scan(main_pool, code_pool).await?
+        find_project_for_llm_health(main_pool, code_pool, "health_llm_complexity_time").await?
     else {
         return Ok(0);
     };
@@ -241,11 +293,22 @@ pub async fn process_health_llm_complexity(
         );
     }
 
+    // Mark this subtask as done so it doesn't re-run until the next scan cycle
+    main_pool
+        .interact(move |conn| {
+            mark_llm_health_done_sync(conn, project_id, "health_llm_complexity_time")
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
     Ok(complexity)
 }
 
 /// LLM-based error handling quality analysis.
 /// Clears category: error_quality.
+/// Uses its own timestamp tracking (independent of the scan-needed flag)
+/// so it can run on a slower cadence without starving or being starved.
 pub async fn process_health_llm_error_quality(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
@@ -256,7 +319,7 @@ pub async fn process_health_llm_error_quality(
     };
 
     let Some((project_id, project_path)) =
-        find_project_for_health_scan(main_pool, code_pool).await?
+        find_project_for_llm_health(main_pool, code_pool, "health_llm_error_quality_time").await?
     else {
         return Ok(0);
     };
@@ -284,6 +347,15 @@ pub async fn process_health_llm_error_quality(
         );
     }
 
+    // Mark this subtask as done so it doesn't re-run until the next scan cycle
+    main_pool
+        .interact(move |conn| {
+            mark_llm_health_done_sync(conn, project_id, "health_llm_error_quality_time")
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
+
     Ok(error_quality)
 }
 
@@ -305,11 +377,15 @@ pub async fn process_health_module_analysis(
         project_path
     );
 
-    // Clear architecture category (for patterns stored in memory_facts)
+    // Clear architecture + circular_dependency categories (for patterns/deps stored in memory_facts)
     main_pool
         .interact(move |conn| {
-            clear_health_issues_by_categories_sync(conn, project_id, &["architecture"])
-                .map_err(|e| anyhow::anyhow!("{}", e))
+            clear_health_issues_by_categories_sync(
+                conn,
+                project_id,
+                &["architecture", "circular_dependency"],
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
         })
         .await
         .str_err()?;
@@ -374,6 +450,16 @@ pub async fn process_health_module_analysis(
             tracing::warn!("Code health: convention extraction failed: {}", e);
         }
     }
+
+    // Module analysis is the last core (non-LLM) health task. Consume the
+    // scan-needed flag so fast scans don't re-run until the next file change.
+    // LLM tasks track their own completion timestamps independently.
+    main_pool
+        .interact(move |conn| {
+            mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .str_err()?;
 
     Ok(total)
 }
@@ -765,5 +851,138 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    // =========================================================================
+    // Orchestration tests — verify subtask scheduling doesn't starve later tasks
+    // =========================================================================
+
+    #[test]
+    fn test_scan_needed_survives_fast_scan_phase() {
+        // After fast scans complete (without calling mark_health_scanned),
+        // needs_health_scan should still return true so module analysis can run.
+        let (conn, pid) = setup_main_db_with_project();
+        mark_health_scan_needed_sync(&conn, pid).unwrap();
+        assert!(needs_health_scan(&conn, pid));
+
+        // Simulate what fast scans do: they do NOT call mark_health_scanned anymore.
+        // The flag should remain set.
+        assert!(
+            needs_health_scan(&conn, pid),
+            "scan-needed flag must survive fast scan phase"
+        );
+    }
+
+    #[test]
+    fn test_module_analysis_consumes_scan_flag() {
+        // Module analysis is the last core task and should consume the flag.
+        let (conn, pid) = setup_main_db_with_project();
+        mark_health_scan_needed_sync(&conn, pid).unwrap();
+        assert!(needs_health_scan(&conn, pid));
+
+        // Simulate module analysis finalizing the scan
+        mark_health_scanned(&conn, pid).unwrap();
+        assert!(
+            !needs_health_scan(&conn, pid),
+            "module analysis should consume the scan-needed flag"
+        );
+    }
+
+    #[test]
+    fn test_llm_task_tracks_own_completion() {
+        // LLM tasks use their own timestamp keys, independent of the scan-needed flag.
+        let (conn, pid) = setup_main_db_with_project();
+
+        // First, mark a scan as done (sets health_scan_time)
+        mark_health_scanned(&conn, pid).unwrap();
+
+        // LLM task has never run — scan_time exists but llm_time doesn't
+        let scan_time = get_scan_info_sync(&conn, pid, "health_scan_time");
+        let llm_time = get_scan_info_sync(&conn, pid, "health_llm_complexity_time");
+        assert!(scan_time.is_some(), "health_scan_time should exist");
+        assert!(llm_time.is_none(), "llm time should not exist yet");
+
+        // Mark LLM task as done
+        mark_llm_health_done_sync(&conn, pid, "health_llm_complexity_time").unwrap();
+        let llm_time = get_scan_info_sync(&conn, pid, "health_llm_complexity_time");
+        assert!(llm_time.is_some(), "llm time should exist after marking done");
+
+        // LLM time should be >= scan time (both set to "now")
+        let (_, st) = scan_time.unwrap();
+        let (_, lt) = llm_time.unwrap();
+        assert!(lt >= st, "llm time should be >= scan time");
+    }
+
+    #[test]
+    fn test_llm_task_reruns_after_new_scan() {
+        // After a new scan cycle, LLM tasks should detect that health_scan_time
+        // is newer than their own timestamp and re-run.
+        let (conn, pid) = setup_main_db_with_project();
+
+        // Cycle 1: LLM task ran — backdate it to simulate a past run
+        conn.execute(
+            "INSERT OR REPLACE INTO memory_facts (project_id, key, content, fact_type, category, confidence, created_at, updated_at)
+             VALUES (?, 'health_llm_complexity_time', 'scanned', 'system', 'health', 1.0, datetime('now', '-1 hour'), datetime('now', '-1 hour'))",
+            [pid],
+        )
+        .unwrap();
+
+        // Cycle 2: new file change triggers a new scan, module analysis finalizes
+        mark_health_scan_needed_sync(&conn, pid).unwrap();
+        mark_health_scanned(&conn, pid).unwrap();
+
+        // Now health_scan_time (just set) is newer than health_llm_complexity_time (1 hour ago)
+        let (_, st) = get_scan_info_sync(&conn, pid, "health_scan_time").unwrap();
+        let (_, lt) = get_scan_info_sync(&conn, pid, "health_llm_complexity_time").unwrap();
+        assert!(
+            st > lt,
+            "scan time ({}) should be newer than llm time ({})",
+            st,
+            lt
+        );
+    }
+
+    #[test]
+    fn test_clear_circular_dependency_category() {
+        // Regression test: process_health_module_analysis must clear "circular_dependency"
+        // in addition to "architecture" so stale findings don't persist.
+        let (conn, pid) = setup_main_db_with_project();
+
+        // Store a circular dependency finding
+        crate::db::test_support::store_memory_helper(
+            &conn,
+            Some(pid),
+            Some("health:circular:mod_a:mod_b"),
+            "[circular-dependency] Circular dependency: mod_a <-> mod_b",
+            "health",
+            Some("circular_dependency"),
+            0.9,
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND category = 'circular_dependency'",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Clear the categories that module analysis clears
+        clear_health_issues_by_categories_sync(&conn, pid, &["architecture", "circular_dependency"])
+            .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND category = 'circular_dependency'",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "circular_dependency findings must be cleared by module analysis"
+        );
     }
 }
