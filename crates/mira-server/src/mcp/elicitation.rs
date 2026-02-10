@@ -228,6 +228,12 @@ pub fn persist_api_key(env_var_name: &str, key: &str) {
                 tracing::warn!("[elicitation] Failed to write key to {:?}: {}", env_path, e);
             } else {
                 tracing::info!("[elicitation] Persisted {} to {:?}", env_var_name, env_path);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ =
+                        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600));
+                }
             }
         }
         Err(e) => {

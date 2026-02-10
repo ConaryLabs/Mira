@@ -6,7 +6,7 @@ This guide details all configuration options for Mira, including environment var
 
 ## 1. Environment Variables
 
-Mira uses environment variables for API keys and configuration. These can be set globally in `~/.mira/.env` or locally in a project's `.env` file.
+Mira uses environment variables for API keys and configuration. These are set in `~/.mira/.env`.
 
 ### Intelligence Features
 
@@ -49,7 +49,6 @@ Project `.env` files are NOT loaded for security reasons (a malicious repo could
 |------|---------|
 | `~/.mira/.env` | Global environment variables |
 | `~/.mira/config.toml` | LLM provider configuration |
-| `.env` | Project-local environment variables |
 | `.mcp.json` | MCP server configuration (project) |
 | `~/.claude/mcp.json` | MCP server configuration (global) |
 | `~/.claude/settings.json` | Claude Code settings including hooks |

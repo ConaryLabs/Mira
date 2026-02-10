@@ -55,15 +55,20 @@ pub fn get_pending_interventions_sync(
     }
 
     // Check cooldown - don't show interventions too frequently
-    let last_intervention: Option<String> = conn
-        .query_row(
-            r#"SELECT created_at FROM proactive_interventions
+    let last_intervention: Option<String> = match conn.query_row(
+        r#"SELECT created_at FROM proactive_interventions
                WHERE project_id = ?
                ORDER BY created_at DESC LIMIT 1"#,
-            params![project_id],
-            |row| row.get(0),
-        )
-        .ok();
+        params![project_id],
+        |row| row.get(0),
+    ) {
+        Ok(v) => Some(v),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            tracing::debug!("Failed to record intervention: {e}");
+            None
+        }
+    };
 
     if let Some(last_time) = last_intervention {
         let too_recent: bool = conn

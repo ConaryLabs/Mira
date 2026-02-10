@@ -463,7 +463,10 @@ pub async fn reply_to_mira<C: ToolContext>(
         Some(tx) => {
             // Send response through the channel
             if tx.send(content.clone()).is_err() {
-                return Err("Response channel was closed".to_string());
+                return Err(
+                    "Agent collaboration timed out - the partner agent may have disconnected."
+                        .to_string(),
+                );
             }
 
             // Broadcast AgentResponse event for frontend

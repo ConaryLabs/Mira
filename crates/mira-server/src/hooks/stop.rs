@@ -109,12 +109,13 @@ pub async fn run() -> Result<()> {
         let session_id = stop_input.session_id.clone();
         let _ = pool_clone
             .interact(move |conn| {
-                crate::db::set_server_state_sync(
+                if let Err(e) = crate::db::set_server_state_sync(
                     conn,
                     "last_stop_time",
                     &chrono::Utc::now().to_rfc3339(),
-                )
-                .ok();
+                ) {
+                    eprintln!("  Warning: failed to save server state: {e}");
+                }
 
                 // Build session summary from stats
                 let summary = if !session_id.is_empty() {
@@ -132,7 +133,11 @@ pub async fn run() -> Result<()> {
 
                 // Close the session with summary
                 if !session_id.is_empty() {
-                    crate::db::close_session_sync(conn, &session_id, summary.as_deref()).ok();
+                    if let Err(e) =
+                        crate::db::close_session_sync(conn, &session_id, summary.as_deref())
+                    {
+                        eprintln!("  Warning: failed to close session: {e}");
+                    }
                     eprintln!(
                         "[mira] Closed session {}",
                         truncate_at_boundary(&session_id, 8)

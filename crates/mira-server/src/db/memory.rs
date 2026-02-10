@@ -166,23 +166,28 @@ pub fn store_memory_sync(
 ) -> rusqlite::Result<i64> {
     // Upsert by key if provided — includes scope principal to prevent cross-scope overwrites
     if let Some(key) = params.key {
-        let existing: Option<(i64, Option<String>)> = conn
-            .query_row(
-                "SELECT id, last_session_id FROM memory_facts
+        let existing: Option<(i64, Option<String>)> = match conn.query_row(
+            "SELECT id, last_session_id FROM memory_facts
                  WHERE key = ?1 AND project_id IS ?2
                    AND COALESCE(scope, 'project') = ?3
                    AND COALESCE(team_id, 0) = COALESCE(?4, 0)
                    AND (?3 != 'personal' OR COALESCE(user_id, '') = COALESCE(?5, ''))",
-                rusqlite::params![
-                    key,
-                    params.project_id,
-                    params.scope,
-                    params.team_id,
-                    params.user_id
-                ],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
+            rusqlite::params![
+                key,
+                params.project_id,
+                params.scope,
+                params.team_id,
+                params.user_id
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ) {
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => {
+                tracing::warn!("Failed to update memory embedding: {e}");
+                None
+            }
+        };
 
         if let Some((id, last_session)) = existing {
             let is_new_session = params

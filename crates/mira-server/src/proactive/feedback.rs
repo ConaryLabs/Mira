@@ -73,13 +73,18 @@ pub fn record_response(
     )?;
 
     // Update the source pattern's confidence if there is one
-    let pattern_id: Option<i64> = conn
-        .query_row(
-            "SELECT trigger_pattern_id FROM proactive_interventions WHERE id = ?",
-            [intervention_id],
-            |row| row.get(0),
-        )
-        .ok();
+    let pattern_id: Option<i64> = match conn.query_row(
+        "SELECT trigger_pattern_id FROM proactive_interventions WHERE id = ?",
+        [intervention_id],
+        |row| row.get(0),
+    ) {
+        Ok(id) => Some(id),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            tracing::debug!("Failed to record feedback: {e}");
+            None
+        }
+    };
 
     if let Some(pattern_id) = pattern_id {
         update_pattern_confidence(conn, pattern_id, effectiveness)?;

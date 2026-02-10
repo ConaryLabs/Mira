@@ -26,6 +26,9 @@ const SUPPORTED_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "g
 /// Debounce duration for rapid file changes
 const DEBOUNCE_MS: u64 = 500;
 
+/// Pending change entry: (change_type, last_attempt, retry_count)
+type PendingChange = (ChangeType, Instant, u32);
+
 /// File watcher manages watching multiple project directories
 pub struct FileWatcher {
     pool: Arc<DatabasePool>,
@@ -33,7 +36,7 @@ pub struct FileWatcher {
     /// Map of project_id -> project_path for active watches
     watched_projects: Arc<RwLock<HashMap<i64, PathBuf>>>,
     /// Pending file changes (debounced)
-    pending_changes: Arc<RwLock<HashMap<PathBuf, (ChangeType, Instant)>>>,
+    pending_changes: Arc<RwLock<HashMap<PathBuf, PendingChange>>>,
     shutdown: watch::Receiver<bool>,
     /// Notify handle to wake fast lane worker after queuing embeddings
     fast_lane_notify: Option<FastLaneNotify>,
@@ -221,8 +224,12 @@ impl FileWatcher {
     async fn queue_change(&self, path: PathBuf, change_type: ChangeType) {
         tracing::info!("Watcher: queuing {:?} for {:?}", change_type, path);
         let mut pending = self.pending_changes.write().await;
-        pending.insert(path, (change_type, Instant::now()));
+        // New change event resets the retry counter
+        pending.insert(path, (change_type, Instant::now(), 0));
     }
+
+    /// Maximum retry attempts before giving up on a file
+    const MAX_RETRIES: u32 = 3;
 
     /// Process pending changes after debounce period
     async fn process_pending_changes(&self) {
@@ -230,12 +237,12 @@ impl FileWatcher {
         let debounce = Duration::from_millis(DEBOUNCE_MS);
 
         // Collect changes that have passed debounce period
-        let ready: Vec<(PathBuf, ChangeType)> = {
+        let ready: Vec<(PathBuf, ChangeType, u32)> = {
             let pending = self.pending_changes.read().await;
             pending
                 .iter()
-                .filter(|(_, (_, timestamp))| now.duration_since(*timestamp) >= debounce)
-                .map(|(path, (ct, _))| (path.clone(), *ct))
+                .filter(|(_, (_, timestamp, _))| now.duration_since(*timestamp) >= debounce)
+                .map(|(path, (ct, _, retries))| (path.clone(), *ct, *retries))
                 .collect()
         };
 
@@ -246,23 +253,44 @@ impl FileWatcher {
         // Process each change, only removing from pending on success.
         // Failed changes stay in the map and will be retried next cycle.
         let mut succeeded = Vec::new();
-        for (path, change_type) in ready {
+        let mut give_up = Vec::new();
+        for (path, change_type, retries) in ready {
             match self.process_file_change(&path, change_type).await {
                 Ok(()) => succeeded.push(path),
                 Err(e) => {
-                    tracing::warn!("Error processing file change {:?}: {}", path, e);
-                    // Re-stamp so it gets retried after another debounce window
-                    let mut pending = self.pending_changes.write().await;
-                    pending
-                        .entry(path)
-                        .and_modify(|(_, ts)| *ts = Instant::now());
+                    let new_retries = retries + 1;
+                    if new_retries >= Self::MAX_RETRIES {
+                        tracing::warn!(
+                            "Giving up on file after {} failed attempts: {}",
+                            Self::MAX_RETRIES,
+                            path.display()
+                        );
+                        give_up.push(path);
+                    } else {
+                        tracing::warn!(
+                            "Error processing file change {:?} (attempt {}/{}): {}",
+                            path,
+                            new_retries,
+                            Self::MAX_RETRIES,
+                            e
+                        );
+                        // Re-stamp and increment retry counter
+                        let mut pending = self.pending_changes.write().await;
+                        pending.entry(path).and_modify(|(_, ts, r)| {
+                            *ts = Instant::now();
+                            *r = new_retries;
+                        });
+                    }
                 }
             }
         }
 
-        if !succeeded.is_empty() {
+        if !succeeded.is_empty() || !give_up.is_empty() {
             let mut pending = self.pending_changes.write().await;
             for path in &succeeded {
+                pending.remove(path);
+            }
+            for path in &give_up {
                 pending.remove(path);
             }
         }

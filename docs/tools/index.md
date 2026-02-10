@@ -86,5 +86,5 @@ Indexing creates an FTS5 full-text search index (`code_fts`) with a code-aware t
 ## See Also
 
 - [**code**](./code.md): Search, symbols, call graph (uses the index)
-- [**tasks**](./tasks.md): Check status of background index operations
+- [**session**](./session.md): Check status of background index operations via `session(action="tasks_list")`
 - [**project**](./project.md): Initialize project context (uses module summaries)

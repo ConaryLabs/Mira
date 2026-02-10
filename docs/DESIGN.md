@@ -20,7 +20,7 @@ Mira, extend it, or embed it into their own workflows.
 - [High-Level Architecture](#high-level-architecture)
 - [Decision 1: MCP over HTTP API](#decision-1-mcp-over-http-api)
 - [Decision 2: SQLite + sqlite-vec](#decision-2-sqlite--sqlite-vec)
-- [Decision 3: DeepSeek Reasoner for Intelligence](#decision-3-deepseek-reasoner-for-intelligence)
+- [Decision 3: Multi-Provider Intelligence](#decision-3-multi-provider-intelligence)
 - [Decision 4: Evidence-Based Memory](#decision-4-evidence-based-memory)
 - [Decision 5: Background Processing](#decision-5-background-processing)
 - [Decision 6: Local-First by Default](#decision-6-local-first-by-default)
@@ -406,7 +406,8 @@ Mira integrates with Claude Code via hooks that trigger at key moments:
 | `SessionEnd` | Snapshots tasks on user interrupt |
 | `SubagentStart` | Injects context when subagents spawn |
 | `SubagentStop` | Captures discoveries from subagent work |
-| `PermissionRequest` | Handles permission-related flows |
+| `PreToolUse` | Injects context before tool execution (suggests semantic alternatives) |
+| `PermissionRequest` | Auto-approves tools based on stored permission rules |
 
 Hooks are auto-configured by the installer.
 
@@ -425,17 +426,6 @@ A two-tier system that predicts and surfaces relevant context:
 
 The `UserPromptSubmit` hook injects relevant suggestions automatically.
 
-### Cross-Project Intelligence
-
-Privacy-preserving pattern sharing across projects:
-
-- **K-Anonymity**: Patterns only shared when observed in 3+ projects
-- **Differential Privacy**: Noise added to protect individual projects
-- **Opt-In**: Disabled by default, per-project preferences
-- **Anonymous Provenance**: Contribution tracking without project identification
-
-Managed via the cross-project module in `crates/mira-server/src/cross_project/`.
-
 ---
 
 ## Security, Privacy, and Safety
@@ -449,7 +439,7 @@ Managed via the cross-project module in `crates/mira-server/src/cross_project/`.
 ### API Keys
 
 Keys read from environment variables (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, etc.)
-and `.env` files (global `~/.mira/.env` and project-local).
+and `.env` files (global `~/.mira/.env`).
 
 ### Attack Surface
 

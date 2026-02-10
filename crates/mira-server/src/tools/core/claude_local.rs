@@ -434,7 +434,7 @@ fn fetch_auto_memory_candidates_sync(
 
     let mut stmt = conn
         .prepare(sql)
-        .map_err(|e| format!("Failed to prepare auto memory query: {}", e))?;
+        .map_err(|e| format!("Failed to load memories for export: {}", e))?;
 
     let rows = stmt
         .query_map(rusqlite::params![project_id, limit as i64], |row| {
@@ -444,7 +444,7 @@ fn fetch_auto_memory_candidates_sync(
                 category: row.get(2)?,
             })
         })
-        .map_err(|e| format!("Failed to execute auto memory query: {}", e))?;
+        .map_err(|e| format!("Failed to load memories for export: {}", e))?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("Failed to collect auto memory results: {}", e))

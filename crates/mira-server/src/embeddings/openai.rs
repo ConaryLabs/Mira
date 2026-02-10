@@ -241,16 +241,18 @@ impl OpenAiEmbeddings {
             num_batches
         );
 
-        let futures: Vec<_> = chunks
-            .into_iter()
-            .map(|chunk| self.embed_texts(chunk))
-            .collect();
-
-        let results = futures::future::join_all(futures).await;
-
+        // Process in groups of 4 to limit concurrent HTTP requests
+        const MAX_CONCURRENT: usize = 4;
         let mut all_results = Vec::with_capacity(texts.len());
-        for result in results {
-            all_results.extend(result?);
+        for batch_group in chunks.chunks(MAX_CONCURRENT) {
+            let tasks: Vec<_> = batch_group
+                .iter()
+                .map(|chunk| self.embed_texts(chunk))
+                .collect();
+            let results = futures::future::join_all(tasks).await;
+            for result in results {
+                all_results.extend(result?);
+            }
         }
 
         Ok(all_results)

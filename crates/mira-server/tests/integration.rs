@@ -411,9 +411,8 @@ async fn test_get_symbols() {
     use std::fs;
 
     // Create a temporary Rust file
-    let temp_dir = "/tmp/mira_test";
-    fs::create_dir_all(temp_dir).expect("Failed to create temp dir");
-    let file_path = format!("{}/test.rs", temp_dir);
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+    let file_path = format!("{}/test.rs", temp_dir.path().display());
     let content = r#"
 // A simple Rust module
 fn hello_world() {
@@ -445,8 +444,7 @@ impl Point {
         msg!(output)
     );
 
-    // Clean up (optional)
-    let _ = fs::remove_file(file_path);
+    // temp_dir is cleaned up automatically when dropped
 }
 
 #[tokio::test]
@@ -2954,11 +2952,15 @@ async fn test_recipe_list() {
 
     match output.0.data {
         Some(RecipeData::List(data)) => {
-            assert_eq!(data.recipes.len(), 2);
+            assert_eq!(data.recipes.len(), 4);
             assert_eq!(data.recipes[0].name, "expert-review");
             assert_eq!(data.recipes[0].member_count, 6);
             assert_eq!(data.recipes[1].name, "full-cycle");
             assert_eq!(data.recipes[1].member_count, 8);
+            assert_eq!(data.recipes[2].name, "qa-hardening");
+            assert_eq!(data.recipes[2].member_count, 5);
+            assert_eq!(data.recipes[3].name, "refactor");
+            assert_eq!(data.recipes[3].member_count, 3);
         }
         _ => panic!("Expected RecipeData::List"),
     }

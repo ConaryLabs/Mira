@@ -28,4 +28,3 @@ The MCP layer calls into these functions after deserializing request parameters.
 | `usage.rs` | — | LLM usage tracking helpers |
 | `session_notes.rs` | — | Session notes helpers |
 | `recipe.rs` | `recipe` | `list`, `get` (reusable team workflow recipes) |
-| `cross_project.rs` | — | Cross-project patterns (CLI-only, not an MCP tool) |

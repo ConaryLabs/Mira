@@ -150,7 +150,7 @@ async fn team_review<C: ToolContext + ?Sized>(
             Ok::<_, anyhow::Error>((member.member_name.clone(), files))
         })
         .await
-        .map_err(|e| format!("{}", e))?;
+        .map_err(|e| format!("Failed to review team work: {}", e))?;
 
     let file_count = files.len();
     let message = format!("{} has modified {} file(s).", member_name, file_count);

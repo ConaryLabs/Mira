@@ -26,7 +26,7 @@ Mira is a Rust MCP server that gives Claude Code long-term memory and deep code 
 
 **Tracks goals across sessions.** Weighted milestones that persist across conversations, so multi-session work doesn't lose its thread. Goals have priorities, statuses, and progress that auto-updates as milestones complete.
 
-**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. Expert consultation works via MCP Sampling through your host LLM — no separate key needed. Add an OpenAI key for semantic search, or DeepSeek/Zhipu/Ollama for background intelligence tasks.
+**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. Expert consultation works via MCP Sampling through your host LLM — no separate key needed. Add an OpenAI key for semantic search (recommended), or DeepSeek/Zhipu/Ollama for background intelligence tasks.
 
 **Detects documentation gaps.** Finds undocumented APIs and modules, flags stale docs when source changes, classifies impact as significant or minor, and provides writing guidelines so Claude can fill the gaps directly.
 
@@ -133,16 +133,16 @@ The plugin install auto-configures hooks. For MCP-only installs, add to `~/.clau
 ```json
 {
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5}]}],
-    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3}]}],
-    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2}]}],
-    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5, "async": true}]}],
-    "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30, "async": true}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5}]}],
-    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5}]}],
-    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3, "async": true}]}]
+    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3000}]}],
+    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2000}]}],
+    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000, "async": true}]}],
+    "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000, "async": true}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5000}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}]
   }
 }
 ```

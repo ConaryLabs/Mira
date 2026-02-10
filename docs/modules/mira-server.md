@@ -17,7 +17,6 @@ The crate follows a modular design with clear separation between protocol handli
 | `cli` | CLI subcommands (binary entrypoint) |
 | `config` | Configuration management |
 | `context` | Session context and state |
-| `cross_project` | Cross-project pattern sharing |
 | `db` | Database layer with SQLite + sqlite-vec |
 | `embeddings` | OpenAI embedding client (`EmbeddingClient`) |
 | `entities` | Entity extraction and linking |
