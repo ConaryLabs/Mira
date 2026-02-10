@@ -716,9 +716,10 @@ mod tests {
             "Cargo.toml",
             "[workspace]\nmembers = [\"crates/*\"]\n",
         );
-        // Workspace falls back to directory name
+        // Workspace has no package name, falls back to directory name
         let result = detect_project_name(dir.path().to_str().unwrap());
-        assert!(result.is_some());
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        assert_eq!(result.unwrap(), dir_name);
     }
 
     #[test]
@@ -743,8 +744,8 @@ mod tests {
         );
         // Empty name should fall through to directory name
         let result = detect_project_name(dir.path().to_str().unwrap());
-        assert!(result.is_some());
-        assert_ne!(result.unwrap(), "");
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        assert_eq!(result.unwrap(), dir_name);
     }
 
     #[test]
@@ -752,7 +753,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Falls back to directory name
         let result = detect_project_name(dir.path().to_str().unwrap());
-        assert!(result.is_some());
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        assert_eq!(result.unwrap(), dir_name);
     }
 
     #[test]

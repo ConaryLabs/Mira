@@ -75,7 +75,8 @@ impl DetectionResults {
     }
 }
 
-/// Check if a line contains a #[cfg(...)] attribute that includes `test`
+/// Check if a line contains a #[cfg(...)] attribute that gates test-only code.
+/// Returns false for `#[cfg(not(test))]` since that marks production-only code.
 fn is_cfg_test(line: &str) -> bool {
     let line = line.trim();
     let mut search_start = 0;
@@ -93,6 +94,14 @@ fn is_cfg_test(line: &str) -> bool {
                     if paren_count == 0 {
                         if line[pos + 1..].starts_with(']') {
                             let content = &line[cfg_start + "#[cfg(".len()..pos];
+                            // Reject not(test) — that's production-only code
+                            let stripped = content
+                                .chars()
+                                .filter(|c| !c.is_whitespace())
+                                .collect::<String>();
+                            if stripped == "not(test)" {
+                                break;
+                            }
                             if content
                                 .split(|c: char| !c.is_alphanumeric() && c != '_')
                                 .any(|part| part == "test")
@@ -464,8 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cfg_test_nested_not() {
-        assert!(is_cfg_test("#[cfg(not(test))]"));
+    fn test_cfg_not_test_is_production() {
+        // not(test) means production-only code, should NOT be treated as test
+        assert!(!is_cfg_test("#[cfg(not(test))]"));
     }
 
     #[test]

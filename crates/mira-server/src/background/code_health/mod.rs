@@ -1005,9 +1005,11 @@ mod tests {
 
         let result = collect_dependency_data(&conn, 1).unwrap();
         // Should have mod_child -> mod_other, not mod_parent -> mod_other
-        if let Some(edge) = result.iter().find(|e| e.target == "mod_other") {
-            assert_eq!(edge.source, "mod_child", "Should match longest path prefix");
-        }
+        let edge = result
+            .iter()
+            .find(|e| e.target == "mod_other")
+            .expect("Expected edge targeting mod_other");
+        assert_eq!(edge.source, "mod_child", "Should match longest path prefix");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

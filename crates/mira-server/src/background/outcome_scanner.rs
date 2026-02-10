@@ -149,7 +149,7 @@ async fn scan_project(
         if let Some((evidence_commit, evidence_msg, time_delta)) = reverts.get(to_commit.as_str()) {
             outcomes.push(Outcome {
                 diff_analysis_id: *diff_id,
-                outcome_type: "reverted",
+                outcome_type: "revert",
                 evidence_commit: evidence_commit.clone(),
                 evidence_message: evidence_msg.clone(),
                 time_to_outcome_seconds: *time_delta,

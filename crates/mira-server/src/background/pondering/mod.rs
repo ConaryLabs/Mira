@@ -88,20 +88,30 @@ pub async fn process_pondering(
             None => heuristic::generate_insights_heuristic(&data),
         };
 
-        // Always advance the timestamp after attempting pondering, even if no
-        // insights were produced. Otherwise empty/failed LLM responses cause
-        // expensive reprocessing every cycle.
-        update_last_pondering(pool, project_id).await?;
-
-        // Store insights as behavior patterns
-        let stored = storage::store_insights(pool, project_id, &insights).await?;
-        if stored > 0 {
-            tracing::info!(
-                "Pondering: generated {} insights for project {}",
-                stored,
-                name
-            );
-            processed += stored;
+        // Store insights as behavior patterns, then advance cooldown.
+        // Cooldown must come AFTER persistence so transient DB failures
+        // don't suppress reprocessing for the full cooldown window.
+        match storage::store_insights(pool, project_id, &insights).await {
+            Ok(stored) => {
+                if stored > 0 {
+                    tracing::info!(
+                        "Pondering: generated {} insights for project {}",
+                        stored,
+                        name
+                    );
+                    processed += stored;
+                }
+                // Advance cooldown only after successful storage
+                update_last_pondering(pool, project_id).await?;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Pondering: failed to store insights for project {}: {}",
+                    name,
+                    e
+                );
+                // Don't advance cooldown — retry next cycle
+            }
         }
     }
 

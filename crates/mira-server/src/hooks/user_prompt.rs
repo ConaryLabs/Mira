@@ -95,11 +95,17 @@ async fn get_proactive_context(
         if let Some(ref base) = project_path_owned {
             predictions.retain(|p| match p.prediction_type {
                 predictor::PredictionType::NextFile | predictor::PredictionType::RelatedFiles => {
-                    let exists = Path::new(base).join(&p.content).exists();
-                    if !exists {
-                        tracing::debug!("Dropping stale file prediction: {}", p.content);
+                    let base_path = Path::new(base);
+                    let joined = base_path.join(&p.content);
+                    // Canonicalize to resolve .. segments; reject paths escaping project root
+                    let ok = joined
+                        .canonicalize()
+                        .map(|canon| canon.starts_with(base_path.canonicalize().unwrap_or_else(|_| base_path.to_path_buf())))
+                        .unwrap_or(false);
+                    if !ok {
+                        tracing::debug!("Dropping invalid/stale file prediction: {}", p.content);
                     }
-                    exists
+                    ok
                 }
                 _ => true,
             });
