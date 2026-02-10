@@ -238,9 +238,31 @@ pub async fn process_health_fast_scans(
     }
     total += unused;
 
-    // NOTE: Do NOT consume the scan-needed flag here. Module analysis
-    // (the last core health task) will call mark_health_scanned to finalize.
-    // This prevents starvation of subtasks that run later in the same cycle.
+    // Signal that fast scans completed successfully. Module analysis checks
+    // this before clearing the scan-needed flag, so a failed fast-scan run
+    // won't be suppressed by a subsequent successful module-analysis pass.
+    let mp = main_pool.clone();
+    mp.interact(move |conn| {
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id: Some(project_id),
+                key: Some("health_fast_scan_done"),
+                content: "done",
+                fact_type: "system",
+                category: Some("health"),
+                confidence: 1.0,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))
+    })
+    .await
+    .str_err()?;
 
     tracing::info!(
         "Code health fast scans: found {} issues for project {}",
@@ -451,15 +473,31 @@ pub async fn process_health_module_analysis(
         }
     }
 
-    // Module analysis is the last core (non-LLM) health task. Consume the
-    // scan-needed flag so fast scans don't re-run until the next file change.
-    // LLM tasks track their own completion timestamps independently.
-    main_pool
+    // Module analysis is the last core (non-LLM) health task. Only consume
+    // the scan-needed flag if fast scans also completed successfully (signalled
+    // by the health_fast_scan_done marker). Without this guard, a failed fast-
+    // scan run would be silently suppressed by a successful module-analysis
+    // finalization clearing the flag.
+    let fast_scan_done = main_pool
         .interact(move |conn| {
-            mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
+            Ok::<bool, anyhow::Error>(memory_key_exists_sync(conn, project_id, "health_fast_scan_done"))
         })
         .await
         .str_err()?;
+
+    if fast_scan_done {
+        main_pool
+            .interact(move |conn| {
+                mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .str_err()?;
+    } else {
+        tracing::info!(
+            "Code health: skipping flag consumption — fast scans did not complete for project {}",
+            project_id
+        );
+    }
 
     Ok(total)
 }
@@ -865,8 +903,25 @@ mod tests {
         mark_health_scan_needed_sync(&conn, pid).unwrap();
         assert!(needs_health_scan(&conn, pid));
 
-        // Simulate what fast scans do: they do NOT call mark_health_scanned anymore.
-        // The flag should remain set.
+        // Simulate what fast scans do: they set a done marker but do NOT
+        // call mark_health_scanned. The scan-needed flag should remain set.
+        store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("health_fast_scan_done"),
+                content: "done",
+                fact_type: "system",
+                category: Some("health"),
+                confidence: 1.0,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .unwrap();
         assert!(
             needs_health_scan(&conn, pid),
             "scan-needed flag must survive fast scan phase"
@@ -875,16 +930,64 @@ mod tests {
 
     #[test]
     fn test_module_analysis_consumes_scan_flag() {
-        // Module analysis is the last core task and should consume the flag.
+        // Module analysis is the last core task and should consume the flag
+        // when fast scans have signalled completion.
         let (conn, pid) = setup_main_db_with_project();
         mark_health_scan_needed_sync(&conn, pid).unwrap();
         assert!(needs_health_scan(&conn, pid));
 
-        // Simulate module analysis finalizing the scan
+        // Fast scans signal completion
+        store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("health_fast_scan_done"),
+                content: "done",
+                fact_type: "system",
+                category: Some("health"),
+                confidence: 1.0,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .unwrap();
+
+        // Module analysis finalizes
         mark_health_scanned(&conn, pid).unwrap();
         assert!(
             !needs_health_scan(&conn, pid),
             "module analysis should consume the scan-needed flag"
+        );
+        // Fast scan done marker should also be cleared
+        assert!(
+            !memory_key_exists_sync(&conn, pid, "health_fast_scan_done"),
+            "fast scan done marker should be cleared"
+        );
+    }
+
+    #[test]
+    fn test_failed_fast_scan_prevents_flag_consumption() {
+        // When fast scans fail (no health_fast_scan_done marker), module
+        // analysis must NOT clear the scan-needed flag. This ensures a
+        // retry on the next cycle.
+        let (conn, pid) = setup_main_db_with_project();
+        mark_health_scan_needed_sync(&conn, pid).unwrap();
+        assert!(needs_health_scan(&conn, pid));
+
+        // Fast scans failed — no health_fast_scan_done marker set.
+        // Module analysis checks for the marker and skips finalization.
+        assert!(
+            !memory_key_exists_sync(&conn, pid, "health_fast_scan_done"),
+            "fast scan done marker should not exist after failure"
+        );
+
+        // The scan-needed flag must survive for retry.
+        assert!(
+            needs_health_scan(&conn, pid),
+            "scan-needed flag must survive when fast scans failed"
         );
     }
 

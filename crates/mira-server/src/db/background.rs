@@ -86,11 +86,17 @@ pub fn insert_system_marker_sync(
 // Health scanner
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Mark project as health-scanned and clear the "needs scan" flag
+/// Mark project as health-scanned and clear the "needs scan" flag.
+/// Also clears the fast-scan-done marker set by `process_health_fast_scans`.
 pub fn mark_health_scanned_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
     // Clear the "needs scan" flag
     conn.execute(
         "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_scan_needed'",
+        [project_id],
+    )?;
+    // Clear the fast-scan-done marker
+    conn.execute(
+        "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_fast_scan_done'",
         [project_id],
     )?;
     // Update last scan time
