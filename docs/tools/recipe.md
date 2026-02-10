@@ -37,11 +37,12 @@ Returns all built-in recipes with name, description, and member count.
 ```json
 {
   "action": "list",
-  "message": "2 recipe(s) available.",
+  "message": "3 recipe(s) available.",
   "data": {
     "recipes": [
       { "name": "expert-review", "description": "Multi-expert code review...", "member_count": 6 },
-      { "name": "full-cycle", "description": "End-to-end review and implementation...", "member_count": 8 }
+      { "name": "full-cycle", "description": "End-to-end review and implementation...", "member_count": 8 },
+      { "name": "qa-hardening", "description": "Production readiness review...", "member_count": 5 }
     ]
   }
 }
@@ -76,6 +77,12 @@ End-to-end review, implementation, and QA cycle with 8 members across 4 phases:
 2. **Synthesis + Implementation** — Team lead synthesizes findings, spawns implementation agents
 3. **QA** — test-runner and ux-reviewer verify changes
 4. **Finalize** — Final build verification and cleanup
+
+### `qa-hardening`
+
+Production readiness review with 5 read-only agents: test-runner, error-auditor, security, edge-case-hunter, and ux-reviewer. All agents run in parallel and report findings. The team lead synthesizes results into a prioritized hardening backlog (critical/high/medium/low).
+
+Use this when code is functionally complete but needs hardening before release. Unlike `full-cycle`, this recipe has no implementation phase — it produces a backlog for the user to act on.
 
 ## Errors
 
