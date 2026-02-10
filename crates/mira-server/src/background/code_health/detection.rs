@@ -75,8 +75,56 @@ impl DetectionResults {
     }
 }
 
+/// Check if `test` appears in a cfg expression in a positive position
+/// (not negated by `not(...)`). For example:
+/// - `"test"` -> true
+/// - `"not(test)"` -> false
+/// - `"all(unix, not(test))"` -> false
+/// - `"any(test, feature = \"foo\")"` -> true
+/// - `"all(test, target_os = \"linux\")"` -> true
+fn has_positive_test(expr: &str) -> bool {
+    // Strip not(...) blocks from the expression, then check if "test" remains
+    let stripped = strip_not_blocks(expr);
+    stripped
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|part| part == "test")
+}
+
+/// Remove all `not(...)` sub-expressions from a cfg expression string.
+fn strip_not_blocks(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    let mut buf = String::new();
+
+    while let Some(c) = chars.next() {
+        buf.push(c);
+        if buf.ends_with("not(") {
+            // Found a not( — skip everything until the matching close paren
+            buf.truncate(buf.len() - 4);
+            result.push_str(&buf);
+            buf.clear();
+            let mut depth = 1;
+            for inner in chars.by_ref() {
+                match inner {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    result.push_str(&buf);
+    result
+}
+
 /// Check if a line contains a #[cfg(...)] attribute that gates test-only code.
-/// Returns false for `#[cfg(not(test))]` since that marks production-only code.
+/// Returns false when `test` only appears inside `not(...)`, since that marks
+/// production-only code (e.g. `#[cfg(not(test))]`, `#[cfg(all(unix, not(test)))]`).
 fn is_cfg_test(line: &str) -> bool {
     let line = line.trim();
     let mut search_start = 0;
@@ -94,18 +142,7 @@ fn is_cfg_test(line: &str) -> bool {
                     if paren_count == 0 {
                         if line[pos + 1..].starts_with(']') {
                             let content = &line[cfg_start + "#[cfg(".len()..pos];
-                            // Reject not(test) — that's production-only code
-                            let stripped = content
-                                .chars()
-                                .filter(|c| !c.is_whitespace())
-                                .collect::<String>();
-                            if stripped == "not(test)" {
-                                break;
-                            }
-                            if content
-                                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                                .any(|part| part == "test")
-                            {
+                            if has_positive_test(content) {
                                 return true;
                             }
                         }
@@ -507,6 +544,19 @@ mod tests {
     fn test_cfg_test_partial_word() {
         // "testing" contains "test" but is a different word
         assert!(!is_cfg_test("#[cfg(feature = \"testing\")]"));
+    }
+
+    #[test]
+    fn test_cfg_composite_not_test() {
+        // test only appears under not() — this is production-only code
+        assert!(!is_cfg_test("#[cfg(all(unix, not(test)))]"));
+        assert!(!is_cfg_test("#[cfg(any(target_os = \"linux\", not(test)))]"));
+    }
+
+    #[test]
+    fn test_cfg_composite_positive_and_negated_test() {
+        // test appears both positively and negated — still test-gated
+        assert!(is_cfg_test("#[cfg(any(test, not(test)))]"));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

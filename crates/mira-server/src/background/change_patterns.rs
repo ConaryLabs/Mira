@@ -83,7 +83,7 @@ fn mine_module_hotspots(conn: &Connection, project_id: i64) -> Result<usize> {
                 dm.module,
                 COUNT(DISTINCT dm.diff_id) as total_diffs,
                 COUNT(DISTINCT CASE WHEN do2.outcome_type = 'clean' THEN dm.diff_id END) as clean,
-                COUNT(DISTINCT CASE WHEN do2.outcome_type = 'reverted' THEN dm.diff_id END) as reverted,
+                COUNT(DISTINCT CASE WHEN do2.outcome_type = 'revert' THEN dm.diff_id END) as reverted,
                 COUNT(DISTINCT CASE WHEN do2.outcome_type = 'follow_up_fix' THEN dm.diff_id END) as fixed,
                 GROUP_CONCAT(DISTINCT dm.to_commit) as sample_commits
             FROM diff_modules dm
@@ -233,7 +233,7 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
             SELECT
                 COUNT(DISTINCT dwo.diff_id) as total,
                 COUNT(DISTINCT CASE WHEN do2.outcome_type = 'clean' THEN dwo.diff_id END) as clean,
-                COUNT(DISTINCT CASE WHEN do2.outcome_type = 'reverted' THEN dwo.diff_id END) as reverted,
+                COUNT(DISTINCT CASE WHEN do2.outcome_type = 'revert' THEN dwo.diff_id END) as reverted,
                 COUNT(DISTINCT CASE WHEN do2.outcome_type = 'follow_up_fix' THEN dwo.diff_id END) as fixed
             FROM diff_without_file dwo
             JOIN diff_outcomes do2 ON do2.diff_analysis_id = dwo.diff_id
@@ -375,7 +375,7 @@ fn mine_size_risk(conn: &Connection, project_id: i64) -> Result<usize> {
                 sd.size_bucket,
                 COUNT(DISTINCT sd.diff_id) as total,
                 COUNT(DISTINCT CASE WHEN do2.outcome_type = 'clean' THEN sd.diff_id END) as clean,
-                COUNT(DISTINCT CASE WHEN do2.outcome_type = 'reverted' THEN sd.diff_id END) as reverted,
+                COUNT(DISTINCT CASE WHEN do2.outcome_type = 'revert' THEN sd.diff_id END) as reverted,
                 COUNT(DISTINCT CASE WHEN do2.outcome_type = 'follow_up_fix' THEN sd.diff_id END) as fixed,
                 GROUP_CONCAT(DISTINCT sd.to_commit) as sample_commits
             FROM sized_diffs sd
