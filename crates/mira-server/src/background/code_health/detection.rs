@@ -96,7 +96,7 @@ fn strip_not_blocks(s: &str) -> String {
         // Look for "not" followed by optional whitespace then "("
         if i + 3 <= bytes.len() && &bytes[i..i + 3] == b"not" {
             let mut j = i + 3;
-            while j < bytes.len() && bytes[j] == b' ' {
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
                 j += 1;
             }
             if j < bytes.len() && bytes[j] == b'(' {
@@ -576,9 +576,11 @@ mod tests {
 
     #[test]
     fn test_cfg_not_with_whitespace() {
-        // not (test) with space is valid Rust — still production-only
+        // not<whitespace>(test) is valid Rust — still production-only
         assert!(!is_cfg_test("#[cfg(not (test))]"));
         assert!(!is_cfg_test("#[cfg(all(unix, not (test)))]"));
+        assert!(!is_cfg_test("#[cfg(not\t(test))]"));
+        assert!(!is_cfg_test("#[cfg(not\n(test))]"));
     }
 
     #[test]
