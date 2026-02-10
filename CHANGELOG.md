@@ -80,6 +80,25 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-02-09
+
+### Changed
+- **Flat session API** -- Replaced nested `session(action="history", history_action="get_history")` with flat `session(action="get_history")`. SessionAction enum now has 11 flat variants: `current_session`, `list_sessions`, `get_history`, `recap`, `usage_summary`, `usage_stats`, `usage_list`, `insights`, `tasks_list`, `tasks_get`, `tasks_cancel`. Deleted `SessionHistoryAction`, `UsageAction`, `TasksAction` enums and `TasksRequest` struct.
+- **Optional tree-sitter and rayon** -- Tree-sitter dependencies now behind `parsers` feature, rayon behind `parallel` feature (both default on). Enables minimal builds with `--no-default-features`.
+
+### Added
+- **Data retention / GC** -- New `db/retention.rs` with periodic cleanup for 12 unbounded tables across 3 tiers (30/60/90 days). Runs as a low-priority background task every ~10 minutes. Preserves active sessions, memory_facts, behavior_patterns, goals, and code index tables.
+- **152 new tests** -- 93 tests for background/code_health modules, 59 tests for tools/core/ modules.
+
+### Removed
+- **Cross-project module** -- Deleted orphaned `cross_project/` directory (1,090 lines) and `CrossProjectAction`/`CrossProjectRequest` types. DB schema preserved for potential future use.
+- **scraper dependency** -- Removed unused `scraper` crate from Cargo.toml.
+
+### Fixed
+- **Retention timestamp columns** -- `diff_outcomes` and `pattern_sharing_log` retention rules used nonexistent `observed_at`/`shared_at` columns; corrected to `created_at`.
+- **cfg parser edge cases** -- Handle tabs/newlines between `not` and `(` in cfg attribute parser, plus whitespace in `not()` and quoted strings.
+- **PreToolUse hook performance** -- Added cooldown and dedup to reduce context bloat from repeated hook invocations.
+
 ## [0.6.5] - 2026-02-08
 
 ### Fixed
