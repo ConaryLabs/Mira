@@ -511,7 +511,7 @@ fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<Go
 ///
 /// Captures tool usage counts, top tools, and modified files as JSON
 /// in the session_snapshots table.
-fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Result<()> {
+pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Result<()> {
     // Get tool count and top tools
     let (tool_count, top_tools) =
         crate::db::get_session_stats_sync(conn, session_id).unwrap_or((0, Vec::new()));

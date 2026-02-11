@@ -269,7 +269,116 @@ async fn test_session_snapshot_roundtrip() {
 }
 
 // =============================================================================
-// Test 8: Project isolation - sessions scoped to their project
+// Test 8: save_session_snapshot roundtrip
+// =============================================================================
+
+#[tokio::test]
+async fn test_save_session_snapshot_roundtrip() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+
+    db(&pool, move |conn| {
+        seed_session(conn, "sess-snap-rt", project_id, "active");
+        // Seed some tool history so snapshot has data
+        seed_tool_history(
+            conn,
+            "sess-snap-rt",
+            "Edit",
+            r#"{"file_path":"/src/handler.rs"}"#,
+            "ok",
+        );
+        seed_tool_history(
+            conn,
+            "sess-snap-rt",
+            "Read",
+            r#"{"file_path":"/src/lib.rs"}"#,
+            "contents",
+        );
+        seed_tool_history(
+            conn,
+            "sess-snap-rt",
+            "Write",
+            r#"{"file_path":"/src/new.rs"}"#,
+            "ok",
+        );
+        Ok(())
+    })
+    .await;
+
+    // Call save_session_snapshot
+    db(&pool, |conn| {
+        super::stop::save_session_snapshot(conn, "sess-snap-rt").map_err(Into::into)
+    })
+    .await;
+
+    // Retrieve snapshot and verify structure
+    let snapshot_str = db(&pool, |conn| {
+        Ok::<_, anyhow::Error>(super::session::get_session_snapshot_sync(
+            conn,
+            "sess-snap-rt",
+        ))
+    })
+    .await;
+
+    assert!(snapshot_str.is_some(), "snapshot should have been saved");
+    let snap: serde_json::Value = serde_json::from_str(&snapshot_str.unwrap()).unwrap();
+
+    // Verify expected fields
+    assert!(snap.get("tool_count").is_some());
+    assert!(snap.get("top_tools").is_some());
+    assert!(snap.get("files_modified").is_some());
+
+    let tool_count = snap["tool_count"].as_i64().unwrap();
+    assert_eq!(tool_count, 3);
+
+    let files = snap["files_modified"].as_array().unwrap();
+    // Only Write/Edit files should be in files_modified, not Read
+    let file_strs: Vec<&str> = files.iter().filter_map(|v| v.as_str()).collect();
+    assert!(file_strs.contains(&"/src/handler.rs"));
+    assert!(file_strs.contains(&"/src/new.rs"));
+    assert!(
+        !file_strs.contains(&"/src/lib.rs"),
+        "Read files should not be in files_modified"
+    );
+}
+
+// =============================================================================
+// Test 9: save_session_snapshot with no tools skips saving
+// =============================================================================
+
+#[tokio::test]
+async fn test_save_session_snapshot_empty_session() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+
+    db(&pool, move |conn| {
+        seed_session(conn, "sess-empty-snap", project_id, "active");
+        // No tool history seeded
+        Ok(())
+    })
+    .await;
+
+    // Call save_session_snapshot — should return Ok but not insert anything
+    db(&pool, |conn| {
+        super::stop::save_session_snapshot(conn, "sess-empty-snap").map_err(Into::into)
+    })
+    .await;
+
+    // Verify no snapshot was saved
+    let snapshot_str = db(&pool, |conn| {
+        Ok::<_, anyhow::Error>(super::session::get_session_snapshot_sync(
+            conn,
+            "sess-empty-snap",
+        ))
+    })
+    .await;
+
+    assert!(
+        snapshot_str.is_none(),
+        "no snapshot should be saved for empty session"
+    );
+}
+
+// =============================================================================
+// Test 10: Project isolation - sessions scoped to their project
 // =============================================================================
 
 #[tokio::test]

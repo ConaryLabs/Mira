@@ -326,3 +326,208 @@ fn get_file_type_hint(file_path: &str) -> Option<String> {
 
     None
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── PostToolInput::from_json ────────────────────────────────────────────
+
+    #[test]
+    fn post_input_parses_all_fields() {
+        let input = PostToolInput::from_json(&serde_json::json!({
+            "session_id": "sess-abc",
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": "/src/main.rs"
+            }
+        }));
+        assert_eq!(input.session_id, "sess-abc");
+        assert_eq!(input.tool_name, "Edit");
+        assert_eq!(input.file_path.as_deref(), Some("/src/main.rs"));
+    }
+
+    #[test]
+    fn post_input_defaults_on_empty_json() {
+        let input = PostToolInput::from_json(&serde_json::json!({}));
+        assert!(input.session_id.is_empty());
+        assert!(input.tool_name.is_empty());
+        assert!(input.file_path.is_none());
+    }
+
+    #[test]
+    fn post_input_missing_file_path() {
+        let input = PostToolInput::from_json(&serde_json::json!({
+            "session_id": "sess-1",
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "ls"
+            }
+        }));
+        assert_eq!(input.tool_name, "Bash");
+        assert!(input.file_path.is_none());
+    }
+
+    #[test]
+    fn post_input_ignores_wrong_types() {
+        let input = PostToolInput::from_json(&serde_json::json!({
+            "session_id": 42,
+            "tool_name": true,
+            "tool_input": "not-an-object"
+        }));
+        assert!(input.session_id.is_empty());
+        assert!(input.tool_name.is_empty());
+        assert!(input.file_path.is_none());
+    }
+
+    // ── is_significant_file ────────────────────────────────────────────────
+
+    #[test]
+    fn significant_source_files() {
+        assert!(is_significant_file("src/main.rs"));
+        assert!(is_significant_file("app/page.tsx"));
+        assert!(is_significant_file("lib/utils.ts"));
+        assert!(is_significant_file("handler.js"));
+        assert!(is_significant_file("views.py"));
+        assert!(is_significant_file("server.go"));
+        assert!(is_significant_file("/home/user/project/src/lib.jsx"));
+    }
+
+    #[test]
+    fn insignificant_config_and_docs() {
+        assert!(!is_significant_file("README.md"));
+        assert!(!is_significant_file("Cargo.toml"));
+        assert!(!is_significant_file("package.json"));
+        assert!(!is_significant_file("config.yaml"));
+        assert!(!is_significant_file("settings.yml"));
+        assert!(!is_significant_file("LICENSE"));
+    }
+
+    #[test]
+    fn insignificant_mixed_case() {
+        // config in path should disqualify even .rs files
+        assert!(!is_significant_file("src/config.rs"));
+    }
+
+    #[test]
+    fn insignificant_unknown_extension() {
+        assert!(!is_significant_file("data.csv"));
+        assert!(!is_significant_file("image.png"));
+    }
+
+    // ── get_file_type_hint ─────────────────────────────────────────────────
+
+    #[test]
+    fn hint_auth_files() {
+        let hint = get_file_type_hint("src/auth/handler.rs");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("security"));
+    }
+
+    #[test]
+    fn hint_login_files() {
+        let hint = get_file_type_hint("components/LoginForm.tsx");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("security"));
+    }
+
+    #[test]
+    fn hint_password_files() {
+        let hint = get_file_type_hint("utils/password_hash.py");
+        assert!(hint.is_some());
+    }
+
+    #[test]
+    fn hint_migration_files() {
+        let hint = get_file_type_hint("db/migrations/001_create_users.sql");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("migration"));
+    }
+
+    #[test]
+    fn hint_schema_files() {
+        let hint = get_file_type_hint("src/db/schema.rs");
+        assert!(hint.is_some());
+    }
+
+    #[test]
+    fn hint_config_files() {
+        let hint = get_file_type_hint("app/config.toml");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("Configuration"));
+    }
+
+    #[test]
+    fn hint_env_files() {
+        let hint = get_file_type_hint("project/.env");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("Configuration"));
+    }
+
+    #[test]
+    fn hint_normal_file_returns_none() {
+        assert!(get_file_type_hint("src/utils/helpers.rs").is_none());
+        assert!(get_file_type_hint("lib/math.ts").is_none());
+    }
+
+    // ── find_related_tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn find_tests_skips_test_files() {
+        assert!(find_related_tests("src/foo_test.rs").is_none());
+        assert!(find_related_tests("src/foo.spec.ts").is_none());
+        assert!(find_related_tests("tests/test_bar.py").is_none());
+    }
+
+    #[test]
+    fn find_tests_unknown_extension_returns_none() {
+        assert!(find_related_tests("data/file.csv").is_none());
+    }
+
+    #[test]
+    fn find_tests_no_extension_returns_none() {
+        assert!(find_related_tests("Makefile").is_none());
+    }
+
+    #[test]
+    fn find_tests_rs_file_no_tests_exist() {
+        // In test env, no test files exist on disk, so we get the
+        // "no test file found" suggestion for significant files
+        let result = find_related_tests("/nonexistent/src/handler.rs");
+        // handler.rs is significant (source code), so we get a suggestion
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("No test file found"));
+    }
+
+    #[test]
+    fn find_tests_config_file_no_suggestion() {
+        // config files are not significant, so no test suggestion
+        let result = find_related_tests("/nonexistent/src/config.rs");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn find_tests_js_file_no_tests_exist() {
+        let result = find_related_tests("/nonexistent/src/app.js");
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("No test file found"));
+    }
+
+    #[test]
+    fn find_tests_py_file_suggestion() {
+        let result = find_related_tests("/nonexistent/src/views.py");
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("test_views.py"));
+    }
+
+    #[test]
+    fn find_tests_go_file_suggestion() {
+        let result = find_related_tests("/nonexistent/src/server.go");
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("server_test.go"));
+    }
+}

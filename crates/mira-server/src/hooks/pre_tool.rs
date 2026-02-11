@@ -225,6 +225,195 @@ fn build_search_query(input: &PreToolInput) -> String {
     parts.join(" ")
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── PreToolInput::from_json ─────────────────────────────────────────────
+
+    #[test]
+    fn pre_input_parses_full_input() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Grep",
+            "tool_input": {
+                "pattern": "fn main",
+                "path": "/home/user/project/src"
+            }
+        }));
+        assert_eq!(input.tool_name, "Grep");
+        assert_eq!(input.pattern.as_deref(), Some("fn main"));
+        assert_eq!(input.path.as_deref(), Some("/home/user/project/src"));
+    }
+
+    #[test]
+    fn pre_input_defaults_on_empty_json() {
+        let input = PreToolInput::from_json(&serde_json::json!({}));
+        assert!(input.tool_name.is_empty());
+        assert!(input.pattern.is_none());
+        assert!(input.path.is_none());
+    }
+
+    #[test]
+    fn pre_input_extracts_query_field() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Search",
+            "tool_input": {
+                "query": "authentication handler"
+            }
+        }));
+        assert_eq!(input.pattern.as_deref(), Some("authentication handler"));
+    }
+
+    #[test]
+    fn pre_input_extracts_regex_field() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Grep",
+            "tool_input": {
+                "regex": "fn\\s+\\w+"
+            }
+        }));
+        assert_eq!(input.pattern.as_deref(), Some("fn\\s+\\w+"));
+    }
+
+    #[test]
+    fn pre_input_prefers_pattern_over_query() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Grep",
+            "tool_input": {
+                "pattern": "primary",
+                "query": "secondary"
+            }
+        }));
+        assert_eq!(input.pattern.as_deref(), Some("primary"));
+    }
+
+    #[test]
+    fn pre_input_ignores_wrong_types() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": 999,
+            "tool_input": {
+                "pattern": 42,
+                "path": true
+            }
+        }));
+        assert!(input.tool_name.is_empty());
+        assert!(input.pattern.is_none());
+        assert!(input.path.is_none());
+    }
+
+    #[test]
+    fn pre_input_missing_tool_input() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Glob"
+        }));
+        assert_eq!(input.tool_name, "Glob");
+        assert!(input.pattern.is_none());
+        assert!(input.path.is_none());
+    }
+
+    // ── build_search_query ──────────────────────────────────────────────────
+
+    #[test]
+    fn build_query_from_pattern_only() {
+        let input = PreToolInput {
+            tool_name: "Grep".into(),
+            pattern: Some("authentication".into()),
+            path: None,
+        };
+        assert_eq!(build_search_query(&input), "authentication");
+    }
+
+    #[test]
+    fn build_query_cleans_regex() {
+        let input = PreToolInput {
+            tool_name: "Grep".into(),
+            pattern: Some("fn\\s+\\w+.*handler".into()),
+            path: None,
+        };
+        let result = build_search_query(&input);
+        assert!(!result.contains("\\s+"));
+        assert!(!result.contains("\\w+"));
+        assert!(!result.contains(".*"));
+        assert!(result.contains("fn"));
+        assert!(result.contains("handler"));
+    }
+
+    #[test]
+    fn build_query_cleans_anchors() {
+        let input = PreToolInput {
+            tool_name: "Grep".into(),
+            pattern: Some("^pub fn$".into()),
+            path: None,
+        };
+        let result = build_search_query(&input);
+        assert!(!result.contains('^'));
+        assert!(!result.contains('$'));
+        assert!(result.contains("pub fn"));
+    }
+
+    #[test]
+    fn build_query_extracts_path_component() {
+        let input = PreToolInput {
+            tool_name: "Glob".into(),
+            pattern: None,
+            path: Some("src/hooks/session.rs".into()),
+        };
+        let result = build_search_query(&input);
+        assert_eq!(result, "session.rs");
+    }
+
+    #[test]
+    fn build_query_skips_common_dirs() {
+        let input = PreToolInput {
+            tool_name: "Glob".into(),
+            pattern: None,
+            path: Some("./src/lib".into()),
+        };
+        let result = build_search_query(&input);
+        // ".", "src", and "lib" are all filtered out, so result might be empty
+        // or contain only meaningful parts
+        assert!(!result.contains("src"));
+    }
+
+    #[test]
+    fn build_query_empty_input() {
+        let input = PreToolInput {
+            tool_name: "Grep".into(),
+            pattern: None,
+            path: None,
+        };
+        assert!(build_search_query(&input).is_empty());
+    }
+
+    #[test]
+    fn build_query_combines_pattern_and_path() {
+        let input = PreToolInput {
+            tool_name: "Grep".into(),
+            pattern: Some("handler".into()),
+            path: Some("src/hooks/session.rs".into()),
+        };
+        let result = build_search_query(&input);
+        assert!(result.contains("handler"));
+        assert!(result.contains("session.rs"));
+    }
+
+    #[test]
+    fn build_query_whitespace_only_pattern_ignored() {
+        let input = PreToolInput {
+            tool_name: "Grep".into(),
+            pattern: Some(".*".into()),
+            path: None,
+        };
+        let result = build_search_query(&input);
+        // ".*" becomes " " after cleanup, which trims to empty
+        assert!(result.is_empty());
+    }
+}
+
 /// Query Mira for memories relevant to the search
 async fn query_relevant_memories(
     pool: &Arc<DatabasePool>,
