@@ -408,9 +408,11 @@ mod tests {
     }
 
     #[test]
-    fn insignificant_mixed_case() {
-        // config in path should disqualify even .rs files
+    fn insignificant_config_in_path() {
+        // "config" in path should disqualify even .rs files
         assert!(!is_significant_file("src/config.rs"));
+        assert!(!is_significant_file("SRC/CONFIG.RS"));
+        assert!(!is_significant_file("src/Config.rs"));
     }
 
     #[test]
@@ -495,39 +497,70 @@ mod tests {
 
     #[test]
     fn find_tests_rs_file_no_tests_exist() {
-        // In test env, no test files exist on disk, so we get the
-        // "no test file found" suggestion for significant files
-        let result = find_related_tests("/nonexistent/src/handler.rs");
-        // handler.rs is significant (source code), so we get a suggestion
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("handler.rs");
+        std::fs::write(&src, "fn handle() {}").unwrap();
+
+        let result = find_related_tests(src.to_str().unwrap());
         assert!(result.is_some());
         assert!(result.unwrap().contains("No test file found"));
     }
 
     #[test]
     fn find_tests_config_file_no_suggestion() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("config.rs");
+        std::fs::write(&src, "").unwrap();
+
         // config files are not significant, so no test suggestion
-        let result = find_related_tests("/nonexistent/src/config.rs");
+        let result = find_related_tests(src.to_str().unwrap());
         assert!(result.is_none());
     }
 
     #[test]
     fn find_tests_js_file_no_tests_exist() {
-        let result = find_related_tests("/nonexistent/src/app.js");
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("app.js");
+        std::fs::write(&src, "").unwrap();
+
+        let result = find_related_tests(src.to_str().unwrap());
         assert!(result.is_some());
         assert!(result.unwrap().contains("No test file found"));
     }
 
     #[test]
     fn find_tests_py_file_suggestion() {
-        let result = find_related_tests("/nonexistent/src/views.py");
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("views.py");
+        std::fs::write(&src, "").unwrap();
+
+        let result = find_related_tests(src.to_str().unwrap());
         assert!(result.is_some());
         assert!(result.unwrap().contains("test_views.py"));
     }
 
     #[test]
     fn find_tests_go_file_suggestion() {
-        let result = find_related_tests("/nonexistent/src/server.go");
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("server.go");
+        std::fs::write(&src, "").unwrap();
+
+        let result = find_related_tests(src.to_str().unwrap());
         assert!(result.is_some());
         assert!(result.unwrap().contains("server_test.go"));
+    }
+
+    #[test]
+    fn find_tests_discovers_existing_test_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("handler.go");
+        std::fs::write(&src, "package main").unwrap();
+        // Create the matching test file
+        let test_file = dir.path().join("handler_test.go");
+        std::fs::write(&test_file, "package main").unwrap();
+
+        let result = find_related_tests(src.to_str().unwrap());
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Related test file exists"));
     }
 }
