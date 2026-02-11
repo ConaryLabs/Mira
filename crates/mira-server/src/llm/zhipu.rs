@@ -1,5 +1,5 @@
 // crates/mira-server/src/llm/zhipu.rs
-// Zhipu GLM-4.7 API client via coding endpoint
+// Zhipu GLM-5 API client via coding endpoint
 
 use crate::llm::http_client::LlmHttpClient;
 use crate::llm::openai_compat::{ChatRequest, parse_chat_response};
@@ -23,9 +23,9 @@ pub struct ZhipuClient {
 }
 
 impl ZhipuClient {
-    /// Create a new Zhipu client with default model (GLM-4.7)
+    /// Create a new Zhipu client with default model (GLM-5)
     pub fn new(api_key: String) -> Self {
-        Self::with_model(api_key, "GLM-4.7".into())
+        Self::with_model(api_key, "glm-5".into())
     }
 
     /// Create a new Zhipu client with custom model
@@ -129,7 +129,7 @@ impl LlmClient for ZhipuClient {
         self.model.clone()
     }
 
-    /// GLM-4.7 budget: 170K tokens (85% of 200K context window)
+    /// GLM-5 budget: 170K tokens (85% of 200K context window)
     fn context_budget(&self) -> u64 {
         170_000
     }
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn test_zhipu_client_creation() {
         let client = ZhipuClient::new("test-key".into());
-        assert_eq!(client.model, "GLM-4.7");
+        assert_eq!(client.model, "glm-5");
         assert_eq!(client.provider_type(), Provider::Zhipu);
     }
 

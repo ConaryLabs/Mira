@@ -13,7 +13,7 @@ use super::{ChatResult, Message, Tool};
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     DeepSeek,
-    Zhipu,    // Zhipu GLM-4.7 via coding endpoint
+    Zhipu,    // Zhipu GLM-5 via coding endpoint
     Ollama,   // Local LLM via Ollama
     Sampling, // MCP sampling — forwards to host client (Claude Code)
 }
@@ -45,7 +45,7 @@ impl Provider {
     pub fn default_model(&self) -> &'static str {
         match self {
             Self::DeepSeek => "deepseek-reasoner",
-            Self::Zhipu => "GLM-4.7",
+            Self::Zhipu => "glm-5",
             Self::Ollama => "llama3.3",
             Self::Sampling => "mcp-sampling",
         }
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn test_provider_default_model() {
         assert_eq!(Provider::DeepSeek.default_model(), "deepseek-reasoner");
-        assert_eq!(Provider::Zhipu.default_model(), "GLM-4.7");
+        assert_eq!(Provider::Zhipu.default_model(), "glm-5");
         assert_eq!(Provider::Ollama.default_model(), "llama3.3");
     }
 
