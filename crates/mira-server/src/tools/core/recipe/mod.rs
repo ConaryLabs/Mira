@@ -3,6 +3,7 @@
 
 mod expert_review;
 mod full_cycle;
+mod prompts;
 mod qa_hardening;
 mod refactor;
 
@@ -16,6 +17,7 @@ use crate::mcp::responses::{
 struct Recipe {
     name: &'static str,
     description: &'static str,
+    use_when: &'static str,
     members: &'static [RecipeMember],
     tasks: &'static [RecipeTask],
     coordination: &'static str,
@@ -60,6 +62,7 @@ fn action_list() -> Result<Json<RecipeOutput>, String> {
             name: r.name.to_string(),
             description: r.description.to_string(),
             member_count: r.members.len(),
+            use_when: r.use_when.to_string(),
         })
         .collect();
     let count = recipes.len();
@@ -80,7 +83,10 @@ fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, String> {
         )
     })?;
 
-    let recipe = ALL_RECIPES.iter().find(|r| r.name == name).ok_or_else(|| {
+    let recipe = ALL_RECIPES
+        .iter()
+        .find(|r| r.name.eq_ignore_ascii_case(&name))
+        .ok_or_else(|| {
         let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
         format!(
             "Recipe '{}' not found. Available: {}",
@@ -154,6 +160,7 @@ mod tests {
                 assert_eq!(data.recipes.len(), 4);
                 assert_eq!(data.recipes[0].name, "expert-review");
                 assert_eq!(data.recipes[0].member_count, 6);
+                assert!(!data.recipes[0].use_when.is_empty());
                 assert_eq!(data.recipes[2].name, "qa-hardening");
                 assert_eq!(data.recipes[2].member_count, 5);
                 assert_eq!(data.recipes[3].name, "refactor");
@@ -289,6 +296,19 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_get_recipe_case_insensitive() {
+        let req = RecipeRequest {
+            action: RecipeAction::Get,
+            name: Some("Expert-Review".to_string()),
+        };
+        let Json(output) = handle_recipe(req).await.expect("case-insensitive get should succeed");
+        match output.data {
+            Some(RecipeData::Get(data)) => assert_eq!(data.name, "expert-review"),
+            _ => panic!("Expected RecipeData::Get"),
+        }
+    }
+
     #[test]
     fn test_all_task_assignees_match_members() {
         for recipe in ALL_RECIPES {
@@ -322,6 +342,7 @@ mod tests {
         for recipe in ALL_RECIPES {
             assert!(!recipe.name.is_empty(), "Recipe has empty name");
             assert!(!recipe.description.is_empty(), "Recipe '{}' has empty description", recipe.name);
+            assert!(!recipe.use_when.is_empty(), "Recipe '{}' has empty use_when", recipe.name);
             assert!(!recipe.coordination.is_empty(), "Recipe '{}' has empty coordination", recipe.name);
             assert!(!recipe.members.is_empty(), "Recipe '{}' has no members", recipe.name);
             assert!(!recipe.tasks.is_empty(), "Recipe '{}' has no tasks", recipe.name);

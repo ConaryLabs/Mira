@@ -120,6 +120,7 @@ If the user wants fixes implemented, create a new team and spawn implementation 
 pub(super) const RECIPE: Recipe = Recipe {
     name: "qa-hardening",
     description: "Production readiness review: test health, error handling, security, edge cases, and UX quality. Read-only analysis with prioritized hardening backlog.",
+    use_when: "Code is functionally complete and needs hardening before release.",
     members: MEMBERS,
     tasks: TASKS,
     coordination: COORDINATION,

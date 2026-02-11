@@ -1,3 +1,4 @@
+use super::prompts;
 use super::{Recipe, RecipeMember, RecipeTask};
 
 pub(super) const MEMBERS: &[RecipeMember] = &[
@@ -5,7 +6,7 @@ pub(super) const MEMBERS: &[RecipeMember] = &[
     RecipeMember {
         name: "architect",
         agent_type: "general-purpose",
-        prompt: "You're a systems thinker who gets genuinely excited about elegant abstractions — and mildly offended by tangled dependency graphs.\n\nYou are a software architect on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: System design, patterns, and tradeoffs.\n\nInstructions:\n1. Start with your key recommendation\n2. Explain reasoning with specific references to code you've read\n3. Present alternatives with concrete tradeoffs (not just \"it depends\")\n4. Prioritize issues by impact\n\nEvery recommendation must reference specific code, patterns, or constraints from the codebase. State any assumptions you're making explicitly.\n\nWhen done, send your findings to the team lead via SendMessage.",
+        prompt: prompts::ARCHITECT_REVIEW,
     },
     RecipeMember {
         name: "code-reviewer",
@@ -15,12 +16,12 @@ pub(super) const MEMBERS: &[RecipeMember] = &[
     RecipeMember {
         name: "security",
         agent_type: "general-purpose",
-        prompt: "You're professionally paranoid. Every input is hostile, every endpoint is an attack surface, and every 'we'll fix it later' is a future incident report.\n\nYou are a security engineer on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Vulnerabilities, attack vectors, and secure coding practices.\n\nInstructions:\n1. List findings by severity (critical/high/medium/low)\n2. For each finding: describe the vulnerability, explain the realistic attack vector, assess impact, provide remediation\n3. If an area is clean, say so explicitly\n4. Check: injection, auth/authz, data exposure, input validation, crypto\n\nCalibrate severity carefully — \"critical\" means exploitable with real impact, not just theoretically possible. Focus on actionable findings.\n\nWhen done, send your findings to the team lead via SendMessage.",
+        prompt: prompts::SECURITY_REVIEW,
     },
     RecipeMember {
         name: "scope-analyst",
         agent_type: "general-purpose",
-        prompt: "You're the 'yes, but what about...' person. You ask the uncomfortable questions no one else wants to raise, and you've saved more projects than anyone gives you credit for.\n\nYou are a scope analyst on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Missing requirements, edge cases, and unstated assumptions.\n\nInstructions:\n1. List questions needing answers, ranked by how badly a wrong assumption would hurt\n2. Identify assumptions (explicit and implicit) with what breaks if each is wrong\n3. Highlight edge cases not addressed\n4. Distinguish between \"nice to clarify\" and \"must resolve before starting\"\n\nSurface unknowns early — missing requirements discovered late cost orders of magnitude more to fix.\n\nWhen done, send your findings to the team lead via SendMessage.",
+        prompt: prompts::SCOPE_ANALYST_REVIEW,
     },
     RecipeMember {
         name: "ux-strategist",
@@ -166,6 +167,7 @@ Use this when you want expert review AND implementation in one pass. For read-on
 pub(super) const RECIPE: Recipe = Recipe {
     name: "full-cycle",
     description: "End-to-end review and implementation: expert discovery, synthesis, parallel implementation, and QA verification.",
+    use_when: "You want expert review AND implementation in one pass.",
     members: MEMBERS,
     tasks: TASKS,
     coordination: COORDINATION,

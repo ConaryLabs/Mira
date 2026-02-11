@@ -22,6 +22,7 @@ pub struct RecipeListItem {
     pub name: String,
     pub description: String,
     pub member_count: usize,
+    pub use_when: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

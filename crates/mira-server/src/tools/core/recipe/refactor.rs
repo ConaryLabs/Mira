@@ -109,6 +109,7 @@ Use this when you need to restructure, reorganize, or rename code without changi
 pub(super) const RECIPE: Recipe = Recipe {
     name: "refactor",
     description: "Safe code restructuring: architect plans, code-reviewer validates, implementation with per-step compilation checks, verification.",
+    use_when: "You need to restructure or reorganize code without changing behavior.",
     members: MEMBERS,
     tasks: TASKS,
     coordination: COORDINATION,
