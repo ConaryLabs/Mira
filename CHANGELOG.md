@@ -80,18 +80,40 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-11
+
 ### Added
 - **Self-updating wrapper** -- The plugin wrapper now checks GitHub for new releases every 24 hours and auto-updates the binary. Uses redirect-based version checks (no API rate limit), TTL-cached results, and graceful fallback when offline.
 - **SHA256 checksum verification** -- Downloaded binaries are verified against checksums published with each release. The release workflow now generates and uploads `checksums.sha256`.
 - **Version pinning** -- Set `MIRA_VERSION_PIN=X.Y.Z` to lock the wrapper to a specific version and skip auto-updates.
+- **Dismiss insight action** -- New `session(action="dismiss_insight", insight_id=N)` to permanently hide individual insights from future queries.
+- **Documentation system overhaul** -- Heuristic fallback for doc gap detection when LLM is unavailable, batch skip support, pagination, and UX improvements.
+
+### Fixed
+- **Insight dismiss scoped to active project** -- `dismiss_insight` now validates project ownership and restricts to `insight_%` pattern types, preventing cross-project mutation or dismissal of non-insight behavior patterns.
+- **Insight dedup hardening** -- Entity-aware dedup with punctuation/apostrophe handling, key migration for legacy patterns, possessive-plural quote extraction, and single-quote delimiter validation.
+- **Session close on interrupt** -- Properly closes sessions on SIGINT. Fixed hook scope bypass and UTF-8 panics.
+- **Session-file race** -- Fixed race condition between session file reads and LLM factory inconsistency.
+- **Entity backfill partial writes** -- Per-fact savepoints prevent partial database writes during entity extraction.
+- **Watcher drop diagnostics** -- Improved circuit-breaker behavior and drop-time diagnostics.
+- **Pagination edge case** -- Skip pagination header when offset is past the end.
+- **Stale impact analysis** -- Codex review fix for stale data in impact analysis, path traversal prevention.
+- **Insight hook messages** -- Surface actual pattern content instead of raw JSON in hook-surfaced insights.
 
 ### Changed
 - **Wrapper messaging** -- Log prefix changed from `[mira-wrapper]` to `[mira]`. Distinct messages for fresh install vs update vs up-to-date. Release notes URL shown after updates.
 - **Atomic version file writes** -- Version file now written via tmp+mv to prevent corruption from concurrent wrapper instances.
 - **Stricter shell defaults** -- Wrapper uses `set -eu` and `umask 077` for safer operation.
+- **Pool boilerplate reduction** -- Reduced repetitive database pool patterns, batch entity extraction.
 
 ### Removed
 - Duplicate `.example` files (`hooks.json.example`, `.mcp.json.example`) that were identical to their non-example counterparts.
+
+### Tests
+- 21 scope isolation tests for multi-user memory sharing.
+- 27 tests for hooks system helper functions.
+- 4 dismiss insight tests (success, cross-project blocked, non-insight blocked, requires project).
+- Multi-distro install tests for hooks, setup, and pinning.
 
 ## [0.6.9] - 2026-02-10
 
