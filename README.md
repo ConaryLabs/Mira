@@ -184,6 +184,8 @@ All data stored locally in `~/.mira/`. No cloud storage, no external databases. 
 | `/mira:insights` | Surface background analysis |
 | `/mira:experts` | Expert consultation via Agent Teams |
 | `/mira:full-cycle` | End-to-end review, implementation, and QA |
+| `/mira:qa-hardening` | Production readiness review |
+| `/mira:refactor` | Safe code restructuring with validation |
 
 ## Troubleshooting
 

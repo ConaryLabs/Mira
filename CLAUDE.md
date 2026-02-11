@@ -97,6 +97,8 @@ See `.env.example` for all options.
 | `/mira:diff` | Semantic analysis of code changes |
 | `/mira:experts` | Expert consultation via Agent Teams |
 | `/mira:full-cycle` | End-to-end expert review with implementation and QA |
+| `/mira:qa-hardening` | Production readiness review and hardening backlog |
+| `/mira:refactor` | Safe code restructuring with architect + reviewer validation |
 
 ## Hook Integration
 

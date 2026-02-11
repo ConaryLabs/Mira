@@ -25,6 +25,8 @@
     "./skills/insights",
     "./skills/diff",
     "./skills/experts",
-    "./skills/full-cycle"
+    "./skills/full-cycle",
+    "./skills/qa-hardening",
+    "./skills/refactor"
   ]
 }

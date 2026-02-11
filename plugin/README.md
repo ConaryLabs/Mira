@@ -74,6 +74,8 @@ claude --plugin-dir /path/to/Mira/plugin
 | `/mira:remember <content>` | Quick memory storage |
 | `/mira:experts` | Expert consultation via Agent Teams |
 | `/mira:full-cycle` | End-to-end review, implementation, and QA |
+| `/mira:qa-hardening` | Production readiness review |
+| `/mira:refactor` | Safe code restructuring with validation |
 
 ## MCP Tools
 
