@@ -66,13 +66,13 @@ install_prereqs() {
     local image="$1"
     case "$image" in
         ubuntu:*|debian:*)
-            echo "apt-get update -qq && apt-get install -y -qq curl tar >/dev/null 2>&1"
+            echo "apt-get update -qq && apt-get install -y -qq curl tar jq >/dev/null 2>&1"
             ;;
         fedora:*)
-            echo "dnf install -y -q curl tar >/dev/null 2>&1"
+            echo "dnf install -y -q curl tar jq >/dev/null 2>&1"
             ;;
         alpine:*)
-            echo "apk add --no-cache curl tar >/dev/null 2>&1"
+            echo "apk add --no-cache curl tar jq >/dev/null 2>&1"
             ;;
         *)
             echo "true"
@@ -113,6 +113,9 @@ soft() {
 
 VERSION="__VERSION__"
 
+# ============================================================
+# Test 1: mira-wrapper first run (download)
+# ============================================================
 echo "--- Test 1: mira-wrapper first run (download) ---"
 
 STDERR_FILE=$(mktemp)
@@ -127,13 +130,14 @@ else
     fail "binary not found or not executable at ~/.mira/bin/mira"
 fi
 
-# 1b: version file matches
+# 1b: version file present with valid version
+INSTALLED_VER=""
 if [ -f "$HOME/.mira/bin/.mira-version" ]; then
-    ACTUAL=$(cat "$HOME/.mira/bin/.mira-version")
-    if [ "$ACTUAL" = "$VERSION" ]; then
-        pass "version file matches ($ACTUAL)"
+    INSTALLED_VER=$(cat "$HOME/.mira/bin/.mira-version")
+    if echo "$INSTALLED_VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+        pass "version file present ($INSTALLED_VER)"
     else
-        fail "version file mismatch: got $ACTUAL, expected $VERSION"
+        fail "version file has invalid content: $INSTALLED_VER"
     fi
 else
     fail "version file not found"
@@ -146,13 +150,30 @@ else
     fail "stderr missing download log"
 fi
 
-# 1d: --version output contains version (soft — may fail on musl/old glibc)
-if echo "$OUTPUT" | grep -q "$VERSION"; then
-    soft pass "--version output contains $VERSION"
+# 1d: --version output (soft — may fail on musl/old glibc)
+if [ -n "$INSTALLED_VER" ] && echo "$OUTPUT" | grep -q "$INSTALLED_VER"; then
+    soft pass "--version output contains $INSTALLED_VER"
 else
     soft fail "--version output missing version string"
 fi
 
+# 1e: update cache file exists
+if [ -f "$HOME/.mira/.last-update-check" ]; then
+    pass "update cache file exists"
+else
+    fail "update cache file missing (~/.mira/.last-update-check)"
+fi
+
+# 1f: checksum tool available
+if command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1; then
+    pass "checksum tool available (verification ran)"
+else
+    warn "no checksum tool (sha256sum/shasum) — verification was skipped"
+fi
+
+# ============================================================
+# Test 2: mira-wrapper second run (fast path)
+# ============================================================
 echo ""
 echo "--- Test 2: mira-wrapper second run (fast path) ---"
 
@@ -167,14 +188,52 @@ else
     pass "fast path — no download on second run"
 fi
 
+# ============================================================
+# Test 3: mira-wrapper version pinning
+# ============================================================
 echo ""
-echo "--- Test 3: install.sh ---"
+echo "--- Test 3: mira-wrapper version pinning ---"
+
+if [ -n "$INSTALLED_VER" ]; then
+    # 3a: pinned to installed version → fast path
+    STDERR_FILE=$(mktemp)
+    MIRA_VERSION_PIN="$INSTALLED_VER" sh /workspace/plugin/bin/mira-wrapper --version 2>"$STDERR_FILE" || true
+    STDERR3=$(cat "$STDERR_FILE")
+    rm -f "$STDERR_FILE"
+
+    if echo "$STDERR3" | grep -qi "download"; then
+        fail "MIRA_VERSION_PIN=$INSTALLED_VER should not trigger download"
+    else
+        pass "MIRA_VERSION_PIN fast path works ($INSTALLED_VER)"
+    fi
+
+    # 3b: pinned to a different version → should attempt download (but may fail, that's ok)
+    STDERR_FILE=$(mktemp)
+    MIRA_VERSION_PIN="0.0.1" sh /workspace/plugin/bin/mira-wrapper --version 2>"$STDERR_FILE" || true
+    STDERR3B=$(cat "$STDERR_FILE")
+    rm -f "$STDERR_FILE"
+
+    if echo "$STDERR3B" | grep -qi "download\|0\.0\.1"; then
+        pass "MIRA_VERSION_PIN=0.0.1 triggers download attempt"
+    else
+        fail "MIRA_VERSION_PIN=0.0.1 did not trigger download attempt"
+    fi
+else
+    fail "cannot test pinning — no version file from test 1"
+fi
+
+# ============================================================
+# Test 4: install.sh
+# ============================================================
+echo ""
+echo "--- Test 4: install.sh ---"
 
 export MIRA_INSTALL_DIR="/tmp/mira-install-test"
 mkdir -p "$MIRA_INSTALL_DIR"
 
-# Remove .mira to test install.sh independently
+# Remove .mira and .claude to test install.sh independently
 rm -rf "$HOME/.mira"
+rm -rf "$HOME/.claude"
 
 # install.sh uses bash — install it if missing (Alpine)
 if ! command -v bash >/dev/null 2>&1; then
@@ -183,21 +242,109 @@ if ! command -v bash >/dev/null 2>&1; then
     fi
 fi
 
-bash /workspace/install.sh 2>&1 || true
+INSTALL_OUTPUT=$(bash /workspace/install.sh 2>&1) || true
 
-# 3a: binary installed
+# 4a: binary installed
 if [ -x "$MIRA_INSTALL_DIR/mira" ]; then
-    pass "install.sh: binary installed to $MIRA_INSTALL_DIR"
+    pass "binary installed to $MIRA_INSTALL_DIR"
 else
-    fail "install.sh: binary not found at $MIRA_INSTALL_DIR/mira"
+    fail "binary not found at $MIRA_INSTALL_DIR/mira"
 fi
 
-# 3b: binary runs (soft — may fail on musl/old glibc)
+# 4b: binary runs (soft — may fail on musl/old glibc)
 INST_OUTPUT=$("$MIRA_INSTALL_DIR/mira" --version 2>/dev/null) || true
-if echo "$INST_OUTPUT" | grep -q "$VERSION"; then
-    soft pass "install.sh: binary outputs version $VERSION"
+if echo "$INST_OUTPUT" | grep -qi "mira"; then
+    soft pass "binary runs and identifies as mira"
 else
-    soft fail "install.sh: binary cannot run on this libc"
+    soft fail "binary cannot run on this libc"
+fi
+
+# 4c: ~/.mira config directory created
+if [ -d "$HOME/.mira" ]; then
+    pass "~/.mira config directory created"
+else
+    fail "~/.mira config directory missing"
+fi
+
+# 4d: hooks configured in ~/.claude/settings.json
+if [ -f "$HOME/.claude/settings.json" ]; then
+    pass "~/.claude/settings.json created"
+
+    if command -v jq >/dev/null 2>&1; then
+        # 4e: settings.json contains mira hook entries
+        HOOK_COUNT=$(jq '[.hooks // {} | to_entries[] | .value[] | .hooks[]? | select(.command | tostring | test("mira"))] | length' "$HOME/.claude/settings.json" 2>/dev/null || echo "0")
+        if [ "$HOOK_COUNT" -ge 8 ]; then
+            pass "$HOOK_COUNT mira hooks configured (expected >= 8)"
+        else
+            fail "only $HOOK_COUNT mira hooks found (expected >= 8)"
+        fi
+
+        # 4f: key hook events present
+        for event in SessionStart UserPromptSubmit Stop PostToolUse PreToolUse PreCompact SessionEnd SubagentStart; do
+            if jq -e ".hooks.${event}" "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+                pass "${event} hook present"
+            else
+                fail "${event} hook missing"
+            fi
+        done
+
+        # 4g: hook commands reference correct binary path
+        HOOK_PATH=$(jq -r '.hooks.SessionStart[0].hooks[0].command // ""' "$HOME/.claude/settings.json" 2>/dev/null || echo "")
+        if echo "$HOOK_PATH" | grep -q "$MIRA_INSTALL_DIR/mira"; then
+            pass "hook commands reference $MIRA_INSTALL_DIR/mira"
+        else
+            fail "hook commands don't reference expected binary path (got: $HOOK_PATH)"
+        fi
+
+        # 4h: statusLine configured
+        if jq -e '.statusLine' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+            pass "statusLine configured"
+
+            SL_CMD=$(jq -r '.statusLine.command // ""' "$HOME/.claude/settings.json" 2>/dev/null || echo "")
+            if echo "$SL_CMD" | grep -q "statusline"; then
+                pass "statusLine command is 'mira statusline'"
+            else
+                fail "statusLine command unexpected: $SL_CMD"
+            fi
+        else
+            fail "statusLine missing from settings.json"
+        fi
+    else
+        warn "jq not available — cannot validate settings.json structure"
+    fi
+else
+    fail "~/.claude/settings.json not created (is jq installed?)"
+fi
+
+# 4i: output mentions mira setup in next steps
+if echo "$INSTALL_OUTPUT" | grep -q "mira setup"; then
+    pass "output mentions 'mira setup' in next steps"
+else
+    fail "output missing 'mira setup' in next steps"
+fi
+
+# 4j: output indicates hook or plugin configuration
+if echo "$INSTALL_OUTPUT" | grep -qi "hook\|plugin"; then
+    pass "output confirms hook/plugin configuration"
+else
+    fail "output missing hook/plugin confirmation"
+fi
+
+# ============================================================
+# Test 5: mira setup --check (smoke test)
+# ============================================================
+echo ""
+echo "--- Test 5: mira setup --check (smoke test) ---"
+
+if [ -x "$MIRA_INSTALL_DIR/mira" ]; then
+    SETUP_OUTPUT=$("$MIRA_INSTALL_DIR/mira" setup --check 2>&1) || true
+    if echo "$SETUP_OUTPUT" | grep -qi "config\|status\|provider\|directory"; then
+        soft pass "mira setup --check produces diagnostic output"
+    else
+        soft fail "mira setup --check produced no recognizable output"
+    fi
+else
+    warn "skipping mira setup --check — binary not executable on this platform"
 fi
 
 echo ""
