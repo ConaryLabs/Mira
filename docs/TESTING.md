@@ -24,12 +24,14 @@ Runs automatically on every `release: published` event. Can also be triggered ma
 
 **Wrapper test assertions (per OS):**
 
-1. `MIRA_VERSION` in wrapper matches the release tag (fast-fail gate)
+1. `MIRA_VERSION` floor in wrapper matches the release tag (fast-fail gate)
 2. First run downloads binary → `~/.mira/bin/mira` exists and is executable
 3. Version file `~/.mira/bin/.mira-version` matches expected version
-4. stderr contains download log
+4. stderr contains install/update log
 5. `mira --version` outputs the correct version string
-6. Second run (fast path) produces no download log in stderr
+6. Update cache file `~/.mira/.last-update-check` created after first run
+7. Second run (fast path) produces no download log in stderr
+8. Version pinning via `MIRA_VERSION_PIN` env var downloads and installs the pinned version
 
 **Installer test assertions:**
 

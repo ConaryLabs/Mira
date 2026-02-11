@@ -36,14 +36,14 @@ jobs:
             echo "VERSION=$TAG" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify wrapper version matches release
+      - name: Verify wrapper floor version
         run: |
-          WRAPPER_VERSION=$(grep '^MIRA_VERSION=' plugin/bin/mira-wrapper | cut -d'"' -f2)
+          WRAPPER_FLOOR=$(grep '^MIRA_VERSION=' plugin/bin/mira-wrapper | cut -d'"' -f2)
           EXPECTED="${{ steps.ver.outputs.VERSION }}"
-          echo "Wrapper MIRA_VERSION: $WRAPPER_VERSION"
-          echo "Expected version:     $EXPECTED"
-          if [ "$WRAPPER_VERSION" != "$EXPECTED" ]; then
-            echo "::error::Wrapper MIRA_VERSION ($WRAPPER_VERSION) does not match release ($EXPECTED)"
+          echo "Wrapper floor version: $WRAPPER_FLOOR"
+          echo "Release version:       $EXPECTED"
+          if [ "$WRAPPER_FLOOR" != "$EXPECTED" ]; then
+            echo "::error::Wrapper floor version ($WRAPPER_FLOOR) does not match release ($EXPECTED). Did you forget to run release.sh?"
             exit 1
           fi
 
@@ -82,9 +82,9 @@ jobs:
             FAIL=1
           fi
 
-          # Assert stderr contains download log
-          if ! echo "$STDERR" | grep -q "downloading"; then
-            echo "::error::stderr missing download log on first run"
+          # Assert stderr contains install/update log
+          if ! echo "$STDERR" | grep -qi "install\|updat\|download"; then
+            echo "::error::stderr missing install/update log on first run"
             FAIL=1
           fi
 
@@ -95,6 +95,14 @@ jobs:
           fi
 
           exit $FAIL
+
+      - name: Verify update cache created
+        run: |
+          if [ ! -f "$HOME/.mira/.last-update-check" ]; then
+            echo "::error::Update cache file not created after first run"
+            exit 1
+          fi
+          echo "Update cache file exists"
 
       - name: Second run — fast path (no download)
         run: |
@@ -111,6 +119,34 @@ jobs:
             exit 1
           fi
           echo "Fast path confirmed — no download on second run"
+
+      - name: Version pinning test
+        run: |
+          # Clean slate
+          rm -rf "$HOME/.mira"
+
+          STDERR_FILE=$(mktemp)
+          MIRA_VERSION_PIN="${{ steps.ver.outputs.VERSION }}" sh plugin/bin/mira-wrapper --version 2>"$STDERR_FILE" || true
+          STDERR=$(cat "$STDERR_FILE")
+          rm -f "$STDERR_FILE"
+
+          echo "--- stderr ---"
+          echo "$STDERR"
+
+          # Should have downloaded the pinned version
+          if [ ! -x "$HOME/.mira/bin/mira" ]; then
+            echo "::error::Binary not found after pinned install"
+            exit 1
+          fi
+
+          # Version file should match pinned version
+          ACTUAL=$(cat "$HOME/.mira/bin/.mira-version")
+          EXPECTED="${{ steps.ver.outputs.VERSION }}"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Version file ($ACTUAL) does not match pinned version ($EXPECTED)"
+            exit 1
+          fi
+          echo "Version pinning confirmed"
 
   test-installer:
     name: Test install.sh

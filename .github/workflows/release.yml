@@ -102,6 +102,14 @@ jobs:
       - name: Display artifacts
         run: ls -la artifacts/*/
 
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum */mira-*.tar.gz */mira-*.zip > ../checksums.sha256
+          cd ..
+          echo "--- checksums.sha256 ---"
+          cat checksums.sha256
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -119,3 +127,4 @@ jobs:
             artifacts/mira-x86_64-apple-darwin/mira-x86_64-apple-darwin.tar.gz
             artifacts/mira-aarch64-apple-darwin/mira-aarch64-apple-darwin.tar.gz
             artifacts/mira-x86_64-pc-windows-msvc/mira-x86_64-pc-windows-msvc.zip
+            checksums.sha256

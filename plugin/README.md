@@ -20,7 +20,9 @@ claude plugin marketplace add ConaryLabs/Mira
 claude plugin install mira@mira
 ```
 
-The `mira` binary is **auto-downloaded** on first launch — no manual installation needed. The wrapper script (`plugin/bin/mira-wrapper`) handles downloading the correct binary for your platform to `~/.mira/bin/mira`.
+The `mira` binary is **auto-downloaded** on first launch and **auto-updated** daily — no manual intervention needed. The wrapper script (`plugin/bin/mira-wrapper`) handles downloading the correct binary for your platform to `~/.mira/bin/mira`, checks for new versions every 24 hours, and verifies downloads via SHA256 checksums.
+
+**Version pinning:** Set `MIRA_VERSION_PIN=0.6.9` to lock to a specific version and skip auto-updates.
 
 After the first launch, configure providers:
 

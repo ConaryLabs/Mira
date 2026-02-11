@@ -3,9 +3,15 @@
 # Downloads the mira binary on first invocation; execs immediately on subsequent runs.
 # All output goes to stderr — MCP uses stdout for the JSON protocol.
 
-set -e
+set -eu
+umask 077
 
 MIRA_VERSION="0.6.9"
+# Allow version pinning via environment variable
+if [ -n "${MIRA_VERSION_PIN:-}" ]; then
+    MIRA_VERSION="$MIRA_VERSION_PIN"
+fi
+
 REPO="ConaryLabs/Mira"
 MIRA_HOME="${HOME}/.mira"
 BIN_DIR="${MIRA_HOME}/bin"
@@ -15,16 +21,58 @@ case "$(uname -s)" in
 esac
 MIRA_BIN="${BIN_DIR}/mira${MIRA_EXE_EXT}"
 VERSION_FILE="${BIN_DIR}/.mira-version"
+UPDATE_CACHE="${MIRA_HOME}/.last-update-check"
+CACHE_TTL=86400  # 24 hours
 
-# --- Fast path: binary exists and version matches ---
-if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ] && [ "$(cat "$VERSION_FILE")" = "$MIRA_VERSION" ]; then
-    exec "$MIRA_BIN" "$@"
+# --- Fast path: binary exists, version known, update cache fresh ---
+if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ]; then
+    installed="$(cat "$VERSION_FILE")"
+    # If pinned, only accept exact match
+    if [ -n "${MIRA_VERSION_PIN:-}" ]; then
+        if [ "$installed" = "$MIRA_VERSION" ]; then
+            exec "$MIRA_BIN" "$@"
+        fi
+    else
+        # Accept any installed version if update cache is fresh
+        if [ -f "$UPDATE_CACHE" ]; then
+            cache_age=$(( $(date +%s) - $(stat -c %Y "$UPDATE_CACHE" 2>/dev/null || stat -f %m "$UPDATE_CACHE" 2>/dev/null || echo 0) ))
+            if [ "$cache_age" -lt "$CACHE_TTL" ]; then
+                exec "$MIRA_BIN" "$@"
+            fi
+        fi
+        # Also fast-path if installed version matches floor (first run after install)
+        if [ "$installed" = "$MIRA_VERSION" ] && [ ! -f "$UPDATE_CACHE" ]; then
+            exec "$MIRA_BIN" "$@"
+        fi
+    fi
 fi
 
-# --- Slow path: download or update binary ---
+# --- Slow path: check for updates and download if needed ---
 log() { printf '%s\n' "$1" >&2; }
 
-log "[mira-wrapper] Mira v${MIRA_VERSION} not found at ${MIRA_BIN} — downloading..."
+# Get latest version from GitHub (uses redirect, no API rate limit)
+get_latest_version() {
+    location=""
+    # Try redirect-based check first (no rate limit)
+    if command -v curl >/dev/null 2>&1; then
+        location=$(curl -fsSI "https://github.com/${REPO}/releases/latest" 2>/dev/null | grep -i '^location:' | tr -d '\r') || true
+    elif command -v wget >/dev/null 2>&1; then
+        location=$(wget --spider -S "https://github.com/${REPO}/releases/latest" 2>&1 | grep -i 'Location:' | tail -1 | tr -d '\r') || true
+    fi
+
+    if [ -n "${location:-}" ]; then
+        # Extract version from redirect URL: .../tag/vX.Y.Z -> X.Y.Z
+        version_tag=$(echo "$location" | sed -E 's|.*/tag/v?||')
+        # Validate semver format
+        if echo "$version_tag" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            printf '%s' "$version_tag"
+            return
+        fi
+    fi
+
+    # Fallback: empty string signals failure
+    printf ''
+}
 
 # Detect platform
 detect_platform() {
@@ -32,13 +80,13 @@ detect_platform() {
         Linux*)                    os="unknown-linux-gnu" ;;
         Darwin*)                   os="apple-darwin" ;;
         MINGW*|MSYS*|CYGWIN*)     os="pc-windows-msvc" ;;
-        *)       log "[mira-wrapper] Unsupported OS: $(uname -s). Install manually: https://github.com/${REPO}"; exit 1 ;;
+        *)       log "[mira] Unsupported OS: $(uname -s). Install manually: https://github.com/${REPO}"; exit 1 ;;
     esac
 
     case "$(uname -m)" in
         x86_64|amd64)   arch="x86_64" ;;
         arm64|aarch64)  arch="aarch64" ;;
-        *) log "[mira-wrapper] Unsupported architecture: $(uname -m)"; exit 1 ;;
+        *) log "[mira] Unsupported architecture: $(uname -m)"; exit 1 ;;
     esac
 
     printf '%s' "${arch}-${os}"
@@ -46,14 +94,69 @@ detect_platform() {
 
 # Pick a download tool
 fetch() {
+    url="$1"
+    outfile="${2:-}"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$1"
+        if [ -n "$outfile" ]; then
+            curl -fsSL "$url" -o "$outfile"
+        else
+            curl -fsSL "$url"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO- "$1"
+        if [ -n "$outfile" ]; then
+            wget -qO "$outfile" "$url"
+        else
+            wget -qO- "$url"
+        fi
     else
-        log "[mira-wrapper] Neither curl nor wget found. Install one and retry."; exit 1
+        log "[mira] Neither curl nor wget found. Install one and retry."
+        exit 1
     fi
 }
+
+# Resolve target version
+installed=""
+if [ -f "$VERSION_FILE" ]; then
+    installed="$(cat "$VERSION_FILE")"
+fi
+
+target="$MIRA_VERSION"  # Start with floor
+
+if [ -z "${MIRA_VERSION_PIN:-}" ]; then
+    latest="$(get_latest_version)" || true
+    if [ -n "$latest" ]; then
+        target="$latest"
+        # Update cache timestamp
+        mkdir -p "$(dirname "$UPDATE_CACHE")"
+        touch "$UPDATE_CACHE"
+    else
+        log "[mira] Update check failed (network unavailable)."
+        if [ -x "$MIRA_BIN" ] && [ -n "$installed" ]; then
+            log "[mira] Using installed v${installed}."
+            touch "$UPDATE_CACHE"  # Avoid re-checking immediately
+            exec "$MIRA_BIN" "$@"
+        fi
+        # No binary installed and no network — use floor version
+        log "[mira] Attempting download of v${MIRA_VERSION} (fallback)..."
+    fi
+else
+    target="$MIRA_VERSION"  # Pinned (MIRA_VERSION was set to MIRA_VERSION_PIN above)
+fi
+
+# If already installed at target version, just update cache and go
+if [ -x "$MIRA_BIN" ] && [ "$installed" = "$target" ]; then
+    touch "$UPDATE_CACHE"
+    printf '%s' "$target" > "${VERSION_FILE}.tmp"
+    mv -f "${VERSION_FILE}.tmp" "$VERSION_FILE"
+    exec "$MIRA_BIN" "$@"
+fi
+
+# Determine if this is an install or update
+if [ -z "$installed" ]; then
+    log "[mira] Installing Mira v${target}..."
+else
+    log "[mira] Updating Mira: v${installed} -> v${target}..."
+fi
 
 platform="$(detect_platform)"
 
@@ -63,30 +166,52 @@ case "$platform" in
     *)         archive_ext="tar.gz" ;;
 esac
 
-url="https://github.com/${REPO}/releases/download/v${MIRA_VERSION}/mira-${platform}.${archive_ext}"
+url="https://github.com/${REPO}/releases/download/v${target}/mira-${platform}.${archive_ext}"
 
-log "[mira-wrapper] Platform: ${platform}"
-log "[mira-wrapper] Downloading from: ${url}"
+log "[mira] Platform: ${platform}"
+log "[mira] Downloading from: ${url}"
 
 # Create directories
 mkdir -p "$BIN_DIR"
 
-# Download and extract to a temp file, then atomically move into place
+# Download and extract to a temp dir, then atomically move into place
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+archive_file="${tmp_dir}/mira.${archive_ext}"
+
 if [ "$archive_ext" = "zip" ]; then
-    zip_file="${tmp_dir}/mira.zip"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$zip_file"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$zip_file" "$url"
-    else
-        log "[mira-wrapper] Neither curl nor wget found. Install one and retry."; exit 1
-    fi
-    unzip -qo "$zip_file" -d "$tmp_dir"
+    fetch "$url" "$archive_file"
+    unzip -qo "$archive_file" -d "$tmp_dir"
 else
-    fetch "$url" | tar -xz -C "$tmp_dir"
+    fetch "$url" "$archive_file"
+    tar -xz -C "$tmp_dir" -f "$archive_file"
+fi
+
+# Verify checksum if available
+checksum_url="https://github.com/${REPO}/releases/download/v${target}/checksums.sha256"
+checksum_file="${tmp_dir}/checksums.sha256"
+if fetch "$checksum_url" "$checksum_file" 2>/dev/null; then
+    expected_hash=$(grep "mira-${platform}.${archive_ext}" "$checksum_file" | cut -d' ' -f1)
+    if [ -n "$expected_hash" ]; then
+        actual_hash=""
+        if command -v sha256sum >/dev/null 2>&1; then
+            actual_hash=$(sha256sum "$archive_file" | cut -d' ' -f1)
+        elif command -v shasum >/dev/null 2>&1; then
+            actual_hash=$(shasum -a 256 "$archive_file" | cut -d' ' -f1)
+        fi
+        if [ -z "${actual_hash:-}" ]; then
+            log "[mira] Note: No checksum tool found (sha256sum/shasum), skipping verification."
+        elif [ "$actual_hash" != "$expected_hash" ]; then
+            log "[mira] ERROR: Checksum verification failed!"
+            log "[mira] Expected: ${expected_hash}"
+            log "[mira] Got:      ${actual_hash}"
+            exit 1
+        fi
+    fi
+else
+    # No checksum file (older release) — proceed with warning
+    log "[mira] Note: Checksum not available for this release."
 fi
 
 # Determine extracted binary name
@@ -99,13 +224,20 @@ fi
 
 # Atomic install — safe if multiple wrapper instances race
 mv -f "$src_bin" "$MIRA_BIN"
-printf '%s' "$MIRA_VERSION" > "$VERSION_FILE"
+printf '%s' "$target" > "${VERSION_FILE}.tmp"
+mv -f "${VERSION_FILE}.tmp" "$VERSION_FILE"
+touch "$UPDATE_CACHE"
 
 # Strip macOS quarantine attribute if present
 case "$(uname -s)" in
     Darwin*) xattr -d com.apple.quarantine "$MIRA_BIN" 2>/dev/null || true ;;
 esac
 
-log "[mira-wrapper] Installed mira v${MIRA_VERSION} to ${MIRA_BIN}"
-log "[mira-wrapper] To configure providers, run: ${MIRA_BIN} setup"
+log "[mira] Installed Mira v${target} to ${MIRA_BIN}"
+if [ -n "$installed" ] && [ "$installed" != "$target" ]; then
+    log "[mira] Release notes: https://github.com/${REPO}/releases/tag/v${target}"
+fi
+if [ -z "$installed" ]; then
+    log "[mira] To configure providers, run: ${MIRA_BIN} setup"
+fi
 exec "$MIRA_BIN" "$@"

@@ -80,6 +80,19 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+### Added
+- **Self-updating wrapper** -- The plugin wrapper now checks GitHub for new releases every 24 hours and auto-updates the binary. Uses redirect-based version checks (no API rate limit), TTL-cached results, and graceful fallback when offline.
+- **SHA256 checksum verification** -- Downloaded binaries are verified against checksums published with each release. The release workflow now generates and uploads `checksums.sha256`.
+- **Version pinning** -- Set `MIRA_VERSION_PIN=X.Y.Z` to lock the wrapper to a specific version and skip auto-updates.
+
+### Changed
+- **Wrapper messaging** -- Log prefix changed from `[mira-wrapper]` to `[mira]`. Distinct messages for fresh install vs update vs up-to-date. Release notes URL shown after updates.
+- **Atomic version file writes** -- Version file now written via tmp+mv to prevent corruption from concurrent wrapper instances.
+- **Stricter shell defaults** -- Wrapper uses `set -eu` and `umask 077` for safer operation.
+
+### Removed
+- Duplicate `.example` files (`hooks.json.example`, `.mcp.json.example`) that were identical to their non-example counterparts.
+
 ## [0.6.9] - 2026-02-10
 
 ### Fixed
