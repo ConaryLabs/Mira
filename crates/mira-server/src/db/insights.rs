@@ -40,11 +40,15 @@ pub fn get_unified_insights_sync(
 }
 
 /// Dismiss a single insight by setting `dismissed = 1` on its behavior_patterns row.
+/// Scoped to project_id and insight pattern_types only.
 /// Returns whether a row was actually updated.
-pub fn dismiss_insight_sync(conn: &Connection, id: i64) -> rusqlite::Result<bool> {
+pub fn dismiss_insight_sync(conn: &Connection, project_id: i64, id: i64) -> rusqlite::Result<bool> {
     let rows = conn.execute(
-        "UPDATE behavior_patterns SET dismissed = 1 WHERE id = ?1 AND (dismissed IS NULL OR dismissed = 0)",
-        params![id],
+        "UPDATE behavior_patterns SET dismissed = 1 \
+         WHERE id = ?1 AND project_id = ?2 \
+           AND pattern_type LIKE 'insight_%' \
+           AND (dismissed IS NULL OR dismissed = 0)",
+        params![id, project_id],
     )?;
     Ok(rows > 0)
 }

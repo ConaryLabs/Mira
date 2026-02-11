@@ -196,10 +196,17 @@ async fn dismiss_insight<C: ToolContext>(
 ) -> Result<Json<SessionOutput>, String> {
     let id = insight_id.ok_or("insight_id is required for dismiss_insight action")?;
 
+    let project = ctx.get_project().await;
+    let project_id = project
+        .as_ref()
+        .map(|p| p.id)
+        .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
+
     let updated = ctx
         .pool()
         .run(move |conn| {
-            dismiss_insight_sync(conn, id).map_err(|e| format!("Failed to dismiss insight: {}", e))
+            dismiss_insight_sync(conn, project_id, id)
+                .map_err(|e| format!("Failed to dismiss insight: {}", e))
         })
         .await?;
 

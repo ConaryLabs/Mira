@@ -3096,3 +3096,188 @@ async fn test_recipe_get_not_found() {
         Ok(_) => panic!("Expected error for nonexistent recipe"),
     }
 }
+
+// =========================================================================
+// Dismiss Insight Tests
+// =========================================================================
+
+/// Helper: insert a behavior_patterns row and return its id
+async fn insert_behavior_pattern(
+    ctx: &TestContext,
+    project_id: i64,
+    pattern_type: &str,
+    pattern_key: &str,
+) -> i64 {
+    let pt = pattern_type.to_string();
+    let pk = pattern_key.to_string();
+    ctx.pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO behavior_patterns (project_id, pattern_type, pattern_key, pattern_data, confidence, last_triggered_at)
+                 VALUES (?1, ?2, ?3, '{\"description\":\"test insight\"}', 0.8, datetime('now'))",
+                rusqlite::params![project_id, pt, pk],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok::<i64, String>(conn.last_insert_rowid())
+        })
+        .await
+        .expect("Failed to insert behavior_pattern")
+}
+
+/// Helper: check if a row has dismissed = 1
+async fn is_dismissed(ctx: &TestContext, row_id: i64) -> bool {
+    ctx.pool()
+        .run(move |conn| {
+            let dismissed: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(dismissed, 0) FROM behavior_patterns WHERE id = ?1",
+                    rusqlite::params![row_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            Ok::<bool, String>(dismissed == 1)
+        })
+        .await
+        .expect("Failed to query dismissed status")
+}
+
+#[tokio::test]
+async fn test_dismiss_insight_success() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
+    let ctx = TestContext::new().await;
+
+    // Set up a project
+    session_start(&ctx, "/tmp/test_dismiss".into(), Some("Dismiss Test".into()), None)
+        .await
+        .expect("session_start failed");
+    let project = ctx.get_project().await.expect("project should be set");
+
+    // Insert an insight for this project
+    let row_id = insert_behavior_pattern(&ctx, project.id, "insight_friction", "test_dismiss_1").await;
+
+    // Dismiss it
+    let req = SessionRequest {
+        action: SessionAction::DismissInsight,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+        insight_id: Some(row_id),
+    };
+    let result = handle_session(&ctx, req).await;
+    assert!(result.is_ok(), "dismiss_insight failed: {:?}", result.err());
+    let output = result.unwrap();
+    assert!(
+        msg!(output).contains("dismissed"),
+        "Expected 'dismissed' in output: {}",
+        msg!(output)
+    );
+    assert!(is_dismissed(&ctx, row_id).await, "Row should be dismissed");
+}
+
+#[tokio::test]
+async fn test_dismiss_insight_cross_project_blocked() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
+    let ctx = TestContext::new().await;
+
+    // Set up project A and insert an insight
+    session_start(&ctx, "/tmp/test_dismiss_a".into(), Some("Project A".into()), None)
+        .await
+        .expect("session_start failed");
+    let project_a = ctx.get_project().await.expect("project A should be set");
+    let row_id = insert_behavior_pattern(&ctx, project_a.id, "insight_friction", "cross_project_1").await;
+
+    // Switch to project B
+    session_start(&ctx, "/tmp/test_dismiss_b".into(), Some("Project B".into()), None)
+        .await
+        .expect("session_start failed");
+
+    // Try to dismiss project A's insight from project B's context
+    let req = SessionRequest {
+        action: SessionAction::DismissInsight,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+        insight_id: Some(row_id),
+    };
+    let result = handle_session(&ctx, req).await;
+    assert!(result.is_ok(), "dismiss_insight should not error: {:?}", result.err());
+    let output = result.unwrap();
+    assert!(
+        msg!(output).contains("not found"),
+        "Expected 'not found' for cross-project dismiss: {}",
+        msg!(output)
+    );
+    assert!(!is_dismissed(&ctx, row_id).await, "Row should NOT be dismissed");
+}
+
+#[tokio::test]
+async fn test_dismiss_insight_non_insight_pattern_blocked() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
+    let ctx = TestContext::new().await;
+
+    // Set up project
+    session_start(&ctx, "/tmp/test_dismiss_type".into(), Some("Type Test".into()), None)
+        .await
+        .expect("session_start failed");
+    let project = ctx.get_project().await.expect("project should be set");
+
+    // Insert a non-insight behavior pattern (e.g., file_sequence)
+    let row_id = insert_behavior_pattern(&ctx, project.id, "file_sequence", "not_an_insight").await;
+
+    // Try to dismiss it — should be blocked by pattern_type filter
+    let req = SessionRequest {
+        action: SessionAction::DismissInsight,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+        insight_id: Some(row_id),
+    };
+    let result = handle_session(&ctx, req).await;
+    assert!(result.is_ok());
+    let output = result.unwrap();
+    assert!(
+        msg!(output).contains("not found"),
+        "Non-insight rows should not be dismissable: {}",
+        msg!(output)
+    );
+    assert!(!is_dismissed(&ctx, row_id).await, "Non-insight row should NOT be dismissed");
+}
+
+#[tokio::test]
+async fn test_dismiss_insight_requires_project() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
+    let ctx = TestContext::new().await;
+
+    // No project set — should fail with project error
+    let req = SessionRequest {
+        action: SessionAction::DismissInsight,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+        insight_id: Some(999),
+    };
+    let result = handle_session(&ctx, req).await;
+    assert!(result.is_err(), "Should fail without active project");
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("project"),
+        "Error should mention project, got: {}",
+        err
+    );
+}
