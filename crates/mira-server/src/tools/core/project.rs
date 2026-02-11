@@ -20,8 +20,8 @@ use crate::mcp::responses::{
     ProjectData, ProjectGetData, ProjectOutput, ProjectSetData, ProjectStartData,
 };
 use crate::proactive::{ProactiveConfig, interventions};
-use crate::tools::core::ToolContext;
 use crate::tools::core::claude_local;
+use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::{ResultExt, truncate};
 
 /// Session info tuple: (session_id, last_activity, summary, tool_count, tool_names)
@@ -193,7 +193,7 @@ pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>,
         })),
         None => Ok(Json(ProjectOutput {
             action: "get".into(),
-            message: "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".into(),
+            message: NO_ACTIVE_PROJECT_ERROR.to_string(),
             data: None,
         })),
     }

@@ -698,7 +698,9 @@ mod tests {
 
     /// Helper to create a project in the test DB, returning its ID.
     fn seed_project(conn: &rusqlite::Connection, path: &str) -> i64 {
-        crate::db::get_or_create_project_sync(conn, path, None).unwrap().0
+        crate::db::get_or_create_project_sync(conn, path, None)
+            .unwrap()
+            .0
     }
 
     #[test]

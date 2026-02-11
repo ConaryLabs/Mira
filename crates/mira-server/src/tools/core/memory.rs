@@ -658,7 +658,7 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
     let Some(scope_info) = scope_info else {
         return Ok(Json(MemoryOutput {
             action: "forget".into(),
-            message: format!("Memory {} not found.", id),
+            message: format!("Memory '{}' not found", id),
             data: None,
         }));
     };
@@ -686,7 +686,7 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
     } else {
         Ok(Json(MemoryOutput {
             action: "forget".into(),
-            message: format!("Memory {} not found.", id),
+            message: format!("Memory '{}' not found", id),
             data: None,
         }))
     }
@@ -709,7 +709,7 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
     let Some(scope_info) = scope_info else {
         return Ok(Json(MemoryOutput {
             action: "archive".into(),
-            message: format!("Memory {} not found.", id),
+            message: format!("Memory '{}' not found", id),
             data: None,
         }));
     };
@@ -747,7 +747,7 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
     } else {
         Ok(Json(MemoryOutput {
             action: "archive".into(),
-            message: format!("Memory {} not found.", id),
+            message: format!("Memory '{}' not found", id),
             data: None,
         }))
     }

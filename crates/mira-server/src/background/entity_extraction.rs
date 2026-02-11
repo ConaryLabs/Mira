@@ -55,7 +55,9 @@ pub async fn process_entity_backfill(pool: &Arc<DatabasePool>) -> Result<usize, 
                     }
                     Ok(())
                 })() {
-                    Ok(()) => { sp.commit()?; }
+                    Ok(()) => {
+                        sp.commit()?;
+                    }
                     Err(e) => {
                         tracing::warn!("Entity backfill: skipping fact {}: {}", fact_id, e);
                         sp.rollback()?;

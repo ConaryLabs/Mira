@@ -4,6 +4,9 @@
 //! and return `Result<String, String>` for consistent error handling.
 
 use async_trait::async_trait;
+
+/// Standard error message when no project is active.
+pub const NO_ACTIVE_PROJECT_ERROR: &str = "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.";
 use mira_types::{ProjectContext, WsEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

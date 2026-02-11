@@ -118,7 +118,7 @@ impl FileWatcher {
                                     // Use try_send to avoid blocking the notify callback
                                     // thread when the channel is full
                                     if let Err(e) = tx_clone.try_send((path, ct)) {
-                                        tracing::debug!(
+                                        tracing::warn!(
                                             "File change dropped (channel full or closed): {}",
                                             e
                                         );

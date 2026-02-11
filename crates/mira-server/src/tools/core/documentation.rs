@@ -11,7 +11,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     DocData, DocGetData, DocInventoryData, DocInventoryItem, DocListData, DocOutput, DocTaskItem,
 };
-use crate::tools::core::ToolContext;
+use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use std::collections::BTreeMap;
 
 /// List documentation that needs to be written or updated
@@ -23,10 +23,7 @@ pub async fn list_doc_tasks(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Json<DocOutput>, String> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let tasks = ctx
         .pool()
@@ -145,17 +142,14 @@ pub async fn get_doc_task_details(
     task_id: i64,
 ) -> Result<Json<DocOutput>, String> {
     // Require active project
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let current_project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     // Get task
     let task = ctx
         .pool()
         .run(move |conn| get_doc_task(conn, task_id))
         .await?
-        .ok_or(format!("Task {} not found", task_id))?;
+        .ok_or(format!("Task '{}' not found", task_id))?;
 
     // Verify task belongs to current project
     let task_project_id = task.project_id.ok_or("No project_id on task")?;
@@ -285,17 +279,14 @@ pub async fn complete_doc_task(
     task_id: i64,
 ) -> Result<Json<DocOutput>, String> {
     // Require active project
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let current_project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     // Verify task exists and is pending
     let task = ctx
         .pool()
         .run(move |conn| get_doc_task(conn, task_id))
         .await?
-        .ok_or(format!("Task {} not found", task_id))?;
+        .ok_or(format!("Task '{}' not found", task_id))?;
 
     // Verify task belongs to current project
     if task.project_id != Some(current_project_id) {
@@ -331,17 +322,14 @@ pub async fn skip_doc_task(
     reason: Option<String>,
 ) -> Result<Json<DocOutput>, String> {
     // Require active project
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let current_project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     // Verify task exists and belongs to current project
     let task = ctx
         .pool()
         .run(move |conn| get_doc_task(conn, task_id))
         .await?
-        .ok_or(format!("Task {} not found", task_id))?;
+        .ok_or(format!("Task '{}' not found", task_id))?;
 
     if task.project_id != Some(current_project_id) {
         return Err(format!("Task {} belongs to a different project.", task_id));
@@ -376,10 +364,7 @@ pub async fn batch_skip_doc_tasks(
     doc_type: Option<String>,
     priority: Option<String>,
 ) -> Result<Json<DocOutput>, String> {
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let current_project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let skip_reason = reason.unwrap_or_else(|| "Batch skipped by user".to_string());
 
@@ -395,7 +380,7 @@ pub async fn batch_skip_doc_tasks(
                 .pool()
                 .run(move |conn| get_doc_task(conn, id))
                 .await?
-                .ok_or(format!("Task {} not found", id))?;
+                .ok_or(format!("Task '{}' not found", id))?;
             tasks.push(task);
         }
         tasks
@@ -466,9 +451,7 @@ pub async fn batch_skip_doc_tasks(
 pub async fn show_doc_inventory(
     ctx: &(impl ToolContext + ?Sized),
 ) -> Result<Json<DocOutput>, String> {
-    let project_id_opt = ctx.project_id().await;
-    let project_id =
-        project_id_opt.ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let inventory = ctx
         .pool()
@@ -601,9 +584,7 @@ fn get_doc_impact_data(
 pub async fn scan_documentation(
     ctx: &(impl ToolContext + ?Sized),
 ) -> Result<Json<DocOutput>, String> {
-    let project_id_opt = ctx.project_id().await;
-    let project_id =
-        project_id_opt.ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     // Clear the scan marker to force new scan
     ctx.pool()

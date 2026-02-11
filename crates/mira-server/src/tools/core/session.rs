@@ -11,8 +11,8 @@ use crate::mcp::responses::{
     HistoryEntry, InsightItem, InsightsData, ReplyOutput, SessionCurrentData, SessionData,
     SessionHistoryData, SessionListData, SessionOutput, SessionSummary,
 };
-use crate::tools::core::ToolContext;
 use crate::tools::core::session_notes;
+use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::{truncate, truncate_at_boundary};
 use mira_types::{AgentRole, WsEvent};
 use uuid::Uuid;
@@ -95,7 +95,7 @@ async fn query_insights<C: ToolContext>(
     let project_id = project
         .as_ref()
         .map(|p| p.id)
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+        .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.3);
@@ -224,7 +224,7 @@ pub(crate) async fn session_history<C: ToolContext>(
             let project_id = project
                 .as_ref()
                 .map(|p| p.id)
-                .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+                .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
             let sessions = ctx
                 .pool()

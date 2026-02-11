@@ -6,15 +6,12 @@ use crate::mcp::responses::{
     CodeData, CodeOutput, DebtFactor, DependenciesData, DependencyEdge, ModulePatterns,
     PatternEntry, PatternsData, TechDebtData, TechDebtModule, TechDebtTier,
 };
-use crate::tools::core::ToolContext;
+use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::ResultExt;
 
 /// Get module dependencies and circular dependency warnings
 pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let deps = ctx
         .code_pool()
@@ -99,10 +96,7 @@ pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput
 
 /// Get detected architectural patterns
 pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let patterns = ctx
         .code_pool()
@@ -183,10 +177,7 @@ pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
 pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
     use crate::background::code_health::scoring::tier_label;
 
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let scores = ctx
         .pool()

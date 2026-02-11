@@ -1,5 +1,5 @@
 use crate::db::{RankedMemory, fetch_ranked_memories_for_export_sync};
-use crate::tools::core::ToolContext;
+use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::ResultExt;
 use std::path::Path;
 
@@ -13,7 +13,7 @@ const MAX_MEMORY_BYTES: usize = 500;
 pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, String> {
     let project = ctx.get_project().await;
     let Some(project) = project else {
-        return Err("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".to_string());
+        return Err(NO_ACTIVE_PROJECT_ERROR.to_string());
     };
 
     let project_id = project.id;

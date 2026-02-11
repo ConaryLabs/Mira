@@ -32,6 +32,10 @@ pub(crate) fn validate_ref(r: &str) -> Result<(), String> {
     if r.contains('\0') || r.contains('\n') || r.contains('\r') {
         return Err("Invalid git ref: contains forbidden characters".to_string());
     }
+    // Reject characters with special meaning to git or shell
+    if r.contains('@') || r.contains('{') || r.contains('}') || r.contains('`') || r.contains('$') {
+        return Err("Invalid git ref: contains forbidden characters (@, {, }, `, $)".to_string());
+    }
     Ok(())
 }
 

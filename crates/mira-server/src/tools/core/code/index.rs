@@ -12,7 +12,7 @@ use crate::mcp::responses::{
     IndexCompactData, IndexData, IndexHealthData, IndexOutput, IndexProjectData, IndexStatusData,
     IndexSummarizeData,
 };
-use crate::tools::core::ToolContext;
+use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::ResultExt;
 
 /// Index project
@@ -32,8 +32,10 @@ pub async fn index<C: ToolContext>(
             {
                 let project = ctx.get_project().await;
                 let project_path = path
-                .or_else(|| project.as_ref().map(|p| p.path.clone()))
-                .ok_or("path is required for index(action=project). No active project to fall back on — call project(action=\"start\", project_path=\"/your/path\") first, or provide a path directly.")?;
+                    .or_else(|| project.as_ref().map(|p| p.path.clone()))
+                    .ok_or_else(|| {
+                        format!("{} Provide a path directly.", NO_ACTIVE_PROJECT_ERROR)
+                    })?;
 
                 let project_id = project.as_ref().map(|p| p.id);
 
@@ -225,9 +227,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
     let (project_id, project_path) = match project.as_ref() {
         Some(p) => (p.id, p.path.clone()),
         None => {
-            return Err(
-                "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".to_string(),
-            );
+            return Err(NO_ACTIVE_PROJECT_ERROR.to_string());
         }
     };
 
@@ -343,9 +343,7 @@ pub async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput
     let (project_id, project_path) = match project.as_ref() {
         Some(p) => (p.id, p.path.clone()),
         None => {
-            return Err(
-                "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".to_string(),
-            );
+            return Err(NO_ACTIVE_PROJECT_ERROR.to_string());
         }
     };
 

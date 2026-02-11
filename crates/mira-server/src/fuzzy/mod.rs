@@ -2,6 +2,7 @@
 // Nucleo-based fuzzy fallback search for code chunks and memories
 
 use crate::db::pool::DatabasePool;
+use crate::tools::core::NO_ACTIVE_PROJECT_ERROR;
 use crate::utils::ResultExt;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
@@ -143,8 +144,7 @@ impl FuzzyCache {
             }
         }
 
-        let project_id_for_query =
-            project_id.ok_or("No active project. Auto-detection failed \u{2014} call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+        let project_id_for_query = project_id.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
         let items: Vec<FuzzyCodeItem> = code_pool
             .run(move |conn| {
                 let mut stmt = conn.prepare(

@@ -16,7 +16,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     DiffAnalysisData, DiffData, DiffOutput, HistoricalRiskData, PatternMatchInfo,
 };
-use crate::tools::core::{ToolContext, get_project_info};
+use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext, get_project_info};
 use crate::utils::truncate;
 
 /// Analyze git diff semantically
@@ -44,9 +44,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     let project_path = match pi.path {
         Some(ref p) => p.clone(),
         None => {
-            return Err(
-                "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.".to_string(),
-            );
+            return Err(NO_ACTIVE_PROJECT_ERROR.to_string());
         }
     };
     let project_id = pi.id;

@@ -7,6 +7,7 @@
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::llm::{LlmClient, ProviderFactory};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -27,6 +28,12 @@ const IDLE_DELAY_SECS: u64 = 60;
 const TASK_TIMEOUT_SECS: u64 = 120;
 /// If the previous cycle took longer than this, skip low-priority tasks
 const LONG_CYCLE_THRESHOLD_SECS: u64 = 60;
+
+/// Circuit breaker: max consecutive failures before suppressing warnings
+const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
+/// Circuit breaker: backoff multiplier for warning suppression
+/// Warning is logged every 2^failures cycles (capped at 2^6 = 64)
+const CIRCUIT_BREAKER_MAX_EXPONENT: u32 = 6;
 
 /// Run documentation tasks every Nth cycle
 const DOCUMENTATION_CYCLE_INTERVAL: u64 = 3;
@@ -213,6 +220,15 @@ fn task_schedule() -> Vec<ScheduledTask> {
     ]
 }
 
+/// Tracks failure state for a single task type
+#[derive(Debug, Clone, Default)]
+struct TaskFailureState {
+    /// Consecutive failure count
+    count: u32,
+    /// Last cycle where we logged a warning
+    last_warn_cycle: u64,
+}
+
 /// Slow lane worker for LLM-dependent background tasks
 pub struct SlowLaneWorker {
     /// Main database pool (sessions, memory, LLM usage, etc.)
@@ -226,6 +242,8 @@ pub struct SlowLaneWorker {
     cycle_count: u64,
     /// Duration of the previous cycle, used to decide whether to skip low-priority tasks
     last_cycle_duration: Duration,
+    /// Tracks failure counts per task for circuit breaker pattern
+    failure_states: HashMap<String, TaskFailureState>,
 }
 
 impl SlowLaneWorker {
@@ -244,6 +262,7 @@ impl SlowLaneWorker {
             shutdown,
             cycle_count: 0,
             last_cycle_duration: Duration::ZERO,
+            failure_states: HashMap::new(),
         }
     }
 
@@ -361,114 +380,111 @@ impl SlowLaneWorker {
     /// The exhaustive match ensures new `BackgroundTask` variants cause a compile error
     /// until their dispatch logic is added here.
     async fn dispatch_task(
-        &self,
+        &mut self,
         task: BackgroundTask,
         client: Option<&Arc<dyn LlmClient>>,
     ) -> usize {
         let name = task.to_string();
+
+        // Clone pools and other needed data upfront to avoid borrow issues with &mut self
+        let pool = self.pool.clone();
+        let code_pool = self.code_pool.clone();
+        let cycle_count = self.cycle_count;
+
         match task {
             BackgroundTask::StaleSessions => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    session_summaries::process_stale_sessions(&self.pool, client),
+                    session_summaries::process_stale_sessions(&pool, client),
                 )
                 .await
             }
             BackgroundTask::Summaries => {
-                Self::run_task(
-                    &name,
-                    summaries::process_queue(&self.code_pool, &self.pool, client),
-                )
-                .await
+                self.run_task(&name, summaries::process_queue(&code_pool, &pool, client))
+                    .await
             }
             BackgroundTask::Briefings => {
-                Self::run_task(&name, briefings::process_briefings(&self.pool, client)).await
+                self.run_task(&name, briefings::process_briefings(&pool, client))
+                    .await
             }
             BackgroundTask::DocumentationTasks => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    documentation::process_documentation(&self.pool, &self.code_pool, client),
+                    documentation::process_documentation(&pool, &code_pool, client),
                 )
                 .await
             }
             BackgroundTask::HealthFastScans => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    code_health::process_health_fast_scans(&self.pool, &self.code_pool),
+                    code_health::process_health_fast_scans(&pool, &code_pool),
                 )
                 .await
             }
             BackgroundTask::HealthLlmComplexity => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    code_health::process_health_llm_complexity(&self.pool, &self.code_pool, client),
+                    code_health::process_health_llm_complexity(&pool, &code_pool, client),
                 )
                 .await
             }
             BackgroundTask::HealthLlmErrorQuality => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    code_health::process_health_llm_error_quality(
-                        &self.pool,
-                        &self.code_pool,
-                        client,
-                    ),
+                    code_health::process_health_llm_error_quality(&pool, &code_pool, client),
                 )
                 .await
             }
             BackgroundTask::HealthModuleAnalysis => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    code_health::process_health_module_analysis(&self.pool, &self.code_pool),
+                    code_health::process_health_module_analysis(&pool, &code_pool),
                 )
                 .await
             }
             BackgroundTask::PonderingInsights => {
-                Self::run_task(&name, pondering::process_pondering(&self.pool, client)).await
+                self.run_task(&name, pondering::process_pondering(&pool, client))
+                    .await
             }
             BackgroundTask::InsightCleanup => {
-                Self::run_task(&name, pondering::cleanup_stale_insights(&self.pool)).await
+                self.run_task(&name, pondering::cleanup_stale_insights(&pool))
+                    .await
             }
             BackgroundTask::ProactiveCleanup => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    crate::proactive::background::cleanup_expired_suggestions(&self.pool),
+                    crate::proactive::background::cleanup_expired_suggestions(&pool),
                 )
                 .await
             }
             BackgroundTask::DiffOutcomes => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    outcome_scanner::process_outcome_scanning(&self.pool, &self.code_pool),
+                    outcome_scanner::process_outcome_scanning(&pool, &code_pool),
                 )
                 .await
             }
             BackgroundTask::TeamMonitor => {
-                Self::run_task(&name, team_monitor::process_team_monitor(&self.pool)).await
+                self.run_task(&name, team_monitor::process_team_monitor(&pool))
+                    .await
             }
             BackgroundTask::ProactiveItems => {
-                Self::run_task(
+                self.run_task(
                     &name,
-                    crate::proactive::background::process_proactive(
-                        &self.pool,
-                        client,
-                        self.cycle_count,
-                    ),
+                    crate::proactive::background::process_proactive(&pool, client, cycle_count),
                 )
                 .await
             }
             BackgroundTask::EntityBackfills => {
-                Self::run_task(
-                    &name,
-                    entity_extraction::process_entity_backfill(&self.pool),
-                )
-                .await
+                self.run_task(&name, entity_extraction::process_entity_backfill(&pool))
+                    .await
             }
             BackgroundTask::MemoryEmbeddings => {
                 if let Some(ref emb) = self.embeddings {
-                    Self::run_task(
+                    let emb = emb.clone();
+                    self.run_task(
                         &name,
-                        memory_embeddings::process_memory_embeddings(&self.pool, emb),
+                        memory_embeddings::process_memory_embeddings(&pool, &emb),
                     )
                     .await
                 } else {
@@ -476,8 +492,7 @@ impl SlowLaneWorker {
                 }
             }
             BackgroundTask::DataRetention => {
-                let pool = self.pool.clone();
-                Self::run_task(&name, async move {
+                self.run_task(&name, async move {
                     pool.run(crate::db::retention::run_data_retention_sync)
                         .await
                 })
@@ -488,29 +503,85 @@ impl SlowLaneWorker {
 
     /// Run a background task with a timeout. Errors and timeouts are caught and
     /// logged so that one failing subsystem cannot starve others.
+    /// Implements circuit breaker pattern to reduce log spam from repeatedly failing tasks.
     async fn run_task(
+        &mut self,
         name: &str,
         fut: impl std::future::Future<Output = Result<usize, String>>,
     ) -> usize {
-        match timeout(Duration::from_secs(TASK_TIMEOUT_SECS), fut).await {
+        let result = timeout(Duration::from_secs(TASK_TIMEOUT_SECS), fut).await;
+
+        match result {
             Ok(Ok(count)) => {
+                // Reset failure count on success
+                if self.failure_states.contains_key(name) {
+                    self.failure_states.remove(name);
+                }
                 if count > 0 {
                     tracing::info!("Slow lane: processed {} {}", count, name);
                 }
                 count
             }
             Ok(Err(e)) => {
-                tracing::warn!("Slow lane task '{}' failed: {}", name, e);
+                self.handle_task_failure(name, &format!("failed: {e}"))
+                    .await;
                 0
             }
             Err(_) => {
-                tracing::warn!(
-                    "Slow lane task '{}' timed out after {}s",
-                    name,
-                    TASK_TIMEOUT_SECS
-                );
+                self.handle_task_failure(name, &format!("timed out after {TASK_TIMEOUT_SECS}s"))
+                    .await;
                 0
             }
+        }
+    }
+
+    /// Handle task failure with circuit breaker pattern.
+    /// Tracks consecutive failures and suppresses warnings using exponential backoff.
+    async fn handle_task_failure(&mut self, name: &str, reason: &str) {
+        let state = self.failure_states.entry(name.to_string()).or_default();
+
+        state.count += 1;
+
+        // Determine if we should log a warning based on circuit breaker state
+        let should_warn = if state.count <= CIRCUIT_BREAKER_THRESHOLD {
+            // Always warn for first few failures
+            true
+        } else {
+            // Use exponential backoff: warn every 2^(count - threshold) cycles
+            let exponent =
+                (state.count - CIRCUIT_BREAKER_THRESHOLD).min(CIRCUIT_BREAKER_MAX_EXPONENT);
+            let interval = 1u64 << exponent;
+            self.cycle_count.saturating_sub(state.last_warn_cycle) >= interval
+        };
+
+        if should_warn {
+            if state.count > CIRCUIT_BREAKER_THRESHOLD {
+                tracing::warn!(
+                    "Slow lane task '{}' {} (failure #{}, suppressing future warnings for {} cycles)",
+                    name,
+                    reason,
+                    state.count,
+                    1u64 << (state.count - CIRCUIT_BREAKER_THRESHOLD)
+                        .min(CIRCUIT_BREAKER_MAX_EXPONENT)
+                );
+            } else {
+                tracing::warn!(
+                    "Slow lane task '{}' {} (failure #{}/{})",
+                    name,
+                    reason,
+                    state.count,
+                    CIRCUIT_BREAKER_THRESHOLD
+                );
+            }
+            state.last_warn_cycle = self.cycle_count;
+        } else {
+            // Log at debug level so the failure is still traceable
+            tracing::debug!(
+                "Slow lane task '{}' {} (failure #{}, suppressed)",
+                name,
+                reason,
+                state.count
+            );
         }
     }
 }
@@ -705,6 +776,7 @@ mod tests {
             shutdown: rx,
             cycle_count: 0,
             last_cycle_duration,
+            failure_states: HashMap::new(),
         }
     }
 }
