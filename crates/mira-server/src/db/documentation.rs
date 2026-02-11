@@ -238,7 +238,11 @@ pub fn reset_orphaned_doc_tasks(
         let full_path = Path::new(project_path).join(&target_path);
 
         // Validate path stays within project root (prevent directory traversal)
-        let canonical_full = full_path.canonicalize().unwrap_or(full_path.clone());
+        // Use canonicalize when possible, but for non-existent paths fall back to
+        // lexical normalization that strips '..' components
+        let canonical_full = full_path
+            .canonicalize()
+            .unwrap_or_else(|_| normalize_lexical(&full_path));
         if !canonical_full.starts_with(&canonical_project) {
             continue;
         }
@@ -261,6 +265,24 @@ pub fn reset_orphaned_doc_tasks(
     }
 
     Ok(reset_count)
+}
+
+/// Lexically normalize a path by resolving `.` and `..` components without
+/// filesystem access. Used as a fallback when `canonicalize()` fails (path
+/// doesn't exist) to prevent directory traversal via `../` in stored paths.
+fn normalize_lexical(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Parameters for upserting documentation inventory
@@ -294,6 +316,9 @@ pub fn upsert_doc_inventory(
             last_seen_commit = excluded.last_seen_commit,
             is_stale = 0,
             staleness_reason = NULL,
+            change_impact = NULL,
+            change_summary = NULL,
+            impact_analyzed_at = NULL,
             verified_at = CURRENT_TIMESTAMP
         RETURNING id",
         params![

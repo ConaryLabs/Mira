@@ -116,7 +116,7 @@ pub async fn list_doc_tasks(
             reason: task.reason.clone(),
         })
         .collect();
-    let total = items.len();
+    let total = total_unfiltered;
 
     Ok(Json(DocOutput {
         action: "list".into(),
@@ -576,7 +576,7 @@ fn get_doc_impact_data(
     let mut stmt = conn
         .prepare(
             "SELECT id, change_impact, change_summary FROM documentation_inventory
-             WHERE project_id = ? AND change_impact IS NOT NULL AND change_summary IS NOT NULL",
+             WHERE project_id = ? AND is_stale = 1 AND change_impact IS NOT NULL AND change_summary IS NOT NULL",
         )
         .str_err()?;
 
