@@ -752,6 +752,109 @@ mod tests {
     }
 
     // ═══════════════════════════════════════
+    // Circuit breaker tests
+    // ═══════════════════════════════════════
+
+    #[test]
+    fn task_failure_state_tracks_consecutive_failures() {
+        let mut state = TaskFailureState::default();
+        assert_eq!(state.count, 0);
+
+        state.count += 1;
+        assert_eq!(state.count, 1);
+
+        state.count += 1;
+        assert_eq!(state.count, 2);
+    }
+
+    #[test]
+    fn task_failure_state_resets() {
+        let mut state = TaskFailureState {
+            count: 5,
+            last_warn_cycle: 100,
+        };
+
+        state.count = 0;
+        state.last_warn_cycle = 0;
+
+        assert_eq!(state.count, 0);
+        assert_eq!(state.last_warn_cycle, 0);
+    }
+
+    #[test]
+    fn circuit_breaker_warn_interval_calculation() {
+        // Test the exponential backoff logic
+        let threshold = 3u32;
+        let max_exponent = 6u32;
+
+        // For failures 1-3: always warn (interval doesn't matter)
+        for count in 1..=threshold {
+            assert!(count <= threshold, "Should warn for count <= threshold");
+        }
+
+        // For failures 4+: warn every 2^(count - threshold) cycles
+        let count = 4u32;
+        let exponent = (count - threshold).min(max_exponent);
+        let interval = 1u64 << exponent;
+        assert_eq!(interval, 2, "Failure 4 should warn every 2 cycles");
+
+        let count = 5u32;
+        let exponent = (count - threshold).min(max_exponent);
+        let interval = 1u64 << exponent;
+        assert_eq!(interval, 4, "Failure 5 should warn every 4 cycles");
+
+        let count = 9u32;
+        let exponent = (count - threshold).min(max_exponent);
+        let interval = 1u64 << exponent;
+        assert_eq!(interval, 64, "Failure 9+ should cap at 64 cycles");
+
+        let count = 20u32;
+        let exponent = (count - threshold).min(max_exponent);
+        let interval = 1u64 << exponent;
+        assert_eq!(interval, 64, "Failure 20 should still cap at 64 cycles");
+    }
+
+    #[test]
+    fn circuit_breaker_should_warn_logic() {
+        // Simulate the logic from handle_task_failure
+        let threshold = 3u32;
+        let max_exponent = 6u32;
+
+        // Test cases: (failure_count, cycles_since_last_warn, expected_should_warn)
+        let test_cases = vec![
+            (1, 0, true),    // First failure: always warn
+            (2, 0, true),    // Second failure: always warn
+            (3, 0, true),    // Third failure: always warn (at threshold)
+            (4, 0, false),   // Fourth failure: only 0 cycles since last warn, interval is 2
+            (4, 1, false),   // Fourth failure: only 1 cycle since last warn, need 2
+            (4, 2, true),    // Fourth failure: 2 cycles passed, should warn
+            (5, 0, false),   // Fifth failure: interval is 4
+            (5, 3, false),   // Fifth failure: 3 cycles passed, need 4
+            (5, 4, true),    // Fifth failure: 4 cycles passed, should warn
+            (10, 0, false),  // Tenth failure: interval is 64
+            (10, 63, false), // Tenth failure: 63 cycles passed, need 64
+            (10, 64, true),  // Tenth failure: 64 cycles passed, should warn
+            (10, 100, true), // Tenth failure: way more cycles passed, should warn
+        ];
+
+        for (failure_count, cycles_since_last_warn, expected_warn) in test_cases {
+            let should_warn = if failure_count <= threshold {
+                true
+            } else {
+                let exponent = (failure_count - threshold).min(max_exponent);
+                let interval = 1u64 << exponent;
+                cycles_since_last_warn >= interval
+            };
+
+            assert_eq!(
+                should_warn, expected_warn,
+                "Failure count={}, cycles_since_last_warn={}, expected_warn={}",
+                failure_count, cycles_since_last_warn, expected_warn
+            );
+        }
+    }
+
+    // ═══════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════
 

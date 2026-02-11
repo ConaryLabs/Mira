@@ -16,7 +16,8 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{RwLock, mpsc, watch};
 
 /// Supported file extensions
@@ -24,6 +25,14 @@ const SUPPORTED_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "g
 
 /// Debounce duration for rapid file changes
 const DEBOUNCE_MS: u64 = 500;
+
+/// Minimum interval between warnings about dropped file events (seconds)
+const DROP_WARN_INTERVAL_SECS: u64 = 60;
+
+/// Static counter for dropped events between warnings
+static DROPPED_EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
+/// Static timestamp of last warning (seconds since epoch)
+static LAST_DROP_WARNING: AtomicU64 = AtomicU64::new(0);
 
 /// Pending change entry: (change_type, last_attempt, retry_count)
 type PendingChange = (ChangeType, Instant, u32);
@@ -117,11 +126,37 @@ impl FileWatcher {
                                 if Self::should_process_path(&path) {
                                     // Use try_send to avoid blocking the notify callback
                                     // thread when the channel is full
-                                    if let Err(e) = tx_clone.try_send((path, ct)) {
-                                        tracing::warn!(
-                                            "File change dropped (channel full or closed): {}",
-                                            e
-                                        );
+                                    if tx_clone.try_send((path, ct)).is_err() {
+                                        // Rate-limit warnings to avoid log flooding under load
+                                        let prev_count =
+                                            DROPPED_EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
+                                        let now = SystemTime::now()
+                                            .duration_since(UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs();
+                                        let last_warn = LAST_DROP_WARNING.load(Ordering::Relaxed);
+
+                                        if now.saturating_sub(last_warn) >= DROP_WARN_INTERVAL_SECS
+                                        {
+                                            // Try to update last warning time - only one thread will succeed
+                                            if LAST_DROP_WARNING
+                                                .compare_exchange(
+                                                    last_warn,
+                                                    now,
+                                                    Ordering::Relaxed,
+                                                    Ordering::Relaxed,
+                                                )
+                                                .is_ok()
+                                            {
+                                                let total_dropped = prev_count + 1;
+                                                tracing::warn!(
+                                                    "File watcher dropped {} event(s) in last {}s (channel full)",
+                                                    total_dropped,
+                                                    DROP_WARN_INTERVAL_SECS
+                                                );
+                                                DROPPED_EVENT_COUNT.store(0, Ordering::Relaxed);
+                                            }
+                                        }
                                     }
                                 }
                             }
