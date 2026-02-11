@@ -170,8 +170,15 @@ impl ProviderFactory {
         self.default_provider
     }
 
-    /// Check if any providers are available (including sampling fallback)
+    /// Check if any API-key-based LLM providers are available.
+    /// Does NOT count MCP sampling peer — use this to gate background work
+    /// and other operations that need a dedicated LLM client.
     pub fn has_providers(&self) -> bool {
+        !self.clients.is_empty()
+    }
+
+    /// Check if any LLM capability exists (API keys OR MCP sampling fallback).
+    pub fn has_any_capability(&self) -> bool {
         !self.clients.is_empty() || self.sampling_peer.is_some()
     }
 }
@@ -202,6 +209,7 @@ mod tests {
     fn test_empty_factory_has_no_providers() {
         let factory = empty_factory();
         assert!(!factory.has_providers());
+        assert!(!factory.has_any_capability());
         assert!(factory.available_providers().is_empty());
     }
 

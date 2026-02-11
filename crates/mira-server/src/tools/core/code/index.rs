@@ -256,7 +256,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
         module.code_preview = cartographer::get_module_code_preview(project_path_ref, &module.path);
     }
 
-    let summaries = if let Some(llm_client) = llm_client {
+    let (summaries, used_llm) = if let Some(llm_client) = llm_client {
         // LLM path (system prompt first for KV cache optimization)
         let prompt = cartographer::build_summary_prompt(&modules);
         let messages = vec![
@@ -287,19 +287,19 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
                 content
             ));
         }
-        parsed
+        (parsed, true)
     } else {
         // Heuristic fallback — no LLM available
         let heuristic = generate_heuristic_summaries(&modules);
         if heuristic.is_empty() {
             return Err("No modules could be summarized heuristically.".to_string());
         }
-        heuristic.into_iter().collect()
+        (heuristic.into_iter().collect(), false)
     };
 
     // Update database (code DB)
-    // Only clear cached modules when using LLM summaries (heuristic ones are upgradeable)
-    let has_llm = ctx.llm_factory().has_providers();
+    // Only clear cached modules when LLM actually generated summaries (heuristic ones are upgradeable)
+    let has_llm = used_llm;
     let summaries_clone = summaries.clone();
     let updated: usize = ctx
         .code_pool()

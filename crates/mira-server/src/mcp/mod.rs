@@ -113,8 +113,18 @@ impl MiraServer {
 
     /// Auto-initialize project from Claude's cwd if not already set or mismatched
     async fn maybe_auto_init_project(&self) {
-        // Read the cwd that Claude's SessionStart hook captured
-        let mut cwd = read_claude_cwd();
+        // Primary: use the MCP server's own working directory.
+        // Claude Code spawns the MCP server in the project directory, so this is
+        // process-local and immune to races with concurrent Claude Code instances.
+        let mut cwd = std::env::current_dir()
+            .ok()
+            .and_then(|p| p.to_str().map(String::from))
+            .filter(|s| !s.is_empty() && s != "/");
+
+        // Fallback: read from the hook-written file (may race with concurrent instances)
+        if cwd.is_none() {
+            cwd = read_claude_cwd();
+        }
 
         // Codex-friendly fallback: allow explicit project path via env var
         if cwd.is_none() {
