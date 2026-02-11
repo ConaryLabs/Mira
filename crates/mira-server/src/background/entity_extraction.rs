@@ -35,24 +35,32 @@ pub async fn process_entity_backfill(pool: &Arc<DatabasePool>) -> Result<usize, 
     let count = facts.len();
 
     pool.interact(move |conn| -> anyhow::Result<()> {
-        let tx = conn.unchecked_transaction()?;
+        let mut tx = conn.unchecked_transaction()?;
         for (fact_id, project_id, content) in &facts {
-            // Isolate per-fact so one bad row doesn't block the batch
-            if let Err(e) = (|| -> anyhow::Result<()> {
-                let entities = extract_entities_heuristic(content);
-                for entity in &entities {
-                    let entity_id = upsert_entity_sync(
-                        &tx,
-                        *project_id,
-                        &entity.canonical_name,
-                        entity.entity_type.as_str(),
-                        &entity.name,
-                    )?;
-                    link_entity_to_fact_sync(&tx, *fact_id, entity_id)?;
+            // Use a savepoint so a failed fact rolls back its partial writes.
+            // Block scope ensures savepoint is dropped before we borrow tx again.
+            {
+                let mut sp = tx.savepoint()?;
+                match (|| -> anyhow::Result<()> {
+                    let entities = extract_entities_heuristic(content);
+                    for entity in &entities {
+                        let entity_id = upsert_entity_sync(
+                            &sp,
+                            *project_id,
+                            &entity.canonical_name,
+                            entity.entity_type.as_str(),
+                            &entity.name,
+                        )?;
+                        link_entity_to_fact_sync(&sp, *fact_id, entity_id)?;
+                    }
+                    Ok(())
+                })() {
+                    Ok(()) => { sp.commit()?; }
+                    Err(e) => {
+                        tracing::warn!("Entity backfill: skipping fact {}: {}", fact_id, e);
+                        sp.rollback()?;
+                    }
                 }
-                Ok(())
-            })() {
-                tracing::warn!("Entity backfill: skipping fact {}: {}", fact_id, e);
             }
             // Always mark as processed, even on error, to avoid re-processing
             mark_fact_has_entities_sync(&tx, *fact_id)?;
