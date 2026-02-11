@@ -325,55 +325,6 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Tests
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::test_support::*;
-
-    #[tokio::test]
-    async fn log_behavior_inserts_event() {
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        // Seed a session so behavior tracker can reference it
-        pool.interact(move |conn| {
-            seed_session(conn, "sess-behav", project_id, "active");
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .unwrap();
-
-        // Log a user query via log_behavior
-        log_behavior(&pool, project_id, "sess-behav", "how do I add auth?").await;
-
-        // Verify session_behavior_log table has an entry
-        let count: i64 = pool
-            .interact(move |conn| {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM session_behavior_log WHERE session_id = 'sess-behav'",
-                    [],
-                    |row| row.get(0),
-                )
-                .map_err(Into::into)
-            })
-            .await
-            .unwrap();
-
-        assert!(count > 0, "expected at least one behavior log entry");
-    }
-
-    #[tokio::test]
-    async fn log_behavior_no_session_does_not_panic() {
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        // Log behavior without seeding a session — should not panic
-        log_behavior(&pool, project_id, "nonexistent-sess", "test query").await;
-    }
-}
-
 /// Get team context: lazy detection, heartbeat, and recent team discoveries.
 async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<String> {
     if session_id.is_empty() {
@@ -549,5 +500,54 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
         None
     } else {
         Some(parts.join("\n"))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::*;
+
+    #[tokio::test]
+    async fn log_behavior_inserts_event() {
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        // Seed a session so behavior tracker can reference it
+        pool.interact(move |conn| {
+            seed_session(conn, "sess-behav", project_id, "active");
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        // Log a user query via log_behavior
+        log_behavior(&pool, project_id, "sess-behav", "how do I add auth?").await;
+
+        // Verify session_behavior_log table has an entry
+        let count: i64 = pool
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM session_behavior_log WHERE session_id = 'sess-behav'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .await
+            .unwrap();
+
+        assert!(count > 0, "expected at least one behavior log entry");
+    }
+
+    #[tokio::test]
+    async fn log_behavior_no_session_does_not_panic() {
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        // Log behavior without seeding a session — should not panic
+        log_behavior(&pool, project_id, "nonexistent-sess", "test query").await;
     }
 }

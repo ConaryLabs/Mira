@@ -13,7 +13,7 @@ Mira uses environment variables for API keys and configuration. These are set in
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Optional | Powers summaries, pondering, background intelligence |
-| `ZHIPU_API_KEY` | Optional | Alternative provider: Zhipu GLM-4.7 |
+| `ZHIPU_API_KEY` | Optional | Alternative provider: Zhipu GLM-5 |
 | `OLLAMA_HOST` | Optional | Ollama base URL for local LLM (default: `http://localhost:11434`) |
 | `OLLAMA_MODEL` | Optional | Ollama model to use (default: `llama3.3`) |
 | `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |

@@ -225,6 +225,55 @@ fn build_search_query(input: &PreToolInput) -> String {
     parts.join(" ")
 }
 
+/// Query Mira for memories relevant to the search
+async fn query_relevant_memories(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+    query: &str,
+) -> Vec<String> {
+    let pool_clone = pool.clone();
+    let query = query.to_string();
+
+    let result = pool_clone
+        .interact(move |conn| {
+            // Search for relevant memories using keyword match
+            // (semantic search would be better but requires embeddings)
+            let sql = r#"
+                SELECT content, fact_type, category
+                FROM memory_facts
+                WHERE project_id = ?1
+                  AND (scope = 'project' OR scope IS NULL)
+                  AND (content LIKE '%' || ?2 || '%'
+                       OR category LIKE '%' || ?2 || '%')
+                ORDER BY created_at DESC
+                LIMIT 2
+            "#;
+
+            let mut stmt = conn.prepare(sql)?;
+            let memories: Vec<String> = stmt
+                .query_map(rusqlite::params![project_id, query], |row| {
+                    let content: String = row.get(0)?;
+                    let fact_type: Option<String> = row.get(1)?;
+                    let category: Option<String> = row.get(2)?;
+
+                    let prefix = match (fact_type.as_deref(), category.as_deref()) {
+                        (Some("decision"), _) => "[Decision]",
+                        (Some("preference"), _) => "[Preference]",
+                        (_, Some(cat)) => return Ok(format!("[{}] {}", cat, content)),
+                        _ => "[Context]",
+                    };
+                    Ok(format!("{} {}", prefix, content))
+                })?
+                .filter_map(crate::db::log_and_discard)
+                .collect();
+
+            Ok::<_, anyhow::Error>(memories)
+        })
+        .await;
+
+    result.unwrap_or_default()
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -412,53 +461,4 @@ mod tests {
         // ".*" becomes " " after cleanup, which trims to empty
         assert!(result.is_empty());
     }
-}
-
-/// Query Mira for memories relevant to the search
-async fn query_relevant_memories(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    query: &str,
-) -> Vec<String> {
-    let pool_clone = pool.clone();
-    let query = query.to_string();
-
-    let result = pool_clone
-        .interact(move |conn| {
-            // Search for relevant memories using keyword match
-            // (semantic search would be better but requires embeddings)
-            let sql = r#"
-                SELECT content, fact_type, category
-                FROM memory_facts
-                WHERE project_id = ?1
-                  AND (scope = 'project' OR scope IS NULL)
-                  AND (content LIKE '%' || ?2 || '%'
-                       OR category LIKE '%' || ?2 || '%')
-                ORDER BY created_at DESC
-                LIMIT 2
-            "#;
-
-            let mut stmt = conn.prepare(sql)?;
-            let memories: Vec<String> = stmt
-                .query_map(rusqlite::params![project_id, query], |row| {
-                    let content: String = row.get(0)?;
-                    let fact_type: Option<String> = row.get(1)?;
-                    let category: Option<String> = row.get(2)?;
-
-                    let prefix = match (fact_type.as_deref(), category.as_deref()) {
-                        (Some("decision"), _) => "[Decision]",
-                        (Some("preference"), _) => "[Preference]",
-                        (_, Some(cat)) => return Ok(format!("[{}] {}", cat, content)),
-                        _ => "[Context]",
-                    };
-                    Ok(format!("{} {}", prefix, content))
-                })?
-                .filter_map(crate::db::log_and_discard)
-                .collect();
-
-            Ok::<_, anyhow::Error>(memories)
-        })
-        .await;
-
-    result.unwrap_or_default()
 }

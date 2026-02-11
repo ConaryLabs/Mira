@@ -306,7 +306,7 @@ async fn test_save_session_snapshot_roundtrip() {
 
     // Call save_session_snapshot
     db(&pool, |conn| {
-        super::stop::save_session_snapshot(conn, "sess-snap-rt").map_err(Into::into)
+        super::stop::save_session_snapshot(conn, "sess-snap-rt")
     })
     .await;
 
@@ -358,7 +358,7 @@ async fn test_save_session_snapshot_empty_session() {
 
     // Call save_session_snapshot — should return Ok but not insert anything
     db(&pool, |conn| {
-        super::stop::save_session_snapshot(conn, "sess-empty-snap").map_err(Into::into)
+        super::stop::save_session_snapshot(conn, "sess-empty-snap")
     })
     .await;
 

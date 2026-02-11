@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 pub struct ApiKeys {
     /// DeepSeek API key (DEEPSEEK_API_KEY)
     pub deepseek: Option<String>,
-    /// Zhipu API key (ZHIPU_API_KEY) — GLM-4.7 via coding endpoint
+    /// Zhipu API key (ZHIPU_API_KEY) — GLM-5 via coding endpoint
     pub zhipu: Option<String>,
     /// Ollama host URL (OLLAMA_HOST) — local LLM, no API key needed
     pub ollama: Option<String>,

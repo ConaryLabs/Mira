@@ -5,7 +5,7 @@ LLM provider abstraction layer. Provides a unified interface for inference acros
 ## Supported Providers
 
 - **DeepSeek** — Primary provider for background LLM tasks
-- **Zhipu** — Alternative provider (GLM-4.7)
+- **Zhipu** — Alternative provider (GLM-5)
 - **Ollama** — Local LLM via Ollama (background tasks, no API key needed)
 - **MCP Sampling** — Routes through the host client
 
@@ -30,7 +30,7 @@ LLM provider abstraction layer. Provides a unified interface for inference acros
 | `provider` | `LlmClient` trait and `Provider` enum |
 | `factory` | `ProviderFactory` for client instantiation |
 | `deepseek` | DeepSeek API client |
-| `zhipu` | Zhipu GLM-4.7 API client |
+| `zhipu` | Zhipu GLM-5 API client |
 | `ollama` | Ollama API client (local LLM, OpenAI-compatible) |
 | `sampling` | MCP Sampling-based provider (routes through host client) |
 | `openai_compat` | Shared OpenAI-compatible request/response format |

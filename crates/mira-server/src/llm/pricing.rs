@@ -87,7 +87,7 @@ fn get_deepseek_pricing(model: &str) -> Option<ModelPricing> {
 }
 
 /// Zhipu GLM pricing (coding plan — bundled quota, approximate per-token cost)
-/// GLM-4.7 coding plan: ~¥0.5/1M tokens input, ~¥0.5/1M tokens output
+/// GLM-5 coding plan: ~¥0.5/1M tokens input, ~¥0.5/1M tokens output
 fn get_zhipu_pricing(_model: &str) -> Option<ModelPricing> {
     // Coding plan uses bundled quota; these are approximate per-token rates
     Some(ModelPricing::new(0.07, 0.07))

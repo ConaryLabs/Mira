@@ -44,6 +44,12 @@ static SQLITE_VEC_INIT: Once = Once::new();
 #[allow(clippy::missing_transmute_annotations)]
 pub(crate) fn ensure_sqlite_vec_registered() {
     SQLITE_VEC_INIT.call_once(|| {
+        // SAFETY: sqlite3_vec_init has the signature expected by sqlite3_auto_extension
+        // (i.e. fn(*mut sqlite3, *mut *const c_char, *const sqlite3_api_routines) -> c_int).
+        // The transmute converts the fn-pointer to the Option<extern "C" fn()> that
+        // sqlite3_auto_extension accepts. This is the standard pattern for registering
+        // SQLite extensions via the Rust FFI; the function pointer remains valid for the
+        // lifetime of the process since it points to a statically-linked symbol.
         unsafe {
             rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
                 sqlite3_vec_init as *const (),
