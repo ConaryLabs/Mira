@@ -840,4 +840,75 @@ mod tests {
         // Verify all regex patterns compile without panic
         assert!(!SECRET_PATTERNS.is_empty());
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // verify_memory_access scope isolation tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn access_project_scope_same_project() {
+        let scope: crate::db::MemoryScopeInfo = (Some(1), "project".into(), None, None);
+        assert!(verify_memory_access(&scope, Some(1), None, None).is_ok());
+    }
+
+    #[test]
+    fn access_project_scope_different_project_denied() {
+        let scope: crate::db::MemoryScopeInfo = (Some(1), "project".into(), None, None);
+        assert!(verify_memory_access(&scope, Some(2), None, None).is_err());
+    }
+
+    #[test]
+    fn access_global_memory_always_passes() {
+        // NULL project_id = global memory, accessible from any project
+        let scope: crate::db::MemoryScopeInfo = (None, "project".into(), None, None);
+        assert!(verify_memory_access(&scope, Some(99), None, None).is_ok());
+        assert!(verify_memory_access(&scope, None, None, None).is_ok());
+    }
+
+    #[test]
+    fn access_personal_scope_matching_user() {
+        let scope: crate::db::MemoryScopeInfo =
+            (Some(1), "personal".into(), Some("alice".into()), None);
+        assert!(verify_memory_access(&scope, Some(1), Some("alice"), None).is_ok());
+    }
+
+    #[test]
+    fn access_personal_scope_different_user_denied() {
+        let scope: crate::db::MemoryScopeInfo =
+            (Some(1), "personal".into(), Some("alice".into()), None);
+        assert!(verify_memory_access(&scope, Some(1), Some("bob"), None).is_err());
+    }
+
+    #[test]
+    fn access_personal_scope_no_caller_user_denied() {
+        let scope: crate::db::MemoryScopeInfo =
+            (Some(1), "personal".into(), Some("alice".into()), None);
+        assert!(verify_memory_access(&scope, Some(1), None, None).is_err());
+    }
+
+    #[test]
+    fn access_team_scope_matching_team() {
+        let scope: crate::db::MemoryScopeInfo = (Some(1), "team".into(), None, Some(10));
+        assert!(verify_memory_access(&scope, Some(1), None, Some(10)).is_ok());
+    }
+
+    #[test]
+    fn access_team_scope_different_team_denied() {
+        let scope: crate::db::MemoryScopeInfo = (Some(1), "team".into(), None, Some(10));
+        assert!(verify_memory_access(&scope, Some(1), None, Some(20)).is_err());
+    }
+
+    #[test]
+    fn access_team_scope_no_caller_team_denied() {
+        let scope: crate::db::MemoryScopeInfo = (Some(1), "team".into(), None, Some(10));
+        assert!(verify_memory_access(&scope, Some(1), None, None).is_err());
+    }
+
+    #[test]
+    fn access_project_scope_ignores_caller_identity() {
+        // Project-scoped memory accessible regardless of caller user/team
+        let scope: crate::db::MemoryScopeInfo = (Some(1), "project".into(), None, None);
+        assert!(verify_memory_access(&scope, Some(1), Some("anyone"), Some(99)).is_ok());
+        assert!(verify_memory_access(&scope, Some(1), None, None).is_ok());
+    }
 }

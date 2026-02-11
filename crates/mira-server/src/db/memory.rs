@@ -946,3 +946,372 @@ mod branch_boost_tests {
         assert!(same_branch < main_branch);
     }
 }
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use crate::db::test_support::setup_test_connection;
+
+    /// Insert a project row and return its ID
+    fn insert_project(conn: &rusqlite::Connection) -> i64 {
+        conn.execute(
+            "INSERT INTO projects (path, name) VALUES ('/test/scope', 'scope-test')",
+            [],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// Helper: store a memory with given scope parameters, return its ID
+    fn store(
+        conn: &rusqlite::Connection,
+        content: &str,
+        scope: &str,
+        project_id: Option<i64>,
+        user_id: Option<&str>,
+        team_id: Option<i64>,
+    ) -> i64 {
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id,
+                key: None,
+                content,
+                fact_type: "general",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("test-session"),
+                user_id,
+                scope,
+                branch: None,
+                team_id,
+            },
+        )
+        .expect("store_memory_sync failed")
+    }
+
+    /// Helper: store a preference memory
+    fn store_pref(
+        conn: &rusqlite::Connection,
+        content: &str,
+        scope: &str,
+        project_id: Option<i64>,
+        user_id: Option<&str>,
+        team_id: Option<i64>,
+    ) -> i64 {
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id,
+                key: None,
+                content,
+                fact_type: "preference",
+                category: Some("style"),
+                confidence: 0.8,
+                session_id: Some("test-session"),
+                user_id,
+                scope,
+                branch: None,
+                team_id,
+            },
+        )
+        .expect("store_memory_sync failed")
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // search_memories_sync isolation
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn search_alice_sees_project_and_personal() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        store(&conn, "shared scope config", "project", Some(pid), None, None);
+        store(&conn, "alice scope config", "personal", Some(pid), Some("alice"), None);
+        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+
+        let results =
+            search_memories_sync(&conn, Some(pid), "scope", Some("alice"), None, 10).unwrap();
+        let contents: Vec<&str> = results.iter().map(|m| m.content.as_str()).collect();
+
+        assert!(contents.contains(&"alice scope config"), "alice should see her personal memory");
+        assert!(
+            contents.contains(&"shared scope config"),
+            "alice should see project memory"
+        );
+        assert!(
+            !contents.contains(&"team scope config"),
+            "alice (no team) should not see team memory"
+        );
+    }
+
+    #[test]
+    fn search_bob_sees_only_project() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        store(&conn, "shared scope config", "project", Some(pid), None, None);
+        store(&conn, "alice scope config", "personal", Some(pid), Some("alice"), None);
+        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+
+        let results =
+            search_memories_sync(&conn, Some(pid), "scope", Some("bob"), None, 10).unwrap();
+        let contents: Vec<&str> = results.iter().map(|m| m.content.as_str()).collect();
+
+        assert!(
+            contents.contains(&"shared scope config"),
+            "bob should see project memory"
+        );
+        assert!(
+            !contents.contains(&"alice scope config"),
+            "bob should not see alice's personal memory"
+        );
+        assert!(
+            !contents.contains(&"team scope config"),
+            "bob (no team) should not see team memory"
+        );
+    }
+
+    #[test]
+    fn search_team_member_sees_project_and_team() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        store(&conn, "shared scope config", "project", Some(pid), None, None);
+        store(&conn, "alice scope config", "personal", Some(pid), Some("alice"), None);
+        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+
+        let results =
+            search_memories_sync(&conn, Some(pid), "scope", Some("charlie"), Some(100), 10)
+                .unwrap();
+        let contents: Vec<&str> = results.iter().map(|m| m.content.as_str()).collect();
+
+        assert!(
+            contents.contains(&"shared scope config"),
+            "team member should see project memory"
+        );
+        assert!(
+            contents.contains(&"team scope config"),
+            "team member should see their team memory"
+        );
+        assert!(
+            !contents.contains(&"alice scope config"),
+            "charlie should not see alice's personal memory"
+        );
+    }
+
+    #[test]
+    fn search_different_team_sees_only_project() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        store(&conn, "shared scope config", "project", Some(pid), None, None);
+        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+
+        let results =
+            search_memories_sync(&conn, Some(pid), "scope", Some("dave"), Some(200), 10).unwrap();
+        let contents: Vec<&str> = results.iter().map(|m| m.content.as_str()).collect();
+
+        assert!(
+            contents.contains(&"shared scope config"),
+            "team-200 member should see project memory"
+        );
+        assert!(
+            !contents.contains(&"team scope config"),
+            "team-200 member should not see team-100 memory"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // get_memory_scope_sync roundtrip
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn scope_roundtrip_project() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        let id = store(&conn, "project mem", "project", Some(pid), None, None);
+        let info = get_memory_scope_sync(&conn, id).unwrap().unwrap();
+        assert_eq!(info, (Some(pid), "project".to_string(), None, None));
+    }
+
+    #[test]
+    fn scope_roundtrip_personal() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        let id = store(&conn, "personal mem", "personal", Some(pid), Some("alice"), None);
+        let info = get_memory_scope_sync(&conn, id).unwrap().unwrap();
+        assert_eq!(
+            info,
+            (Some(pid), "personal".to_string(), Some("alice".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn scope_roundtrip_team() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        let id = store(&conn, "team mem", "team", Some(pid), None, Some(42));
+        let info = get_memory_scope_sync(&conn, id).unwrap().unwrap();
+        assert_eq!(info, (Some(pid), "team".to_string(), None, Some(42)));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // get_preferences_sync scope filtering
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn preferences_filtered_by_user() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        store_pref(&conn, "project pref: use tabs", "project", Some(pid), None, None);
+        store_pref(&conn, "alice pref: dark mode", "personal", Some(pid), Some("alice"), None);
+        store_pref(&conn, "bob pref: light mode", "personal", Some(pid), Some("bob"), None);
+
+        let prefs = get_preferences_sync(&conn, Some(pid), Some("alice"), None).unwrap();
+        let contents: Vec<&str> = prefs.iter().map(|m| m.content.as_str()).collect();
+
+        assert!(contents.contains(&"project pref: use tabs"));
+        assert!(contents.contains(&"alice pref: dark mode"));
+        assert!(!contents.contains(&"bob pref: light mode"));
+    }
+
+    #[test]
+    fn preferences_filtered_by_team() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        store_pref(&conn, "project pref: use tabs", "project", Some(pid), None, None);
+        store_pref(&conn, "team pref: 4-space indent", "team", Some(pid), None, Some(10));
+        store_pref(&conn, "other team pref: 2-space", "team", Some(pid), None, Some(20));
+
+        let prefs = get_preferences_sync(&conn, Some(pid), None, Some(10)).unwrap();
+        let contents: Vec<&str> = prefs.iter().map(|m| m.content.as_str()).collect();
+
+        assert!(contents.contains(&"project pref: use tabs"));
+        assert!(contents.contains(&"team pref: 4-space indent"));
+        assert!(!contents.contains(&"other team pref: 2-space"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // store_memory_sync key upsert respects scope boundary
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn key_upsert_same_key_different_scopes_separate_rows() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+
+        let id_project = store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("theme"),
+                content: "project theme: blue",
+                fact_type: "preference",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("s1"),
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .unwrap();
+
+        let id_personal = store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("theme"),
+                content: "alice theme: red",
+                fact_type: "preference",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("s1"),
+                user_id: Some("alice"),
+                scope: "personal",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .unwrap();
+
+        let id_team = store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("theme"),
+                content: "team theme: green",
+                fact_type: "preference",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("s1"),
+                user_id: None,
+                scope: "team",
+                branch: None,
+                team_id: Some(10),
+            },
+        )
+        .unwrap();
+
+        // All three should be distinct rows
+        assert_ne!(id_project, id_personal);
+        assert_ne!(id_personal, id_team);
+        assert_ne!(id_project, id_team);
+
+        // Verify content is preserved (no cross-scope overwrite)
+        let scope_project = get_memory_scope_sync(&conn, id_project).unwrap().unwrap();
+        assert_eq!(scope_project.1, "project");
+
+        let scope_personal = get_memory_scope_sync(&conn, id_personal).unwrap().unwrap();
+        assert_eq!(scope_personal.1, "personal");
+        assert_eq!(scope_personal.2, Some("alice".to_string()));
+
+        let scope_team = get_memory_scope_sync(&conn, id_team).unwrap().unwrap();
+        assert_eq!(scope_team.1, "team");
+        assert_eq!(scope_team.3, Some(10));
+    }
+
+    #[test]
+    fn key_upsert_same_scope_updates_in_place() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+
+        let id1 = store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("setting"),
+                content: "original value",
+                fact_type: "general",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("s1"),
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .unwrap();
+
+        // Same key, same scope — should update, not create new row
+        let id2 = store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("setting"),
+                content: "updated value",
+                fact_type: "general",
+                category: None,
+                confidence: 0.9,
+                session_id: Some("s2"),
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(id1, id2, "same key + same scope should upsert in place");
+    }
+}
