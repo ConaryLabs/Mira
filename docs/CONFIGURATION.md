@@ -258,7 +258,7 @@ background_provider = "deepseek"
 | Provider | Config Value | API Key / Env Var | Default Model |
 |----------|--------------|-------------------|---------------|
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
-| Zhipu | `zhipu` | `ZHIPU_API_KEY` | `glm-4.7` |
+| Zhipu | `zhipu` | `ZHIPU_API_KEY` | `glm-5` |
 | Ollama | `ollama` | `OLLAMA_HOST` (URL, no key) | `llama3.3` |
 
 If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available. All three providers are included in the background task fallback chain.

@@ -537,7 +537,7 @@ async fn validate_api_key(env_var: &str, key: &str) -> ValidationResult {
                 .header("Authorization", format!("Bearer {}", key))
                 .header("Content-Type", "application/json")
                 .json(&serde_json::json!({
-                    "model": "GLM-5",
+                    "model": "glm-5",
                     "messages": [{"role": "user", "content": "hi"}],
                     "max_tokens": 1
                 }))

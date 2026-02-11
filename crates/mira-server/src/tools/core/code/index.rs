@@ -26,7 +26,7 @@ pub async fn index<C: ToolContext>(
         IndexAction::Project | IndexAction::File => {
             #[cfg(not(feature = "parsers"))]
             {
-                return Err("Code indexing requires the 'parsers' feature. Reinstall with: cargo install mira --features parsers".to_string());
+                return Err("Code indexing requires the 'parsers' feature. Reinstall with: cargo install --git https://github.com/ConaryLabs/Mira.git --features parsers".to_string());
             }
             #[cfg(feature = "parsers")]
             {
