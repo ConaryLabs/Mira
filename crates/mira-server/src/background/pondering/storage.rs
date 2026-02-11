@@ -62,8 +62,9 @@ fn extract_primary_entity(description: &str) -> Option<String> {
 
 /// Extract the first quoted text from a description (for goal titles, etc.).
 fn extract_quoted_text(description: &str) -> Option<&str> {
-    // Try double quotes first, then single quotes
-    for quote in ['"', '\'', '\u{201c}'] {
+    // Try double quotes first (unambiguous), then smart quotes, then single quotes
+    // Single quotes are tried last and use special handling for apostrophes.
+    for quote in ['"', '\u{201c}'] {
         let close = match quote {
             '\u{201c}' => '\u{201d}',
             q => q,
@@ -71,10 +72,45 @@ fn extract_quoted_text(description: &str) -> Option<&str> {
         if let Some(start) = description.find(quote) {
             let after_open = start + quote.len_utf8();
             let rest = &description[after_open..];
-            // Single quotes need greedy (last valid) matching to handle
-            // possessive plurals like Users' that look like closing quotes.
-            let greedy = quote == '\'';
-            let end = find_closing_quote(rest, close, greedy)?;
+            let end = find_closing_quote(rest, close)?;
+            let inner = &description[after_open..after_open + end];
+            if !inner.is_empty() {
+                return Some(inner);
+            }
+        }
+    }
+    // Fall back to single quotes with stricter open/close validation
+    extract_single_quoted(description)
+}
+
+/// Extract single-quoted text with apostrophe-aware open/close detection.
+///
+/// An opening `'` must be preceded by a non-alphanumeric character (or be at
+/// the start of the string) AND followed by an alphanumeric character.
+/// This prevents apostrophes in words like `There's` from being selected as
+/// the opening delimiter.
+fn extract_single_quoted(description: &str) -> Option<&str> {
+    for (i, c) in description.char_indices() {
+        if c != '\'' {
+            continue;
+        }
+        // Opening quote: preceded by non-alphanumeric (or start of string)
+        let before = description[..i].chars().next_back();
+        if before.is_some_and(|b| b.is_alphanumeric()) {
+            continue;
+        }
+        // Opening quote: followed by an alphanumeric character
+        let after_open = i + c.len_utf8();
+        if !description[after_open..]
+            .chars()
+            .next()
+            .is_some_and(|a| a.is_alphanumeric())
+        {
+            continue;
+        }
+        // Find the closing quote (non-greedy, skips apostrophes like User's)
+        let rest = &description[after_open..];
+        if let Some(end) = find_closing_quote(rest, '\'') {
             let inner = &description[after_open..after_open + end];
             if !inner.is_empty() {
                 return Some(inner);
@@ -85,31 +121,20 @@ fn extract_quoted_text(description: &str) -> Option<&str> {
 }
 
 /// Find a closing quote character, skipping apostrophes (quote followed by a letter).
-///
-/// When `greedy` is true (used for single quotes), returns the *last* valid
-/// closing position instead of the first.  This handles possessive plurals
-/// like `Users'` which look like a closing quote but aren't.
-fn find_closing_quote(text: &str, quote: char, greedy: bool) -> Option<usize> {
-    let mut last_valid = None;
+fn find_closing_quote(text: &str, quote: char) -> Option<usize> {
     for (i, c) in text.char_indices() {
         if c == quote {
             // A closing quote is followed by non-alphanumeric or end-of-string.
             // An apostrophe (e.g., User's) is followed by a letter — skip it.
             let after = text[i + c.len_utf8()..].chars().next();
-            let is_closing = match after {
-                None => true,
-                Some(next) => !next.is_alphanumeric(),
-            };
-            if is_closing {
-                if greedy {
-                    last_valid = Some(i);
-                } else {
-                    return Some(i);
-                }
+            match after {
+                None => return Some(i),
+                Some(next) if !next.is_alphanumeric() => return Some(i),
+                _ => continue,
             }
         }
     }
-    last_valid
+    None
 }
 
 /// Compute a 16-hex-char pattern key, using the primary entity for
@@ -432,11 +457,11 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_quoted_text_possessive_plural() {
-        // Possessive plural: Users' looks like a closing quote but isn't
+    fn test_extract_quoted_text_apostrophe_before_title() {
+        // Apostrophe in text BEFORE the quoted title should not be picked as opening
         assert_eq!(
-            extract_quoted_text("Goal 'Users' profile migration' has no progress"),
-            Some("Users' profile migration"),
+            extract_quoted_text("There's a stale goal 'Add caching' with no progress"),
+            Some("Add caching"),
         );
     }
 
@@ -444,7 +469,7 @@ mod tests {
     fn test_extract_quoted_text_apostrophe_after_closing() {
         // Apostrophe in text AFTER the closing quote should not extend the match
         assert_eq!(
-            extract_quoted_text("Goal 'Add caching' isn't needed"),
+            extract_quoted_text("Goal 'Add caching' users' feedback is stale"),
             Some("Add caching"),
         );
     }
@@ -471,15 +496,15 @@ mod tests {
     }
 
     #[test]
-    fn test_stale_goal_possessive_plural_dedup() {
-        // Possessive plural titles should also dedup correctly
+    fn test_stale_goal_apostrophe_before_title_dedup() {
+        // Apostrophe before the quoted title should not affect key extraction
         let key1 = compute_pattern_key(
             "insight_stale_goal",
-            "Goal 'Users' profile migration' is stale for 30 days",
+            "There's a stale goal 'Add caching' with no updates for 30 days",
         );
         let key2 = compute_pattern_key(
             "insight_stale_goal",
-            "Goal 'Users' profile migration' still in progress after 45 days",
+            "There's a stale goal 'Add caching' still in progress after 45 days",
         );
         assert_eq!(key1, key2);
     }
