@@ -7,7 +7,6 @@ use crate::db::{
 };
 use crate::embeddings::EmbeddingClient;
 use crate::search::embedding_to_bytes;
-use crate::utils::ResultExt;
 use std::sync::Arc;
 
 /// Maximum embeddings to process per batch
@@ -25,12 +24,8 @@ pub async fn process_pending_embeddings(
 
     // Fetch pending chunks
     let pending = pool
-        .interact(move |conn| {
-            get_pending_embeddings_sync(conn, BATCH_SIZE)
-                .map_err(|e| anyhow::anyhow!("Failed to get pending embeddings: {}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_pending_embeddings_sync(conn, BATCH_SIZE))
+        .await?;
 
     if pending.is_empty() {
         return Ok(0);
@@ -49,7 +44,7 @@ pub async fn process_pending_embeddings(
 
     // Store embeddings and cleanup pending queue
     let count = pool
-        .interact(move |conn| {
+        .run(move |conn| {
             let tx = conn.unchecked_transaction()?;
             let mut stored = 0;
 
@@ -64,22 +59,18 @@ pub async fn process_pending_embeddings(
                     &chunk.chunk_content,
                     chunk.project_id,
                     chunk.start_line as usize,
-                )
-                .map_err(|e| anyhow::anyhow!("Insert failed: {}", e))?;
+                )?;
 
                 // Remove from pending queue
-                delete_pending_embedding_sync(&tx, chunk.id)
-                    .map_err(|e| anyhow::anyhow!("Delete failed: {}", e))?;
+                delete_pending_embedding_sync(&tx, chunk.id)?;
 
                 stored += 1;
             }
 
-            tx.commit()
-                .map_err(|e| anyhow::anyhow!("Commit failed: {}", e))?;
-            Ok(stored)
+            tx.commit()?;
+            Ok::<_, rusqlite::Error>(stored)
         })
-        .await
-        .str_err()?;
+        .await?;
 
     tracing::info!("Stored {} embeddings from pending queue", count);
     Ok(count)

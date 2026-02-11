@@ -9,7 +9,6 @@ use crate::db::{
     get_project_paths_by_ids_sync, update_module_purposes_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
-use crate::utils::ResultExt;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -35,12 +34,8 @@ pub async fn process_queue(
 ) -> Result<usize, String> {
     // Step 1: Get project IDs with pending summaries (from code DB)
     let project_ids = code_pool
-        .interact(move |conn| {
-            get_project_ids_needing_summaries_sync(conn)
-                .map_err(|e| anyhow::anyhow!("Failed to get project IDs: {}", e))
-        })
-        .await
-        .str_err()?;
+        .run(get_project_ids_needing_summaries_sync)
+        .await?;
 
     if project_ids.is_empty() {
         return Ok(0);
@@ -49,12 +44,8 @@ pub async fn process_queue(
     // Step 2: Get project paths from main DB
     let ids_clone = project_ids.clone();
     let projects = main_pool
-        .interact(move |conn| {
-            get_project_paths_by_ids_sync(conn, &ids_clone)
-                .map_err(|e| anyhow::anyhow!("Failed to get project paths: {}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_project_paths_by_ids_sync(conn, &ids_clone))
+        .await?;
 
     if projects.is_empty() {
         return Ok(0);
@@ -65,12 +56,8 @@ pub async fn process_queue(
     for (project_id, project_path) in projects {
         // Get modules needing summaries for this project (from code DB)
         let mut modules = code_pool
-            .interact(move |conn| {
-                get_modules_needing_summaries_sync(conn, project_id)
-                    .map_err(|e| anyhow::anyhow!("Failed to get modules: {}", e))
-            })
-            .await
-            .str_err()?;
+            .run(move |conn| get_modules_needing_summaries_sync(conn, project_id))
+            .await?;
 
         if modules.is_empty() {
             continue;

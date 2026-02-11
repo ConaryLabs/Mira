@@ -1707,8 +1707,14 @@ async fn test_documentation_skip_task() {
         .expect("Failed to query status");
 
     assert_eq!(status, "skipped", "Status should be 'skipped'");
-    assert!(reason.contains("API needs docs"), "Original reason should be preserved");
-    assert!(skip_reason.unwrap_or_default().contains("Internal API"), "Skip reason should be set");
+    assert!(
+        reason.contains("API needs docs"),
+        "Original reason should be preserved"
+    );
+    assert!(
+        skip_reason.unwrap_or_default().contains("Internal API"),
+        "Skip reason should be set"
+    );
 }
 
 #[tokio::test]

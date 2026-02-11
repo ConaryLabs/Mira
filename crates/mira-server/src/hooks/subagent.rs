@@ -208,28 +208,26 @@ pub async fn run_stop() -> Result<()> {
     let entity_summary = build_entity_summary(&stop_input.subagent_type, &entities);
 
     // Store as a subagent discovery memory
-    let pool_clone = pool.clone();
-    let _ = pool_clone
-        .interact(move |conn| {
-            crate::db::store_memory_sync(
-                conn,
-                crate::db::StoreMemoryParams {
-                    project_id: Some(project_id),
-                    key: None,
-                    content: &entity_summary,
-                    fact_type: "context",
-                    category: Some("subagent_discovery"),
-                    confidence: 0.6,
-                    session_id: None,
-                    user_id: None,
-                    scope: "project",
-                    branch: None,
-                    team_id: None,
-                },
-            )?;
-            Ok::<_, anyhow::Error>(())
-        })
-        .await;
+    pool.try_interact("subagent discovery", move |conn| {
+        crate::db::store_memory_sync(
+            conn,
+            crate::db::StoreMemoryParams {
+                project_id: Some(project_id),
+                key: None,
+                content: &entity_summary,
+                fact_type: "context",
+                category: Some("subagent_discovery"),
+                confidence: 0.6,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )?;
+        Ok(())
+    })
+    .await;
 
     write_hook_output(&serde_json::json!({}));
     Ok(())

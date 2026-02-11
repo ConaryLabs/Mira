@@ -33,12 +33,7 @@ async fn find_project_for_health_scan(
     code_pool: &Arc<DatabasePool>,
 ) -> Result<Option<(i64, String)>, String> {
     // Get indexed project IDs from code DB
-    let project_ids = code_pool
-        .interact(move |conn| {
-            get_indexed_project_ids_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+    let project_ids = code_pool.run(get_indexed_project_ids_sync).await?;
 
     if project_ids.is_empty() {
         return Ok(None);
@@ -47,19 +42,17 @@ async fn find_project_for_health_scan(
     // Get project paths from main DB and filter by health check needs
     let ids = project_ids;
     let result = main_pool
-        .interact(move |conn| {
-            let all_projects =
-                get_project_paths_by_ids_sync(conn, &ids).map_err(|e| anyhow::anyhow!("{}", e))?;
+        .run(move |conn| {
+            let all_projects = get_project_paths_by_ids_sync(conn, &ids)?;
 
             for (project_id, project_path) in all_projects {
                 if needs_health_scan(conn, project_id) && Path::new(&project_path).exists() {
-                    return Ok::<_, anyhow::Error>(Some((project_id, project_path)));
+                    return Ok(Some((project_id, project_path)));
                 }
             }
-            Ok(None)
+            Ok::<_, rusqlite::Error>(None)
         })
-        .await
-        .str_err()?;
+        .await?;
 
     Ok(result)
 }
@@ -74,12 +67,7 @@ async fn find_project_for_llm_health(
     code_pool: &Arc<DatabasePool>,
     task_key: &str,
 ) -> Result<Option<(i64, String)>, String> {
-    let project_ids = code_pool
-        .interact(move |conn| {
-            get_indexed_project_ids_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+    let project_ids = code_pool.run(get_indexed_project_ids_sync).await?;
 
     if project_ids.is_empty() {
         return Ok(None);
@@ -88,9 +76,8 @@ async fn find_project_for_llm_health(
     let key = task_key.to_string();
     let ids = project_ids;
     let result = main_pool
-        .interact(move |conn| {
-            let all_projects =
-                get_project_paths_by_ids_sync(conn, &ids).map_err(|e| anyhow::anyhow!("{}", e))?;
+        .run(move |conn| {
+            let all_projects = get_project_paths_by_ids_sync(conn, &ids)?;
 
             for (project_id, project_path) in all_projects {
                 if !Path::new(&project_path).exists() {
@@ -107,13 +94,12 @@ async fn find_project_for_llm_health(
                 };
 
                 if needs_run {
-                    return Ok::<_, anyhow::Error>(Some((project_id, project_path)));
+                    return Ok(Some((project_id, project_path)));
                 }
             }
-            Ok(None)
+            Ok::<_, rusqlite::Error>(None)
         })
-        .await
-        .str_err()?;
+        .await?;
 
     Ok(result)
 }
@@ -140,19 +126,18 @@ pub async fn process_health_fast_scans(
     // Without clearing it here, a failed fast-scan run would inherit the stale
     // marker, letting module analysis incorrectly consume health_scan_needed.
     let mp = main_pool.clone();
-    mp.interact(move |conn| {
+    mp.run(move |conn| {
         conn.execute(
             "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_fast_scan_done'",
             [project_id],
-        )
-        .map_err(|e| anyhow::anyhow!("{}", e))
+        )?;
+        Ok::<_, rusqlite::Error>(())
     })
-    .await
-    .str_err()?;
+    .await?;
 
     // Clear relevant categories
     main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             clear_health_issues_by_categories_sync(
                 conn,
                 project_id,
@@ -165,10 +150,8 @@ pub async fn process_health_fast_scans(
                     "unused",
                 ],
             )
-            .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     let mut total = 0;
 
@@ -234,15 +217,12 @@ pub async fn process_health_fast_scans(
     let warnings_count = cargo_findings.len();
     let det_count = det_output.findings.len();
     main_pool
-        .interact(move |conn| -> Result<(), anyhow::Error> {
-            cargo::store_cargo_findings(conn, project_id, &cargo_findings)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            detection::store_detection_findings(conn, project_id, &det_output.findings)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(())
+        .run(move |conn| {
+            cargo::store_cargo_findings(conn, project_id, &cargo_findings)?;
+            detection::store_detection_findings(conn, project_id, &det_output.findings)?;
+            Ok::<_, String>(())
         })
-        .await
-        .str_err()?;
+        .await?;
 
     total += warnings_count + det_count;
 
@@ -257,7 +237,7 @@ pub async fn process_health_fast_scans(
     // this before clearing the scan-needed flag, so a failed fast-scan run
     // won't be suppressed by a subsequent successful module-analysis pass.
     let mp = main_pool.clone();
-    mp.interact(move |conn| {
+    mp.run(move |conn| {
         store_memory_sync(
             conn,
             StoreMemoryParams {
@@ -274,10 +254,8 @@ pub async fn process_health_fast_scans(
                 team_id: None,
             },
         )
-        .map_err(|e| anyhow::anyhow!("{}", e))
     })
-    .await
-    .str_err()?;
+    .await?;
 
     tracing::info!(
         "Code health fast scans: found {} issues for project {}",
@@ -314,12 +292,8 @@ pub async fn process_health_llm_complexity(
 
     // Clear complexity category
     main_pool
-        .interact(move |conn| {
-            clear_health_issues_by_categories_sync(conn, project_id, &["complexity"])
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| clear_health_issues_by_categories_sync(conn, project_id, &["complexity"]))
+        .await?;
 
     let complexity =
         analysis::scan_complexity(code_pool, main_pool, llm, project_id, &project_path).await?;
@@ -332,12 +306,8 @@ pub async fn process_health_llm_complexity(
 
     // Mark this subtask as done so it doesn't re-run until the next scan cycle
     main_pool
-        .interact(move |conn| {
-            mark_llm_health_done_sync(conn, project_id, "health_llm_complexity_time")
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| mark_llm_health_done_sync(conn, project_id, "health_llm_complexity_time"))
+        .await?;
 
     Ok(complexity)
 }
@@ -368,12 +338,10 @@ pub async fn process_health_llm_error_quality(
 
     // Clear error_quality category
     main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             clear_health_issues_by_categories_sync(conn, project_id, &["error_quality"])
-                .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     let error_quality =
         analysis::scan_error_quality(code_pool, main_pool, llm, project_id, &project_path).await?;
@@ -386,12 +354,10 @@ pub async fn process_health_llm_error_quality(
 
     // Mark this subtask as done so it doesn't re-run until the next scan cycle
     main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             mark_llm_health_done_sync(conn, project_id, "health_llm_error_quality_time")
-                .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     Ok(error_quality)
 }
@@ -416,16 +382,14 @@ pub async fn process_health_module_analysis(
 
     // Clear architecture + circular_dependency categories (for patterns/deps stored in memory_facts)
     main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             clear_health_issues_by_categories_sync(
                 conn,
                 project_id,
                 &["architecture", "circular_dependency"],
             )
-            .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     let mut total = 0;
 
@@ -494,23 +458,19 @@ pub async fn process_health_module_analysis(
     // scan run would be silently suppressed by a successful module-analysis
     // finalization clearing the flag.
     let fast_scan_done = main_pool
-        .interact(move |conn| {
-            Ok::<bool, anyhow::Error>(memory_key_exists_sync(
+        .run(move |conn| {
+            Ok::<bool, rusqlite::Error>(memory_key_exists_sync(
                 conn,
                 project_id,
                 "health_fast_scan_done",
             ))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     if fast_scan_done {
         main_pool
-            .interact(move |conn| {
-                mark_health_scanned(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-            .str_err()?;
+            .run(move |conn| mark_health_scanned(conn, project_id))
+            .await?;
     } else {
         tracing::info!(
             "Code health: skipping flag consumption — fast scans did not complete for project {}",
@@ -534,11 +494,8 @@ pub async fn scan_project_health_full(
 
     // Clear all health issues
     main_pool
-        .interact(move |conn| {
-            clear_old_health_issues(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| clear_old_health_issues(conn, project_id))
+        .await?;
 
     let mut total = 0;
 
@@ -575,15 +532,12 @@ pub async fn scan_project_health_full(
     let warnings_count = cargo_findings.len();
     let det_count = det_output.findings.len();
     main_pool
-        .interact(move |conn| -> Result<(), anyhow::Error> {
-            cargo::store_cargo_findings(conn, project_id, &cargo_findings)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            detection::store_detection_findings(conn, project_id, &det_output.findings)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(())
+        .run(move |conn| {
+            cargo::store_cargo_findings(conn, project_id, &cargo_findings)?;
+            detection::store_detection_findings(conn, project_id, &det_output.findings)?;
+            Ok::<_, String>(())
         })
-        .await
-        .str_err()?;
+        .await?;
     total += warnings_count + det_count;
 
     let unused = scan_unused_functions_sharded(main_pool, code_pool, project_id).await?;
@@ -772,11 +726,8 @@ async fn scan_unused_functions_sharded(
 ) -> Result<usize, String> {
     // Read unused functions from code DB
     let unused = code_pool
-        .interact(move |conn| {
-            get_unused_functions_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_unused_functions_sync(conn, project_id))
+        .await?;
 
     if unused.is_empty() {
         return Ok(0);
@@ -784,7 +735,7 @@ async fn scan_unused_functions_sharded(
 
     // Write findings to main DB
     let count = main_pool
-        .interact(move |conn| -> Result<usize, anyhow::Error> {
+        .run(move |conn| {
             let mut stored = 0;
             for (name, file_path, line) in &unused {
                 let content = format!(
@@ -808,18 +759,16 @@ async fn scan_unused_functions_sharded(
                         branch: None,
                         team_id: None,
                     },
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+                )?;
 
                 stored += 1;
                 if stored >= MAX_UNUSED_FINDINGS {
                     break;
                 }
             }
-            Ok(stored)
+            Ok::<_, rusqlite::Error>(stored)
         })
-        .await
-        .str_err()?;
+        .await?;
 
     Ok(count)
 }

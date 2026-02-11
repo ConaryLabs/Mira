@@ -3,14 +3,13 @@
 
 use super::types::PonderingInsight;
 use crate::db::pool::DatabasePool;
-use crate::utils::ResultExt;
 use rusqlite::params;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 /// Delete insights not triggered in the last 30 days.
 pub async fn cleanup_stale_insights(pool: &Arc<DatabasePool>) -> Result<usize, String> {
-    pool.interact(|conn| {
+    pool.run(|conn| {
         let deleted = conn
             .execute(
                 "DELETE FROM behavior_patterns \
@@ -22,10 +21,9 @@ pub async fn cleanup_stale_insights(pool: &Arc<DatabasePool>) -> Result<usize, S
         if deleted > 0 {
             tracing::info!("Cleaned up {} stale insights", deleted);
         }
-        Ok(deleted)
+        Ok::<_, anyhow::Error>(deleted)
     })
     .await
-    .str_err()
 }
 
 /// Normalize a description for dedup hashing.
@@ -71,7 +69,7 @@ pub(super) async fn store_insights(
         })
         .collect();
 
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut stored = 0;
         let mut types_touched = std::collections::HashSet::new();
 
@@ -149,10 +147,9 @@ pub(super) async fn store_insights(
             }
         }
 
-        Ok(stored)
+        Ok::<_, anyhow::Error>(stored)
     })
     .await
-    .str_err()
 }
 
 #[cfg(test)]

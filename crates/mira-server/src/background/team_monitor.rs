@@ -15,80 +15,77 @@ const STALE_THRESHOLD_MINUTES: i64 = 30;
 /// Process team monitoring tasks.
 /// Returns count of items processed.
 pub async fn process_team_monitor(pool: &Arc<DatabasePool>) -> Result<usize, String> {
-    let pool_clone = pool.clone();
-    pool_clone
-        .interact(move |conn| {
-            // Cheap EXISTS check before doing heavier work
-            if !has_active_teams(conn) {
-                return Ok(0);
+    pool.run(move |conn| {
+        // Cheap EXISTS check before doing heavier work
+        if !has_active_teams(conn) {
+            return Ok(0);
+        }
+
+        let mut processed = 0;
+        let team_ids = get_active_team_ids(conn);
+
+        for team_id in team_ids {
+            // 1. Clean up stale sessions
+            if let Ok(cleaned) =
+                crate::db::cleanup_stale_sessions_sync(conn, team_id, STALE_THRESHOLD_MINUTES)
+                && cleaned > 0
+            {
+                tracing::info!(
+                    "Team monitor: cleaned {} stale session(s) for team {}",
+                    cleaned,
+                    team_id
+                );
+                processed += cleaned;
             }
 
-            let mut processed = 0;
-            let team_ids = get_active_team_ids(conn);
+            // 2. Detect file conflicts across active sessions
+            let conflicts = detect_team_file_conflicts(conn, team_id);
+            if !conflicts.is_empty() {
+                // Store as team-scoped convergence alert
+                let alert_content = format!(
+                    "File conflict detected: {}",
+                    conflicts
+                        .iter()
+                        .map(|(file, editors)| format!(
+                            "{} (edited by {})",
+                            file,
+                            editors.join(", ")
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
 
-            for team_id in team_ids {
-                // 1. Clean up stale sessions
-                if let Ok(cleaned) =
-                    crate::db::cleanup_stale_sessions_sync(conn, team_id, STALE_THRESHOLD_MINUTES)
-                    && cleaned > 0
-                {
-                    tracing::info!(
-                        "Team monitor: cleaned {} stale session(s) for team {}",
-                        cleaned,
-                        team_id
-                    );
-                    processed += cleaned;
+                let key = format!("convergence:files:{}", team_id);
+                if let Err(e) = crate::db::store_memory_sync(
+                    conn,
+                    crate::db::StoreMemoryParams {
+                        project_id: None,
+                        key: Some(&key),
+                        content: &alert_content,
+                        fact_type: "convergence_alert",
+                        category: Some("convergence_alert"),
+                        confidence: 0.7,
+                        session_id: None,
+                        user_id: None,
+                        scope: "team",
+                        branch: None,
+                        team_id: Some(team_id),
+                    },
+                ) {
+                    tracing::warn!("Failed to store convergence alert: {}", e);
                 }
-
-                // 2. Detect file conflicts across active sessions
-                let conflicts = detect_team_file_conflicts(conn, team_id);
-                if !conflicts.is_empty() {
-                    // Store as team-scoped convergence alert
-                    let alert_content = format!(
-                        "File conflict detected: {}",
-                        conflicts
-                            .iter()
-                            .map(|(file, editors)| format!(
-                                "{} (edited by {})",
-                                file,
-                                editors.join(", ")
-                            ))
-                            .collect::<Vec<_>>()
-                            .join("; ")
-                    );
-
-                    let key = format!("convergence:files:{}", team_id);
-                    if let Err(e) = crate::db::store_memory_sync(
-                        conn,
-                        crate::db::StoreMemoryParams {
-                            project_id: None,
-                            key: Some(&key),
-                            content: &alert_content,
-                            fact_type: "convergence_alert",
-                            category: Some("convergence_alert"),
-                            confidence: 0.7,
-                            session_id: None,
-                            user_id: None,
-                            scope: "team",
-                            branch: None,
-                            team_id: Some(team_id),
-                        },
-                    ) {
-                        tracing::warn!("Failed to store convergence alert: {}", e);
-                    }
-                    processed += 1;
-                    tracing::info!(
-                        "Team monitor: {} file conflict(s) for team {}",
-                        conflicts.len(),
-                        team_id
-                    );
-                }
+                processed += 1;
+                tracing::info!(
+                    "Team monitor: {} file conflict(s) for team {}",
+                    conflicts.len(),
+                    team_id
+                );
             }
+        }
 
-            Ok::<usize, anyhow::Error>(processed)
-        })
-        .await
-        .map_err(|e| format!("Team monitor failed: {}", e))
+        Ok::<usize, rusqlite::Error>(processed)
+    })
+    .await
 }
 
 /// Get IDs of all active teams.

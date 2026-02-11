@@ -179,15 +179,11 @@ async fn extract_and_store(
         {
             let embedding_bytes = embedding_to_bytes(&embedding);
             let content_for_embed = outcome.content.clone();
-            if let Err(e) = pool
-                .interact(move |conn| {
-                    store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-            {
-                warn!("Failed to store embedding for outcome {}: {}", id, e);
-            }
+            pool.try_interact("store outcome embedding", move |conn| {
+                store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await;
         }
 
         debug!(

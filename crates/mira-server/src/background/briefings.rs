@@ -5,7 +5,7 @@ use super::{HEURISTIC_PREFIX, is_fallback_content};
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
-use crate::utils::{ResultExt, truncate, truncate_at_boundary};
+use crate::utils::{truncate, truncate_at_boundary};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -20,13 +20,7 @@ pub async fn process_briefings(
     pool: &Arc<DatabasePool>,
     client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
-    let projects = pool
-        .interact(move |conn| {
-            get_projects_for_briefing_check_sync(conn)
-                .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
-        })
-        .await
-        .str_err()?;
+    let projects = pool.run(get_projects_for_briefing_check_sync).await?;
 
     let mut processed = 0;
 
@@ -95,12 +89,10 @@ pub async fn process_briefings(
         if let Some(ref text) = briefing {
             let commit = current_commit.clone();
             let text_clone = text.clone();
-            pool.interact(move |conn| {
+            pool.run(move |conn| {
                 update_project_briefing_sync(conn, project_id, &commit, Some(&text_clone))
-                    .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
             })
-            .await
-            .str_err()?;
+            .await?;
             tracing::info!(
                 "Generated briefing for project {} ({})",
                 project_id,

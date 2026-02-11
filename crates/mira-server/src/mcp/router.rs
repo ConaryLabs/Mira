@@ -234,9 +234,8 @@ impl MiraServer {
         let session_id = session_id.to_string();
         let tool_name = tool_name.to_string();
         let args_json = args_json.to_string();
-        if let Err(e) = self
-            .pool
-            .interact(move |conn| {
+        self.pool
+            .try_interact("log tool call", move |conn| {
                 crate::db::log_tool_call_sync(
                     conn,
                     &session_id,
@@ -248,10 +247,7 @@ impl MiraServer {
                 )
                 .map_err(|e| anyhow::anyhow!(e))
             })
-            .await
-        {
-            tracing::warn!("[HISTORY] Failed to log tool call: {}", e);
-        }
+            .await;
     }
 }
 
@@ -443,5 +439,112 @@ impl MiraServer {
         }
 
         result
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::{CallToolResult, Content};
+
+    // ═══════════════════════════════════════
+    // extract_result_text
+    // ═══════════════════════════════════════
+
+    #[test]
+    fn extract_result_text_with_text_content() {
+        let result = Ok(CallToolResult {
+            content: vec![Content::text("hello world")],
+            structured_content: None,
+            is_error: Some(false),
+            meta: None,
+        });
+        let (success, text) = MiraServer::extract_result_text(&result);
+        assert!(success);
+        assert_eq!(text, "hello world");
+    }
+
+    #[test]
+    fn extract_result_text_empty_content() {
+        let result = Ok(CallToolResult {
+            content: vec![],
+            structured_content: None,
+            is_error: Some(false),
+            meta: None,
+        });
+        let (success, text) = MiraServer::extract_result_text(&result);
+        assert!(success);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn extract_result_text_structured_with_message() {
+        let result = Ok(CallToolResult {
+            content: vec![Content::text("fallback text")],
+            structured_content: Some(serde_json::json!({
+                "message": "structured message",
+                "data": 42
+            })),
+            is_error: Some(false),
+            meta: None,
+        });
+        let (success, text) = MiraServer::extract_result_text(&result);
+        assert!(success);
+        // structured_content.message takes priority over content text
+        assert_eq!(text, "structured message");
+    }
+
+    #[test]
+    fn extract_result_text_structured_without_message() {
+        let result = Ok(CallToolResult {
+            content: vec![Content::text("fallback text")],
+            structured_content: Some(serde_json::json!({
+                "data": 42
+            })),
+            is_error: Some(false),
+            meta: None,
+        });
+        let (success, text) = MiraServer::extract_result_text(&result);
+        assert!(success);
+        // No "message" field in structured, falls back to content
+        assert_eq!(text, "fallback text");
+    }
+
+    #[test]
+    fn extract_result_text_error_result() {
+        let result: Result<CallToolResult, ErrorData> = Err(ErrorData::internal_error(
+            "something broke".to_string(),
+            None,
+        ));
+        let (success, text) = MiraServer::extract_result_text(&result);
+        assert!(!success);
+        assert_eq!(text, "something broke");
+    }
+
+    // ═══════════════════════════════════════
+    // tool_result
+    // ═══════════════════════════════════════
+
+    #[test]
+    fn tool_result_err_produces_error_content() {
+        use crate::mcp::responses::MemoryOutput;
+        let result: Result<CallToolResult, ErrorData> =
+            tool_result::<MemoryOutput>(Err("bad request".to_string()));
+        // Should be Ok (not protocol error), but with error content
+        let call_result = result.expect("tool_result Err should produce Ok(CallToolResult)");
+        let text = call_result
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.to_string())
+            .unwrap_or_default();
+        assert!(
+            text.contains("bad request"),
+            "expected 'bad request' in: {text}"
+        );
     }
 }

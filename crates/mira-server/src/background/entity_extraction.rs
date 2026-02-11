@@ -34,35 +34,28 @@ pub async fn process_entity_backfill(pool: &Arc<DatabasePool>) -> Result<usize, 
 
     let count = facts.len();
 
-    for (fact_id, project_id, content) in facts {
-        let entities = extract_entities_heuristic(&content);
-
-        let pool_clone = pool.clone();
-        if let Err(e) = pool_clone
-            .interact(move |conn| -> anyhow::Result<()> {
-                let tx = conn.unchecked_transaction()?;
-
-                for entity in &entities {
-                    let entity_id = upsert_entity_sync(
-                        &tx,
-                        project_id,
-                        &entity.canonical_name,
-                        entity.entity_type.as_str(),
-                        &entity.name,
-                    )?;
-                    link_entity_to_fact_sync(&tx, fact_id, entity_id)?;
-                }
-
-                // Always mark as processed, even if zero entities found
-                mark_fact_has_entities_sync(&tx, fact_id)?;
-                tx.commit()?;
-                Ok(())
-            })
-            .await
-        {
-            tracing::warn!("Entity backfill failed for fact {}: {}", fact_id, e);
+    pool.interact(move |conn| -> anyhow::Result<()> {
+        let tx = conn.unchecked_transaction()?;
+        for (fact_id, project_id, content) in &facts {
+            let entities = extract_entities_heuristic(content);
+            for entity in &entities {
+                let entity_id = upsert_entity_sync(
+                    &tx,
+                    *project_id,
+                    &entity.canonical_name,
+                    entity.entity_type.as_str(),
+                    &entity.name,
+                )?;
+                link_entity_to_fact_sync(&tx, *fact_id, entity_id)?;
+            }
+            // Always mark as processed, even if zero entities found
+            mark_fact_has_entities_sync(&tx, *fact_id)?;
         }
-    }
+        tx.commit()?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     if count > 0 {
         tracing::info!("Entity backfill: processed {} facts", count);

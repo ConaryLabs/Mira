@@ -198,14 +198,10 @@ impl OpenAiEmbeddings {
                 project_id,
             };
 
-            if let Err(e) = pool
-                .interact(move |conn| {
-                    insert_embedding_usage_sync(conn, &record).map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-            {
-                tracing::warn!("Failed to record embedding usage: {}", e);
-            }
+            pool.try_interact("record embedding usage", move |conn| {
+                insert_embedding_usage_sync(conn, &record).map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await;
         }
     }
 

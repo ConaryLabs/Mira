@@ -247,6 +247,23 @@ impl DatabasePool {
             .map_err(|e| anyhow::anyhow!("interact failed: {e}"))?
     }
 
+    /// Run a closure on a pooled connection, logging errors but not propagating them.
+    /// Use for best-effort operations (heartbeats, session tracking, behavior logging, etc.)
+    pub async fn try_interact<F, R>(&self, label: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let label = label.to_string();
+        match self.interact(move |conn| f(conn)).await {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::debug!("{}: {}", label, e);
+                None
+            }
+        }
+    }
+
     /// Run a closure that may return a rusqlite::Error.
     ///
     /// Convenience wrapper for operations that return rusqlite::Result.

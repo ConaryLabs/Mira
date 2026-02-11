@@ -20,12 +20,8 @@ pub async fn process_memory_embeddings(
 ) -> Result<usize, String> {
     // Fetch facts needing embeddings
     let facts = pool
-        .interact(move |conn| {
-            find_facts_without_embeddings_sync(conn, BATCH_SIZE)
-                .map_err(|e| anyhow::anyhow!("Failed to find facts without embeddings: {}", e))
-        })
-        .await
-        .map_err(|e| format!("Pool error: {}", e))?;
+        .run(move |conn| find_facts_without_embeddings_sync(conn, BATCH_SIZE))
+        .await?;
 
     if facts.is_empty() {
         return Ok(0);
@@ -50,10 +46,8 @@ pub async fn process_memory_embeddings(
         .collect();
 
     let stored = pool
-        .interact(move |conn| {
-            let tx = conn
-                .unchecked_transaction()
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+        .run(move |conn| {
+            let tx = conn.unchecked_transaction()?;
             let mut count = 0;
             for (id, content, embedding_bytes) in &facts_with_vectors {
                 if let Err(e) = store_fact_embedding_sync(&tx, *id, content, embedding_bytes) {
@@ -62,11 +56,10 @@ pub async fn process_memory_embeddings(
                 }
                 count += 1;
             }
-            tx.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(count)
+            tx.commit()?;
+            Ok::<_, rusqlite::Error>(count)
         })
-        .await
-        .map_err(|e| format!("Failed to store embeddings: {}", e))?;
+        .await?;
 
     if stored > 0 {
         tracing::info!("Re-embedded {} memory facts", stored);

@@ -105,47 +105,44 @@ pub async fn run() -> Result<()> {
 
     // Build session summary, save snapshot, and close the session
     {
-        let pool_clone = pool.clone();
         let session_id = stop_input.session_id.clone();
-        let _ = pool_clone
-            .interact(move |conn| {
-                if let Err(e) = crate::db::set_server_state_sync(
-                    conn,
-                    "last_stop_time",
-                    &chrono::Utc::now().to_rfc3339(),
-                ) {
-                    eprintln!("  Warning: failed to save server state: {e}");
-                }
+        pool.try_interact("session close", move |conn| {
+            if let Err(e) = crate::db::set_server_state_sync(
+                conn,
+                "last_stop_time",
+                &chrono::Utc::now().to_rfc3339(),
+            ) {
+                eprintln!("  Warning: failed to save server state: {e}");
+            }
 
-                // Build session summary from stats
-                let summary = if !session_id.is_empty() {
-                    build_session_summary(conn, &session_id)
-                } else {
-                    None
-                };
+            // Build session summary from stats
+            let summary = if !session_id.is_empty() {
+                build_session_summary(conn, &session_id)
+            } else {
+                None
+            };
 
-                // Save structured session snapshot for future resume context
-                if !session_id.is_empty()
-                    && let Err(e) = save_session_snapshot(conn, &session_id)
+            // Save structured session snapshot for future resume context
+            if !session_id.is_empty()
+                && let Err(e) = save_session_snapshot(conn, &session_id)
+            {
+                eprintln!("[mira] Session snapshot failed: {}", e);
+            }
+
+            // Close the session with summary
+            if !session_id.is_empty() {
+                if let Err(e) = crate::db::close_session_sync(conn, &session_id, summary.as_deref())
                 {
-                    eprintln!("[mira] Session snapshot failed: {}", e);
+                    eprintln!("  Warning: failed to close session: {e}");
                 }
-
-                // Close the session with summary
-                if !session_id.is_empty() {
-                    if let Err(e) =
-                        crate::db::close_session_sync(conn, &session_id, summary.as_deref())
-                    {
-                        eprintln!("  Warning: failed to close session: {e}");
-                    }
-                    eprintln!(
-                        "[mira] Closed session {}",
-                        truncate_at_boundary(&session_id, 8)
-                    );
-                }
-                Ok::<_, anyhow::Error>(())
-            })
-            .await;
+                eprintln!(
+                    "[mira] Closed session {}",
+                    truncate_at_boundary(&session_id, 8)
+                );
+            }
+            Ok(())
+        })
+        .await;
     }
 
     // Snapshot native Claude Code tasks
@@ -153,32 +150,30 @@ pub async fn run() -> Result<()> {
 
     // Auto-export ranked memories to CLAUDE.local.md
     {
-        let pool_clone = pool.clone();
         let pid = project_id;
-        let _ = pool_clone
-            .interact(move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
-                    tracing::warn!("Failed to get last active project: {e}");
-                    None
-                });
-                if let Some(project_path) = path {
-                    match crate::tools::core::claude_local::write_claude_local_md_sync(
-                        conn,
-                        pid,
-                        &project_path,
-                    ) {
-                        Ok(count) if count > 0 => {
-                            eprintln!("[mira] Auto-exported {} memories to CLAUDE.local.md", count);
-                        }
-                        Err(e) => {
-                            eprintln!("[mira] CLAUDE.local.md export failed: {}", e);
-                        }
-                        _ => {}
+        pool.try_interact("CLAUDE.local.md export", move |conn| {
+            let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
+                tracing::warn!("Failed to get last active project: {e}");
+                None
+            });
+            if let Some(project_path) = path {
+                match crate::tools::core::claude_local::write_claude_local_md_sync(
+                    conn,
+                    pid,
+                    &project_path,
+                ) {
+                    Ok(count) if count > 0 => {
+                        eprintln!("[mira] Auto-exported {} memories to CLAUDE.local.md", count);
                     }
+                    Err(e) => {
+                        eprintln!("[mira] CLAUDE.local.md export failed: {}", e);
+                    }
+                    _ => {}
                 }
-                Ok::<_, anyhow::Error>(())
-            })
-            .await;
+            }
+            Ok(())
+        })
+        .await;
     }
 
     write_hook_output(&output);
@@ -242,13 +237,9 @@ pub async fn run_session_end() -> Result<()> {
                 }
             }
 
-            let pool_clone = pool.clone();
             let sid = session_id.to_string();
-            if let Err(e) = pool_clone
-                .interact(move |conn| {
-                    crate::db::deactivate_team_session_sync(conn, &sid)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
+            if let Err(e) = pool
+                .run(move |conn| crate::db::deactivate_team_session_sync(conn, &sid))
                 .await
             {
                 eprintln!("[mira] Failed to deactivate team session: {}", e);
@@ -272,29 +263,27 @@ pub async fn run_session_end() -> Result<()> {
         snapshot_tasks(&pool, project_id, session_id, true).await;
 
         // Auto-export to Claude Code's auto memory (if feature available)
-        let pool_clone = pool.clone();
         let path_clone = project_path.clone();
-        let _ = pool_clone
-            .interact(move |conn| {
-                // Only write if auto memory directory exists (non-invasive feature detection)
-                if crate::tools::core::claude_local::auto_memory_dir_exists(&path_clone) {
-                    match crate::tools::core::claude_local::write_auto_memory_sync(
-                        conn,
-                        project_id,
-                        &path_clone,
-                    ) {
-                        Ok(count) if count > 0 => {
-                            eprintln!("[mira] Auto-exported {} memories to MEMORY.mira.md", count);
-                        }
-                        Err(e) => {
-                            eprintln!("[mira] Auto memory export failed: {}", e);
-                        }
-                        _ => {}
+        pool.try_interact("auto memory export", move |conn| {
+            // Only write if auto memory directory exists (non-invasive feature detection)
+            if crate::tools::core::claude_local::auto_memory_dir_exists(&path_clone) {
+                match crate::tools::core::claude_local::write_auto_memory_sync(
+                    conn,
+                    project_id,
+                    &path_clone,
+                ) {
+                    Ok(count) if count > 0 => {
+                        eprintln!("[mira] Auto-exported {} memories to MEMORY.mira.md", count);
                     }
+                    Err(e) => {
+                        eprintln!("[mira] Auto memory export failed: {}", e);
+                    }
+                    _ => {}
                 }
-                Ok::<_, anyhow::Error>(())
-            })
-            .await;
+            }
+            Ok(())
+        })
+        .await;
     }
 
     write_hook_output(&serde_json::json!({}));
@@ -466,7 +455,7 @@ fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<Go
     let sql = r#"
         SELECT g.title, g.progress_percent,
                (SELECT title FROM milestones
-                WHERE goal_id = g.id AND completed_at IS NULL
+                WHERE goal_id = g.id AND completed = 0
                 ORDER BY id LIMIT 1) as next_milestone
         FROM goals g
         WHERE g.project_id = ? AND g.status = 'in_progress'
@@ -558,4 +547,205 @@ fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Resul
     );
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::{
+        seed_goal, seed_session, seed_tool_history, setup_test_connection,
+    };
+
+    // ── StopInput::from_json ──────────────────────────────────────────────
+
+    #[test]
+    fn stop_input_defaults_on_empty_json() {
+        let input = StopInput::from_json(&serde_json::json!({}));
+        assert!(input.session_id.is_empty());
+        assert!(!input.stop_hook_active);
+    }
+
+    #[test]
+    fn stop_input_parses_valid_fields() {
+        let input = StopInput::from_json(&serde_json::json!({
+            "session_id": "sess-1",
+            "stop_hook_active": true
+        }));
+        assert_eq!(input.session_id, "sess-1");
+        assert!(input.stop_hook_active);
+    }
+
+    #[test]
+    fn stop_input_ignores_wrong_types() {
+        let input = StopInput::from_json(&serde_json::json!({
+            "session_id": 123,
+            "stop_hook_active": "not-a-bool"
+        }));
+        // Wrong type for session_id falls back to ""
+        assert!(input.session_id.is_empty());
+        // Wrong type for stop_hook_active falls back to false
+        assert!(!input.stop_hook_active);
+    }
+
+    #[test]
+    fn stop_input_handles_partial_fields() {
+        let input = StopInput::from_json(&serde_json::json!({
+            "session_id": "sess-2"
+        }));
+        assert_eq!(input.session_id, "sess-2");
+        assert!(!input.stop_hook_active);
+    }
+
+    // ── build_session_summary ─────────────────────────────────────────────
+
+    #[test]
+    fn build_summary_no_tools_returns_none() {
+        let conn = setup_test_connection();
+        crate::db::get_or_create_project_sync(&conn, "/tmp/empty-proj", None).unwrap();
+        seed_session(&conn, "empty-sess", 1, "active");
+
+        let summary = build_session_summary(&conn, "empty-sess");
+        // Returns None when tool_count == 0
+        assert!(summary.is_none());
+    }
+
+    #[test]
+    fn build_summary_nonexistent_session() {
+        let conn = setup_test_connection();
+        let summary = build_session_summary(&conn, "no-such-session");
+        // Should return None — not panic
+        assert!(summary.is_none());
+    }
+
+    #[test]
+    fn build_summary_with_tools() {
+        let conn = setup_test_connection();
+        crate::db::get_or_create_project_sync(&conn, "/tmp/tool-proj", None).unwrap();
+        seed_session(&conn, "tool-sess", 1, "active");
+        seed_tool_history(
+            &conn,
+            "tool-sess",
+            "Read",
+            r#"{"file_path":"/tmp/tool-proj/foo.rs"}"#,
+            "contents",
+        );
+        seed_tool_history(
+            &conn,
+            "tool-sess",
+            "Read",
+            r#"{"file_path":"/tmp/tool-proj/bar.rs"}"#,
+            "contents",
+        );
+        seed_tool_history(
+            &conn,
+            "tool-sess",
+            "Edit",
+            r#"{"file_path":"/tmp/tool-proj/foo.rs"}"#,
+            "ok",
+        );
+
+        let summary = build_session_summary(&conn, "tool-sess");
+        assert!(summary.is_some());
+        let s = summary.unwrap();
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn build_summary_with_modified_files() {
+        let conn = setup_test_connection();
+        crate::db::get_or_create_project_sync(&conn, "/tmp/mod-proj", None).unwrap();
+        seed_session(&conn, "mod-sess", 1, "active");
+        seed_tool_history(
+            &conn,
+            "mod-sess",
+            "Write",
+            r#"{"file_path":"/tmp/mod-proj/new.rs"}"#,
+            "ok",
+        );
+
+        let summary = build_session_summary(&conn, "mod-sess");
+        assert!(summary.is_some());
+    }
+
+    #[test]
+    fn build_summary_many_files_truncates() {
+        let conn = setup_test_connection();
+        crate::db::get_or_create_project_sync(&conn, "/tmp/big-proj", None).unwrap();
+        seed_session(&conn, "big-sess", 1, "active");
+        for i in 0..30 {
+            let args = format!(r#"{{"file_path":"/tmp/big-proj/file_{}.rs"}}"#, i);
+            seed_tool_history(&conn, "big-sess", "Edit", &args, "ok");
+        }
+
+        let summary = build_session_summary(&conn, "big-sess");
+        assert!(summary.is_some());
+        let s = summary.unwrap();
+        assert!(s.len() < 10_000);
+    }
+
+    // ── get_in_progress_goals ─────────────────────────────────────────────
+
+    #[test]
+    fn goals_empty_when_none_exist() {
+        let conn = setup_test_connection();
+        let goals = get_in_progress_goals(&conn, 1);
+        assert!(goals.is_empty());
+    }
+
+    /// Helper to create a project in the test DB, returning its ID.
+    fn seed_project(conn: &rusqlite::Connection, path: &str) -> i64 {
+        crate::db::get_or_create_project_sync(conn, path, None).unwrap().0
+    }
+
+    #[test]
+    fn goals_filters_by_status() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/goal-test");
+        seed_goal(&conn, pid, "Active Goal", "in_progress", 50);
+        seed_goal(&conn, pid, "Done Goal", "completed", 100);
+        seed_goal(&conn, pid, "Blocked Goal", "blocked", 20);
+
+        let goals = get_in_progress_goals(&conn, pid);
+        assert!(!goals.is_empty());
+    }
+
+    #[test]
+    fn goals_with_milestones() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/ms-test");
+        seed_goal(&conn, pid, "Goal With MS", "in_progress", 30);
+
+        let goals = get_in_progress_goals(&conn, pid);
+        assert!(!goals.is_empty());
+    }
+
+    #[test]
+    fn goals_limits_to_five() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/limit-test");
+        for i in 0..8 {
+            seed_goal(&conn, pid, &format!("Goal {}", i), "in_progress", 10);
+        }
+
+        let goals = get_in_progress_goals(&conn, pid);
+        assert!(goals.len() <= 5);
+    }
+
+    #[test]
+    fn goals_isolates_by_project() {
+        let conn = setup_test_connection();
+        let pid1 = seed_project(&conn, "/tmp/proj1");
+        let pid2 = seed_project(&conn, "/tmp/proj2");
+        seed_goal(&conn, pid1, "Project 1 Goal", "in_progress", 40);
+        seed_goal(&conn, pid2, "Project 2 Goal", "in_progress", 60);
+
+        let goals = get_in_progress_goals(&conn, pid1);
+        for g in &goals {
+            assert!(!g.title.contains("Project 2"));
+        }
+    }
 }

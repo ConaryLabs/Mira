@@ -117,11 +117,8 @@ where
     let project_path_owned = project_path.to_string();
     let functions = ctx
         .code_pool
-        .interact(move |conn| {
-            query_fn(conn, project_id, &project_path_owned).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| query_fn(conn, project_id, &project_path_owned))
+        .await?;
 
     if functions.is_empty() {
         return Ok(0);
@@ -195,7 +192,7 @@ where
                     let key = format!("{}:{}:{}", key_prefix, file_path, name);
 
                     ctx.main_pool
-                        .interact(move |conn| {
+                        .run(move |conn| {
                             store_memory_sync(
                                 conn,
                                 StoreMemoryParams {
@@ -212,10 +209,8 @@ where
                                     team_id: None,
                                 },
                             )
-                            .map_err(|e| anyhow::anyhow!("Failed to store: {}", e))
                         })
-                        .await
-                        .str_err()?;
+                        .await?;
 
                     tracing::info!("Code health: {} issue found in {}", category, name);
                     stored += 1;

@@ -112,7 +112,7 @@ async fn analyze_stale_doc_impacts(
 
     // Get all projects with stale docs needing analysis
     let projects: Vec<(i64, String)> = main_pool
-        .interact(|conn| {
+        .run(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT DISTINCT p.id, p.path FROM projects p
                  JOIN documentation_inventory di ON di.project_id = p.id
@@ -121,22 +121,16 @@ async fn analyze_stale_doc_impacts(
             )?;
             let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
             rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     let mut total_analyzed = 0;
 
     for (project_id, _project_path) in projects {
         // Get stale docs for this project (limit to avoid overwhelming)
         let stale_docs = main_pool
-            .interact(move |conn| {
-                get_stale_docs_needing_analysis(conn, project_id, 3)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-            .map_err(|e| e.to_string())?;
+            .run(move |conn| get_stale_docs_needing_analysis(conn, project_id, 3))
+            .await?;
 
         for doc in stale_docs {
             // Extract source file path from source_symbols (expects "source_file:<path>" format)
@@ -175,12 +169,10 @@ async fn analyze_stale_doc_impacts(
             let impact_clone = impact.clone();
             let summary_clone = summary.clone();
             main_pool
-                .interact(move |conn| {
+                .run(move |conn| {
                     update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
                 })
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
 
             tracing::debug!(
                 "Doc impact analysis for {}: {} - {}",

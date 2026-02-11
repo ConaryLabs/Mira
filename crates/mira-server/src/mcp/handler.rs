@@ -330,3 +330,87 @@ impl ServerHandler for MiraServer {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::CallToolRequestParams;
+
+    /// Helper to build a CallToolRequestParams with given tool name and optional arguments.
+    fn make_request(name: &str, args: Option<serde_json::Value>) -> CallToolRequestParams {
+        CallToolRequestParams {
+            meta: None,
+            name: name.to_string().into(),
+            arguments: args.and_then(|v| v.as_object().cloned()),
+            task: None,
+        }
+    }
+
+    // ═══════════════════════════════════════
+    // extract_action_ttl
+    // ═══════════════════════════════════════
+
+    #[test]
+    fn extract_action_ttl_no_args() {
+        let req = make_request("memory", None);
+        let (action, ttl) = extract_action_ttl(&req);
+        assert_eq!(action, None);
+        assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn extract_action_ttl_empty_args() {
+        let req = make_request("memory", Some(serde_json::json!({})));
+        let (action, ttl) = extract_action_ttl(&req);
+        assert_eq!(action, None);
+        assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn extract_action_ttl_with_non_eligible_action() {
+        let req = make_request("memory", Some(serde_json::json!({"action": "recall"})));
+        let (action, ttl) = extract_action_ttl(&req);
+        assert_eq!(action, Some("recall".to_string()));
+        assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn extract_action_ttl_eligible_index_project() {
+        let req = make_request("index", Some(serde_json::json!({"action": "project"})));
+        let (action, ttl) = extract_action_ttl(&req);
+        assert_eq!(action, Some("project".to_string()));
+        assert_eq!(ttl, Some(600));
+    }
+
+    #[test]
+    fn extract_action_ttl_eligible_code_diff() {
+        let req = make_request("code", Some(serde_json::json!({"action": "diff"})));
+        let (action, ttl) = extract_action_ttl(&req);
+        assert_eq!(action, Some("diff".to_string()));
+        assert_eq!(ttl, Some(300));
+    }
+
+    #[test]
+    fn extract_action_ttl_non_string_action() {
+        // action is a number, not a string — should be treated as None
+        let req = make_request("index", Some(serde_json::json!({"action": 42})));
+        let (action, ttl) = extract_action_ttl(&req);
+        assert_eq!(action, None);
+        assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn extract_action_ttl_with_extra_args() {
+        let req = make_request(
+            "index",
+            Some(serde_json::json!({"action": "health", "path": "/some/path"})),
+        );
+        let (action, ttl) = extract_action_ttl(&req);
+        assert_eq!(action, Some("health".to_string()));
+        assert_eq!(ttl, Some(600));
+    }
+}

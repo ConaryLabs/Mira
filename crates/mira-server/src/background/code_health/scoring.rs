@@ -133,15 +133,13 @@ pub async fn compute_tech_debt_scores(
     // Step 6: Store scores in main DB
     let count = scores.len();
     main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             for score in &scores {
-                store_debt_score_sync(conn, project_id, score)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                store_debt_score_sync(conn, project_id, score)?;
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, rusqlite::Error>(())
         })
-        .await
-        .str_err()?;
+        .await?;
 
     Ok(count)
 }

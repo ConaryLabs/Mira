@@ -8,7 +8,7 @@ use crate::db::{
     get_stale_sessions_sync, update_session_summary_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
-use crate::utils::{ResultExt, truncate_at_boundary};
+use crate::utils::truncate_at_boundary;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -44,12 +44,8 @@ async fn close_stale_sessions(
     client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     let stale = pool
-        .interact(move |conn| {
-            get_stale_sessions_sync(conn, STALE_SESSION_MINUTES)
-                .map_err(|e| anyhow::anyhow!("Failed to get stale sessions: {}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_stale_sessions_sync(conn, STALE_SESSION_MINUTES))
+        .await?;
 
     if stale.is_empty() {
         return Ok(0);
@@ -69,10 +65,7 @@ async fn close_stale_sessions(
         let session_id_clone = session_id.clone();
         let summary_clone = summary.clone();
         if let Err(e) = pool
-            .interact(move |conn| {
-                close_session_sync(conn, &session_id_clone, summary_clone.as_deref())
-                    .map_err(|e| anyhow::anyhow!("Failed to close session: {}", e))
-            })
+            .run(move |conn| close_session_sync(conn, &session_id_clone, summary_clone.as_deref()))
             .await
         {
             tracing::warn!(
@@ -105,13 +98,7 @@ async fn generate_missing_summaries(
     pool: &Arc<DatabasePool>,
     client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
-    let sessions = pool
-        .interact(move |conn| {
-            get_sessions_needing_summary_sync(conn)
-                .map_err(|e| anyhow::anyhow!("Failed to get sessions needing summary: {}", e))
-        })
-        .await
-        .str_err()?;
+    let sessions = pool.run(get_sessions_needing_summary_sync).await?;
 
     if sessions.is_empty() {
         return Ok(0);
@@ -125,9 +112,8 @@ async fn generate_missing_summaries(
             let session_id_clone = session_id.clone();
             let summary_clone = summary.clone();
             if let Err(e) = pool
-                .interact(move |conn| {
+                .run(move |conn| {
                     update_session_summary_sync(conn, &session_id_clone, &summary_clone)
-                        .map_err(|e| anyhow::anyhow!("Failed to update summary: {}", e))
                 })
                 .await
             {
@@ -355,16 +341,14 @@ pub async fn close_session_now(
     // Check tool count
     let session_id_clone = session_id.to_string();
     let tool_count: i64 = pool
-        .interact(move |conn| {
+        .run(move |conn| {
             conn.query_row(
                 "SELECT COUNT(*) FROM tool_history WHERE session_id = ?",
                 [&session_id_clone],
                 |row| row.get(0),
             )
-            .map_err(|e| anyhow::anyhow!("Failed to count tools: {}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     // Generate summary if enough tool calls (LLM or fallback)
     let summary = if tool_count >= MIN_TOOLS_FOR_SUMMARY {
@@ -376,12 +360,8 @@ pub async fn close_session_now(
     // Close the session
     let session_id_clone = session_id.to_string();
     let summary_clone = summary.clone();
-    pool.interact(move |conn| {
-        close_session_sync(conn, &session_id_clone, summary_clone.as_deref())
-            .map_err(|e| anyhow::anyhow!("Failed to close session: {}", e))
-    })
-    .await
-    .str_err()?;
+    pool.run(move |conn| close_session_sync(conn, &session_id_clone, summary_clone.as_deref()))
+        .await?;
 
     Ok(summary)
 }

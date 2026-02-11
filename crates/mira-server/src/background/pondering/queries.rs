@@ -6,7 +6,7 @@ use super::types::{
     ToolUsageEntry, UntestedFile,
 };
 use crate::db::pool::DatabasePool;
-use crate::utils::{ResultExt, truncate};
+use crate::utils::truncate;
 use rusqlite::params;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ pub(super) async fn get_recent_tool_history(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<ToolUsageEntry>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut stmt = conn
             .prepare(
                 r#"
@@ -56,7 +56,6 @@ pub(super) async fn get_recent_tool_history(
             .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
     })
     .await
-    .str_err()
 }
 
 /// Summarize tool arguments to avoid leaking sensitive data
@@ -77,7 +76,7 @@ pub(super) async fn get_recent_memories(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<MemoryEntry>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut stmt = conn
             .prepare(
                 r#"
@@ -106,7 +105,6 @@ pub(super) async fn get_recent_memories(
             .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
     })
     .await
-    .str_err()
 }
 
 // ── New project-aware queries ──────────────────────────────────────────
@@ -117,7 +115,7 @@ pub(super) async fn get_stale_goals(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<StaleGoal>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut stmt = conn
             .prepare(
                 r#"
@@ -167,7 +165,6 @@ pub(super) async fn get_stale_goals(
             .map_err(|e| anyhow::anyhow!("Failed to collect stale goals: {}", e))
     })
     .await
-    .str_err()
 }
 
 /// Modules where a significant portion of diffs resulted in reverts or follow-up fixes.
@@ -176,7 +173,7 @@ pub(super) async fn get_fragile_modules(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<FragileModule>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         // Fetch all diff analyses with their files and any outcomes
         let mut stmt = conn
             .prepare(
@@ -261,10 +258,9 @@ pub(super) async fn get_fragile_modules(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        Ok(results)
+        Ok::<_, anyhow::Error>(results)
     })
     .await
-    .str_err()
 }
 
 /// 2+ reverts in the same module within 48h, looking back 7 days.
@@ -272,7 +268,7 @@ pub(super) async fn get_recent_revert_clusters(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<RevertCluster>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut stmt = conn
             .prepare(
                 r#"
@@ -350,10 +346,9 @@ pub(super) async fn get_recent_revert_clusters(
         }
 
         clusters.sort_by(|a, b| b.revert_count.cmp(&a.revert_count));
-        Ok(clusters)
+        Ok::<_, anyhow::Error>(clusters)
     })
     .await
-    .str_err()
 }
 
 /// Files modified 5+ times across multiple sessions without corresponding test file changes.
@@ -362,7 +357,7 @@ pub(super) async fn get_untested_hotspots(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<UntestedFile>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         // Get file modification events from session_behavior_log
         let mut stmt = conn
             .prepare(
@@ -431,10 +426,9 @@ pub(super) async fn get_untested_hotspots(
             .collect();
 
         results.sort_by(|a, b| b.modification_count.cmp(&a.modification_count));
-        Ok(results)
+        Ok::<_, anyhow::Error>(results)
     })
     .await
-    .str_err()
 }
 
 /// Detect session-level patterns: many short sessions, sessions with no commits, long gaps.
@@ -442,7 +436,7 @@ pub(super) async fn get_session_patterns(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<SessionPattern>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut patterns = Vec::new();
 
         // Pattern 1: Short sessions (< 5 minutes)
@@ -520,10 +514,9 @@ pub(super) async fn get_session_patterns(
             });
         }
 
-        Ok(patterns)
+        Ok::<_, rusqlite::Error>(patterns)
     })
     .await
-    .str_err()
 }
 
 /// Gather all project insight data in one call.
@@ -554,7 +547,7 @@ pub(super) async fn get_existing_insights(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<Vec<String>, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut stmt = conn
             .prepare(
                 r#"
@@ -576,7 +569,6 @@ pub(super) async fn get_existing_insights(
             .map_err(|e| anyhow::anyhow!("Failed to collect existing insights: {}", e))
     })
     .await
-    .str_err()
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

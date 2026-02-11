@@ -13,7 +13,6 @@ pub(crate) mod types;
 use crate::db::get_active_projects_sync;
 use crate::db::pool::DatabasePool;
 use crate::llm::LlmClient;
-use crate::utils::ResultExt;
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -28,13 +27,7 @@ pub async fn process_pondering(
     client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     // Get all projects with recent activity
-    let projects = pool
-        .interact(|conn| {
-            get_active_projects_sync(conn, 24)
-                .map_err(|e| anyhow::anyhow!("Failed to get active projects: {}", e))
-        })
-        .await
-        .str_err()?;
+    let projects = pool.run(|conn| get_active_projects_sync(conn, 24)).await?;
 
     let mut processed = 0;
 
@@ -123,7 +116,7 @@ pub async fn process_pondering(
 
 /// Check if enough time has passed since last pondering
 async fn should_ponder_project(pool: &Arc<DatabasePool>, project_id: i64) -> Result<bool, String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         // Check server_state for last pondering time
         let last_pondering: Option<String> = conn
             .query_row(
@@ -145,16 +138,15 @@ async fn should_ponder_project(pool: &Arc<DatabasePool>, project_id: i64) -> Res
                     .unwrap_or(true);
                 Ok(should)
             }
-            None => Ok(true), // Never pondered before
+            None => Ok::<_, rusqlite::Error>(true), // Never pondered before
         }
     })
     .await
-    .str_err()
 }
 
 /// Update last pondering timestamp
 async fn update_last_pondering(pool: &Arc<DatabasePool>, project_id: i64) -> Result<(), String> {
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         conn.execute(
             r#"
             INSERT INTO server_state (key, value, updated_at)
@@ -162,10 +154,8 @@ async fn update_last_pondering(pool: &Arc<DatabasePool>, project_id: i64) -> Res
             ON CONFLICT(key) DO UPDATE SET value = datetime('now'), updated_at = datetime('now')
             "#,
             params![format!("last_pondering_{}", project_id)],
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))?;
-        Ok(())
+        )?;
+        Ok::<_, rusqlite::Error>(())
     })
     .await
-    .str_err()
 }

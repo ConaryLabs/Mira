@@ -4,7 +4,6 @@
 use super::PreGeneratedSuggestion;
 use crate::background::is_fallback_content;
 use crate::db::pool::DatabasePool;
-use crate::utils::ResultExt;
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -29,7 +28,7 @@ pub(super) async fn store_suggestions(
         })
         .collect();
 
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         let mut stored = 0;
 
         for suggestion in &suggestions_clone {
@@ -81,20 +80,18 @@ pub(super) async fn store_suggestions(
         Ok::<usize, anyhow::Error>(stored)
     })
     .await
-    .str_err()
 }
 
 /// Clean up expired suggestions
 pub async fn cleanup_expired_suggestions(pool: &Arc<DatabasePool>) -> Result<usize, String> {
-    pool.interact(|conn| {
+    pool.run(|conn| {
         let deleted = conn
             .execute(
                 "DELETE FROM proactive_suggestions WHERE expires_at < datetime('now')",
                 [],
             )
             .map_err(|e| anyhow::anyhow!("Failed to cleanup: {}", e))?;
-        Ok(deleted)
+        Ok::<_, anyhow::Error>(deleted)
     })
     .await
-    .str_err()
 }

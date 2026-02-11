@@ -78,30 +78,26 @@ async fn save_pre_compaction_state(
     );
 
     // Store as a session event
-    {
-        let pool_clone = pool.clone();
-        pool_clone
-            .interact(move |conn| {
-                store_memory_sync(
-                    conn,
-                    StoreMemoryParams {
-                        project_id,
-                        key: None,
-                        content: &note_content,
-                        fact_type: "session_event",
-                        category: Some("compaction"),
-                        confidence: COMPACTION_CONFIDENCE,
-                        session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
-                        team_id: None,
-                    },
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await?
-    };
+    pool.interact(move |conn| {
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id,
+                key: None,
+                content: &note_content,
+                fact_type: "session_event",
+                category: Some("compaction"),
+                confidence: COMPACTION_CONFIDENCE,
+                session_id: None,
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))
+    })
+    .await?;
 
     // If we have transcript, extract key information
     if let Some(transcript) = transcript

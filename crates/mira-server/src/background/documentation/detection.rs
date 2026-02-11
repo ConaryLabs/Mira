@@ -9,7 +9,7 @@ use crate::db::{
     get_documented_by_category_sync, get_indexed_project_ids_sync, get_lib_symbols_sync,
     get_modules_for_doc_gaps_sync, get_project_paths_by_ids_sync, get_symbols_for_file_sync,
 };
-use crate::utils::{ResultExt, truncate_at_boundary};
+use crate::utils::truncate_at_boundary;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -27,12 +27,7 @@ pub async fn scan_documentation_gaps(
     code_pool: &Arc<DatabasePool>,
 ) -> Result<usize, String> {
     // Step 1: Get indexed project IDs from code DB
-    let project_ids = code_pool
-        .interact(move |conn| {
-            get_indexed_project_ids_sync(conn).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+    let project_ids = code_pool.run(get_indexed_project_ids_sync).await?;
 
     if project_ids.is_empty() {
         return Ok(0);
@@ -41,11 +36,8 @@ pub async fn scan_documentation_gaps(
     // Step 2: Get project paths from main DB
     let ids = project_ids.clone();
     let projects = main_pool
-        .interact(move |conn| {
-            get_project_paths_by_ids_sync(conn, &ids).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_project_paths_by_ids_sync(conn, &ids))
+        .await?;
 
     let mut total_created = 0;
 
@@ -53,12 +45,8 @@ pub async fn scan_documentation_gaps(
         // Check if project needs scan (main DB - memory_facts)
         let project_path_clone = project_path.clone();
         let needs_scan = main_pool
-            .interact(move |conn| {
-                super::needs_documentation_scan(conn, project_id, &project_path_clone)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-            .str_err()?;
+            .run(move |conn| super::needs_documentation_scan(conn, project_id, &project_path_clone))
+            .await?;
 
         if !needs_scan {
             continue;
@@ -97,16 +85,14 @@ pub async fn scan_documentation_gaps(
         // Reset orphaned tasks (main DB)
         let project_path_for_reset = project_path.clone();
         let reset_count = main_pool
-            .interact(move |conn| {
+            .run(move |conn| {
                 crate::db::documentation::reset_orphaned_doc_tasks(
                     conn,
                     project_id,
                     &project_path_for_reset,
                 )
-                .map_err(|e| anyhow::anyhow!("{}", e))
             })
-            .await
-            .str_err()?;
+            .await?;
         if reset_count > 0 {
             tracing::info!(
                 "Documentation: reset {} orphaned tasks for project {}",
@@ -135,12 +121,10 @@ pub async fn scan_documentation_gaps(
         // Mark as scanned (main DB)
         let project_path_for_scan = project_path.clone();
         main_pool
-            .interact(move |conn| {
+            .run(move |conn| {
                 mark_documentation_scanned_sync(conn, project_id, &project_path_for_scan)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
             })
-            .await
-            .str_err()?;
+            .await?;
     }
 
     Ok(total_created)
@@ -172,7 +156,7 @@ async fn detect_gaps_for_project(
     let gaps_to_create = gaps.clone();
 
     let created = main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             let mut count = 0;
             for gap in gaps_to_create {
                 match create_doc_task(conn, &gap, git_commit.as_deref()) {
@@ -189,8 +173,7 @@ async fn detect_gaps_for_project(
             }
             Ok::<usize, anyhow::Error>(count)
         })
-        .await
-        .str_err()?;
+        .await?;
 
     if created > 0 {
         tracing::info!(
@@ -259,13 +242,11 @@ async fn detect_mcp_tool_gaps(
 
     // Check which tools have documentation (main DB)
     let documented: HashSet<String> = pool
-        .interact(move |conn| {
+        .run(move |conn| {
             get_documented_by_category_sync(conn, project_id, "mcp_tool")
                 .map(|v| v.into_iter().collect())
-                .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     // Create gaps for undocumented tools
     for tool_name in tool_names {
@@ -298,21 +279,16 @@ async fn detect_public_api_gaps(
 
     // Find public symbols in lib.rs (code DB)
     let lib_symbols = code_pool
-        .interact(move |conn| {
-            get_lib_symbols_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_lib_symbols_sync(conn, project_id))
+        .await?;
 
     // Get documented public APIs (main DB)
     let documented: HashSet<String> = main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             get_documented_by_category_sync(conn, project_id, "public_api")
                 .map(|v| v.into_iter().collect())
-                .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     for (name, _signature) in lib_symbols {
         let doc_path = format!("docs/api/{}.md", name);
@@ -344,21 +320,16 @@ async fn detect_module_doc_gaps(
 
     // Get all modules from codebase_modules (code DB)
     let modules = code_pool
-        .interact(move |conn| {
-            get_modules_for_doc_gaps_sync(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_modules_for_doc_gaps_sync(conn, project_id))
+        .await?;
 
     // Get documented modules (main DB)
     let documented: HashSet<String> = main_pool
-        .interact(move |conn| {
+        .run(move |conn| {
             get_documented_by_category_sync(conn, project_id, "module")
                 .map(|v| v.into_iter().collect())
-                .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     for (module_id, path, purpose) in modules {
         let doc_path = format!("docs/modules/{}.md", module_id);
@@ -398,11 +369,8 @@ async fn detect_stale_docs_for_project(
 
     // Get all documented items with source info (main DB)
     let inventory = main_pool
-        .interact(move |conn| {
-            get_inventory_for_stale_check(conn, project_id).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_inventory_for_stale_check(conn, project_id))
+        .await?;
 
     for item in inventory {
         let mut is_stale = false;
@@ -445,12 +413,8 @@ async fn detect_stale_docs_for_project(
             let doc_path = item.doc_path.clone();
             let reason_clone = reason.clone();
             main_pool
-                .interact(move |conn| {
-                    mark_doc_stale(conn, project_id, &doc_path, &reason_clone)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-                .str_err()?;
+                .run(move |conn| mark_doc_stale(conn, project_id, &doc_path, &reason_clone))
+                .await?;
             stale_count += 1;
             tracing::debug!("Stale documentation: {} - {}", item.doc_path, reason);
         }
@@ -469,12 +433,8 @@ async fn check_source_signature_changed(
 
     // Get symbols from code DB
     let symbols = code_pool
-        .interact(move |conn| {
-            get_symbols_for_file_sync(conn, project_id, &source_path)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_symbols_for_file_sync(conn, project_id, &source_path))
+        .await?;
 
     if symbols.is_empty() {
         return Ok(None);

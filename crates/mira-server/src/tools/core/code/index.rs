@@ -375,12 +375,8 @@ pub async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput
     // Mark as scanned so the background worker doesn't re-run immediately
     let pid = project_id;
     ctx.pool()
-        .interact(move |conn| {
-            crate::background::code_health::mark_health_scanned(conn, pid)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .map_err(|e| format!("Failed to mark health scanned: {}", e))?;
+        .run(move |conn| crate::background::code_health::mark_health_scanned(conn, pid))
+        .await?;
 
     Ok(Json(IndexOutput {
         action: "health".into(),

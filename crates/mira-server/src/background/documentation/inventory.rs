@@ -4,7 +4,6 @@
 use crate::db::documentation::{DocInventoryParams, upsert_doc_inventory};
 use crate::db::get_symbols_for_file_sync;
 use crate::db::pool::DatabasePool;
-use crate::utils::ResultExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -169,7 +168,7 @@ async fn inventory_file(
     let git_commit_owned = git_commit.map(|s| s.to_string());
 
     // Upsert inventory
-    pool.interact(move |conn| {
+    pool.run(move |conn| {
         upsert_doc_inventory(
             conn,
             &DocInventoryParams {
@@ -183,10 +182,8 @@ async fn inventory_file(
                 git_commit: git_commit_owned.as_deref(),
             },
         )
-        .map_err(|e| anyhow::anyhow!("{}", e))
     })
-    .await
-    .str_err()?;
+    .await?;
 
     Ok(())
 }
@@ -276,12 +273,8 @@ async fn get_source_signature(
 
     // Get symbols from db - returns (id, name, symbol_type, start_line, end_line, signature)
     let symbols = pool
-        .interact(move |conn| {
-            get_symbols_for_file_sync(conn, project_id, &source_path)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_symbols_for_file_sync(conn, project_id, &source_path))
+        .await?;
 
     if symbols.is_empty() {
         return Ok(None);

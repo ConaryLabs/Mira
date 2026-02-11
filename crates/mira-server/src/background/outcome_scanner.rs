@@ -12,7 +12,7 @@ use crate::db::{
     get_indexed_project_ids_sync, get_project_paths_by_ids_sync, set_server_state_sync,
 };
 use crate::git::{CommitWithFiles, get_commits_with_files, get_git_head};
-use crate::utils::{ResultExt, truncate_at_boundary};
+use crate::utils::truncate_at_boundary;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -40,13 +40,7 @@ pub async fn process_outcome_scanning(
 ) -> Result<usize, String> {
     // Two-step project discovery for split-DB mode:
     // 1. Get indexed project IDs from code DB (has codebase_modules)
-    let project_ids = code_pool
-        .interact(|conn| {
-            get_indexed_project_ids_sync(conn)
-                .map_err(|e| anyhow::anyhow!("Failed to get indexed project IDs: {}", e))
-        })
-        .await
-        .str_err()?;
+    let project_ids = code_pool.run(get_indexed_project_ids_sync).await?;
 
     if project_ids.is_empty() {
         return Ok(0);
@@ -55,12 +49,8 @@ pub async fn process_outcome_scanning(
     // 2. Resolve project paths from main DB (has projects table)
     let ids = project_ids.clone();
     let projects = pool
-        .interact(move |conn| {
-            get_project_paths_by_ids_sync(conn, &ids)
-                .map_err(|e| anyhow::anyhow!("Failed to get project paths: {}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_project_paths_by_ids_sync(conn, &ids))
+        .await?;
 
     let mut processed = 0;
 
@@ -96,23 +86,15 @@ async fn scan_project(
     // Get unscanned diffs for this project
     let pid = project_id;
     let unscanned = pool
-        .interact(move |conn| {
-            get_unscanned_diffs_sync(conn, pid, MAX_DIFFS_PER_CYCLE)
-                .map_err(|e| anyhow::anyhow!("Failed to get unscanned diffs: {}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| get_unscanned_diffs_sync(conn, pid, MAX_DIFFS_PER_CYCLE))
+        .await?;
 
     if unscanned.is_empty() {
         // Still mark clean outcomes for aged diffs
         let pid = project_id;
         let aged = pool
-            .interact(move |conn| {
-                mark_clean_outcomes_sync(conn, pid, CLEAN_AGING_DAYS)
-                    .map_err(|e| anyhow::anyhow!("Failed to mark clean: {}", e))
-            })
-            .await
-            .str_err()?;
+            .run(move |conn| mark_clean_outcomes_sync(conn, pid, CLEAN_AGING_DAYS))
+            .await?;
         return Ok(aged);
     }
 
@@ -174,10 +156,8 @@ async fn scan_project(
     if !outcomes.is_empty() {
         let pid = project_id;
         let count = outcomes.len();
-        pool.interact(move |conn| {
-            let tx = conn
-                .unchecked_transaction()
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+        pool.run(move |conn| {
+            let tx = conn.unchecked_transaction()?;
             for o in &outcomes {
                 store_diff_outcome_sync(
                     &tx,
@@ -190,36 +170,27 @@ async fn scan_project(
                         time_to_outcome_seconds: Some(o.time_to_outcome_seconds),
                         detected_by: "git_scan",
                     },
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+                )?;
             }
-            tx.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok::<_, anyhow::Error>(())
+            tx.commit()?;
+            Ok::<_, rusqlite::Error>(())
         })
-        .await
-        .str_err()?;
+        .await?;
         processed += count;
     }
 
     // Mark aged diffs as clean
     let pid = project_id;
     let aged = pool
-        .interact(move |conn| {
-            mark_clean_outcomes_sync(conn, pid, CLEAN_AGING_DAYS)
-                .map_err(|e| anyhow::anyhow!("Failed to mark clean: {}", e))
-        })
-        .await
-        .str_err()?;
+        .run(move |conn| mark_clean_outcomes_sync(conn, pid, CLEAN_AGING_DAYS))
+        .await?;
     processed += aged;
 
     // Update scan state
     if let Some(latest_commit) = get_git_head(project_path) {
         let key = format!("{}{}", STATE_KEY_PREFIX, project_id);
-        pool.interact(move |conn| {
-            set_server_state_sync(conn, &key, &latest_commit).map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-        .str_err()?;
+        pool.run(move |conn| set_server_state_sync(conn, &key, &latest_commit))
+            .await?;
     }
 
     Ok(processed)

@@ -68,19 +68,15 @@ fn spawn_record_access(
 ) {
     use crate::db::record_memory_access_sync;
     tokio::spawn(async move {
-        if let Err(e) = pool
-            .interact(move |conn| {
-                for id in ids {
-                    if let Err(e) = record_memory_access_sync(conn, id, &session_id) {
-                        tracing::warn!("Failed to record memory access: {}", e);
-                    }
+        pool.try_interact("record memory access", move |conn| {
+            for id in ids {
+                if let Err(e) = record_memory_access_sync(conn, id, &session_id) {
+                    tracing::warn!("Failed to record memory access: {}", e);
                 }
-                Ok::<_, anyhow::Error>(())
-            })
-            .await
-        {
-            tracing::warn!("Failed to record memory access (pool error): {}", e);
-        }
+            }
+            Ok(())
+        })
+        .await;
     });
 }
 

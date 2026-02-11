@@ -7,7 +7,6 @@ use crate::db::get_projects_needing_suggestions_sync;
 use crate::db::pool::DatabasePool;
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::proactive::patterns::{BehaviorPattern, PatternData, get_high_confidence_patterns};
-use crate::utils::ResultExt;
 use crate::utils::json::parse_json_hardened;
 use std::sync::Arc;
 
@@ -18,12 +17,11 @@ pub(super) async fn enhance_suggestions(
 ) -> Result<usize, String> {
     // Get projects with high-confidence patterns that don't have recent suggestions
     let projects_with_patterns = pool
-        .interact(|conn| {
+        .run(|conn| {
             get_projects_needing_suggestions_sync(conn)
                 .map_err(|e| anyhow::anyhow!("Failed to get projects: {}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     let mut total_suggestions = 0;
 
@@ -32,12 +30,11 @@ pub(super) async fn enhance_suggestions(
         let patterns: Vec<BehaviorPattern> = {
             let pool_clone = pool.clone();
             pool_clone
-                .interact(move |conn| {
+                .run(move |conn| {
                     get_high_confidence_patterns(conn, project_id, 0.7)
                         .map_err(|e| anyhow::anyhow!("Failed to get patterns: {}", e))
                 })
-                .await
-                .str_err()?
+                .await?
         };
 
         if patterns.is_empty() {

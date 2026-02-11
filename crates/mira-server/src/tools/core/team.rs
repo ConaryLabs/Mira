@@ -30,7 +30,7 @@ async fn team_status<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput
 
     // Get active members and their files
     let (members_info, all_conflicts) = pool
-        .interact(move |conn| {
+        .run(move |conn| {
             let members = crate::db::get_active_team_members_sync(conn, tid);
             let mut member_summaries: Vec<(crate::db::TeamMemberInfo, Vec<String>)> = Vec::new();
 
@@ -64,8 +64,7 @@ async fn team_status<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput
 
             Ok::<_, anyhow::Error>((member_summaries, conflict_map))
         })
-        .await
-        .map_err(|e| format!("Failed to get team status: {}", e))?;
+        .await?;
 
     let active_count = members_info.len();
     let members: Vec<TeamMemberSummary> = members_info
@@ -128,7 +127,7 @@ async fn team_review<C: ToolContext + ?Sized>(
     let target_name = teammate.unwrap_or_else(|| my_name.clone());
 
     let (member_name, files) = pool
-        .interact(move |conn| {
+        .run(move |conn| {
             let members = crate::db::get_active_team_members_sync(conn, tid);
 
             // Find matching member
@@ -149,8 +148,7 @@ async fn team_review<C: ToolContext + ?Sized>(
 
             Ok::<_, anyhow::Error>((member.member_name.clone(), files))
         })
-        .await
-        .map_err(|e| format!("Failed to review team work: {}", e))?;
+        .await?;
 
     let file_count = files.len();
     let message = format!("{} has modified {} file(s).", member_name, file_count);

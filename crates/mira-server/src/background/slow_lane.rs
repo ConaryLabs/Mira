@@ -304,16 +304,15 @@ impl SlowLaneWorker {
         // Write heartbeat so the status line can detect if the background loop is alive.
         // This runs every cycle (~60s idle, ~10s active) regardless of what tasks run.
         let pool = self.pool.clone();
-        let _ = pool
-            .interact(move |conn| {
-                crate::db::set_server_state_sync(
-                    conn,
-                    "last_bg_heartbeat",
-                    &chrono::Utc::now().to_rfc3339(),
-                )
-                .map_err(Into::into)
-            })
-            .await;
+        pool.try_interact("heartbeat write", move |conn| {
+            crate::db::set_server_state_sync(
+                conn,
+                "last_bg_heartbeat",
+                &chrono::Utc::now().to_rfc3339(),
+            )?;
+            Ok(())
+        })
+        .await;
 
         let skip_low = self.skip_low_priority();
         if skip_low {
@@ -479,12 +478,8 @@ impl SlowLaneWorker {
             BackgroundTask::DataRetention => {
                 let pool = self.pool.clone();
                 Self::run_task(&name, async move {
-                    pool.interact(move |conn| {
-                        crate::db::retention::run_data_retention_sync(conn)
-                            .map_err(|e| anyhow::anyhow!(e))
-                    })
-                    .await
-                    .map_err(|e| e.to_string())
+                    pool.run(crate::db::retention::run_data_retention_sync)
+                        .await
                 })
                 .await
             }
@@ -516,6 +511,200 @@ impl SlowLaneWorker {
                 );
                 0
             }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════
+    // ScheduledTask::should_run
+    // ═══════════════════════════════════════
+
+    #[test]
+    fn should_run_none_always_runs() {
+        let task = ScheduledTask {
+            task: BackgroundTask::StaleSessions,
+            priority: TaskPriority::Critical,
+            cycle_interval: None,
+        };
+        for cycle in 0..10 {
+            assert!(
+                task.should_run(cycle),
+                "should_run(None) must be true for cycle {cycle}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_run_zero_always_runs() {
+        let task = ScheduledTask {
+            task: BackgroundTask::Summaries,
+            priority: TaskPriority::Normal,
+            cycle_interval: Some(0),
+        };
+        for cycle in 0..10 {
+            assert!(
+                task.should_run(cycle),
+                "should_run(Some(0)) must be true for cycle {cycle}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_run_interval_3() {
+        let task = ScheduledTask {
+            task: BackgroundTask::DocumentationTasks,
+            priority: TaskPriority::Low,
+            cycle_interval: Some(3),
+        };
+        // 0 is a multiple of 3 (0 % 3 == 0)
+        assert!(task.should_run(0));
+        assert!(!task.should_run(1));
+        assert!(!task.should_run(2));
+        assert!(task.should_run(3));
+        assert!(!task.should_run(4));
+        assert!(!task.should_run(5));
+        assert!(task.should_run(6));
+        assert!(task.should_run(9));
+        assert!(task.should_run(30));
+    }
+
+    #[test]
+    fn should_run_interval_10() {
+        let task = ScheduledTask {
+            task: BackgroundTask::PonderingInsights,
+            priority: TaskPriority::Low,
+            cycle_interval: Some(10),
+        };
+        assert!(task.should_run(0));
+        assert!(!task.should_run(1));
+        assert!(!task.should_run(9));
+        assert!(task.should_run(10));
+        assert!(task.should_run(20));
+        assert!(!task.should_run(15));
+    }
+
+    // ═══════════════════════════════════════
+    // skip_low_priority
+    // ═══════════════════════════════════════
+
+    #[tokio::test]
+    async fn skip_low_priority_under_threshold() {
+        let worker = make_test_worker(Duration::from_secs(59)).await;
+        assert!(!worker.skip_low_priority());
+    }
+
+    #[tokio::test]
+    async fn skip_low_priority_at_threshold() {
+        let worker = make_test_worker(Duration::from_secs(60)).await;
+        assert!(worker.skip_low_priority());
+    }
+
+    #[tokio::test]
+    async fn skip_low_priority_over_threshold() {
+        let worker = make_test_worker(Duration::from_secs(120)).await;
+        assert!(worker.skip_low_priority());
+    }
+
+    #[tokio::test]
+    async fn skip_low_priority_zero_duration() {
+        let worker = make_test_worker(Duration::ZERO).await;
+        assert!(!worker.skip_low_priority());
+    }
+
+    // ═══════════════════════════════════════
+    // task_schedule completeness
+    // ═══════════════════════════════════════
+
+    #[test]
+    fn task_schedule_contains_all_variants() {
+        let schedule = task_schedule();
+        // Verify we have all BackgroundTask variants
+        let names: Vec<String> = schedule.iter().map(|s| s.task.to_string()).collect();
+
+        assert!(names.contains(&"stale sessions".to_string()));
+        assert!(names.contains(&"memory embeddings".to_string()));
+        assert!(names.contains(&"summaries".to_string()));
+        assert!(names.contains(&"briefings".to_string()));
+        assert!(names.contains(&"health: fast scans".to_string()));
+        assert!(names.contains(&"health: LLM complexity".to_string()));
+        assert!(names.contains(&"health: LLM error quality".to_string()));
+        assert!(names.contains(&"health: module analysis".to_string()));
+        assert!(names.contains(&"proactive items".to_string()));
+        assert!(names.contains(&"entity backfills".to_string()));
+        assert!(names.contains(&"team monitor".to_string()));
+        assert!(names.contains(&"documentation tasks".to_string()));
+        assert!(names.contains(&"pondering insights".to_string()));
+        assert!(names.contains(&"insight cleanup".to_string()));
+        assert!(names.contains(&"proactive cleanup".to_string()));
+        assert!(names.contains(&"diff outcomes".to_string()));
+        assert!(names.contains(&"data retention".to_string()));
+    }
+
+    #[test]
+    fn task_schedule_critical_tasks_come_first() {
+        let schedule = task_schedule();
+        // All Critical tasks should appear before any Normal or Low
+        let mut seen_non_critical = false;
+        for task in &schedule {
+            if task.priority != TaskPriority::Critical {
+                seen_non_critical = true;
+            }
+            if seen_non_critical {
+                assert_ne!(
+                    task.priority,
+                    TaskPriority::Critical,
+                    "Critical task '{}' appears after non-critical tasks",
+                    task.task
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn task_schedule_has_no_duplicates() {
+        let schedule = task_schedule();
+        let names: Vec<String> = schedule.iter().map(|s| s.task.to_string()).collect();
+        let unique: std::collections::HashSet<&String> = names.iter().collect();
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "task_schedule contains duplicates"
+        );
+    }
+
+    // ═══════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════
+
+    /// Build a minimal SlowLaneWorker with a given last_cycle_duration for skip_low_priority tests.
+    async fn make_test_worker(last_cycle_duration: Duration) -> SlowLaneWorker {
+        let (_tx, rx) = watch::channel(false);
+        let pool = Arc::new(
+            crate::db::pool::DatabasePool::open_in_memory()
+                .await
+                .unwrap(),
+        );
+        let code_pool = Arc::new(
+            crate::db::pool::DatabasePool::open_in_memory()
+                .await
+                .unwrap(),
+        );
+        SlowLaneWorker {
+            pool,
+            code_pool,
+            embeddings: None,
+            llm_factory: Arc::new(crate::llm::ProviderFactory::new()),
+            shutdown: rx,
+            cycle_count: 0,
+            last_cycle_duration,
         }
     }
 }

@@ -147,7 +147,7 @@ pub async fn run() -> Result<()> {
         if let Ok(pool) = DatabasePool::open(&db_path).await {
             let pool = Arc::new(pool);
             let res = pool
-                .interact(move |conn| {
+                .run(move |conn| {
                     // Resolve project from cwd
                     let (project_id, _) =
                         crate::db::get_or_create_project_sync(conn, &cwd_owned, None)?;
@@ -168,7 +168,7 @@ pub async fn run() -> Result<()> {
                         rusqlite::params![sid_owned, source_owned],
                     )
                     .ok(); // best-effort
-                    Ok::<_, anyhow::Error>(())
+                    Ok::<_, rusqlite::Error>(())
                 })
                 .await;
             match res {

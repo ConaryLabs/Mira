@@ -20,16 +20,14 @@ fn get_embeddings(pool: Option<Arc<DatabasePool>>) -> Option<Arc<EmbeddingClient
 
 /// Log user query for behavior tracking
 async fn log_behavior(pool: &Arc<DatabasePool>, project_id: i64, session_id: &str, message: &str) {
-    let pool_clone = pool.clone();
     let session_id_clone = session_id.to_string();
     let message_clone = message.to_string();
-    let _ = pool_clone
-        .interact(move |conn| {
-            let mut tracker = BehaviorTracker::for_session(conn, session_id_clone, project_id);
-            let _ = tracker.log_query(conn, &message_clone, "user_prompt");
-            Ok::<_, anyhow::Error>(())
-        })
-        .await;
+    pool.try_interact("behavior logging", move |conn| {
+        let mut tracker = BehaviorTracker::for_session(conn, session_id_clone, project_id);
+        let _ = tracker.log_query(conn, &message_clone, "user_prompt");
+        Ok(())
+    })
+    .await;
 }
 
 /// Get proactive context predictions (hybrid: pre-generated + on-the-fly + pondering insights)
@@ -424,15 +422,13 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
     };
 
     // Heartbeat: update last_heartbeat for this session
-    let pool_clone = pool.clone();
     let tid = membership.team_id;
     let sid = session_id.to_string();
-    let _ = pool_clone
-        .interact(move |conn| {
-            crate::db::heartbeat_team_session_sync(conn, tid, &sid)
-                .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await;
+    pool.try_interact("team heartbeat", move |conn| {
+        crate::db::heartbeat_team_session_sync(conn, tid, &sid)?;
+        Ok(())
+    })
+    .await;
 
     // Fetch recent team-scoped memories (last 1 hour, limit 3) as discoveries
     let pool_clone = pool.clone();

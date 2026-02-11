@@ -44,11 +44,8 @@ pub async fn distill_team_session(
     team_id: i64,
     project_id: Option<i64>,
 ) -> Result<Option<DistillationResult>, String> {
-    let pool_clone = pool.clone();
-    pool_clone
-        .interact(move |conn| distill_team_session_sync(conn, team_id, project_id))
+    pool.run(move |conn| distill_team_session_sync(conn, team_id, project_id))
         .await
-        .map_err(|e| format!("Knowledge distillation failed: {}", e))
 }
 
 /// Synchronous distillation logic for use within pool.interact().

@@ -12,7 +12,6 @@ use crate::db::{
 };
 use crate::fuzzy::FuzzyCache;
 use crate::indexer;
-use crate::utils::ResultExt;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -347,16 +346,13 @@ impl FileWatcher {
         }
 
         // Mark project for health rescan (will run on next background cycle)
-        if let Err(e) = self
-            .pool
-            .interact(move |conn| {
+        self.pool
+            .try_interact("health scan mark", move |conn| {
                 code_health::mark_health_scan_needed_sync(conn, project_id)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                Ok(())
             })
-            .await
-        {
-            tracing::warn!("Failed to mark project for health scan: {}", e);
-        }
+            .await;
 
         Ok(())
     }
@@ -366,17 +362,16 @@ impl FileWatcher {
         let file_path = file_path.to_string();
         let result = self
             .pool
-            .interact(move |conn| -> Result<(), anyhow::Error> {
+            .run(move |conn| {
                 clear_file_index_sync(conn, project_id, &file_path)?;
                 tracing::debug!(
                     "Deleted data for file {} in project {}",
                     file_path,
                     project_id
                 );
-                Ok(())
+                Ok::<_, rusqlite::Error>(())
             })
-            .await
-            .str_err();
+            .await;
         if result.is_ok()
             && let Some(cache) = self.fuzzy_cache.as_ref()
         {
@@ -429,7 +424,7 @@ impl FileWatcher {
             let call_count = parse_result.calls.len();
             let chunk_count = parse_result.chunks.len();
             self.pool
-                .interact(move |conn| -> Result<(), anyhow::Error> {
+                .run(move |conn| -> Result<(), rusqlite::Error> {
                     let relative_path = relative_path_for_db;
                     // Use a transaction for batch inserts (much faster)
                     let tx = conn.unchecked_transaction()?;
@@ -516,8 +511,7 @@ impl FileWatcher {
                     tx.commit()?;
                     Ok(())
                 })
-                .await
-                .str_err()?;
+                .await?;
 
             if let Some(cache) = self.fuzzy_cache.as_ref() {
                 cache.invalidate_code(Some(project_id)).await;

@@ -30,7 +30,6 @@ use crate::db::{
     DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync, store_diff_analysis_sync,
 };
 use crate::llm::LlmClient;
-use crate::utils::ResultExt;
 use std::sync::Arc;
 
 /// Reconstruct a DiffAnalysisResult from cached database row
@@ -115,31 +114,27 @@ async fn cache_result(
         }
     };
 
-    if let Err(e) = pool
-        .interact(move |conn| {
-            store_diff_analysis_sync(
-                conn,
-                &StoreDiffAnalysisParams {
-                    project_id,
-                    from_commit: &from,
-                    to_commit: &to,
-                    analysis_type: &analysis_type,
-                    changes_json: changes_json.as_deref(),
-                    impact_json: impact_json.as_deref(),
-                    risk_json: risk_json.as_deref(),
-                    summary: Some(&summary),
-                    files_changed: Some(files_changed),
-                    lines_added: Some(lines_added),
-                    lines_removed: Some(lines_removed),
-                    files_json: files_json.as_deref(),
-                },
-            )
-            .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await
-    {
-        tracing::warn!("Failed to cache diff analysis: {}", e);
-    }
+    pool.try_interact("cache diff analysis", move |conn| {
+        store_diff_analysis_sync(
+            conn,
+            &StoreDiffAnalysisParams {
+                project_id,
+                from_commit: &from,
+                to_commit: &to,
+                analysis_type: &analysis_type,
+                changes_json: changes_json.as_deref(),
+                impact_json: impact_json.as_deref(),
+                risk_json: risk_json.as_deref(),
+                summary: Some(&summary),
+                files_changed: Some(files_changed),
+                lines_added: Some(lines_added),
+                lines_removed: Some(lines_removed),
+                files_json: files_json.as_deref(),
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))
+    })
+    .await;
 }
 
 /// Perform complete diff analysis (LLM optional — falls back to heuristic)
@@ -160,12 +155,10 @@ pub async fn analyze_diff(
     let from_for_cache = from_commit.clone();
     let to_for_cache = to_commit.clone();
     let cached = pool
-        .interact(move |conn| {
+        .run(move |conn| {
             get_cached_diff_analysis_sync(conn, project_id, &from_for_cache, &to_for_cache)
-                .map_err(|e| anyhow::anyhow!("{}", e))
         })
-        .await
-        .str_err()?;
+        .await?;
 
     if let Some(cached) = cached {
         // If LLM is available and cached result is heuristic, skip cache to re-analyze
@@ -216,7 +209,7 @@ pub async fn analyze_diff(
         let files = stats.files.clone();
         let changes_clone = changes.clone();
         let impact_result = pool
-            .interact(move |conn| -> Result<ImpactAnalysis, anyhow::Error> {
+            .run(move |conn| -> Result<ImpactAnalysis, String> {
                 let symbols = map_to_symbols(conn, project_id, &files);
                 if symbols.is_empty() {
                     let pseudo_symbols: Vec<(String, String, String)> = changes_clone
@@ -232,8 +225,7 @@ pub async fn analyze_diff(
                     Ok(build_impact_graph(conn, project_id, &symbols, 2))
                 }
             })
-            .await
-            .str_err()?;
+            .await?;
         Some(impact_result)
     } else {
         None

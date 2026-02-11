@@ -78,36 +78,34 @@ pub async fn run() -> Result<()> {
 
     // Log behavior events for proactive intelligence
     {
-        let pool_clone = pool.clone();
         let session_id = post_input.session_id.clone();
         let tool_name = post_input.tool_name.clone();
         let file_path_clone = file_path.clone();
-        let _ = pool_clone
-            .interact(move |conn| {
-                let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
+        pool.try_interact("behavior tracking", move |conn| {
+            let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
 
-                // Log tool use
-                if let Err(e) = tracker.log_tool_use(conn, &tool_name, None) {
-                    tracing::debug!("Failed to log tool use: {e}");
-                }
+            // Log tool use
+            if let Err(e) = tracker.log_tool_use(conn, &tool_name, None) {
+                tracing::debug!("Failed to log tool use: {e}");
+            }
 
-                // Log file access
-                if let Err(e) = tracker.log_file_access(conn, &file_path_clone, &tool_name) {
-                    tracing::debug!("Failed to log file access: {e}");
-                }
+            // Log file access
+            if let Err(e) = tracker.log_file_access(conn, &file_path_clone, &tool_name) {
+                tracing::debug!("Failed to log file access: {e}");
+            }
 
-                Ok::<_, anyhow::Error>(())
-            })
-            .await;
+            Ok(())
+        })
+        .await;
     }
 
     // Queue file for re-indexing (background)
     {
-        let pool_clone = pool.clone();
         let file_path_clone = file_path.clone();
-        let _ = pool_clone
-            .interact(move |conn| queue_file_for_indexing(conn, project_id, &file_path_clone))
-            .await;
+        pool.try_interact("queue file indexing", move |conn| {
+            queue_file_for_indexing(conn, project_id, &file_path_clone)
+        })
+        .await;
     }
 
     // Track file ownership for team intelligence (only for file-mutating tools)
@@ -119,20 +117,17 @@ pub async fn run() -> Result<()> {
         && let Some(membership) =
             crate::hooks::session::read_team_membership_from_db(&pool, &post_input.session_id).await
     {
-        let pool_clone = pool.clone();
         let sid = post_input.session_id.clone();
         let member = membership.member_name.clone();
         let fp = file_path.clone();
         let tool = post_input.tool_name.clone();
         let team_id = membership.team_id;
-        let result = pool_clone
-            .interact(move |conn| {
+        if let Err(e) = pool
+            .run(move |conn| {
                 crate::db::record_file_ownership_sync(conn, team_id, &sid, &member, &fp, &tool)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
             })
-            .await;
-
-        if let Err(e) = result {
+            .await
+        {
             eprintln!("[mira] File ownership tracking failed: {}", e);
         }
 
