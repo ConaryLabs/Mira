@@ -2,8 +2,8 @@
 // Unified session management and collaboration tools
 
 use crate::db::{
-    build_session_recap_sync, create_session_ext_sync, get_recent_sessions_sync,
-    get_session_history_sync, get_unified_insights_sync,
+    build_session_recap_sync, create_session_ext_sync, dismiss_insight_sync,
+    get_recent_sessions_sync, get_session_history_sync, get_unified_insights_sync,
 };
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
@@ -75,6 +75,7 @@ pub async fn handle_session<C: ToolContext>(
             )
             .await
         }
+        SessionAction::DismissInsight => dismiss_insight(ctx, req.insight_id).await,
         SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
             // Tasks actions need MiraServer directly, not ToolContext
             // This branch is unreachable in MCP (router intercepts) but needed for CLI
@@ -142,6 +143,7 @@ async fn query_insights<C: ToolContext>(
             }
             output.push('\n');
             InsightItem {
+                row_id: insight.row_id,
                 source: insight.source.clone(),
                 source_type: insight.source_type.clone(),
                 description: insight.description.clone(),
@@ -184,6 +186,33 @@ async fn query_insights<C: ToolContext>(
             insights: items,
             total,
         })),
+    }))
+}
+
+/// Dismiss a single insight by row ID
+async fn dismiss_insight<C: ToolContext>(
+    ctx: &C,
+    insight_id: Option<i64>,
+) -> Result<Json<SessionOutput>, String> {
+    let id = insight_id.ok_or("insight_id is required for dismiss_insight action")?;
+
+    let updated = ctx
+        .pool()
+        .run(move |conn| {
+            dismiss_insight_sync(conn, id).map_err(|e| format!("Failed to dismiss insight: {}", e))
+        })
+        .await?;
+
+    let message = if updated {
+        format!("Insight {} dismissed.", id)
+    } else {
+        format!("Insight {} not found or already dismissed.", id)
+    };
+
+    Ok(Json(SessionOutput {
+        action: "dismiss_insight".into(),
+        message,
+        data: None,
     }))
 }
 

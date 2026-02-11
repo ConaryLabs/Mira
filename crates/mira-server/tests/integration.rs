@@ -511,6 +511,7 @@ async fn test_session_history_current() {
         since_days: None,
         insight_source: None,
         min_confidence: None,
+        insight_id: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(
@@ -545,6 +546,7 @@ async fn test_session_history_current() {
         since_days: None,
         insight_source: None,
         min_confidence: None,
+        insight_id: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(
@@ -584,6 +586,7 @@ async fn test_session_history_list_sessions() {
         since_days: None,
         insight_source: None,
         min_confidence: None,
+        insight_id: None,
     };
     let result = handle_session(&ctx, req).await;
     // Should succeed even if no sessions in database (maybe there is one now)

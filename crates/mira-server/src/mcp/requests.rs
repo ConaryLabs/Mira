@@ -251,6 +251,8 @@ pub enum SessionAction {
     UsageList,
     /// Query unified insights digest (pondering, proactive, doc gaps)
     Insights,
+    /// Dismiss an insight by ID (removes it from future queries)
+    DismissInsight,
     /// List all running and recently completed tasks
     TasksList,
     /// Get status and result of a specific task
@@ -262,7 +264,7 @@ pub enum SessionAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, tasks_list, tasks_get, tasks_cancel"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]
@@ -283,6 +285,8 @@ pub struct SessionRequest {
     pub insight_source: Option<String>,
     #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.3)")]
     pub min_confidence: Option<f64>,
+    #[schemars(description = "Insight row ID to dismiss (for dismiss_insight action)")]
+    pub insight_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
