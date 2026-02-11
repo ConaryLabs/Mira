@@ -247,8 +247,8 @@ impl DatabasePool {
             .map_err(|e| anyhow::anyhow!("interact failed: {e}"))?
     }
 
-    /// Run a closure on a pooled connection, logging errors but not propagating them.
-    /// Use for best-effort operations (heartbeats, session tracking, behavior logging, etc.)
+    /// Run a closure on a pooled connection, logging errors at debug but not propagating.
+    /// Use for low-priority best-effort operations (heartbeats, behavior logging, telemetry).
     pub async fn try_interact<F, R>(&self, label: &str, f: F) -> Option<R>
     where
         F: FnOnce(&Connection) -> Result<R> + Send + 'static,
@@ -259,6 +259,23 @@ impl DatabasePool {
             Ok(v) => Some(v),
             Err(e) => {
                 tracing::debug!("{}: {}", label, e);
+                None
+            }
+        }
+    }
+
+    /// Like `try_interact` but logs failures at warn level.
+    /// Use for important best-effort operations (session close, exports, caching).
+    pub async fn try_interact_warn<F, R>(&self, label: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let label = label.to_string();
+        match self.interact(move |conn| f(conn)).await {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("{}: {}", label, e);
                 None
             }
         }

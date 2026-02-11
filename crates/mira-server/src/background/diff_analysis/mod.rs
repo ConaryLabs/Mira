@@ -114,7 +114,7 @@ async fn cache_result(
         }
     };
 
-    pool.try_interact("cache diff analysis", move |conn| {
+    pool.try_interact_warn("cache diff analysis", move |conn| {
         store_diff_analysis_sync(
             conn,
             &StoreDiffAnalysisParams {

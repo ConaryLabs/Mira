@@ -106,7 +106,7 @@ pub async fn run() -> Result<()> {
     // Build session summary, save snapshot, and close the session
     {
         let session_id = stop_input.session_id.clone();
-        pool.try_interact("session close", move |conn| {
+        pool.try_interact_warn("session close", move |conn| {
             if let Err(e) = crate::db::set_server_state_sync(
                 conn,
                 "last_stop_time",
@@ -151,7 +151,7 @@ pub async fn run() -> Result<()> {
     // Auto-export ranked memories to CLAUDE.local.md
     {
         let pid = project_id;
-        pool.try_interact("CLAUDE.local.md export", move |conn| {
+        pool.try_interact_warn("CLAUDE.local.md export", move |conn| {
             let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
                 tracing::warn!("Failed to get last active project: {e}");
                 None
@@ -264,7 +264,7 @@ pub async fn run_session_end() -> Result<()> {
 
         // Auto-export to Claude Code's auto memory (if feature available)
         let path_clone = project_path.clone();
-        pool.try_interact("auto memory export", move |conn| {
+        pool.try_interact_warn("auto memory export", move |conn| {
             // Only write if auto memory directory exists (non-invasive feature detection)
             if crate::tools::core::claude_local::auto_memory_dir_exists(&path_clone) {
                 match crate::tools::core::claude_local::write_auto_memory_sync(

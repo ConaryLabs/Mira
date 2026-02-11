@@ -208,7 +208,7 @@ pub async fn run_stop() -> Result<()> {
     let entity_summary = build_entity_summary(&stop_input.subagent_type, &entities);
 
     // Store as a subagent discovery memory
-    pool.try_interact("subagent discovery", move |conn| {
+    pool.try_interact_warn("subagent discovery", move |conn| {
         crate::db::store_memory_sync(
             conn,
             crate::db::StoreMemoryParams {
