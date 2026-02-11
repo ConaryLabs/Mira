@@ -854,6 +854,77 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn run_task_failures_increment_and_success_resets_state() {
+        let mut worker = make_test_worker(Duration::ZERO).await;
+        let name = "test-task";
+
+        worker.cycle_count = 1;
+        let processed = worker
+            .run_task(name, async { Err::<usize, String>("boom".to_string()) })
+            .await;
+        assert_eq!(processed, 0);
+        assert_eq!(worker.failure_states.get(name).map(|s| s.count), Some(1));
+
+        worker.cycle_count = 2;
+        let processed = worker
+            .run_task(name, async { Err::<usize, String>("boom".to_string()) })
+            .await;
+        assert_eq!(processed, 0);
+        assert_eq!(worker.failure_states.get(name).map(|s| s.count), Some(2));
+
+        worker.cycle_count = 3;
+        let processed = worker
+            .run_task(name, async { Ok::<usize, String>(1) })
+            .await;
+        assert_eq!(processed, 1);
+        assert!(
+            !worker.failure_states.contains_key(name),
+            "failure state should reset after success"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_task_failure_updates_last_warn_cycle_only_when_due() {
+        let mut worker = make_test_worker(Duration::ZERO).await;
+        let name = "backoff-task";
+
+        // Simulate previous threshold-level failures that last warned at cycle 10.
+        worker.failure_states.insert(
+            name.to_string(),
+            TaskFailureState {
+                count: CIRCUIT_BREAKER_THRESHOLD,
+                last_warn_cycle: 10,
+            },
+        );
+        // Next failure becomes threshold+1 (interval = 2). At cycle 11, still suppressed.
+        worker.cycle_count = 11;
+        worker.handle_task_failure(name, "failed").await;
+        let state = worker.failure_states.get(name).expect("state should exist");
+        assert_eq!(state.count, CIRCUIT_BREAKER_THRESHOLD + 1);
+        assert_eq!(
+            state.last_warn_cycle, 10,
+            "warning should be suppressed before interval elapses"
+        );
+
+        // Reset to the same starting state and rerun when interval has elapsed.
+        worker.failure_states.insert(
+            name.to_string(),
+            TaskFailureState {
+                count: CIRCUIT_BREAKER_THRESHOLD,
+                last_warn_cycle: 10,
+            },
+        );
+        worker.cycle_count = 12;
+        worker.handle_task_failure(name, "failed").await;
+        let state = worker.failure_states.get(name).expect("state should exist");
+        assert_eq!(state.count, CIRCUIT_BREAKER_THRESHOLD + 1);
+        assert_eq!(
+            state.last_warn_cycle, 12,
+            "warning should update once backoff interval is reached"
+        );
+    }
+
     // ═══════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════

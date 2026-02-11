@@ -29,8 +29,9 @@ const DEBOUNCE_MS: u64 = 500;
 /// Minimum interval between warnings about dropped file events (seconds)
 const DROP_WARN_INTERVAL_SECS: u64 = 60;
 
-/// Static counter for dropped events between warnings
-static DROPPED_EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
+/// Static counters for dropped events between warnings
+static DROPPED_EVENT_FULL_COUNT: AtomicU64 = AtomicU64::new(0);
+static DROPPED_EVENT_CLOSED_COUNT: AtomicU64 = AtomicU64::new(0);
 /// Static timestamp of last warning (seconds since epoch)
 static LAST_DROP_WARNING: AtomicU64 = AtomicU64::new(0);
 
@@ -126,10 +127,19 @@ impl FileWatcher {
                                 if Self::should_process_path(&path) {
                                     // Use try_send to avoid blocking the notify callback
                                     // thread when the channel is full
-                                    if tx_clone.try_send((path, ct)).is_err() {
+                                    if let Err(e) = tx_clone.try_send((path, ct)) {
                                         // Rate-limit warnings to avoid log flooding under load
-                                        let prev_count =
-                                            DROPPED_EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
+                                        match e {
+                                            mpsc::error::TrySendError::Full(_) => {
+                                                DROPPED_EVENT_FULL_COUNT
+                                                    .fetch_add(1, Ordering::Relaxed);
+                                            }
+                                            mpsc::error::TrySendError::Closed(_) => {
+                                                DROPPED_EVENT_CLOSED_COUNT
+                                                    .fetch_add(1, Ordering::Relaxed);
+                                            }
+                                        }
+
                                         let now = SystemTime::now()
                                             .duration_since(UNIX_EPOCH)
                                             .unwrap_or_default()
@@ -148,13 +158,18 @@ impl FileWatcher {
                                                 )
                                                 .is_ok()
                                             {
-                                                let total_dropped = prev_count + 1;
+                                                let full_dropped = DROPPED_EVENT_FULL_COUNT
+                                                    .swap(0, Ordering::Relaxed);
+                                                let closed_dropped = DROPPED_EVENT_CLOSED_COUNT
+                                                    .swap(0, Ordering::Relaxed);
+                                                let total_dropped = full_dropped + closed_dropped;
                                                 tracing::warn!(
-                                                    "File watcher dropped {} event(s) in last {}s (channel full)",
+                                                    "File watcher dropped {} event(s) in last {}s (full: {}, closed: {})",
                                                     total_dropped,
-                                                    DROP_WARN_INTERVAL_SECS
+                                                    DROP_WARN_INTERVAL_SECS,
+                                                    full_dropped,
+                                                    closed_dropped,
                                                 );
-                                                DROPPED_EVENT_COUNT.store(0, Ordering::Relaxed);
                                             }
                                         }
                                     }
