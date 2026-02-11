@@ -410,12 +410,13 @@ pub(super) async fn get_untested_hotspots(
             }
         }
 
-        // Filter: 5+ modifications, multiple sessions, no corresponding test file modified
+        // Filter: 5+ modifications, multiple sessions, actual code file, no corresponding test
         let mut results: Vec<UntestedFile> = file_stats
             .into_iter()
             .filter(|(path, (count, sessions))| {
                 *count >= 5
                     && sessions.len() >= 2
+                    && !is_non_code_file(path)
                     && !has_corresponding_test(&test_files_modified, path)
             })
             .map(|(file_path, (count, sessions))| UntestedFile {
@@ -593,6 +594,24 @@ fn extract_modules_from_files_json(files_json: &str) -> Vec<String> {
     modules.into_iter().collect()
 }
 
+/// Check if a file is a non-code file that shouldn't be flagged as an "untested hotspot".
+/// Config files, documentation, lock files, etc. don't have meaningful unit tests.
+fn is_non_code_file(path: &str) -> bool {
+    let non_code_extensions = [
+        ".json", ".toml", ".yaml", ".yml", ".env",
+        ".md", ".txt", ".rst",
+        ".lock",
+        ".generated",
+        ".sh", ".bash", ".bat", ".cmd",
+        ".sql",
+        ".csv", ".tsv",
+        ".xml", ".html", ".css",
+        ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico",
+    ];
+    let lower = path.to_lowercase();
+    non_code_extensions.iter().any(|ext| lower.ends_with(ext))
+}
+
 /// Check if a file path looks like a test file.
 fn is_test_file(path: &str) -> bool {
     path.contains("/test/")
@@ -690,6 +709,35 @@ mod tests {
         assert!(is_test_file("tests/integration.rs"));
         assert!(!is_test_file("src/db/pool.rs"));
         assert!(!is_test_file("src/main.rs"));
+    }
+
+    #[test]
+    fn test_is_non_code_file() {
+        // Config files
+        assert!(is_non_code_file("package.json"));
+        assert!(is_non_code_file("Cargo.toml"));
+        assert!(is_non_code_file("config.yaml"));
+        assert!(is_non_code_file("settings.yml"));
+        assert!(is_non_code_file(".env"));
+
+        // Documentation
+        assert!(is_non_code_file("README.md"));
+        assert!(is_non_code_file("CHANGELOG.md"));
+
+        // Lock files
+        assert!(is_non_code_file("Cargo.lock"));
+        assert!(is_non_code_file("package-lock.json"));
+
+        // SQL and scripts
+        assert!(is_non_code_file("schema.sql"));
+        assert!(is_non_code_file("deploy.sh"));
+
+        // Actual code files should NOT match
+        assert!(!is_non_code_file("src/db/pool.rs"));
+        assert!(!is_non_code_file("src/main.ts"));
+        assert!(!is_non_code_file("lib/auth.py"));
+        assert!(!is_non_code_file("cmd/server.go"));
+        assert!(!is_non_code_file("App.java"));
     }
 
     #[test]

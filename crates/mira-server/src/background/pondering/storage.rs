@@ -38,12 +38,66 @@ fn normalize_for_dedup(description: &str) -> String {
         .join(" ")
 }
 
-/// Compute a 16-hex-char pattern key from a normalized description.
-fn compute_pattern_key(description: &str) -> String {
-    let normalized = normalize_for_dedup(description);
+/// Hash a string into a 16-hex-char key.
+fn hash_key(input: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(normalized.as_bytes());
+    hasher.update(input.as_bytes());
     format!("{:x}", hasher.finalize())[..16].to_string()
+}
+
+/// Extract the first file/module path from an insight description.
+/// Matches patterns like `src/db/pool.rs`, `background/`, `crates/mira-server/src/...`.
+fn extract_primary_entity(description: &str) -> Option<String> {
+    // Look for path-like tokens: contains '/' or ends with a known extension
+    for token in description.split_whitespace() {
+        let clean = token.trim_matches(|c: char| c == '`' || c == '\'' || c == '"' || c == ',');
+        if clean.contains('/') || clean.ends_with(".rs") || clean.ends_with(".ts") || clean.ends_with(".py") || clean.ends_with(".js") || clean.ends_with(".go") {
+            return Some(clean.to_lowercase());
+        }
+    }
+    None
+}
+
+/// Extract the first quoted text from a description (for goal titles, etc.).
+fn extract_quoted_text(description: &str) -> Option<&str> {
+    // Try double quotes first, then single quotes
+    for quote in ['"', '\'', '\u{201c}'] {
+        let close = match quote {
+            '\u{201c}' => '\u{201d}',
+            q => q,
+        };
+        if let Some(start) = description.find(quote)
+            && let Some(end) = description[start + quote.len_utf8()..].find(close)
+        {
+            let inner = &description[start + quote.len_utf8()..start + quote.len_utf8() + end];
+            if !inner.is_empty() {
+                return Some(inner);
+            }
+        }
+    }
+    None
+}
+
+/// Compute a 16-hex-char pattern key, using the primary entity for
+/// file/module-based insight types to avoid false-unique keys from
+/// different LLM phrasings about the same entity.
+fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
+    // For file/module insights, key on the entity not the prose
+    if matches!(
+        pattern_type,
+        "insight_fragile_code" | "insight_untested" | "insight_revert_cluster"
+    ) && let Some(entity) = extract_primary_entity(description)
+    {
+        return hash_key(&format!("{}:{}", pattern_type, entity));
+    }
+    // For stale goal insights, key on the goal title
+    if pattern_type == "insight_stale_goal"
+        && let Some(title) = extract_quoted_text(description)
+    {
+        return hash_key(&format!("{}:{}", pattern_type, title.to_lowercase()));
+    }
+    // Default: current behavior (normalized description hash)
+    hash_key(&normalize_for_dedup(description))
 }
 
 /// Maximum number of insights to keep per pattern_type per project.
@@ -74,8 +128,21 @@ pub(super) async fn store_insights(
         let mut types_touched = std::collections::HashSet::new();
 
         for insight in &insights_clone {
-            // Generate pattern key from normalized description hash
-            let pattern_key = compute_pattern_key(&insight.description);
+            // Generate pattern key using entity-aware hashing
+            let pattern_key = compute_pattern_key(&insight.pattern_type, &insight.description);
+
+            // Skip if this pattern was previously dismissed
+            let dismissed: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM behavior_patterns \
+                     WHERE project_id = ? AND pattern_type = ? AND pattern_key = ? AND dismissed = 1)",
+                    params![project_id, insight.pattern_type, pattern_key],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if dismissed {
+                continue;
+            }
 
             let pattern_data = serde_json::json!({
                 "description": insight.description,
@@ -187,15 +254,115 @@ mod tests {
 
     #[test]
     fn test_same_meaning_same_key() {
-        let key1 = compute_pattern_key("Module background/ had 3 reverts in 24h");
-        let key2 = compute_pattern_key("Module background/ had 7 reverts in 24h");
+        // Generic type falls back to normalized description hash
+        let key1 = compute_pattern_key("insight_workflow", "Module background/ had 3 reverts in 24h");
+        let key2 = compute_pattern_key("insight_workflow", "Module background/ had 7 reverts in 24h");
         assert_eq!(key1, key2);
     }
 
     #[test]
     fn test_different_meaning_different_key() {
-        let key1 = compute_pattern_key("Module background/ had reverts");
-        let key2 = compute_pattern_key("Module db/ had reverts");
+        let key1 = compute_pattern_key("insight_workflow", "Module background/ had reverts");
+        let key2 = compute_pattern_key("insight_workflow", "Module db/ had reverts");
         assert_ne!(key1, key2);
+    }
+
+    // ── Entity-aware dedup tests ─────────────────────────────────────
+
+    #[test]
+    fn test_extract_primary_entity() {
+        assert_eq!(
+            extract_primary_entity("File src/db/pool.rs has 148 modifications"),
+            Some("src/db/pool.rs".to_string()),
+        );
+        assert_eq!(
+            extract_primary_entity("Module background/ has high churn"),
+            Some("background/".to_string()),
+        );
+        assert_eq!(
+            extract_primary_entity("No paths here at all"),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_extract_quoted_text() {
+        assert_eq!(
+            extract_quoted_text(r#"Goal "Implement auth" is stale for 30 days"#),
+            Some("Implement auth"),
+        );
+        assert_eq!(
+            extract_quoted_text("Goal 'Quick Wins' has no progress"),
+            Some("Quick Wins"),
+        );
+        assert_eq!(extract_quoted_text("No quotes here"), None);
+    }
+
+    #[test]
+    fn test_entity_dedup_same_file_different_prose() {
+        // Two different descriptions about the same file should produce the same key
+        let key1 = compute_pattern_key(
+            "insight_fragile_code",
+            "src/db/factory.rs has 148 modifications and high revert rate",
+        );
+        let key2 = compute_pattern_key(
+            "insight_fragile_code",
+            "LLM provider abstraction src/db/factory.rs shows instability with 148 mods",
+        );
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn test_entity_dedup_different_files() {
+        let key1 = compute_pattern_key(
+            "insight_fragile_code",
+            "src/db/factory.rs has high churn",
+        );
+        let key2 = compute_pattern_key(
+            "insight_fragile_code",
+            "src/db/pool.rs has high churn",
+        );
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_stale_goal_dedup_same_title() {
+        let key1 = compute_pattern_key(
+            "insight_stale_goal",
+            r#"Goal "Implement auth" has been stale for 30 days"#,
+        );
+        let key2 = compute_pattern_key(
+            "insight_stale_goal",
+            r#"Goal "Implement auth" still in progress after 45 days with no updates"#,
+        );
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn test_stale_goal_dedup_different_titles() {
+        let key1 = compute_pattern_key(
+            "insight_stale_goal",
+            r#"Goal "Implement auth" is stale"#,
+        );
+        let key2 = compute_pattern_key(
+            "insight_stale_goal",
+            r#"Goal "Add caching" is stale"#,
+        );
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_session_insight_falls_back_to_description() {
+        // Session/workflow insights have no entity, so they use normalized description
+        let key1 = compute_pattern_key(
+            "insight_session",
+            "5 sessions lasted under 5 minutes",
+        );
+        let key2 = compute_pattern_key(
+            "insight_session",
+            "8 sessions lasted under 5 minutes",
+        );
+        // Numbers are normalized to #, so these should match
+        assert_eq!(key1, key2);
     }
 }
