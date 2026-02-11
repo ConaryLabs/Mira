@@ -12,7 +12,7 @@
       "name": "mira",
       "source": "./plugin",
       "description": "Persistent memory across sessions, goal tracking, and proactive context injection.",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "author": {
         "name": "Peter Permenter"
       },
