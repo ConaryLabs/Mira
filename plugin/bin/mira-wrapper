@@ -62,9 +62,9 @@ get_latest_version() {
 
     if [ -n "${location:-}" ]; then
         # Extract version from redirect URL: .../tag/vX.Y.Z -> X.Y.Z
-        version_tag=$(echo "$location" | sed -E 's|.*/tag/v?||')
-        # Validate semver format
-        if echo "$version_tag" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+        # Use grep -oE to extract just the version, handling trailing text from wget
+        version_tag=$(echo "$location" | grep -oE '/tag/v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1 | sed 's|.*/tag/v||;s|.*/tag/||')
+        if [ -n "$version_tag" ]; then
             printf '%s' "$version_tag"
             return
         fi
@@ -179,39 +179,42 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 archive_file="${tmp_dir}/mira.${archive_ext}"
+fetch "$url" "$archive_file"
 
-if [ "$archive_ext" = "zip" ]; then
-    fetch "$url" "$archive_file"
-    unzip -qo "$archive_file" -d "$tmp_dir"
-else
-    fetch "$url" "$archive_file"
-    tar -xz -C "$tmp_dir" -f "$archive_file"
-fi
-
-# Verify checksum if available
+# Verify checksum BEFORE extraction — reject tampered archives early
 checksum_url="https://github.com/${REPO}/releases/download/v${target}/checksums.sha256"
 checksum_file="${tmp_dir}/checksums.sha256"
 if fetch "$checksum_url" "$checksum_file" 2>/dev/null; then
     expected_hash=$(grep "mira-${platform}.${archive_ext}" "$checksum_file" | cut -d' ' -f1)
-    if [ -n "$expected_hash" ]; then
-        actual_hash=""
-        if command -v sha256sum >/dev/null 2>&1; then
-            actual_hash=$(sha256sum "$archive_file" | cut -d' ' -f1)
-        elif command -v shasum >/dev/null 2>&1; then
-            actual_hash=$(shasum -a 256 "$archive_file" | cut -d' ' -f1)
-        fi
-        if [ -z "${actual_hash:-}" ]; then
-            log "[mira] Note: No checksum tool found (sha256sum/shasum), skipping verification."
-        elif [ "$actual_hash" != "$expected_hash" ]; then
-            log "[mira] ERROR: Checksum verification failed!"
-            log "[mira] Expected: ${expected_hash}"
-            log "[mira] Got:      ${actual_hash}"
-            exit 1
-        fi
+    if [ -z "$expected_hash" ]; then
+        log "[mira] ERROR: Checksum file present but no entry for mira-${platform}.${archive_ext}"
+        log "[mira] This may indicate a corrupted or tampered release."
+        exit 1
+    fi
+    actual_hash=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual_hash=$(sha256sum "$archive_file" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1; then
+        actual_hash=$(shasum -a 256 "$archive_file" | cut -d' ' -f1)
+    fi
+    if [ -z "${actual_hash:-}" ]; then
+        log "[mira] Note: No checksum tool found (sha256sum/shasum), skipping verification."
+    elif [ "$actual_hash" != "$expected_hash" ]; then
+        log "[mira] ERROR: Checksum verification failed!"
+        log "[mira] Expected: ${expected_hash}"
+        log "[mira] Got:      ${actual_hash}"
+        exit 1
     fi
 else
     # No checksum file (older release) — proceed with warning
     log "[mira] Note: Checksum not available for this release."
+fi
+
+# Extract verified archive
+if [ "$archive_ext" = "zip" ]; then
+    unzip -qo "$archive_file" -d "$tmp_dir"
+else
+    tar -xz -C "$tmp_dir" -f "$archive_file"
 fi
 
 # Determine extracted binary name
