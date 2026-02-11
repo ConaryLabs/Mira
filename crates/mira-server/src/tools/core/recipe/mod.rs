@@ -87,13 +87,13 @@ fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, String> {
         .iter()
         .find(|r| r.name.eq_ignore_ascii_case(&name))
         .ok_or_else(|| {
-        let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
-        format!(
-            "Recipe '{}' not found. Available: {}",
-            name,
-            available.join(", ")
-        )
-    })?;
+            let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
+            format!(
+                "Recipe '{}' not found. Available: {}",
+                name,
+                available.join(", ")
+            )
+        })?;
 
     let members: Vec<RecipeMemberData> = recipe
         .members
@@ -290,7 +290,10 @@ mod tests {
         match handle_recipe(req).await {
             Err(e) => {
                 assert!(e.contains("required"), "unexpected error: {e}");
-                assert!(e.contains("Available:"), "should hint available recipes: {e}");
+                assert!(
+                    e.contains("Available:"),
+                    "should hint available recipes: {e}"
+                );
             }
             Ok(_) => panic!("Expected error for missing name"),
         }
@@ -302,7 +305,9 @@ mod tests {
             action: RecipeAction::Get,
             name: Some("Expert-Review".to_string()),
         };
-        let Json(output) = handle_recipe(req).await.expect("case-insensitive get should succeed");
+        let Json(output) = handle_recipe(req)
+            .await
+            .expect("case-insensitive get should succeed");
         match output.data {
             Some(RecipeData::Get(data)) => assert_eq!(data.name, "expert-review"),
             _ => panic!("Expected RecipeData::Get"),
@@ -317,7 +322,10 @@ mod tests {
                 assert!(
                     member_names.contains(&task.assignee),
                     "Recipe '{}': task '{}' has assignee '{}' but no member with that name. Members: {:?}",
-                    recipe.name, task.subject, task.assignee, member_names
+                    recipe.name,
+                    task.subject,
+                    task.assignee,
+                    member_names
                 );
             }
         }
@@ -331,7 +339,8 @@ mod tests {
                 assert!(
                     seen.insert(member.name),
                     "Recipe '{}': duplicate member name '{}'",
-                    recipe.name, member.name
+                    recipe.name,
+                    member.name
                 );
             }
         }
@@ -341,22 +350,70 @@ mod tests {
     fn test_no_empty_fields() {
         for recipe in ALL_RECIPES {
             assert!(!recipe.name.is_empty(), "Recipe has empty name");
-            assert!(!recipe.description.is_empty(), "Recipe '{}' has empty description", recipe.name);
-            assert!(!recipe.use_when.is_empty(), "Recipe '{}' has empty use_when", recipe.name);
-            assert!(!recipe.coordination.is_empty(), "Recipe '{}' has empty coordination", recipe.name);
-            assert!(!recipe.members.is_empty(), "Recipe '{}' has no members", recipe.name);
-            assert!(!recipe.tasks.is_empty(), "Recipe '{}' has no tasks", recipe.name);
+            assert!(
+                !recipe.description.is_empty(),
+                "Recipe '{}' has empty description",
+                recipe.name
+            );
+            assert!(
+                !recipe.use_when.is_empty(),
+                "Recipe '{}' has empty use_when",
+                recipe.name
+            );
+            assert!(
+                !recipe.coordination.is_empty(),
+                "Recipe '{}' has empty coordination",
+                recipe.name
+            );
+            assert!(
+                !recipe.members.is_empty(),
+                "Recipe '{}' has no members",
+                recipe.name
+            );
+            assert!(
+                !recipe.tasks.is_empty(),
+                "Recipe '{}' has no tasks",
+                recipe.name
+            );
 
             for member in recipe.members {
-                assert!(!member.name.is_empty(), "Recipe '{}': member has empty name", recipe.name);
-                assert!(!member.agent_type.is_empty(), "Recipe '{}': member '{}' has empty agent_type", recipe.name, member.name);
-                assert!(!member.prompt.is_empty(), "Recipe '{}': member '{}' has empty prompt", recipe.name, member.name);
+                assert!(
+                    !member.name.is_empty(),
+                    "Recipe '{}': member has empty name",
+                    recipe.name
+                );
+                assert!(
+                    !member.agent_type.is_empty(),
+                    "Recipe '{}': member '{}' has empty agent_type",
+                    recipe.name,
+                    member.name
+                );
+                assert!(
+                    !member.prompt.is_empty(),
+                    "Recipe '{}': member '{}' has empty prompt",
+                    recipe.name,
+                    member.name
+                );
             }
 
             for task in recipe.tasks {
-                assert!(!task.subject.is_empty(), "Recipe '{}': task has empty subject", recipe.name);
-                assert!(!task.description.is_empty(), "Recipe '{}': task '{}' has empty description", recipe.name, task.subject);
-                assert!(!task.assignee.is_empty(), "Recipe '{}': task '{}' has empty assignee", recipe.name, task.subject);
+                assert!(
+                    !task.subject.is_empty(),
+                    "Recipe '{}': task has empty subject",
+                    recipe.name
+                );
+                assert!(
+                    !task.description.is_empty(),
+                    "Recipe '{}': task '{}' has empty description",
+                    recipe.name,
+                    task.subject
+                );
+                assert!(
+                    !task.assignee.is_empty(),
+                    "Recipe '{}': task '{}' has empty assignee",
+                    recipe.name,
+                    task.subject
+                );
             }
         }
     }
