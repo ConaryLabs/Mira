@@ -60,7 +60,7 @@ pub async fn list_doc_tasks(
 
     let mut output = String::from("## Documentation Tasks\n\n");
 
-    if total_unfiltered > tasks.len() {
+    if total_unfiltered > tasks.len() && !tasks.is_empty() {
         output.push_str(&format!(
             "Showing {}-{} of {} tasks\n\n",
             offset + 1,
