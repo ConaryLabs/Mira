@@ -80,6 +80,28 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-02-11
+
+### Added
+- **`/mira:qa-hardening` skill** -- Production readiness review is now a slash command. Previously only accessible via raw MCP tool calls.
+- **`/mira:refactor` skill** -- Safe code restructuring is now a slash command. Runs architect analysis, code-reviewer validation, then implementation.
+- **`use_when` field on recipe list** -- Recipe list responses now include a one-liner explaining when to use each recipe, so Claude can pick the right one without fetching every recipe's full coordination text.
+- **Recipe validation tests** -- 4 structural invariant tests: task assignees match members, unique member names, no empty fields, "When to Use" section required. Catches broken recipes at test time.
+- **"When to Use" sections** -- Added to expert-review and full-cycle recipe coordination strings (qa-hardening and refactor already had them).
+
+### Fixed
+- **Zhipu model case mismatch** -- Setup validation sent `"GLM-5"` but runtime uses `"glm-5"`. Case-sensitive APIs would reject valid keys during setup.
+- **Wrong parsers reinstall hint** -- Error message said `cargo install mira --features parsers` but the package is `mira-server` and installs from git.
+- **Phase 2.5 numbering in full-cycle** -- Renamed to Phase 3, bumped subsequent phases to 4 and 5.
+- **Task tool parameter gaps in recipes** -- All 4 recipes now consistently document `team_name`, `name`, `subagent_type` for the Task tool. Previously only expert-review listed them.
+- **Missing recipe hint on empty name** -- `recipe(action=get)` without a name now lists available recipes in the error message.
+- **New skills registered in plugin manifest** -- Without this, the SKILL.md files wouldn't load as slash commands.
+
+### Changed
+- **Case-insensitive recipe lookup** -- `recipe(action=get, name="Expert-Review")` now works instead of returning "not found".
+- **Shared prompt module** -- Extracted architect, security, and scope-analyst prompts into `prompts.rs` to eliminate duplication between expert-review and full-cycle recipes.
+- **Stale docs updated** -- CONFIGURATION.md provider table corrected from `glm-4.7` to `glm-5`. Slash command tables in README.md, CLAUDE.md, and plugin/README.md updated with new skills.
+
 ## [0.7.0] - 2026-02-11
 
 ### Added
