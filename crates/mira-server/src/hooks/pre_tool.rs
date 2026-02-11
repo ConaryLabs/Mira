@@ -242,6 +242,7 @@ async fn query_relevant_memories(
                 SELECT content, fact_type, category
                 FROM memory_facts
                 WHERE project_id = ?1
+                  AND (scope = 'project' OR scope IS NULL)
                   AND (content LIKE '%' || ?2 || '%'
                        OR category LIKE '%' || ?2 || '%')
                 ORDER BY created_at DESC

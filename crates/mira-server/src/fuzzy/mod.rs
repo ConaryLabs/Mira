@@ -388,7 +388,7 @@ fn memory_visible(
     }
 
     match item.scope.as_deref() {
-        Some("personal") => item.user_id.as_deref() == user_id,
+        Some("personal") => user_id.is_some() && item.user_id.as_deref() == user_id,
         Some("team") => team_id.is_some() && item.team_id == team_id,
         Some("project") | None => true,
         Some(_) => true,

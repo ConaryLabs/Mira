@@ -253,6 +253,31 @@ pub async fn run_session_end() -> Result<()> {
         crate::hooks::session::cleanup_team_file(session_id);
     }
 
+    // Build session summary and close the session (same as Stop hook)
+    if !session_id.is_empty() {
+        let sid = session_id.to_string();
+        pool.try_interact_warn("session end close", move |conn| {
+            // Build session summary from stats
+            let summary = build_session_summary(conn, &sid);
+
+            // Save structured session snapshot for future resume context
+            if let Err(e) = save_session_snapshot(conn, &sid) {
+                eprintln!("[mira] SessionEnd snapshot failed: {}", e);
+            }
+
+            // Close the session with summary
+            if let Err(e) = crate::db::close_session_sync(conn, &sid, summary.as_deref()) {
+                eprintln!("  Warning: failed to close session: {e}");
+            }
+            eprintln!(
+                "[mira] SessionEnd closed session {}",
+                truncate_at_boundary(&sid, 8)
+            );
+            Ok(())
+        })
+        .await;
+    }
+
     // Get current project (id and path)
     let (project_id, project_path) = super::resolve_project(&pool).await;
 

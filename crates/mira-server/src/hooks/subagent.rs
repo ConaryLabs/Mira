@@ -82,7 +82,7 @@ pub async fn run_start() -> Result<()> {
             .task_description
             .as_deref()
             .map(|s| if s.len() > 50 {
-                format!("{}...", &s[..50])
+                format!("{}...", truncate_at_boundary(s, 50))
             } else {
                 s.to_string()
             })
@@ -391,7 +391,7 @@ async fn try_semantic_recall(
 /// Since semantic search returns content without fact_type, we infer from content.
 fn format_memory_line(content: &str) -> String {
     let truncated = if content.len() > 150 {
-        format!("{}...", &content[..150])
+        format!("{}...", truncate_at_boundary(content, 150))
     } else {
         content.to_string()
     };
@@ -433,6 +433,7 @@ async fn get_keyword_memories(
                 SELECT content, fact_type
                 FROM memory_facts
                 WHERE project_id = ?
+                  AND (scope = 'project' OR scope IS NULL)
                   AND ({})
                 ORDER BY
                     CASE fact_type
@@ -467,7 +468,7 @@ async fn get_keyword_memories(
                     };
                     // Truncate long content
                     let content = if content.len() > 150 {
-                        format!("{}...", &content[..150])
+                        format!("{}...", truncate_at_boundary(&content, 150))
                     } else {
                         content
                     };

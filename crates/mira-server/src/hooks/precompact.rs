@@ -54,6 +54,7 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] Failed to save pre-compaction state: {}", e);
     }
 
+    super::write_hook_output(&serde_json::json!({}));
     Ok(())
 }
 

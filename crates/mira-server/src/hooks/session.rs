@@ -366,7 +366,7 @@ pub(crate) async fn build_resume_context(
                         .as_deref()
                         .map(|s| {
                             if s.len() > 80 {
-                                format!("{}...", &s[..80])
+                                format!("{}...", crate::utils::truncate_at_boundary(s, 80))
                             } else {
                                 s.to_string()
                             }
