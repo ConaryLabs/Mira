@@ -349,10 +349,110 @@ pub fn record_intervention_response_sync(
     Ok(())
 }
 
-/// Extract description from pattern_data JSON
+/// Extract description from pattern_data JSON.
+/// Tries explicit "description" field first (pondering insights), then falls back
+/// to generating a human-readable summary from the structured PatternData.
 fn extract_description(pattern_data: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(pattern_data).ok()?;
-    value.get("description")?.as_str().map(|s| s.to_string())
+
+    // Pondering insights have an explicit description
+    if let Some(desc) = value.get("description").and_then(|d| d.as_str()) {
+        return Some(desc.to_string());
+    }
+
+    // Mined patterns — generate a summary from the structured data
+    use super::patterns::PatternData;
+    let data = PatternData::from_json(pattern_data)?;
+    Some(summarize_pattern(&data))
+}
+
+/// Generate a concise human-readable summary from structured pattern data.
+fn summarize_pattern(data: &super::patterns::PatternData) -> String {
+    use super::patterns::PatternData;
+    match data {
+        PatternData::FileSequence { files, .. } => {
+            let short: Vec<&str> = files.iter().map(|f| short_path(f)).collect();
+            match short.len() {
+                0 => "File sequence pattern detected".to_string(),
+                1 => format!("Recurring file access: {}", short[0]),
+                2 => format!("Files often edited together: {} and {}", short[0], short[1]),
+                _ => format!(
+                    "Files often edited together: {}, {}, +{} more",
+                    short[0],
+                    short[1],
+                    short.len() - 2
+                ),
+            }
+        }
+        PatternData::ToolChain { tools, .. } => {
+            if tools.len() >= 2 {
+                format!("Common tool sequence: {} -> {}", tools[0], tools[1])
+            } else {
+                "Tool chain pattern detected".to_string()
+            }
+        }
+        PatternData::SessionFlow { stages, .. } => {
+            let preview: Vec<&str> = stages.iter().take(3).map(|s| s.as_str()).collect();
+            format!("Session flow: {}", preview.join(" -> "))
+        }
+        PatternData::QueryPattern {
+            keywords,
+            query_type,
+            ..
+        } => {
+            if keywords.is_empty() {
+                format!("Recurring {} pattern", query_type)
+            } else {
+                format!(
+                    "Recurring {} for: {}",
+                    query_type,
+                    keywords.join(", ")
+                )
+            }
+        }
+        PatternData::ChangePattern {
+            module,
+            pattern_subtype,
+            outcome_stats,
+            ..
+        } => {
+            let location = module.as_deref().unwrap_or("unknown module");
+            let bad = outcome_stats.reverted + outcome_stats.follow_up_fix;
+            match pattern_subtype.as_str() {
+                "module_hotspot" => format!(
+                    "Change hotspot in {}: {}/{} changes needed follow-up",
+                    location, bad, outcome_stats.total
+                ),
+                "co_change_gap" => format!(
+                    "Co-change gap in {}: files often need coordinated edits",
+                    location
+                ),
+                "size_risk" => format!(
+                    "Large changes in {} are risky: {}/{} had issues",
+                    location, bad, outcome_stats.total
+                ),
+                _ => format!(
+                    "Change pattern in {}: {}/{} changes had issues",
+                    location, bad, outcome_stats.total
+                ),
+            }
+        }
+    }
+}
+
+/// Extract the filename (or last two path components) for brevity.
+fn short_path(path: &str) -> &str {
+    // Show "dir/file.rs" instead of full path
+    let mut parts = path.rsplitn(3, '/');
+    let file = parts.next().unwrap_or(path);
+    match parts.next() {
+        Some(dir) => {
+            // Find the start of "dir/file" in the original string
+            let offset = path.len() - dir.len() - 1 - file.len();
+            &path[offset..]
+        }
+        None => file,
+    }
 }
 
 /// Get interventions shown in current session
@@ -401,17 +501,52 @@ mod tests {
 
     #[test]
     fn test_extract_description() {
+        // Pondering insight with explicit description
         let json = r#"{"description": "Test description", "evidence": []}"#;
         assert_eq!(
             extract_description(json),
             Some("Test description".to_string())
         );
 
-        let no_desc = r#"{"evidence": []}"#;
-        assert_eq!(extract_description(no_desc), None);
+        // Invalid JSON returns None
+        assert_eq!(extract_description("not json"), None);
 
-        let invalid = "not json";
-        assert_eq!(extract_description(invalid), None);
+        // Empty object with no description and no valid PatternData returns None
+        assert_eq!(extract_description(r#"{"evidence": []}"#), None);
+    }
+
+    #[test]
+    fn test_extract_description_file_sequence() {
+        let json = r#"{"type":"file_sequence","files":["src/mcp/router.rs","src/tools/core/session.rs"],"transitions":[["src/mcp/router.rs","src/tools/core/session.rs"]]}"#;
+        let desc = extract_description(json).unwrap();
+        assert!(desc.contains("often edited together"), "got: {desc}");
+        assert!(desc.contains("router.rs"), "got: {desc}");
+        assert!(desc.contains("session.rs"), "got: {desc}");
+    }
+
+    #[test]
+    fn test_extract_description_tool_chain() {
+        let json = r#"{"type":"tool_chain","tools":["memory","code"],"typical_args":{}}"#;
+        let desc = extract_description(json).unwrap();
+        assert!(desc.contains("memory"), "got: {desc}");
+        assert!(desc.contains("code"), "got: {desc}");
+        assert!(desc.contains("->"), "got: {desc}");
+    }
+
+    #[test]
+    fn test_extract_description_change_pattern() {
+        let json = r#"{"type":"change_pattern","files":["src/auth.rs"],"module":"src/auth","pattern_subtype":"module_hotspot","outcome_stats":{"total":10,"clean":6,"reverted":2,"follow_up_fix":2},"sample_commits":[]}"#;
+        let desc = extract_description(json).unwrap();
+        assert!(desc.contains("hotspot"), "got: {desc}");
+        assert!(desc.contains("src/auth"), "got: {desc}");
+        assert!(desc.contains("4/10"), "got: {desc}");
+    }
+
+    #[test]
+    fn test_short_path() {
+        assert_eq!(short_path("src/mcp/router.rs"), "mcp/router.rs");
+        assert_eq!(short_path("router.rs"), "router.rs");
+        assert_eq!(short_path("a/b/c/d.rs"), "c/d.rs");
     }
 
     #[test]
