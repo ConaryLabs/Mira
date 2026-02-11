@@ -71,7 +71,10 @@ fn extract_quoted_text(description: &str) -> Option<&str> {
         if let Some(start) = description.find(quote) {
             let after_open = start + quote.len_utf8();
             let rest = &description[after_open..];
-            let end = find_closing_quote(rest, close)?;
+            // Single quotes need greedy (last valid) matching to handle
+            // possessive plurals like Users' that look like closing quotes.
+            let greedy = quote == '\'';
+            let end = find_closing_quote(rest, close, greedy)?;
             let inner = &description[after_open..after_open + end];
             if !inner.is_empty() {
                 return Some(inner);
@@ -82,20 +85,31 @@ fn extract_quoted_text(description: &str) -> Option<&str> {
 }
 
 /// Find a closing quote character, skipping apostrophes (quote followed by a letter).
-fn find_closing_quote(text: &str, quote: char) -> Option<usize> {
+///
+/// When `greedy` is true (used for single quotes), returns the *last* valid
+/// closing position instead of the first.  This handles possessive plurals
+/// like `Users'` which look like a closing quote but aren't.
+fn find_closing_quote(text: &str, quote: char, greedy: bool) -> Option<usize> {
+    let mut last_valid = None;
     for (i, c) in text.char_indices() {
         if c == quote {
             // A closing quote is followed by non-alphanumeric or end-of-string.
             // An apostrophe (e.g., User's) is followed by a letter — skip it.
             let after = text[i + c.len_utf8()..].chars().next();
-            match after {
-                None => return Some(i),
-                Some(next) if !next.is_alphanumeric() => return Some(i),
-                _ => continue,
+            let is_closing = match after {
+                None => true,
+                Some(next) => !next.is_alphanumeric(),
+            };
+            if is_closing {
+                if greedy {
+                    last_valid = Some(i);
+                } else {
+                    return Some(i);
+                }
             }
         }
     }
-    None
+    last_valid
 }
 
 /// Compute a 16-hex-char pattern key, using the primary entity for
@@ -418,6 +432,24 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_quoted_text_possessive_plural() {
+        // Possessive plural: Users' looks like a closing quote but isn't
+        assert_eq!(
+            extract_quoted_text("Goal 'Users' profile migration' has no progress"),
+            Some("Users' profile migration"),
+        );
+    }
+
+    #[test]
+    fn test_extract_quoted_text_apostrophe_after_closing() {
+        // Apostrophe in text AFTER the closing quote should not extend the match
+        assert_eq!(
+            extract_quoted_text("Goal 'Add caching' isn't needed"),
+            Some("Add caching"),
+        );
+    }
+
+    #[test]
     fn test_stale_goal_apostrophe_dedup() {
         // Goal titles with apostrophes should produce correct keys
         let key1 = compute_pattern_key(
@@ -436,6 +468,74 @@ mod tests {
             "Goal 'Add caching' is stale for 30 days",
         );
         assert_ne!(key1, key3);
+    }
+
+    #[test]
+    fn test_stale_goal_possessive_plural_dedup() {
+        // Possessive plural titles should also dedup correctly
+        let key1 = compute_pattern_key(
+            "insight_stale_goal",
+            "Goal 'Users' profile migration' is stale for 30 days",
+        );
+        let key2 = compute_pattern_key(
+            "insight_stale_goal",
+            "Goal 'Users' profile migration' still in progress after 45 days",
+        );
+        assert_eq!(key1, key2);
+    }
+
+    // ── Legacy key dismissal ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_legacy_dismissed_key_blocks_new_entity_key() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        // Create a project
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/legacy-dismiss", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        let description = "src/db/factory.rs has 148 modifications and high revert rate";
+        let pattern_type = "insight_fragile_code";
+
+        // Simulate a legacy dismissed insight (keyed with old normalized-description hash)
+        let legacy_key = hash_key(&normalize_for_dedup(description));
+        pool.run({
+            let legacy_key = legacy_key.clone();
+            let pattern_type = pattern_type.to_string();
+            move |conn| {
+                conn.execute(
+                    r#"INSERT INTO behavior_patterns
+                        (project_id, pattern_type, pattern_key, pattern_data, confidence,
+                         dismissed, last_triggered_at, first_seen_at, updated_at)
+                       VALUES (?, ?, ?, '{}', 0.5, 1, datetime('now'), datetime('now'), datetime('now'))"#,
+                    params![project_id, pattern_type, legacy_key],
+                )?;
+                Ok::<_, anyhow::Error>(())
+            }
+        })
+        .await
+        .unwrap();
+
+        // Now try to store the same insight — it should be blocked by the legacy dismissal
+        let insights = vec![PonderingInsight {
+            pattern_type: pattern_type.to_string(),
+            description: description.to_string(),
+            confidence: 0.8,
+            evidence: vec!["test".to_string()],
+        }];
+
+        let stored = store_insights(&pool, project_id, &insights).await.unwrap();
+        assert_eq!(stored, 0, "insight should be blocked by legacy dismissed key");
     }
 
     #[test]
