@@ -50,14 +50,14 @@ Use this when you need to restructure, reorganize, or rename code without changi
 ### Phase 1: Analysis
 
 1. **Create team**: `TeamCreate(team_name="refactor-{timestamp}")`
-2. **Spawn architect** using `Task` tool with `run_in_background=true`
+2. **Spawn architect** using `Task` tool with `team_name`, `name`, `subagent_type`, and `run_in_background=true`
    - Append the user's refactoring goal/context to the agent's prompt
 3. **Create and assign** the analysis task using `TaskCreate` + `TaskUpdate`
 4. **Wait** for the architect to report via SendMessage
 
 ### Phase 2: Validation
 
-5. **Spawn code-reviewer** using `Task` tool with `run_in_background=true`
+5. **Spawn code-reviewer** using `Task` tool with `team_name`, `name`, `subagent_type`, and `run_in_background=true`
 6. **Send the architect's plan** to code-reviewer via `SendMessage` so they have the specific plan to validate
 7. **Create and assign** the validation task
 8. **Wait** for code-reviewer to report via SendMessage

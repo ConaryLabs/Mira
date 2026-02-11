@@ -72,7 +72,13 @@ fn action_list() -> Result<Json<RecipeOutput>, String> {
 }
 
 fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, String> {
-    let name = name.ok_or_else(|| "name is required for recipe(action=get)".to_string())?;
+    let name = name.ok_or_else(|| {
+        let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
+        format!(
+            "name is required for recipe(action=get). Available: {}",
+            available.join(", ")
+        )
+    })?;
 
     let recipe = ALL_RECIPES.iter().find(|r| r.name == name).ok_or_else(|| {
         let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
@@ -202,6 +208,7 @@ mod tests {
                 assert!(data.coordination.contains("Phase 2"));
                 assert!(data.coordination.contains("Phase 3"));
                 assert!(data.coordination.contains("Phase 4"));
+                assert!(data.coordination.contains("Phase 5"));
             }
             _ => panic!("Expected RecipeData::Get"),
         }
@@ -274,8 +281,73 @@ mod tests {
             name: None,
         };
         match handle_recipe(req).await {
-            Err(e) => assert!(e.contains("required"), "unexpected error: {e}"),
+            Err(e) => {
+                assert!(e.contains("required"), "unexpected error: {e}");
+                assert!(e.contains("Available:"), "should hint available recipes: {e}");
+            }
             Ok(_) => panic!("Expected error for missing name"),
+        }
+    }
+
+    #[test]
+    fn test_all_task_assignees_match_members() {
+        for recipe in ALL_RECIPES {
+            let member_names: Vec<&str> = recipe.members.iter().map(|m| m.name).collect();
+            for task in recipe.tasks {
+                assert!(
+                    member_names.contains(&task.assignee),
+                    "Recipe '{}': task '{}' has assignee '{}' but no member with that name. Members: {:?}",
+                    recipe.name, task.subject, task.assignee, member_names
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_member_names_unique() {
+        for recipe in ALL_RECIPES {
+            let mut seen = std::collections::HashSet::new();
+            for member in recipe.members {
+                assert!(
+                    seen.insert(member.name),
+                    "Recipe '{}': duplicate member name '{}'",
+                    recipe.name, member.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_no_empty_fields() {
+        for recipe in ALL_RECIPES {
+            assert!(!recipe.name.is_empty(), "Recipe has empty name");
+            assert!(!recipe.description.is_empty(), "Recipe '{}' has empty description", recipe.name);
+            assert!(!recipe.coordination.is_empty(), "Recipe '{}' has empty coordination", recipe.name);
+            assert!(!recipe.members.is_empty(), "Recipe '{}' has no members", recipe.name);
+            assert!(!recipe.tasks.is_empty(), "Recipe '{}' has no tasks", recipe.name);
+
+            for member in recipe.members {
+                assert!(!member.name.is_empty(), "Recipe '{}': member has empty name", recipe.name);
+                assert!(!member.agent_type.is_empty(), "Recipe '{}': member '{}' has empty agent_type", recipe.name, member.name);
+                assert!(!member.prompt.is_empty(), "Recipe '{}': member '{}' has empty prompt", recipe.name, member.name);
+            }
+
+            for task in recipe.tasks {
+                assert!(!task.subject.is_empty(), "Recipe '{}': task has empty subject", recipe.name);
+                assert!(!task.description.is_empty(), "Recipe '{}': task '{}' has empty description", recipe.name, task.subject);
+                assert!(!task.assignee.is_empty(), "Recipe '{}': task '{}' has empty assignee", recipe.name, task.subject);
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_recipes_have_when_to_use() {
+        for recipe in ALL_RECIPES {
+            assert!(
+                recipe.coordination.contains("When to Use"),
+                "Recipe '{}' is missing a 'When to Use' section in coordination",
+                recipe.name
+            );
         }
     }
 }

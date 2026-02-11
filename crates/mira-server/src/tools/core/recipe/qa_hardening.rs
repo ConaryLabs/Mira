@@ -68,7 +68,7 @@ Use this recipe when code is functionally complete but needs hardening before re
 
 1. **Create team**: `TeamCreate(team_name="qa-hardening-{timestamp}")`
 2. **Create tasks FIRST** using `TaskCreate` for each recipe task — do this BEFORE spawning agents to avoid timing confusion
-3. **Spawn all 5 agents** in parallel using `Task` tool with `run_in_background=true`
+3. **Spawn all 5 agents** in parallel using `Task` tool with `team_name`, `name`, `subagent_type`, and `run_in_background=true`
    - Append the user's context (what to review, specific areas of concern) to each agent's prompt
 4. **Assign tasks** to agents using `TaskUpdate` with `owner`
 5. **Wait** for all agents to report findings via SendMessage

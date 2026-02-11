@@ -92,12 +92,16 @@ pub(super) const TASKS: &[RecipeTask] = &[
 
 pub(super) const COORDINATION: &str = r#"## Full-Cycle Review: Discovery → Implementation → QA
 
-This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team lead coordinates all phases.
+This recipe orchestrates a complete review-and-fix cycle in 5 phases. The team lead coordinates all phases.
+
+### When to Use
+
+Use this when you want expert review AND implementation in one pass. For read-only analysis without changes, use `expert-review`. For pure restructuring without behavior changes, use `refactor`.
 
 ### Phase 1: Discovery (parallel)
 
 1. **Create team**: `TeamCreate(team_name="full-cycle-{timestamp}")`
-2. **Spawn discovery experts** (architect, code-reviewer, security, scope-analyst, ux-strategist, plan-reviewer) in parallel using `Task` tool with `run_in_background=true`
+2. **Spawn discovery experts** (architect, code-reviewer, security, scope-analyst, ux-strategist, plan-reviewer) in parallel using `Task` tool with `team_name`, `name`, `subagent_type`, and `run_in_background=true`
 3. **Create and assign discovery tasks** using `TaskCreate` + `TaskUpdate`
 4. **Wait** for all 6 experts to report findings via SendMessage
 5. **Shut down** discovery experts (they're done)
@@ -112,24 +116,24 @@ This recipe orchestrates a complete review-and-fix cycle in 4 phases. The team l
 
 7. **Present synthesis to user** and WAIT for approval before proceeding to implementation
 8. **Create implementation tasks** from action items, grouped by file ownership to avoid conflicts
-9. **Spawn implementation agents** (dynamic — as many as needed based on task groupings). Use `general-purpose` agent type with `mode="bypassPermissions"`
+9. **Spawn implementation agents** (dynamic — as many as needed based on task groupings). Use `Task` tool with `team_name`, `name`, `subagent_type="general-purpose"`, and `mode="bypassPermissions"`
 10. **Assign tasks** to implementation agents via `TaskUpdate`
 11. **Monitor** build diagnostics actively. When you see compile errors, send targeted hints to the responsible agent via SendMessage with the exact error and fix suggestion. This unblocks agents within one turn instead of letting them struggle
 12. **Wait** for all implementation agents to complete, then shut them down
 
-### Phase 2.5: Dependency Updates (sequential)
+### Phase 3: Dependency Updates (sequential)
 
 13. **After** all implementation agents finish, run `cargo update` to pick up compatible dependency patches
 14. This runs AFTER code changes to avoid Cargo.lock conflicts with parallel agents
 
-### Phase 3: QA (parallel)
+### Phase 4: QA (parallel)
 
-15. **Spawn QA agents** (test-runner, ux-reviewer) with context about what changed
+15. **Spawn QA agents** (test-runner, ux-reviewer) using `Task` tool with `team_name`, `name`, `subagent_type`, and context about what changed
 16. **Create and assign QA tasks**
 17. **Wait** for QA results
 18. If QA finds issues, either fix them directly or spawn additional fixers
 
-### Phase 4: Finalize
+### Phase 5: Finalize
 
 19. **Shut down** all remaining agents
 20. **Verify** final build and test status (cargo clippy, cargo fmt, cargo test)

@@ -66,7 +66,15 @@ pub(super) const TASKS: &[RecipeTask] = &[
     },
 ];
 
-pub(super) const COORDINATION: &str = r#"## How to use this recipe
+pub(super) const COORDINATION: &str = r#"## Expert Review: Multi-Expert Analysis
+
+A read-only review by 6 specialists working in parallel. Experts analyze and report — they don't modify code.
+
+### When to Use
+
+Use this when you want expert opinions on code without making changes. For findings that should also be implemented, use `full-cycle` instead. For production-readiness checks on finished code, use `qa-hardening`.
+
+### How to Run
 
 1. **Create team**: Use `TeamCreate` with a descriptive team name
 2. **Spawn members**: For each member, use `Task` tool with:
