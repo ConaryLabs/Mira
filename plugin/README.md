@@ -83,10 +83,10 @@ The plugin bundles the Mira MCP server with 10 action-based tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
-| `memory` | remember, recall, forget, archive | Persistent semantic memory |
+| `memory` | remember, recall, forget, archive, export_claude_local | Persistent semantic memory |
 | `code` | search, symbols, callers, callees, dependencies, patterns, tech_debt, diff | Code intelligence + semantic diff analysis |
 | `project` | start, set, get | Project/session management |
-| `session` | history, recap, usage, insights, tasks | Session history, analytics, and async task management |
+| `session` | current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel | Session history, analytics, and async task management |
 | `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
 | `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
 | `index` | project, file, status, compact, summarize, health | Code indexing and health |

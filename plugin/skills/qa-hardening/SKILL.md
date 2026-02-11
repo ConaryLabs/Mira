@@ -5,6 +5,8 @@ description: This skill should be used when the user asks for "QA review", "prod
 
 # QA Hardening
 
+> **Requires:** Claude Code Agent Teams feature.
+
 Production readiness review with 5 specialists: test runner, error auditor, security, edge case hunter, and UX reviewer.
 
 **Arguments:** $ARGUMENTS

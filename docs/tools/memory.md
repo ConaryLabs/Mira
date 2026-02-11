@@ -1,6 +1,6 @@
 # memory
 
-Manage persistent memories. Actions: `remember` (store), `recall` (search), `forget` (delete), `archive` (exclude from auto-export).
+Manage persistent memories. Actions: `remember` (store), `recall` (search), `forget` (delete), `archive` (exclude from auto-export), `export_claude_local` (export to CLAUDE.local.md).
 
 ## Usage
 
@@ -20,7 +20,7 @@ Manage persistent memories. Actions: `remember` (store), `recall` (search), `for
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | `remember`, `recall`, `forget`, or `archive` |
+| action | String | Yes | `remember`, `recall`, `forget`, `archive`, or `export_claude_local` |
 | content | String | For remember | The factual content to store |
 | key | String | No | Unique key for upsert (remember) |
 | fact_type | String | No | `preference`, `decision`, `context`, or `general` (default: `general`). For `remember`: sets the type. For `recall`: filters results by type. |
@@ -103,9 +103,24 @@ Archives a memory so it is excluded from CLAUDE.local.md auto-export but kept in
 
 Returns: Confirmation that the memory was archived.
 
+### `export_claude_local` — Export memories to CLAUDE.local.md
+
+Exports all non-archived project memories to the `CLAUDE.local.md` file in the project root. Organizes memories by fact type (preferences, decisions, context, general).
+
+```json
+{
+  "name": "memory",
+  "arguments": {
+    "action": "export_claude_local"
+  }
+}
+```
+
+Returns: Confirmation with the number of memories exported.
+
 ## Errors
 
-- **Invalid action**: Must be `remember`, `recall`, `forget`, or `archive`
+- **Invalid action**: Must be `remember`, `recall`, `forget`, `archive`, or `export_claude_local`
 - **Missing content**: `remember` requires `content`
 - **Missing query**: `recall` requires `query`
 - **Missing id**: `forget` and `archive` require `id`

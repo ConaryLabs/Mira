@@ -19,6 +19,6 @@ When uncertain, don't store it. Memories accumulate and dilute recall quality.
 4. **Before making changes** - Recall past decisions in that area
 5. **Workflows that worked** - Store successful patterns
 
-Example: User chooses builder pattern for Config -> `memory(action="remember", content="Config struct uses builder pattern. Chosen for clarity and optional field handling.", category="decision")`.
+Example: User chooses builder pattern for Config -> `memory(action="remember", content="Config struct uses builder pattern. Chosen for clarity and optional field handling.", fact_type="decision", category="patterns")`.
 
 Example: Adding an API endpoint -> first `memory(action="recall", query="API design patterns endpoints conventions")` to follow established patterns.

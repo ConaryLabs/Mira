@@ -383,6 +383,8 @@ Pre-generated suggestions for fast lookup during UserPromptSubmit hook.
 
 ## Cross-Project Intelligence
 
+> **Note:** The cross-project code module was removed in v0.6.6. These tables remain in the schema for potential future use but are not currently populated.
+
 Tables for privacy-preserving pattern sharing across projects.
 
 ### cross_project_patterns
@@ -806,6 +808,8 @@ Cross-module dependency analysis.
 ---
 
 ## Chat History
+
+> **Note:** Legacy tables from the web chat era. Schema preserved but not actively used in current MCP-only architecture.
 
 ### chat_messages
 

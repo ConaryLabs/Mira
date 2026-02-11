@@ -5,6 +5,8 @@ description: This skill should be used when the user asks for a "full review and
 
 # Full-Cycle Review
 
+> **Requires:** Claude Code Agent Teams feature.
+
 End-to-end expert review with automatic implementation and QA verification.
 
 **Arguments:** $ARGUMENTS

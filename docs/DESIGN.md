@@ -376,7 +376,7 @@ The schema is "product-shaped," not purely technical:
 | Workflow | `goals`, `milestones` | Goal and milestone tracking |
 | Learning | `corrections` | Learned patterns |
 | Proactive | `behavior_patterns`, `proactive_suggestions` | Behavior mining and predictions |
-| Cross-Project | `cross_project_patterns`, `cross_project_preferences` | Privacy-preserving pattern sharing |
+| Cross-Project | `cross_project_patterns`, `cross_project_preferences` | Privacy-preserving pattern sharing (removed in v0.6.6; tables retained for future use) |
 
 ### Embeddings and Search
 

@@ -42,17 +42,18 @@ code(action="diff", from_ref="v1.0", to_ref="v1.1", include_impact=true)
 ## `session` — Session Management & Analytics
 
 ```
-session(action="history", history_action="current")
-session(action="history", history_action="list_sessions", limit=5)
-session(action="history", history_action="get_history", session_id="...")
-session(action="recap")                     # Quick overview: goals, sessions, insights
-session(action="usage", usage_action="summary", since_days=7)
-session(action="usage", usage_action="stats", group_by="provider_model")
-session(action="usage", usage_action="list", limit=50)
+session(action="current_session")                          # Show current session
+session(action="list_sessions", limit=5)                   # List recent sessions
+session(action="get_history", session_id="...")             # Get session history
+session(action="recap")                                    # Quick overview: goals, sessions, insights
+session(action="usage_summary", since_days=7)              # LLM usage summary
+session(action="usage_stats", group_by="provider_model")   # LLM usage by dimension
+session(action="usage_list", limit=50)                     # Recent LLM usage records
 session(action="insights", insight_source="pondering", min_confidence=0.5)
-session(action="tasks", tasks_action="list")          # Show running/completed tasks
-session(action="tasks", tasks_action="get", task_id="abc123")  # Get task status
-session(action="tasks", tasks_action="cancel", task_id="abc123")  # Cancel task
+session(action="dismiss_insight", insight_id=42)           # Remove resolved insight
+session(action="tasks_list")                               # Show running/completed tasks
+session(action="tasks_get", task_id="abc123")              # Get task status
+session(action="tasks_cancel", task_id="abc123")           # Cancel task
 ```
 
 ## `goal` — Cross-Session Goal Tracking

@@ -1,6 +1,7 @@
 ---
 name: search
 description: This skill should be used when the user asks "find code that does X", "search for authentication", "where is X implemented", "look for code related to", or needs semantic code search by concept rather than exact text.
+argument-hint: "<query>"
 ---
 
 # Semantic Code Search

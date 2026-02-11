@@ -5,6 +5,8 @@ description: This skill should be used when the user asks to "refactor this", "r
 
 # Safe Refactoring
 
+> **Requires:** Claude Code Agent Teams feature.
+
 Architect-planned, reviewer-validated code restructuring with per-step compilation checks.
 
 **Arguments:** $ARGUMENTS

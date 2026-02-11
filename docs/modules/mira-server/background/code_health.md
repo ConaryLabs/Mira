@@ -10,7 +10,7 @@ Background worker for detecting code health issues. Combines concrete signal det
 
 ## Key Functions
 
-- `process_code_health()` - Orchestrates full health scan
+- `scan_project_health_full()` - Orchestrates full health scan
 - `needs_health_scan()` - Check if a rescan is needed
 - `mark_health_scan_needed_sync()` - Flag for rescan (triggered by file watcher)
 

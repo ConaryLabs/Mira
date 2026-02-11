@@ -1,6 +1,7 @@
 ---
 name: diff
 description: This skill should be used when the user asks "analyze my changes", "what did I change", "review my diff", "impact of changes", or wants semantic analysis of code changes.
+argument-hint: "[from_ref] [to_ref]"
 ---
 
 # Semantic Diff Analysis
@@ -75,6 +76,6 @@ Analyze git changes semantically with classification, impact analysis, and risk 
 - `create_session()` change affects 12 callers
 
 ### Risk Assessment
-⚠️ **Breaking**: `create_session()` return type changed
-🔒 **Security**: Rate limiting added (positive)
+[WARNING] **Breaking**: `create_session()` return type changed
+[SECURITY] **Security**: Rate limiting added (positive)
 ```

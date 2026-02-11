@@ -1,17 +1,18 @@
 {
+  "version": "0.7.1",
   "name": "mira",
   "owner": {
     "name": "Conary Labs",
     "email": "peter@conary.io"
   },
   "metadata": {
-    "description": "Semantic memory and code intelligence for Claude Code"
+    "description": "Persistent memory, semantic code intelligence, and proactive context for Claude Code"
   },
   "plugins": [
     {
       "name": "mira",
       "source": "./plugin",
-      "description": "Persistent memory across sessions, goal tracking, and proactive context injection.",
+      "description": "Persistent memory, semantic code intelligence, team recipes, documentation management, and proactive context injection for Claude Code.",
       "version": "0.7.1",
       "author": {
         "name": "Peter Permenter"

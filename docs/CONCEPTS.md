@@ -198,6 +198,7 @@ Mira integrates with Claude Code via **hooks** that trigger at key moments durin
 |------|--------------|---------|
 | **SessionStart** | When session begins | Captures session ID, initializes tracking |
 | **UserPromptSubmit** | When user submits a prompt | Injects proactive context automatically |
+| **PreToolUse** | Before Grep/Glob/Read execution | Injects relevant code context and suggests semantic alternatives |
 | **PostToolUse** | After file mutations (`Write\|Edit\|NotebookEdit`) | Tracks behavior for pattern mining |
 | **PreCompact** | Before context compaction | Preserves important context before summarization |
 | **Stop** | When session ends | Saves session state, auto-exports memories to CLAUDE.local.md, checks goal progress |

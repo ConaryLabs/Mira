@@ -17,7 +17,7 @@ Session management, analytics, and background task tracking. All actions are fla
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | One of: `current_session`, `list_sessions`, `get_history`, `recap`, `usage_summary`, `usage_stats`, `usage_list`, `insights`, `tasks_list`, `tasks_get`, `tasks_cancel` |
+| action | String | Yes | One of: `current_session`, `list_sessions`, `get_history`, `recap`, `usage_summary`, `usage_stats`, `usage_list`, `insights`, `dismiss_insight`, `tasks_list`, `tasks_get`, `tasks_cancel` |
 | session_id | String | No | Session ID for `get_history` |
 | task_id | String | For tasks | Task ID for `tasks_get` or `tasks_cancel` |
 | group_by | String | No | For `usage_stats`: `role`, `provider`, `model`, `provider_model` |
@@ -25,6 +25,7 @@ Session management, analytics, and background task tracking. All actions are fla
 | limit | Integer | No | Max results |
 | insight_source | String | No | Filter insights: `pondering`, `proactive`, `doc_gap` |
 | min_confidence | Float | No | Min confidence for insights (default: 0.3) |
+| insight_id | Integer | For dismiss_insight | Insight row ID to dismiss |
 
 ## Actions
 
@@ -80,6 +81,12 @@ Merges pondering insights, proactive suggestions, and documentation gaps into a 
 { "action": "insights", "insight_source": "pondering", "min_confidence": 0.5 }
 ```
 
+### `dismiss_insight` — Remove a resolved insight
+
+```json
+{ "action": "dismiss_insight", "insight_id": 42 }
+```
+
 ### `tasks_list` — Show running and completed tasks
 
 ```json
@@ -100,7 +107,7 @@ Merges pondering insights, proactive suggestions, and documentation gaps into a 
 
 ## Errors
 
-- **Invalid action**: Must be one of the 11 supported actions
+- **Invalid action**: Must be one of the 12 supported actions
 - **No active session**: No session has been started yet
 - **No active project**: Some actions require an active project context
 

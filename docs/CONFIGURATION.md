@@ -174,7 +174,8 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
     "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000, "async": true}]}],
     "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
     "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}]
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 2000}]}]
   }
 }
 ```

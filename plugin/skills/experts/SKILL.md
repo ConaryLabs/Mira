@@ -1,9 +1,12 @@
 ---
 name: experts
 description: This skill should be used when the user asks "get expert opinion", "review this", "what would an architect say", "security review", or wants a second opinion from AI experts.
+argument-hint: "[context or focus area]"
 ---
 
 # Expert Consultation
+
+> **Requires:** Claude Code Agent Teams feature.
 
 Get expert opinions on code, architecture, security, or plans using a team of AI specialists.
 
