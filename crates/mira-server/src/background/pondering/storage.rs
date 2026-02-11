@@ -50,7 +50,9 @@ fn hash_key(input: &str) -> String {
 fn extract_primary_entity(description: &str) -> Option<String> {
     // Look for path-like tokens: contains '/' or ends with a known extension
     for token in description.split_whitespace() {
-        let clean = token.trim_matches(|c: char| c == '`' || c == '\'' || c == '"' || c == ',');
+        let clean = token.trim_matches(|c: char| {
+            matches!(c, '`' | '\'' | '"' | ',' | '.' | ':' | ';' | '(' | ')' | '!' | '?')
+        });
         if clean.contains('/') || clean.ends_with(".rs") || clean.ends_with(".ts") || clean.ends_with(".py") || clean.ends_with(".js") || clean.ends_with(".go") {
             return Some(clean.to_lowercase());
         }
@@ -66,12 +68,30 @@ fn extract_quoted_text(description: &str) -> Option<&str> {
             '\u{201c}' => '\u{201d}',
             q => q,
         };
-        if let Some(start) = description.find(quote)
-            && let Some(end) = description[start + quote.len_utf8()..].find(close)
-        {
-            let inner = &description[start + quote.len_utf8()..start + quote.len_utf8() + end];
+        if let Some(start) = description.find(quote) {
+            let after_open = start + quote.len_utf8();
+            let rest = &description[after_open..];
+            let end = find_closing_quote(rest, close)?;
+            let inner = &description[after_open..after_open + end];
             if !inner.is_empty() {
                 return Some(inner);
+            }
+        }
+    }
+    None
+}
+
+/// Find a closing quote character, skipping apostrophes (quote followed by a letter).
+fn find_closing_quote(text: &str, quote: char) -> Option<usize> {
+    for (i, c) in text.char_indices() {
+        if c == quote {
+            // A closing quote is followed by non-alphanumeric or end-of-string.
+            // An apostrophe (e.g., User's) is followed by a letter — skip it.
+            let after = text[i + c.len_utf8()..].chars().next();
+            match after {
+                None => return Some(i),
+                Some(next) if !next.is_alphanumeric() => return Some(i),
+                _ => continue,
             }
         }
     }
@@ -130,13 +150,15 @@ pub(super) async fn store_insights(
         for insight in &insights_clone {
             // Generate pattern key using entity-aware hashing
             let pattern_key = compute_pattern_key(&insight.pattern_type, &insight.description);
+            // Also compute legacy key (pre-entity-aware) so old dismissals are honoured
+            let legacy_key = hash_key(&normalize_for_dedup(&insight.description));
 
-            // Skip if this pattern was previously dismissed
+            // Skip if this pattern was previously dismissed (check both key strategies)
             let dismissed: bool = conn
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM behavior_patterns \
-                     WHERE project_id = ? AND pattern_type = ? AND pattern_key = ? AND dismissed = 1)",
-                    params![project_id, insight.pattern_type, pattern_key],
+                     WHERE project_id = ? AND pattern_type = ? AND pattern_key IN (?, ?) AND dismissed = 1)",
+                    params![project_id, insight.pattern_type, pattern_key, legacy_key],
                     |row| row.get(0),
                 )
                 .unwrap_or(false);
@@ -349,6 +371,71 @@ mod tests {
             r#"Goal "Add caching" is stale"#,
         );
         assert_ne!(key1, key2);
+    }
+
+    // ── Punctuation robustness ────────────────────────────────────────
+
+    #[test]
+    fn test_extract_entity_trailing_punctuation() {
+        // Trailing period, colon, etc. should be stripped
+        assert_eq!(
+            extract_primary_entity("File src/db/pool.rs."),
+            Some("src/db/pool.rs".to_string()),
+        );
+        assert_eq!(
+            extract_primary_entity("See src/db/pool.rs:"),
+            Some("src/db/pool.rs".to_string()),
+        );
+        assert_eq!(
+            extract_primary_entity("(src/db/pool.rs)"),
+            Some("src/db/pool.rs".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_entity_dedup_trailing_punctuation_same_key() {
+        // src/db/pool.rs and src/db/pool.rs. should produce the same key
+        let key1 = compute_pattern_key(
+            "insight_fragile_code",
+            "File src/db/pool.rs has high churn",
+        );
+        let key2 = compute_pattern_key(
+            "insight_fragile_code",
+            "File src/db/pool.rs. has high churn",
+        );
+        assert_eq!(key1, key2);
+    }
+
+    // ── Apostrophe handling in quoted text ──────────────────────────────
+
+    #[test]
+    fn test_extract_quoted_text_with_apostrophe() {
+        // Apostrophe inside single-quoted text should not truncate
+        assert_eq!(
+            extract_quoted_text("Goal 'User's profile migration' has no progress"),
+            Some("User's profile migration"),
+        );
+    }
+
+    #[test]
+    fn test_stale_goal_apostrophe_dedup() {
+        // Goal titles with apostrophes should produce correct keys
+        let key1 = compute_pattern_key(
+            "insight_stale_goal",
+            "Goal 'User's profile migration' is stale for 30 days",
+        );
+        let key2 = compute_pattern_key(
+            "insight_stale_goal",
+            "Goal 'User's profile migration' still in progress after 45 days",
+        );
+        assert_eq!(key1, key2);
+
+        // Different title should produce different key
+        let key3 = compute_pattern_key(
+            "insight_stale_goal",
+            "Goal 'Add caching' is stale for 30 days",
+        );
+        assert_ne!(key1, key3);
     }
 
     #[test]
