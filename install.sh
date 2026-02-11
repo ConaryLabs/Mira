@@ -151,7 +151,7 @@ setup_hooks() {
       "PermissionRequest": [{"hooks": [{"type": "command", "command": "${mira_bin} hook permission", "timeout": 3}]}],
       "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "${mira_bin} hook pre-tool", "timeout": 2}]}],
       "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "${mira_bin} hook post-tool", "timeout": 5, "async": true}]}],
-      "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "${mira_bin} hook pre-compact", "timeout": 30, "async": true}]}],
+      "PreCompact": [{"hooks": [{"type": "command", "command": "${mira_bin} hook pre-compact", "timeout": 30, "async": true}]}],
       "Stop": [{"hooks": [{"type": "command", "command": "${mira_bin} hook stop", "timeout": 5}]}],
       "SessionEnd": [{"hooks": [{"type": "command", "command": "${mira_bin} hook session-end", "timeout": 5}]}],
       "SubagentStart": [{"hooks": [{"type": "command", "command": "${mira_bin} hook subagent-start", "timeout": 3}]}],

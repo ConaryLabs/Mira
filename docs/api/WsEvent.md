@@ -1,8 +1,6 @@
 # WsEvent
 
-> **Legacy:** These types exist in code but are **not used in MCP mode**. Mira communicates with Claude Code via MCP over stdio and hooks. The WebSocket broadcaster is retained for potential future transport layers but is currently inactive.
-
-Event types originally designed for real-time communication. Used internally for agent collaboration message typing.
+Event types used internally by the MCP router for tool lifecycle broadcasting (`ToolStart`, `ToolResult`) and agent collaboration messaging (`AgentResponse`). Originally designed for WebSocket transport; now used as an internal broadcast mechanism within the server.
 
 **Crate:** `mira-types`
 **Source:** `crates/mira-types/src/lib.rs`
