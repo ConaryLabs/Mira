@@ -51,9 +51,18 @@ fn extract_primary_entity(description: &str) -> Option<String> {
     // Look for path-like tokens: contains '/' or ends with a known extension
     for token in description.split_whitespace() {
         let clean = token.trim_matches(|c: char| {
-            matches!(c, '`' | '\'' | '"' | ',' | '.' | ':' | ';' | '(' | ')' | '!' | '?')
+            matches!(
+                c,
+                '`' | '\'' | '"' | ',' | '.' | ':' | ';' | '(' | ')' | '!' | '?'
+            )
         });
-        if clean.contains('/') || clean.ends_with(".rs") || clean.ends_with(".ts") || clean.ends_with(".py") || clean.ends_with(".js") || clean.ends_with(".go") {
+        if clean.contains('/')
+            || clean.ends_with(".rs")
+            || clean.ends_with(".ts")
+            || clean.ends_with(".py")
+            || clean.ends_with(".js")
+            || clean.ends_with(".go")
+        {
             return Some(clean.to_lowercase());
         }
     }
@@ -316,8 +325,14 @@ mod tests {
     #[test]
     fn test_same_meaning_same_key() {
         // Generic type falls back to normalized description hash
-        let key1 = compute_pattern_key("insight_workflow", "Module background/ had 3 reverts in 24h");
-        let key2 = compute_pattern_key("insight_workflow", "Module background/ had 7 reverts in 24h");
+        let key1 = compute_pattern_key(
+            "insight_workflow",
+            "Module background/ had 3 reverts in 24h",
+        );
+        let key2 = compute_pattern_key(
+            "insight_workflow",
+            "Module background/ had 7 reverts in 24h",
+        );
         assert_eq!(key1, key2);
     }
 
@@ -340,10 +355,7 @@ mod tests {
             extract_primary_entity("Module background/ has high churn"),
             Some("background/".to_string()),
         );
-        assert_eq!(
-            extract_primary_entity("No paths here at all"),
-            None,
-        );
+        assert_eq!(extract_primary_entity("No paths here at all"), None,);
     }
 
     #[test]
@@ -375,14 +387,8 @@ mod tests {
 
     #[test]
     fn test_entity_dedup_different_files() {
-        let key1 = compute_pattern_key(
-            "insight_fragile_code",
-            "src/db/factory.rs has high churn",
-        );
-        let key2 = compute_pattern_key(
-            "insight_fragile_code",
-            "src/db/pool.rs has high churn",
-        );
+        let key1 = compute_pattern_key("insight_fragile_code", "src/db/factory.rs has high churn");
+        let key2 = compute_pattern_key("insight_fragile_code", "src/db/pool.rs has high churn");
         assert_ne!(key1, key2);
     }
 
@@ -401,14 +407,8 @@ mod tests {
 
     #[test]
     fn test_stale_goal_dedup_different_titles() {
-        let key1 = compute_pattern_key(
-            "insight_stale_goal",
-            r#"Goal "Implement auth" is stale"#,
-        );
-        let key2 = compute_pattern_key(
-            "insight_stale_goal",
-            r#"Goal "Add caching" is stale"#,
-        );
+        let key1 = compute_pattern_key("insight_stale_goal", r#"Goal "Implement auth" is stale"#);
+        let key2 = compute_pattern_key("insight_stale_goal", r#"Goal "Add caching" is stale"#);
         assert_ne!(key1, key2);
     }
 
@@ -434,10 +434,8 @@ mod tests {
     #[test]
     fn test_entity_dedup_trailing_punctuation_same_key() {
         // src/db/pool.rs and src/db/pool.rs. should produce the same key
-        let key1 = compute_pattern_key(
-            "insight_fragile_code",
-            "File src/db/pool.rs has high churn",
-        );
+        let key1 =
+            compute_pattern_key("insight_fragile_code", "File src/db/pool.rs has high churn");
         let key2 = compute_pattern_key(
             "insight_fragile_code",
             "File src/db/pool.rs. has high churn",
@@ -560,20 +558,17 @@ mod tests {
         }];
 
         let stored = store_insights(&pool, project_id, &insights).await.unwrap();
-        assert_eq!(stored, 0, "insight should be blocked by legacy dismissed key");
+        assert_eq!(
+            stored, 0,
+            "insight should be blocked by legacy dismissed key"
+        );
     }
 
     #[test]
     fn test_session_insight_falls_back_to_description() {
         // Session/workflow insights have no entity, so they use normalized description
-        let key1 = compute_pattern_key(
-            "insight_session",
-            "5 sessions lasted under 5 minutes",
-        );
-        let key2 = compute_pattern_key(
-            "insight_session",
-            "8 sessions lasted under 5 minutes",
-        );
+        let key1 = compute_pattern_key("insight_session", "5 sessions lasted under 5 minutes");
+        let key2 = compute_pattern_key("insight_session", "8 sessions lasted under 5 minutes");
         // Numbers are normalized to #, so these should match
         assert_eq!(key1, key2);
     }

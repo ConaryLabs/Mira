@@ -598,15 +598,32 @@ fn extract_modules_from_files_json(files_json: &str) -> Vec<String> {
 /// Config files, documentation, lock files, etc. don't have meaningful unit tests.
 fn is_non_code_file(path: &str) -> bool {
     let non_code_extensions = [
-        ".json", ".toml", ".yaml", ".yml", ".env",
-        ".md", ".txt", ".rst",
+        ".json",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".env",
+        ".md",
+        ".txt",
+        ".rst",
         ".lock",
         ".generated",
-        ".sh", ".bash", ".bat", ".cmd",
+        ".sh",
+        ".bash",
+        ".bat",
+        ".cmd",
         ".sql",
-        ".csv", ".tsv",
-        ".xml", ".html", ".css",
-        ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico",
+        ".csv",
+        ".tsv",
+        ".xml",
+        ".html",
+        ".css",
+        ".svg",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".ico",
     ];
     let lower = path.to_lowercase();
     non_code_extensions.iter().any(|ext| lower.ends_with(ext))

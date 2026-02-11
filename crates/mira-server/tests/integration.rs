@@ -3147,13 +3147,19 @@ async fn test_dismiss_insight_success() {
     let ctx = TestContext::new().await;
 
     // Set up a project
-    session_start(&ctx, "/tmp/test_dismiss".into(), Some("Dismiss Test".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_dismiss".into(),
+        Some("Dismiss Test".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
     let project = ctx.get_project().await.expect("project should be set");
 
     // Insert an insight for this project
-    let row_id = insert_behavior_pattern(&ctx, project.id, "insight_friction", "test_dismiss_1").await;
+    let row_id =
+        insert_behavior_pattern(&ctx, project.id, "insight_friction", "test_dismiss_1").await;
 
     // Dismiss it
     let req = SessionRequest {
@@ -3184,16 +3190,27 @@ async fn test_dismiss_insight_cross_project_blocked() {
     let ctx = TestContext::new().await;
 
     // Set up project A and insert an insight
-    session_start(&ctx, "/tmp/test_dismiss_a".into(), Some("Project A".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_dismiss_a".into(),
+        Some("Project A".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
     let project_a = ctx.get_project().await.expect("project A should be set");
-    let row_id = insert_behavior_pattern(&ctx, project_a.id, "insight_friction", "cross_project_1").await;
+    let row_id =
+        insert_behavior_pattern(&ctx, project_a.id, "insight_friction", "cross_project_1").await;
 
     // Switch to project B
-    session_start(&ctx, "/tmp/test_dismiss_b".into(), Some("Project B".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_dismiss_b".into(),
+        Some("Project B".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // Try to dismiss project A's insight from project B's context
     let req = SessionRequest {
@@ -3208,14 +3225,21 @@ async fn test_dismiss_insight_cross_project_blocked() {
         insight_id: Some(row_id),
     };
     let result = handle_session(&ctx, req).await;
-    assert!(result.is_ok(), "dismiss_insight should not error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "dismiss_insight should not error: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
     assert!(
         msg!(output).contains("not found"),
         "Expected 'not found' for cross-project dismiss: {}",
         msg!(output)
     );
-    assert!(!is_dismissed(&ctx, row_id).await, "Row should NOT be dismissed");
+    assert!(
+        !is_dismissed(&ctx, row_id).await,
+        "Row should NOT be dismissed"
+    );
 }
 
 #[tokio::test]
@@ -3224,9 +3248,14 @@ async fn test_dismiss_insight_non_insight_pattern_blocked() {
     let ctx = TestContext::new().await;
 
     // Set up project
-    session_start(&ctx, "/tmp/test_dismiss_type".into(), Some("Type Test".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_dismiss_type".into(),
+        Some("Type Test".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
     let project = ctx.get_project().await.expect("project should be set");
 
     // Insert a non-insight behavior pattern (e.g., file_sequence)
@@ -3252,7 +3281,10 @@ async fn test_dismiss_insight_non_insight_pattern_blocked() {
         "Non-insight rows should not be dismissable: {}",
         msg!(output)
     );
-    assert!(!is_dismissed(&ctx, row_id).await, "Non-insight row should NOT be dismissed");
+    assert!(
+        !is_dismissed(&ctx, row_id).await,
+        "Non-insight row should NOT be dismissed"
+    );
 }
 
 #[tokio::test]

@@ -403,11 +403,7 @@ fn summarize_pattern(data: &super::patterns::PatternData) -> String {
             if keywords.is_empty() {
                 format!("Recurring {} pattern", query_type)
             } else {
-                format!(
-                    "Recurring {} for: {}",
-                    query_type,
-                    keywords.join(", ")
-                )
+                format!("Recurring {} for: {}", query_type, keywords.join(", "))
             }
         }
         PatternData::ChangePattern {

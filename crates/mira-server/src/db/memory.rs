@@ -1026,15 +1026,39 @@ mod scope_tests {
     fn search_alice_sees_project_and_personal() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        store(&conn, "shared scope config", "project", Some(pid), None, None);
-        store(&conn, "alice scope config", "personal", Some(pid), Some("alice"), None);
-        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+        store(
+            &conn,
+            "shared scope config",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store(
+            &conn,
+            "alice scope config",
+            "personal",
+            Some(pid),
+            Some("alice"),
+            None,
+        );
+        store(
+            &conn,
+            "team scope config",
+            "team",
+            Some(pid),
+            None,
+            Some(100),
+        );
 
         let results =
             search_memories_sync(&conn, Some(pid), "scope", Some("alice"), None, 10).unwrap();
         let contents: Vec<&str> = results.iter().map(|m| m.content.as_str()).collect();
 
-        assert!(contents.contains(&"alice scope config"), "alice should see her personal memory");
+        assert!(
+            contents.contains(&"alice scope config"),
+            "alice should see her personal memory"
+        );
         assert!(
             contents.contains(&"shared scope config"),
             "alice should see project memory"
@@ -1049,9 +1073,30 @@ mod scope_tests {
     fn search_bob_sees_only_project() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        store(&conn, "shared scope config", "project", Some(pid), None, None);
-        store(&conn, "alice scope config", "personal", Some(pid), Some("alice"), None);
-        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+        store(
+            &conn,
+            "shared scope config",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store(
+            &conn,
+            "alice scope config",
+            "personal",
+            Some(pid),
+            Some("alice"),
+            None,
+        );
+        store(
+            &conn,
+            "team scope config",
+            "team",
+            Some(pid),
+            None,
+            Some(100),
+        );
 
         let results =
             search_memories_sync(&conn, Some(pid), "scope", Some("bob"), None, 10).unwrap();
@@ -1075,9 +1120,30 @@ mod scope_tests {
     fn search_team_member_sees_project_and_team() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        store(&conn, "shared scope config", "project", Some(pid), None, None);
-        store(&conn, "alice scope config", "personal", Some(pid), Some("alice"), None);
-        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+        store(
+            &conn,
+            "shared scope config",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store(
+            &conn,
+            "alice scope config",
+            "personal",
+            Some(pid),
+            Some("alice"),
+            None,
+        );
+        store(
+            &conn,
+            "team scope config",
+            "team",
+            Some(pid),
+            None,
+            Some(100),
+        );
 
         let results =
             search_memories_sync(&conn, Some(pid), "scope", Some("charlie"), Some(100), 10)
@@ -1102,8 +1168,22 @@ mod scope_tests {
     fn search_different_team_sees_only_project() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        store(&conn, "shared scope config", "project", Some(pid), None, None);
-        store(&conn, "team scope config", "team", Some(pid), None, Some(100));
+        store(
+            &conn,
+            "shared scope config",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store(
+            &conn,
+            "team scope config",
+            "team",
+            Some(pid),
+            None,
+            Some(100),
+        );
 
         let results =
             search_memories_sync(&conn, Some(pid), "scope", Some("dave"), Some(200), 10).unwrap();
@@ -1136,11 +1216,23 @@ mod scope_tests {
     fn scope_roundtrip_personal() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        let id = store(&conn, "personal mem", "personal", Some(pid), Some("alice"), None);
+        let id = store(
+            &conn,
+            "personal mem",
+            "personal",
+            Some(pid),
+            Some("alice"),
+            None,
+        );
         let info = get_memory_scope_sync(&conn, id).unwrap().unwrap();
         assert_eq!(
             info,
-            (Some(pid), "personal".to_string(), Some("alice".to_string()), None)
+            (
+                Some(pid),
+                "personal".to_string(),
+                Some("alice".to_string()),
+                None
+            )
         );
     }
 
@@ -1161,9 +1253,30 @@ mod scope_tests {
     fn preferences_filtered_by_user() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        store_pref(&conn, "project pref: use tabs", "project", Some(pid), None, None);
-        store_pref(&conn, "alice pref: dark mode", "personal", Some(pid), Some("alice"), None);
-        store_pref(&conn, "bob pref: light mode", "personal", Some(pid), Some("bob"), None);
+        store_pref(
+            &conn,
+            "project pref: use tabs",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store_pref(
+            &conn,
+            "alice pref: dark mode",
+            "personal",
+            Some(pid),
+            Some("alice"),
+            None,
+        );
+        store_pref(
+            &conn,
+            "bob pref: light mode",
+            "personal",
+            Some(pid),
+            Some("bob"),
+            None,
+        );
 
         let prefs = get_preferences_sync(&conn, Some(pid), Some("alice"), None).unwrap();
         let contents: Vec<&str> = prefs.iter().map(|m| m.content.as_str()).collect();
@@ -1177,9 +1290,30 @@ mod scope_tests {
     fn preferences_filtered_by_team() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        store_pref(&conn, "project pref: use tabs", "project", Some(pid), None, None);
-        store_pref(&conn, "team pref: 4-space indent", "team", Some(pid), None, Some(10));
-        store_pref(&conn, "other team pref: 2-space", "team", Some(pid), None, Some(20));
+        store_pref(
+            &conn,
+            "project pref: use tabs",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store_pref(
+            &conn,
+            "team pref: 4-space indent",
+            "team",
+            Some(pid),
+            None,
+            Some(10),
+        );
+        store_pref(
+            &conn,
+            "other team pref: 2-space",
+            "team",
+            Some(pid),
+            None,
+            Some(20),
+        );
 
         let prefs = get_preferences_sync(&conn, Some(pid), None, Some(10)).unwrap();
         let contents: Vec<&str> = prefs.iter().map(|m| m.content.as_str()).collect();
