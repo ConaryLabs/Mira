@@ -18,12 +18,15 @@ Manage documentation tasks. Tracks what needs documenting across the project, pr
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | Action to perform: `list`, `get`, `complete`, `skip`, `inventory`, `scan`, or `export_claude_local` |
+| action | String | Yes | Action to perform: `list`, `get`, `complete`, `skip`, `batch_skip`, `inventory`, or `scan` |
 | task_id | Integer | Conditional | Task ID (required for `get`, `complete`, `skip`) |
-| reason | String | No | Reason for skipping (used with `skip` action, defaults to "Skipped by user") |
-| doc_type | String | No | Filter by documentation type (used with `list` action, e.g. `mcp_tool`, `module`, `public_api`) |
-| priority | String | No | Filter by priority (used with `list` action, e.g. `high`, `medium`, `low`) |
-| status | String | No | Filter by status (used with `list` action, e.g. `pending`, `applied`, `skipped`) |
+| task_ids | Array[Integer] | No | List of task IDs (used with `batch_skip`) |
+| reason | String | No | Reason for skipping (used with `skip`/`batch_skip`, defaults to "Skipped by user") |
+| doc_type | String | No | Filter by documentation type: `api`, `architecture`, `guide` |
+| priority | String | No | Filter by priority: `urgent`, `high`, `medium`, `low` |
+| status | String | No | Filter by status: `pending`, `completed`, `skipped` |
+| limit | Integer | No | Max results for `list` (default: 50, max: 500) |
+| offset | Integer | No | Offset for `list` pagination (default: 0) |
 
 ### Actions
 
@@ -33,9 +36,9 @@ Manage documentation tasks. Tracks what needs documenting across the project, pr
 | `get` | Get full task details with writing guidelines for a specific task | `action`, `task_id` |
 | `complete` | Mark a task as done after writing the documentation | `action`, `task_id` |
 | `skip` | Mark a task as not needed | `action`, `task_id` |
-| `inventory` | Show all existing documentation with staleness indicators | `action` |
+| `batch_skip` | Skip multiple tasks at once | `action`, plus `task_ids` or filters |
+| `inventory` | Show all existing documentation with staleness indicators and impact data | `action` |
 | `scan` | Trigger a fresh documentation scan of the project | `action` |
-| `export_claude_local` | Export Mira memories to CLAUDE.local.md | `action` |
 
 ## Returns
 
@@ -55,17 +58,17 @@ Confirmation message: `Task {id} marked complete. Documentation written to {path
 
 Confirmation message: `Task {id} skipped: {reason}`
 
+### `batch_skip`
+
+Summary of skipped tasks with IDs and any errors for tasks that couldn't be skipped.
+
 ### `inventory`
 
-Markdown inventory of all existing documentation grouped by type, with staleness warnings for docs whose source files have changed since the doc was last updated.
+Markdown inventory of all existing documentation grouped by type (stable alphabetical ordering), with staleness warnings and impact analysis (`change_impact`, `change_summary`) for docs whose source files have changed.
 
 ### `scan`
 
 Confirmation that the scan was triggered. Results appear in subsequent `list` calls.
-
-### `export_claude_local`
-
-Exports Mira memories to the project's `CLAUDE.local.md` file, organized by category (preferences, decisions, general).
 
 ## Examples
 
@@ -116,8 +119,9 @@ Exports Mira memories to the project's `CLAUDE.local.md` file, organized by cate
 - **"No active project"**: Requires an active project context.
 - **"Task {id} not found"**: The specified task ID does not exist.
 - **"Task {id} belongs to a different project"**: The task is associated with another project.
-- **"Task {id} is not pending"**: Only pending tasks can be completed or skipped.
+- **"Task {id} is not pending (status: {status}). Cannot skip."**: Only pending tasks can be completed or skipped.
 - **"task_id is required for action '{action}'"**: The `get`, `complete`, and `skip` actions require a `task_id`.
+- **"batch_skip requires either task_ids or a filter"**: The `batch_skip` action needs `task_ids` or `doc_type`/`priority` filters.
 
 ## See Also
 

@@ -29,8 +29,8 @@ pub async fn scan_existing_docs(
 
     let mut scanned = 0;
 
-    // Collect all markdown files using simple recursive scan
-    let mut doc_files = collect_markdown_files(&docs_dir);
+    // Collect all markdown files using simple recursive scan (with safety limits)
+    let mut doc_files = collect_markdown_files(&docs_dir, 0);
 
     // Also add root-level documentation files
     for file in [
@@ -70,15 +70,35 @@ pub async fn scan_existing_docs(
     Ok(scanned)
 }
 
-/// Collect all markdown files recursively
-fn collect_markdown_files(dir: &Path) -> Vec<std::path::PathBuf> {
+/// Maximum recursion depth for markdown file collection
+const MAX_COLLECT_DEPTH: u32 = 10;
+/// Maximum number of markdown files to collect
+const MAX_COLLECT_FILES: usize = 500;
+
+/// Collect all markdown files recursively with safety limits.
+/// Skips symlinks, respects max depth, and caps total file count.
+fn collect_markdown_files(dir: &Path, depth: u32) -> Vec<std::path::PathBuf> {
+    if depth >= MAX_COLLECT_DEPTH {
+        return Vec::new();
+    }
+
     let mut files = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
+            if files.len() >= MAX_COLLECT_FILES {
+                break;
+            }
             let path = entry.path();
+            // Skip symlinks to avoid cycles and escaping the project tree
+            if path.is_symlink() {
+                continue;
+            }
             if path.is_dir() {
-                files.extend(collect_markdown_files(&path));
+                let remaining = MAX_COLLECT_FILES - files.len();
+                let mut sub_files = collect_markdown_files(&path, depth + 1);
+                sub_files.truncate(remaining);
+                files.extend(sub_files);
             } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
                 files.push(path);
             }
@@ -111,8 +131,28 @@ async fn inventory_file(
     // Extract title from first heading
     let title = extract_title(file_path).await;
 
-    // Get source file path (code that this doc documents)
-    let source_file_path = find_source_for_doc(&doc_path);
+    // Get source file path: first check DB for a previously stored source path,
+    // then fall back to heuristic path mapping
+    let doc_path_for_query = doc_path.clone();
+    let source_file_path = {
+        let stored = pool
+            .interact(move |conn| -> anyhow::Result<Option<String>> {
+                let result: Option<String> = conn
+                    .query_row(
+                        "SELECT source_symbols FROM documentation_inventory
+                         WHERE project_id = ? AND doc_path = ?",
+                        rusqlite::params![project_id, doc_path_for_query],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten();
+                Ok(result.and_then(|s| s.strip_prefix("source_file:").map(|p| p.to_string())))
+            })
+            .await
+            .ok()
+            .flatten();
+        stored.or_else(|| find_source_for_doc(&doc_path))
+    };
 
     // Calculate source signature hash if we have a source file
     let source_signature_hash = if let Some(ref source) = source_file_path {
@@ -121,9 +161,9 @@ async fn inventory_file(
         None
     };
 
-    let source_symbols = source_signature_hash
+    let source_symbols = source_file_path
         .as_ref()
-        .map(|_| "from_source".to_string());
+        .map(|p| format!("source_file:{}", p));
 
     // Convert git_commit reference to owned String
     let git_commit_owned = git_commit.map(|s| s.to_string());

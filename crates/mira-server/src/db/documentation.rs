@@ -5,6 +5,11 @@ use crate::utils::ResultExt;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+/// Columns selected for DocTask queries (excludes vestigial draft columns)
+const DOC_TASK_COLUMNS: &str = "id, project_id, doc_type, doc_category, source_file_path, target_doc_path, \
+     priority, status, reason, skip_reason, created_at, updated_at, git_commit, \
+     source_signature_hash, applied_at";
+
 /// Documentation task for tracking missing or stale docs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocTask {
@@ -17,24 +22,13 @@ pub struct DocTask {
     pub priority: String,
     pub status: String,
     pub reason: Option<String>,
+    pub skip_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub git_commit: Option<String>,
     /// Safety rails: hash of source signatures at generation time
     pub source_signature_hash: Option<String>,
-    /// Safety rails: checksum of target doc when draft was generated
-    pub target_doc_checksum_at_generation: Option<String>,
-    /// Generated draft content
-    pub draft_content: Option<String>,
-    /// Preview for list views (first 200 chars)
-    pub draft_preview: Option<String>,
-    /// SHA256 of draft content
-    pub draft_sha256: Option<String>,
-    pub draft_generated_at: Option<String>,
-    pub reviewed_at: Option<String>,
     pub applied_at: Option<String>,
-    pub retry_count: i32,
-    pub last_error: Option<String>,
 }
 
 /// Documentation inventory entry for existing docs
@@ -103,10 +97,11 @@ pub fn get_pending_doc_tasks(
     limit: usize,
 ) -> Result<Vec<DocTask>, String> {
     let sql = format!(
-        "SELECT * FROM documentation_tasks
+        "SELECT {} FROM documentation_tasks
          WHERE {}status = 'pending'
          ORDER BY {}, created_at DESC
          LIMIT ?",
+        DOC_TASK_COLUMNS,
         if project_id.is_some() {
             "project_id = ? AND "
         } else {
@@ -134,7 +129,10 @@ pub fn list_doc_tasks(
     doc_type: Option<&str>,
     priority: Option<&str>,
 ) -> Result<Vec<DocTask>, String> {
-    let mut sql = "SELECT * FROM documentation_tasks WHERE 1=1".to_string();
+    let mut sql = format!(
+        "SELECT {} FROM documentation_tasks WHERE 1=1",
+        DOC_TASK_COLUMNS
+    );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
     if let Some(pid) = project_id {
@@ -169,7 +167,10 @@ pub fn list_doc_tasks(
 /// Get a single task by ID
 pub fn get_doc_task(conn: &rusqlite::Connection, task_id: i64) -> Result<Option<DocTask>, String> {
     conn.query_row(
-        "SELECT * FROM documentation_tasks WHERE id = ?",
+        &format!(
+            "SELECT {} FROM documentation_tasks WHERE id = ?",
+            DOC_TASK_COLUMNS
+        ),
         [task_id],
         parse_doc_task,
     )
@@ -177,11 +178,11 @@ pub fn get_doc_task(conn: &rusqlite::Connection, task_id: i64) -> Result<Option<
     .str_err()
 }
 
-/// Mark a task as applied (documentation written)
-pub fn mark_doc_task_applied(conn: &rusqlite::Connection, task_id: i64) -> Result<(), String> {
+/// Mark a task as completed (documentation written)
+pub fn mark_doc_task_completed(conn: &rusqlite::Connection, task_id: i64) -> Result<(), String> {
     conn.execute(
         "UPDATE documentation_tasks
-         SET status = 'applied', applied_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         SET status = 'completed', applied_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?",
         [task_id],
     )
@@ -189,7 +190,7 @@ pub fn mark_doc_task_applied(conn: &rusqlite::Connection, task_id: i64) -> Resul
     .str_err()
 }
 
-/// Mark a task as skipped
+/// Mark a task as skipped (preserves original reason, stores skip reason separately)
 pub fn mark_doc_task_skipped(
     conn: &rusqlite::Connection,
     task_id: i64,
@@ -197,7 +198,7 @@ pub fn mark_doc_task_skipped(
 ) -> Result<(), String> {
     conn.execute(
         "UPDATE documentation_tasks
-         SET status = 'skipped', reason = ?1, updated_at = CURRENT_TIMESTAMP
+         SET status = 'skipped', skip_reason = ?1, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?2",
         params![reason, task_id],
     )
@@ -212,13 +213,17 @@ pub fn reset_orphaned_doc_tasks(
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    // Get all applied tasks for this project
+    let canonical_project = Path::new(project_path)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(project_path));
+
+    // Get all completed tasks for this project
     let mut stmt = conn
         .prepare(
             "SELECT id, target_doc_path FROM documentation_tasks
-             WHERE project_id = ? AND status = 'applied'",
+             WHERE project_id = ? AND status = 'completed'",
         )
         .str_err()?;
 
@@ -231,6 +236,13 @@ pub fn reset_orphaned_doc_tasks(
     let mut reset_count = 0;
     for (task_id, target_path) in tasks {
         let full_path = Path::new(project_path).join(&target_path);
+
+        // Validate path stays within project root (prevent directory traversal)
+        let canonical_full = full_path.canonicalize().unwrap_or(full_path.clone());
+        if !canonical_full.starts_with(&canonical_project) {
+            continue;
+        }
+
         if !full_path.exists() {
             conn.execute(
                 "UPDATE documentation_tasks
@@ -374,7 +386,7 @@ pub fn get_stale_docs(
         .str_err()
 }
 
-/// Parse a DocTask row
+/// Parse a DocTask row from explicit column list
 fn parse_doc_task(row: &rusqlite::Row) -> Result<DocTask, rusqlite::Error> {
     Ok(DocTask {
         id: row.get("id")?,
@@ -386,19 +398,12 @@ fn parse_doc_task(row: &rusqlite::Row) -> Result<DocTask, rusqlite::Error> {
         priority: row.get("priority")?,
         status: row.get("status")?,
         reason: row.get("reason")?,
+        skip_reason: row.get("skip_reason")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         git_commit: row.get("git_commit")?,
         source_signature_hash: row.get("source_signature_hash")?,
-        target_doc_checksum_at_generation: row.get("target_doc_checksum_at_generation")?,
-        draft_content: row.get("draft_content")?,
-        draft_preview: row.get("draft_preview")?,
-        draft_sha256: row.get("draft_sha256")?,
-        draft_generated_at: row.get("draft_generated_at")?,
-        reviewed_at: row.get("reviewed_at")?,
         applied_at: row.get("applied_at")?,
-        retry_count: row.get("retry_count")?,
-        last_error: row.get("last_error")?,
     })
 }
 

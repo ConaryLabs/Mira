@@ -235,12 +235,11 @@ Queue of documentation that needs to be written or updated.
 | source_file_path | TEXT | Source code being documented |
 | target_doc_path | TEXT | Where doc should be written |
 | priority | TEXT | `low`, `medium`, `high` |
-| status | TEXT | `pending`, `skipped`, `applied` |
-| reason | TEXT | Why this doc is needed |
+| status | TEXT | `pending`, `skipped`, `completed` |
+| reason | TEXT | Why this doc is needed (preserved on skip) |
+| skip_reason | TEXT | Why the task was skipped (set on skip) |
 | source_signature_hash | TEXT | Hash of source signatures for staleness |
 | git_commit | TEXT | Commit when task was created |
-| retry_count | INTEGER | Number of generation attempts |
-| last_error | TEXT | Last error if generation failed |
 | created_at | TEXT | Timestamp |
 
 ### documentation_inventory
@@ -256,7 +255,7 @@ Registry of existing documentation files.
 | doc_category | TEXT | Category |
 | title | TEXT | Document title |
 | source_signature_hash | TEXT | Hash of source being documented |
-| source_symbols | TEXT | JSON list of documented symbols |
+| source_symbols | TEXT | Source file path (format: `source_file:<path>`) |
 | last_seen_commit | TEXT | Last git commit when verified |
 | is_stale | INTEGER | 1 if doc needs update |
 | staleness_reason | TEXT | Why it's stale |

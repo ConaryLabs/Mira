@@ -65,4 +65,8 @@ pub struct DocInventoryItem {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub staleness_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_impact: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_summary: Option<String>,
 }

@@ -191,6 +191,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "session_snapshots",
             func: session::migrate_session_snapshots_table,
         },
+        Migration {
+            version: 32,
+            name: "doc_skip_reason_and_completed_status",
+            func: memory::migrate_documentation_skip_reason_and_completed_status,
+        },
     ]
 }
 

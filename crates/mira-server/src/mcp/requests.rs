@@ -72,12 +72,12 @@ pub enum DocumentationAction {
     Complete,
     /// Skip a documentation task
     Skip,
+    /// Skip multiple documentation tasks by IDs or filter
+    BatchSkip,
     /// Show documentation inventory
     Inventory,
     /// Trigger documentation scan
     Scan,
-    /// Export Mira memories to CLAUDE.local.md
-    ExportClaudeLocal,
 }
 
 // ============================================================================
@@ -109,11 +109,13 @@ pub enum MemoryAction {
     Forget,
     /// Archive a memory (exclude from auto-export, keep for history)
     Archive,
+    /// Export Mira memories to CLAUDE.local.md
+    ExportClaudeLocal,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MemoryRequest {
-    #[schemars(description = "Action: remember, recall, forget, archive")]
+    #[schemars(description = "Action: remember, recall, forget, archive, export_claude_local")]
     pub action: MemoryAction,
     #[schemars(description = "Content to remember (required for remember)")]
     pub content: Option<String>,
@@ -299,20 +301,24 @@ pub struct ReplyToMiraRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DocumentationRequest {
-    #[schemars(
-        description = "Action: list, get, complete, skip, inventory, scan, export_claude_local"
-    )]
+    #[schemars(description = "Action: list, get, complete, skip, batch_skip, inventory, scan")]
     pub action: DocumentationAction,
     #[schemars(description = "Task ID (for get/complete/skip actions)")]
     pub task_id: Option<i64>,
-    #[schemars(description = "Reason for skipping (for skip action)")]
+    #[schemars(description = "List of task IDs (for batch_skip action)")]
+    pub task_ids: Option<Vec<i64>>,
+    #[schemars(description = "Reason for skipping (for skip/batch_skip actions)")]
     pub reason: Option<String>,
-    #[schemars(description = "Filter by documentation type")]
+    #[schemars(description = "Filter by documentation type: api, architecture, guide")]
     pub doc_type: Option<String>,
-    #[schemars(description = "Filter by priority")]
+    #[schemars(description = "Filter by priority: urgent, high, medium, low")]
     pub priority: Option<String>,
-    #[schemars(description = "Filter by status")]
+    #[schemars(description = "Filter by status: pending, completed, skipped")]
     pub status: Option<String>,
+    #[schemars(description = "Max results to return (default: 50, for list action)")]
+    pub limit: Option<i64>,
+    #[schemars(description = "Number of results to skip (for list action pagination)")]
+    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]

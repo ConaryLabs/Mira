@@ -90,17 +90,9 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         }
         "documentation" => {
             let req: DocumentationRequest = serde_json::from_str(&args)?;
-            mira::tools::documentation(
-                &server,
-                req.action,
-                req.task_id,
-                req.reason,
-                req.doc_type,
-                req.priority,
-                req.status,
-            )
-            .await
-            .map(|output| output.0.message)
+            mira::tools::documentation(&server, req)
+                .await
+                .map(|output| output.0.message)
         }
         "team" => {
             let req: TeamRequest = serde_json::from_str(&args)?;

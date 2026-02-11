@@ -3,7 +3,7 @@
 
 use crate::background::documentation::clear_documentation_scan_marker_sync;
 use crate::db::documentation::{
-    DocInventory, DocTask, get_doc_inventory, get_doc_task, mark_doc_task_applied,
+    DocInventory, DocTask, get_doc_inventory, get_doc_task, mark_doc_task_completed,
     mark_doc_task_skipped,
 };
 use crate::mcp::requests::DocumentationAction;
@@ -12,6 +12,7 @@ use crate::mcp::responses::{
     DocData, DocGetData, DocInventoryData, DocInventoryItem, DocListData, DocOutput, DocTaskItem,
 };
 use crate::tools::core::ToolContext;
+use std::collections::BTreeMap;
 
 /// List documentation that needs to be written or updated
 pub async fn list_doc_tasks(
@@ -19,6 +20,8 @@ pub async fn list_doc_tasks(
     status: Option<String>,
     doc_type: Option<String>,
     priority: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<Json<DocOutput>, String> {
     let project_id = ctx
         .project_id()
@@ -49,12 +52,27 @@ pub async fn list_doc_tasks(
         }));
     }
 
+    // Apply pagination
+    let offset = offset.unwrap_or(0).max(0) as usize;
+    let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
+    let total_unfiltered = tasks.len();
+    let tasks: Vec<&DocTask> = tasks.iter().skip(offset).take(limit).collect();
+
     let mut output = String::from("## Documentation Tasks\n\n");
+
+    if total_unfiltered > tasks.len() {
+        output.push_str(&format!(
+            "Showing {}-{} of {} tasks\n\n",
+            offset + 1,
+            offset + tasks.len(),
+            total_unfiltered
+        ));
+    }
 
     for task in &tasks {
         let status_indicator = match task.status.as_str() {
             "pending" => "[P]",
-            "applied" => "[A]",
+            "completed" => "[C]",
             "skipped" => "[S]",
             _ => "[?]",
         };
@@ -291,9 +309,9 @@ pub async fn complete_doc_task(
         ));
     }
 
-    // Mark as applied
+    // Mark as completed
     ctx.pool()
-        .run(move |conn| mark_doc_task_applied(conn, task_id))
+        .run(move |conn| mark_doc_task_completed(conn, task_id))
         .await?;
 
     Ok(Json(DocOutput {
@@ -329,6 +347,13 @@ pub async fn skip_doc_task(
         return Err(format!("Task {} belongs to a different project.", task_id));
     }
 
+    if task.status != "pending" {
+        return Err(format!(
+            "Task {} is not pending (status: {}). Cannot skip.",
+            task_id, task.status
+        ));
+    }
+
     let skip_reason = reason.unwrap_or_else(|| "Skipped by user".to_string());
     let skip_reason_clone = skip_reason.clone();
 
@@ -339,6 +364,100 @@ pub async fn skip_doc_task(
     Ok(Json(DocOutput {
         action: "skip".into(),
         message: format!("Task {} skipped: {}", task_id, skip_reason),
+        data: None,
+    }))
+}
+
+/// Batch skip documentation tasks by IDs or filter
+pub async fn batch_skip_doc_tasks(
+    ctx: &(impl ToolContext + ?Sized),
+    task_ids: Option<Vec<i64>>,
+    reason: Option<String>,
+    doc_type: Option<String>,
+    priority: Option<String>,
+) -> Result<Json<DocOutput>, String> {
+    let current_project_id = ctx
+        .project_id()
+        .await
+        .ok_or("No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")?;
+
+    let skip_reason = reason.unwrap_or_else(|| "Batch skipped by user".to_string());
+
+    // Determine which tasks to skip
+    let tasks_to_skip: Vec<DocTask> = if let Some(ids) = task_ids {
+        if ids.is_empty() {
+            return Err("task_ids list is empty".to_string());
+        }
+        // Fetch each task by ID
+        let mut tasks = Vec::new();
+        for id in ids {
+            let task = ctx
+                .pool()
+                .run(move |conn| get_doc_task(conn, id))
+                .await?
+                .ok_or(format!("Task {} not found", id))?;
+            tasks.push(task);
+        }
+        tasks
+    } else if doc_type.is_some() || priority.is_some() {
+        // Use filter to find matching pending tasks
+        let dt = doc_type.clone();
+        let pr = priority.clone();
+        ctx.pool()
+            .run(move |conn| {
+                list_db_doc_tasks(
+                    conn,
+                    Some(current_project_id),
+                    Some("pending"),
+                    dt.as_deref(),
+                    pr.as_deref(),
+                )
+            })
+            .await?
+    } else {
+        return Err(
+            "batch_skip requires either task_ids or a filter (doc_type/priority)".to_string(),
+        );
+    };
+
+    // Filter to only pending tasks belonging to current project
+    let eligible: Vec<&DocTask> = tasks_to_skip
+        .iter()
+        .filter(|t| t.project_id == Some(current_project_id) && t.status == "pending")
+        .collect();
+
+    if eligible.is_empty() {
+        return Ok(Json(DocOutput {
+            action: "batch_skip".into(),
+            message: "No eligible pending tasks found to skip.".into(),
+            data: None,
+        }));
+    }
+
+    let mut skipped_ids = Vec::new();
+    let mut errors = Vec::new();
+
+    for task in &eligible {
+        let task_id = task.id;
+        let reason_clone = skip_reason.clone();
+        match ctx
+            .pool()
+            .run(move |conn| mark_doc_task_skipped(conn, task_id, &reason_clone))
+            .await
+        {
+            Ok(()) => skipped_ids.push(task_id),
+            Err(e) => errors.push(format!("Task {}: {}", task_id, e)),
+        }
+    }
+
+    let mut message = format!("Skipped {} tasks: {:?}", skipped_ids.len(), skipped_ids);
+    if !errors.is_empty() {
+        message.push_str(&format!("\nErrors: {}", errors.join("; ")));
+    }
+
+    Ok(Json(DocOutput {
+        action: "batch_skip".into(),
+        message,
         data: None,
     }))
 }
@@ -355,6 +474,13 @@ pub async fn show_doc_inventory(
         .pool()
         .run(move |conn| get_doc_inventory(conn, project_id))
         .await?;
+
+    // Fetch impact data for stale docs
+    let impact_data = ctx
+        .pool()
+        .run(move |conn| get_doc_impact_data(conn, project_id))
+        .await
+        .unwrap_or_default();
 
     if inventory.is_empty() {
         return Ok(Json(DocOutput {
@@ -377,8 +503,8 @@ pub async fn show_doc_inventory(
     }
     output.push_str("\n\n---\n\n");
 
-    // Group by type
-    let mut by_type: std::collections::HashMap<&str, Vec<&DocInventory>> = Default::default();
+    // Group by type using BTreeMap for stable ordering
+    let mut by_type: BTreeMap<&str, Vec<&DocInventory>> = BTreeMap::new();
     for item in &inventory {
         by_type.entry(&item.doc_type).or_default().push(item);
     }
@@ -399,6 +525,12 @@ pub async fn show_doc_inventory(
             {
                 output.push_str(&format!("  - Reason: {}\n", reason));
             }
+
+            // Show impact data if available
+            if let Some((impact, summary)) = impact_data.get(&item.id) {
+                output.push_str(&format!("  - Impact: {}\n", impact));
+                output.push_str(&format!("  - Summary: {}\n", summary));
+            }
         }
 
         output.push('\n');
@@ -406,12 +538,20 @@ pub async fn show_doc_inventory(
 
     let items: Vec<DocInventoryItem> = inventory
         .iter()
-        .map(|item| DocInventoryItem {
-            doc_path: item.doc_path.clone(),
-            doc_type: item.doc_type.clone(),
-            is_stale: item.is_stale,
-            title: item.title.clone(),
-            staleness_reason: item.staleness_reason.clone(),
+        .map(|item| {
+            let (change_impact, change_summary) = impact_data
+                .get(&item.id)
+                .map(|(i, s)| (Some(i.clone()), Some(s.clone())))
+                .unwrap_or((None, None));
+            DocInventoryItem {
+                doc_path: item.doc_path.clone(),
+                doc_type: item.doc_type.clone(),
+                is_stale: item.is_stale,
+                title: item.title.clone(),
+                staleness_reason: item.staleness_reason.clone(),
+                change_impact,
+                change_summary,
+            }
         })
         .collect();
     let total = items.len();
@@ -425,6 +565,36 @@ pub async fn show_doc_inventory(
             stale_count,
         })),
     }))
+}
+
+/// Fetch change_impact and change_summary for inventory items
+fn get_doc_impact_data(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+) -> Result<std::collections::HashMap<i64, (String, String)>, String> {
+    use crate::utils::ResultExt;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, change_impact, change_summary FROM documentation_inventory
+             WHERE project_id = ? AND change_impact IS NOT NULL AND change_summary IS NOT NULL",
+        )
+        .str_err()?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![project_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .str_err()?;
+
+    let mut map = std::collections::HashMap::new();
+    for (id, impact, summary) in rows.flatten() {
+        map.insert(id, (impact, summary));
+    }
+    Ok(map)
 }
 
 /// Trigger manual documentation scan
@@ -448,39 +618,45 @@ pub async fn scan_documentation(
 }
 
 /// Unified documentation tool with action parameter
-/// Actions: list, get, complete, skip, inventory, scan
+/// Actions: list, get, complete, skip, batch_skip, inventory, scan
 pub async fn documentation<C: ToolContext>(
     ctx: &C,
-    action: DocumentationAction,
-    task_id: Option<i64>,
-    reason: Option<String>,
-    doc_type: Option<String>,
-    priority: Option<String>,
-    status: Option<String>,
+    req: crate::mcp::requests::DocumentationRequest,
 ) -> Result<Json<DocOutput>, String> {
-    match action {
-        DocumentationAction::List => list_doc_tasks(ctx, status, doc_type, priority).await,
+    match req.action {
+        DocumentationAction::List => {
+            list_doc_tasks(
+                ctx,
+                req.status,
+                req.doc_type,
+                req.priority,
+                req.limit,
+                req.offset,
+            )
+            .await
+        }
         DocumentationAction::Get => {
-            let id = task_id.ok_or("task_id is required for documentation(action=get)")?;
+            let id = req
+                .task_id
+                .ok_or("task_id is required for documentation(action=get)")?;
             get_doc_task_details(ctx, id).await
         }
         DocumentationAction::Complete => {
-            let id = task_id.ok_or("task_id is required for documentation(action=complete)")?;
+            let id = req
+                .task_id
+                .ok_or("task_id is required for documentation(action=complete)")?;
             complete_doc_task(ctx, id).await
         }
         DocumentationAction::Skip => {
-            let id = task_id.ok_or("task_id is required for documentation(action=skip)")?;
-            skip_doc_task(ctx, id, reason).await
+            let id = req
+                .task_id
+                .ok_or("task_id is required for documentation(action=skip)")?;
+            skip_doc_task(ctx, id, req.reason).await
+        }
+        DocumentationAction::BatchSkip => {
+            batch_skip_doc_tasks(ctx, req.task_ids, req.reason, req.doc_type, req.priority).await
         }
         DocumentationAction::Inventory => show_doc_inventory(ctx).await,
         DocumentationAction::Scan => scan_documentation(ctx).await,
-        DocumentationAction::ExportClaudeLocal => {
-            let message = crate::tools::core::claude_local::export_claude_local(ctx).await?;
-            Ok(Json(DocOutput {
-                action: "export_claude_local".into(),
-                message,
-                data: None,
-            }))
-        }
     }
 }

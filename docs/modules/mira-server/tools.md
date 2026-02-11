@@ -14,12 +14,12 @@ The MCP layer calls into these functions after deserializing request parameters.
 
 | Module | Tool | Actions |
 |--------|------|---------|
-| `memory.rs` | `memory` | `remember`, `recall`, `forget`, `archive` |
+| `memory.rs` | `memory` | `remember`, `recall`, `forget`, `archive`, `export_claude_local` |
 | `code/` | `code` | `search`, `symbols`, `callers`, `callees`, `dependencies`, `patterns`, `tech_debt`, `diff` |
 | `code/` | `index` | `project`, `file`, `status`, `compact`, `summarize`, `health` |
 | `project.rs` | `project` | `start`, `set`, `get` |
 | `goals.rs` | `goal` | `create`, `bulk_create`, `list`, `get`, `update`, `delete`, `add_milestone`, `complete_milestone`, `delete_milestone`, `progress` |
-| `documentation.rs` | `documentation` | `list`, `get`, `complete`, `skip`, `inventory`, `scan`, `export_claude_local` |
+| `documentation.rs` | `documentation` | `list`, `get`, `complete`, `skip`, `batch_skip`, `inventory`, `scan` |
 | `diff.rs` | `code` (`action="diff"`) | Semantic diff analysis |
 | `session.rs` | `session` | `history`, `recap`, `usage`, `insights` |
 | `session.rs` | `reply_to_mira` | (standalone) |

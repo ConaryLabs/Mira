@@ -1131,7 +1131,7 @@ async fn test_reply_to_mira_not_collaborative() {
 // Documentation System Integration Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-use mira::mcp::requests::DocumentationAction;
+use mira::mcp::requests::{DocumentationAction, DocumentationRequest};
 use mira::tools::core::documentation;
 
 #[tokio::test]
@@ -1151,12 +1151,17 @@ async fn test_documentation_list_empty() {
     // List documentation tasks - should be empty
     let result = documentation(
         &ctx,
-        DocumentationAction::List,
-        None, // task_id
-        None, // reason
-        None, // doc_type
-        None, // priority
-        None, // status
+        DocumentationRequest {
+            action: DocumentationAction::List,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1180,12 +1185,17 @@ async fn test_documentation_list_requires_project() {
     // No project set - should error
     let result = documentation(
         &ctx,
-        DocumentationAction::List,
-        None,
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::List,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1242,12 +1252,17 @@ async fn test_documentation_list_with_tasks() {
     // List documentation tasks
     let result = documentation(
         &ctx,
-        DocumentationAction::List,
-        None,
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::List,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1320,12 +1335,17 @@ async fn test_documentation_get_task_details() {
     // Get task details
     let result = documentation(
         &ctx,
-        DocumentationAction::Get,
-        Some(task_id),
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Get,
+            task_id: Some(task_id),
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1379,12 +1399,17 @@ async fn test_documentation_get_requires_task_id() {
     // Get without task_id should fail
     let result = documentation(
         &ctx,
-        DocumentationAction::Get,
-        None, // No task_id
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Get,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1414,12 +1439,17 @@ async fn test_documentation_get_nonexistent_task() {
     // Get non-existent task
     let result = documentation(
         &ctx,
-        DocumentationAction::Get,
-        Some(99999), // Non-existent ID
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Get,
+            task_id: Some(99999),
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1477,12 +1507,17 @@ async fn test_documentation_complete_task() {
     // Complete the task
     let result = documentation(
         &ctx,
-        DocumentationAction::Complete,
-        Some(task_id),
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Complete,
+            task_id: Some(task_id),
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1511,7 +1546,7 @@ async fn test_documentation_complete_task() {
         .await
         .expect("Failed to query status");
 
-    assert_eq!(status, "applied", "Status should be 'applied'");
+    assert_eq!(status, "completed", "Status should be 'completed'");
 }
 
 #[tokio::test]
@@ -1532,7 +1567,7 @@ async fn test_documentation_complete_already_completed() {
 
     let project_id = ctx.project_id().await.expect("Should have project_id");
 
-    // Create an already-applied doc task
+    // Create an already-completed doc task
     let task_id: i64 = ctx
         .pool()
         .run(move |conn| {
@@ -1547,7 +1582,7 @@ async fn test_documentation_complete_already_completed() {
                     "module",
                     "docs/modules/already.md",
                     "medium",
-                    "applied", // Already applied
+                    "completed", // Already completed
                     "Already done"
                 ],
             )?;
@@ -1559,12 +1594,17 @@ async fn test_documentation_complete_already_completed() {
     // Try to complete again
     let result = documentation(
         &ctx,
-        DocumentationAction::Complete,
-        Some(task_id),
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Complete,
+            task_id: Some(task_id),
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1622,12 +1662,17 @@ async fn test_documentation_skip_task() {
     // Skip the task with a reason
     let result = documentation(
         &ctx,
-        DocumentationAction::Skip,
-        Some(task_id),
-        Some("Internal API, not needed".to_string()),
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Skip,
+            task_id: Some(task_id),
+            task_ids: None,
+            reason: Some("Internal API, not needed".to_string()),
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1648,21 +1693,22 @@ async fn test_documentation_skip_task() {
         msg!(output)
     );
 
-    // Verify status changed in database
-    let (status, reason): (String, String) = ctx
+    // Verify status changed in database and original reason preserved
+    let (status, reason, skip_reason): (String, String, Option<String>) = ctx
         .pool()
         .run(move |conn| {
             conn.query_row(
-                "SELECT status, reason FROM documentation_tasks WHERE id = ?",
+                "SELECT status, reason, skip_reason FROM documentation_tasks WHERE id = ?",
                 [task_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
         })
         .await
         .expect("Failed to query status");
 
     assert_eq!(status, "skipped", "Status should be 'skipped'");
-    assert!(reason.contains("Internal API"), "Reason should be updated");
+    assert!(reason.contains("API needs docs"), "Original reason should be preserved");
+    assert!(skip_reason.unwrap_or_default().contains("Internal API"), "Skip reason should be set");
 }
 
 #[tokio::test]
@@ -1682,12 +1728,17 @@ async fn test_documentation_inventory_empty() {
     // Show inventory - should be empty
     let result = documentation(
         &ctx,
-        DocumentationAction::Inventory,
-        None,
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Inventory,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1721,12 +1772,17 @@ async fn test_documentation_scan() {
     // Trigger scan
     let result = documentation(
         &ctx,
-        DocumentationAction::Scan,
-        None,
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Scan,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1802,12 +1858,17 @@ async fn test_documentation_project_scoping() {
     // Try to get task from project 1 while in project 2 - should fail
     let result = documentation(
         &ctx,
-        DocumentationAction::Get,
-        Some(task1_id),
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Get,
+            task_id: Some(task1_id),
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1825,12 +1886,17 @@ async fn test_documentation_project_scoping() {
     // Try to complete task from project 1 while in project 2 - should fail
     let result = documentation(
         &ctx,
-        DocumentationAction::Complete,
-        Some(task1_id),
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Complete,
+            task_id: Some(task1_id),
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1842,12 +1908,17 @@ async fn test_documentation_project_scoping() {
     // Try to skip task from project 1 while in project 2 - should fail
     let result = documentation(
         &ctx,
-        DocumentationAction::Skip,
-        Some(task1_id),
-        Some("test".to_string()),
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::Skip,
+            task_id: Some(task1_id),
+            task_ids: None,
+            reason: Some("test".to_string()),
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1859,12 +1930,17 @@ async fn test_documentation_project_scoping() {
     // List should only show tasks for current project (project 2 has none)
     let result = documentation(
         &ctx,
-        DocumentationAction::List,
-        None,
-        None,
-        None,
-        None,
-        None,
+        DocumentationRequest {
+            action: DocumentationAction::List,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: None,
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 
@@ -1928,8 +2004,8 @@ async fn test_documentation_list_filter_by_status() {
                     "module",
                     "docs/applied.md",
                     "medium",
-                    "applied",
-                    "Applied task"
+                    "completed",
+                    "Completed task"
                 ],
             )?;
             Ok::<(), rusqlite::Error>(())
@@ -1940,12 +2016,17 @@ async fn test_documentation_list_filter_by_status() {
     // List only pending tasks
     let result = documentation(
         &ctx,
-        DocumentationAction::List,
-        None,
-        None,
-        None,
-        None,
-        Some("pending".to_string()),
+        DocumentationRequest {
+            action: DocumentationAction::List,
+            task_id: None,
+            task_ids: None,
+            reason: None,
+            doc_type: None,
+            priority: None,
+            status: Some("pending".to_string()),
+            limit: None,
+            offset: None,
+        },
     )
     .await;
 

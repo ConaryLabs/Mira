@@ -229,6 +229,14 @@ pub async fn handle_memory<C: ToolContext>(
             let id = req.id.ok_or("id is required for memory(action=archive)")?;
             archive(ctx, id).await
         }
+        MemoryAction::ExportClaudeLocal => {
+            let message = crate::tools::core::claude_local::export_claude_local(ctx).await?;
+            Ok(Json(MemoryOutput {
+                action: "export_claude_local".into(),
+                message,
+                data: None,
+            }))
+        }
     }
 }
 

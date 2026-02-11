@@ -6,11 +6,11 @@ Implementation layer for all MCP tool handlers. Each file contains the business 
 
 | File | Implements |
 |------|-----------|
-| `memory.rs` | `memory` — remember, recall, forget, archive |
+| `memory.rs` | `memory` — remember, recall, forget, archive, export_claude_local |
 | `code/` | `code` — search, symbols, callers, callees, dependencies, patterns, tech_debt; `index` — project, file, status, compact, summarize, health |
 | `project.rs` | `project` — start, set, get |
 | `goals.rs` | `goal` — create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, progress |
-| `documentation.rs` | `documentation` — list, get, complete, skip, inventory, scan, export_claude_local |
+| `documentation.rs` | `documentation` — list, get, complete, skip, batch_skip, inventory, scan |
 | `diff.rs` | `code` (`action="diff"`) — semantic diff analysis |
 | `session.rs` | `session` — history, recap, usage, insights; `reply_to_mira` |
 | `tasks.rs` | `session` (`action="tasks"`) — list, get, cancel (fallback for clients without native MCP tasks) |
@@ -18,7 +18,7 @@ Implementation layer for all MCP tool handlers. Each file contains the business 
 | `usage.rs` | LLM usage tracking helpers |
 | `session_notes.rs` | Session notes helpers |
 | `recipe.rs` | `recipe` — list, get (reusable team workflow recipes) |
-| `claude_local.rs` | CLAUDE.local.md export (called via `documentation(action="export_claude_local")`) |
+| `claude_local.rs` | CLAUDE.local.md export (called via `memory(action="export_claude_local")`) |
 
 ## Pattern
 

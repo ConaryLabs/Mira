@@ -262,6 +262,36 @@ pub fn migrate_remove_capability_data(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate documentation_tasks: add skip_reason column and change 'applied' status to 'completed'
+pub fn migrate_documentation_skip_reason_and_completed_status(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "documentation_tasks") {
+        return Ok(());
+    }
+
+    // Add skip_reason column if missing
+    if !column_exists(conn, "documentation_tasks", "skip_reason") {
+        tracing::info!("Adding skip_reason column to documentation_tasks");
+        conn.execute(
+            "ALTER TABLE documentation_tasks ADD COLUMN skip_reason TEXT",
+            [],
+        )?;
+    }
+
+    // Migrate 'applied' status to 'completed'
+    let updated: usize = conn.execute(
+        "UPDATE documentation_tasks SET status = 'completed' WHERE status = 'applied'",
+        [],
+    )?;
+    if updated > 0 {
+        tracing::info!(
+            "Migrated {} documentation_tasks from 'applied' to 'completed' status",
+            updated
+        );
+    }
+
+    Ok(())
+}
+
 /// Drop OLD teams tables (pre-team-intelligence-layer).
 ///
 /// The old `teams` table lacked a `config_path` column. New tables created by

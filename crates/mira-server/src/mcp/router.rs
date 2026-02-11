@@ -49,7 +49,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID), archive (exclude from auto-export, keep for history). Store and retrieve decisions, preferences, patterns, and context across sessions. Scope: personal, project (default), team.",
+        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID), archive (exclude from auto-export, keep for history), export_claude_local (export memories to CLAUDE.local.md). Store and retrieve decisions, preferences, patterns, and context across sessions. Scope: personal, project (default), team.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::MemoryOutput>()
             .expect("MemoryOutput schema")
     )]
@@ -141,7 +141,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Manage documentation gap detection and writing tasks. Actions: list (show needed docs), get (task details with writing guidelines), complete (mark done), skip (mark not needed), inventory (show all docs), scan (trigger scan), export_claude_local (export memories to CLAUDE.local.md).",
+        description = "Manage documentation gap detection and writing tasks. Actions: list (show needed docs), get (task details with writing guidelines), complete (mark done), skip (mark not needed), batch_skip (skip multiple tasks), inventory (show all docs), scan (trigger scan).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DocOutput>()
             .expect("DocOutput schema")
     )]
@@ -149,18 +149,7 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<DocumentationRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(
-            tools::documentation(
-                self,
-                req.action,
-                req.task_id,
-                req.reason,
-                req.doc_type,
-                req.priority,
-                req.status,
-            )
-            .await,
-        )
+        tool_result(tools::documentation(self, req).await)
     }
 
     #[tool(

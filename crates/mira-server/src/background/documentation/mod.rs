@@ -75,12 +75,13 @@ pub fn hash_normalized_signatures(signatures: &[&str]) -> Option<String> {
 ///
 /// - `main_pool`: for documentation_inventory, memory_facts, doc tasks, LLM usage
 /// - `code_pool`: for code_symbols, codebase_modules
+/// - `client`: optional LLM client for semantic analysis; heuristic fallback when absent
 ///
 /// Only detects gaps - Claude Code writes docs directly via documentation(action="get/complete")
 pub async fn process_documentation(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
-    llm_factory: &Arc<crate::llm::ProviderFactory>,
+    client: Option<&Arc<dyn crate::llm::LlmClient>>,
 ) -> Result<usize, String> {
     // Scan for missing and stale documentation (detection only)
     let scan_count = scan_documentation_gaps(main_pool, code_pool).await?;
@@ -88,8 +89,8 @@ pub async fn process_documentation(
         tracing::info!("Documentation scan found {} gaps", scan_count);
     }
 
-    // Analyze impact of stale docs using LLM
-    let analyzed = analyze_stale_doc_impacts(main_pool, code_pool, llm_factory).await?;
+    // Analyze impact of stale docs (LLM or heuristic)
+    let analyzed = analyze_stale_doc_impacts(main_pool, code_pool, client).await?;
     if analyzed > 0 {
         tracing::info!("Analyzed impact for {} stale docs", analyzed);
     }
@@ -97,26 +98,17 @@ pub async fn process_documentation(
     Ok(scan_count + analyzed)
 }
 
-/// Analyze the impact of changes for stale documentation using LLM.
+/// Analyze the impact of changes for stale documentation.
+/// Uses LLM when available, otherwise falls back to heuristic comparison.
 ///
 /// - `main_pool`: for documentation_inventory, LLM usage
 /// - `code_pool`: for code_symbols (current signatures)
 async fn analyze_stale_doc_impacts(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
-    llm_factory: &Arc<crate::llm::ProviderFactory>,
+    client: Option<&Arc<dyn crate::llm::LlmClient>>,
 ) -> Result<usize, String> {
     use crate::db::documentation::{get_stale_docs_needing_analysis, update_doc_impact_analysis};
-    use crate::llm::{PromptBuilder, record_llm_usage};
-
-    // Get LLM client for background work
-    let client = match llm_factory.client_for_background() {
-        Some(c) => c,
-        None => {
-            tracing::debug!("No LLM client available for doc impact analysis");
-            return Ok(0);
-        }
-    };
 
     // Get all projects with stale docs needing analysis
     let projects: Vec<(i64, String)> = main_pool
@@ -147,16 +139,78 @@ async fn analyze_stale_doc_impacts(
             .map_err(|e| e.to_string())?;
 
         for doc in stale_docs {
-            // Build context for LLM
-            let source_file = doc.source_symbols.as_deref().unwrap_or("unknown");
+            // Extract source file path from source_symbols (expects "source_file:<path>" format)
+            let source_file = doc
+                .source_symbols
+                .as_deref()
+                .and_then(|s| s.strip_prefix("source_file:"))
+                .unwrap_or_else(|| doc.source_symbols.as_deref().unwrap_or("unknown"));
             let staleness_reason = doc.staleness_reason.as_deref().unwrap_or("source changed");
 
-            // Try to get current source signatures for comparison
-            let current_signatures =
-                get_current_signatures(code_pool, project_id, source_file).await;
+            let (impact, summary) = if let Some(llm) = client {
+                // LLM path: full semantic analysis
+                analyze_impact_with_llm(
+                    llm,
+                    main_pool,
+                    code_pool,
+                    project_id,
+                    &doc.doc_path,
+                    source_file,
+                    staleness_reason,
+                )
+                .await
+            } else {
+                // Heuristic path: compare signature hashes
+                analyze_impact_heuristic(
+                    code_pool,
+                    project_id,
+                    source_file,
+                    doc.source_signature_hash.as_deref(),
+                )
+                .await
+            };
 
-            let prompt = format!(
-                r#"Analyze the impact of source code changes on documentation.
+            // Update the database
+            let doc_id = doc.id;
+            let impact_clone = impact.clone();
+            let summary_clone = summary.clone();
+            main_pool
+                .interact(move |conn| {
+                    update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            tracing::debug!(
+                "Doc impact analysis for {}: {} - {}",
+                doc.doc_path,
+                impact,
+                summary
+            );
+            total_analyzed += 1;
+        }
+    }
+
+    Ok(total_analyzed)
+}
+
+/// Analyze doc impact using LLM
+async fn analyze_impact_with_llm(
+    client: &Arc<dyn crate::llm::LlmClient>,
+    main_pool: &Arc<DatabasePool>,
+    code_pool: &Arc<DatabasePool>,
+    project_id: i64,
+    doc_path: &str,
+    source_file: &str,
+    staleness_reason: &str,
+) -> (String, String) {
+    use crate::llm::{PromptBuilder, record_llm_usage};
+
+    let current_signatures = get_current_signatures(code_pool, project_id, source_file).await;
+
+    let prompt = format!(
+        r#"Analyze the impact of source code changes on documentation.
 
 Documentation file: {}
 Source file: {}
@@ -183,60 +237,126 @@ MINOR changes (documentation update optional):
 Respond in this exact format:
 IMPACT: [significant/minor]
 SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
-                doc.doc_path,
-                source_file,
-                staleness_reason,
-                current_signatures.unwrap_or_else(|| "Unable to retrieve".to_string())
-            );
+        doc_path,
+        source_file,
+        staleness_reason,
+        current_signatures.unwrap_or_else(|| "Unable to retrieve".to_string())
+    );
 
-            let messages = PromptBuilder::for_background().build_messages(prompt);
+    let messages = PromptBuilder::for_background().build_messages(prompt);
 
-            match client.chat(messages, None).await {
-                Ok(result) => {
-                    // Parse the response
-                    let content = result.content.as_deref().unwrap_or("");
-                    let (impact, summary) = parse_impact_response(content);
+    match client.chat(messages, None).await {
+        Ok(result) => {
+            let content = result.content.as_deref().unwrap_or("");
+            let (impact, summary) = parse_impact_response(content);
 
-                    // Record LLM usage (handles errors internally)
-                    record_llm_usage(
-                        main_pool,
-                        client.provider_type(),
-                        &client.model_name(),
-                        "background:doc_impact_analysis",
-                        &result,
-                        Some(project_id),
-                        None,
-                    )
-                    .await;
+            record_llm_usage(
+                main_pool,
+                client.provider_type(),
+                &client.model_name(),
+                "background:doc_impact_analysis",
+                &result,
+                Some(project_id),
+                None,
+            )
+            .await;
 
-                    // Update the database
-                    let doc_id = doc.id;
-                    let impact_clone = impact.clone();
-                    let summary_clone = summary.clone();
-                    main_pool
-                        .interact(move |conn| {
-                            update_doc_impact_analysis(conn, doc_id, &impact_clone, &summary_clone)
-                                .map_err(|e| anyhow::anyhow!("{}", e))
-                        })
-                        .await
-                        .map_err(|e| e.to_string())?;
-
-                    tracing::debug!(
-                        "Doc impact analysis for {}: {} - {}",
-                        doc.doc_path,
-                        impact,
-                        summary
-                    );
-                    total_analyzed += 1;
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to analyze doc impact for {}: {}", doc.doc_path, e);
-                }
-            }
+            (impact, summary)
+        }
+        Err(e) => {
+            tracing::warn!("Failed LLM doc impact for {}: {}", doc_path, e);
+            // Default to significant when LLM fails
+            (
+                "significant".to_string(),
+                "LLM analysis failed, defaulting to significant".to_string(),
+            )
         }
     }
+}
 
-    Ok(total_analyzed)
+/// Heuristic doc impact analysis: compare old signature hash with current signatures.
+/// - If signature count changed -> "significant"
+/// - If signatures changed but count is same -> "moderate"
+/// - If only hash changed with no visible diff -> "minor"
+/// - Default to "significant" when ambiguous
+async fn analyze_impact_heuristic(
+    code_pool: &Arc<DatabasePool>,
+    project_id: i64,
+    source_file: &str,
+    old_hash: Option<&str>,
+) -> (String, String) {
+    use super::HEURISTIC_PREFIX;
+
+    let source_path = source_file.to_string();
+
+    // Get current symbols from code DB
+    let current_symbols = code_pool
+        .interact(move |conn| {
+            crate::db::get_symbols_for_file_sync(conn, project_id, &source_path)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .ok()
+        .unwrap_or_default();
+
+    let current_sigs: Vec<&str> = current_symbols
+        .iter()
+        .filter_map(|(_, _, _, _, _, sig)| sig.as_deref())
+        .collect();
+
+    let current_hash = hash_normalized_signatures(&current_sigs);
+    let current_count = current_sigs.len();
+
+    match (old_hash, current_hash.as_deref()) {
+        // No old hash: can't compare, assume significant
+        (None, _) => (
+            "significant".to_string(),
+            format!(
+                "{}No previous signature hash to compare, assuming significant",
+                HEURISTIC_PREFIX
+            ),
+        ),
+        // Hash unchanged: shouldn't be stale, but mark as minor
+        (Some(old), Some(new)) if old == new => (
+            "minor".to_string(),
+            format!(
+                "{}Signature hash unchanged, likely internal changes only",
+                HEURISTIC_PREFIX
+            ),
+        ),
+        // Hash changed: check signature count for severity
+        (Some(_), Some(_)) => {
+            // Get old signature count from stored hash (we can't recover it, but we
+            // can check if current symbols are empty vs non-empty)
+            if current_count == 0 {
+                (
+                    "significant".to_string(),
+                    format!(
+                        "{}Source file signatures no longer found (file removed or renamed?)",
+                        HEURISTIC_PREFIX
+                    ),
+                )
+            } else {
+                // Hash changed with signatures present: classify as moderate
+                // (can't determine count difference without storing old count)
+                (
+                    "moderate".to_string(),
+                    format!(
+                        "{}Source signatures changed ({} current signatures)",
+                        HEURISTIC_PREFIX, current_count
+                    ),
+                )
+            }
+        }
+        // No current hash but had old one: source likely removed
+        (Some(_), None) => (
+            "significant".to_string(),
+            format!(
+                "{}Source signatures no longer available (file removed or emptied?)",
+                HEURISTIC_PREFIX
+            ),
+        ),
+    }
 }
 
 /// Get current source signatures for a file (reads from code_symbols in code DB)

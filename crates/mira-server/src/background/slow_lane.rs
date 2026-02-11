@@ -388,11 +388,7 @@ impl SlowLaneWorker {
             BackgroundTask::DocumentationTasks => {
                 Self::run_task(
                     &name,
-                    documentation::process_documentation(
-                        &self.pool,
-                        &self.code_pool,
-                        &self.llm_factory,
-                    ),
+                    documentation::process_documentation(&self.pool, &self.code_pool, client),
                 )
                 .await
             }
