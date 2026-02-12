@@ -78,9 +78,15 @@ pub fn read_hook_input() -> Result<serde_json::Value> {
 
 /// Write hook output to stdout
 pub fn write_hook_output(output: &serde_json::Value) {
+    use std::io::Write;
     match serde_json::to_string(output) {
-        Ok(s) => println!("{}", s),
-        Err(e) => eprintln!("Failed to serialize hook output: {}", e),
+        Ok(s) => {
+            let _ = writeln!(std::io::stdout(), "{}", s);
+        }
+        Err(e) => {
+            eprintln!("Failed to serialize hook output: {}", e);
+            let _ = writeln!(std::io::stdout(), "{{}}");
+        }
     }
 }
 

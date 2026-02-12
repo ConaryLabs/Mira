@@ -318,73 +318,7 @@ pub async fn remember<C: ToolContext>(
         return Err("Memory content cannot be empty or whitespace-only.".to_string());
     }
 
-    // Rate limiting: max 50 new memories per session.
-    // Skip for key-based upserts that update an existing memory (not a new creation).
-    // Fail-closed: DB errors are treated as limit reached to prevent bypass.
-    // Note: SQLite's single-writer model minimizes the TOCTOU race between
-    // this check and the subsequent insert.
-    if let Some(ref sid) = ctx.get_session_id().await {
-        let is_keyed_update = if let Some(ref k) = key {
-            let k2 = k.clone();
-            let pid = ctx.project_id().await;
-            ctx.pool()
-                .run(move |conn| {
-                    conn.query_row(
-                        "SELECT COUNT(*) FROM memory_facts WHERE key = ?1 AND project_id IS ?2",
-                        rusqlite::params![k2, pid],
-                        |row| row.get::<_, i64>(0),
-                    )
-                })
-                .await
-                .unwrap_or(0)
-                > 0
-        } else {
-            false
-        };
-
-        if !is_keyed_update {
-            let sid_clone = sid.clone();
-            let count: i64 = ctx
-                .pool()
-                .run(move |conn| {
-                    conn.query_row(
-                        "SELECT COUNT(*) FROM memory_facts WHERE first_session_id = ?1",
-                        [&sid_clone],
-                        |row| row.get(0),
-                    )
-                })
-                .await
-                .unwrap_or(MAX_MEMORIES_PER_SESSION); // fail-closed
-            if count >= MAX_MEMORIES_PER_SESSION {
-                return Err(format!(
-                    "Rate limit exceeded: {} memories already created this session (max {}).",
-                    count, MAX_MEMORIES_PER_SESSION
-                ));
-            }
-        }
-    }
-
-    // Security: warn if content looks like it contains secrets
-    if let Some(pattern_name) = detect_secret(&content) {
-        return Err(format!(
-            "Content appears to contain a secret ({pattern_name}). \
-             Secrets should be stored in ~/.mira/.env, not in memories. \
-             If this is a false positive, rephrase the content to avoid secret-like patterns."
-        ));
-    }
-
-    // Security: detect prompt injection patterns. Store but flag as suspicious.
-    let suspicious = if let Some(pattern_name) = detect_injection(&content) {
-        tracing::warn!(
-            "Memory flagged as suspicious (matched '{}'): {}",
-            pattern_name,
-            crate::utils::truncate(&content, 80)
-        );
-        true
-    } else {
-        false
-    };
-
+    // Resolve identity fields early — needed by both rate-limit bypass and the insert.
     let project_id = ctx.project_id().await;
     let session_id = ctx.get_session_id().await;
     let user_id = ctx.get_user_identity();
@@ -423,15 +357,84 @@ pub async fn remember<C: ToolContext>(
         None
     };
 
+    // Security: warn if content looks like it contains secrets
+    if let Some(pattern_name) = detect_secret(&content) {
+        return Err(format!(
+            "Content appears to contain a secret ({pattern_name}). \
+             Secrets should be stored in ~/.mira/.env, not in memories. \
+             If this is a false positive, rephrase the content to avoid secret-like patterns."
+        ));
+    }
+
+    // Security: detect prompt injection patterns. Store but flag as suspicious.
+    let suspicious = if let Some(pattern_name) = detect_injection(&content) {
+        tracing::warn!(
+            "Memory flagged as suspicious (matched '{}'): {}",
+            pattern_name,
+            crate::utils::truncate(&content, 80)
+        );
+        true
+    } else {
+        false
+    };
+
     // Get current branch for branch-aware memory
     let branch = ctx.get_branch().await;
 
     // Clone only what's needed after the closure; move the rest directly
     let content_for_later = content.clone(); // needed for entity extraction
     let key_for_later = key.clone(); // needed for response message
+    // Atomic rate-limit check + insert inside a BEGIN IMMEDIATE transaction.
+    // IMMEDIATE acquires a write lock before the count check, so concurrent
+    // requests on other pooled connections block until this transaction commits.
+    // This closes the TOCTOU gap: two requests cannot both see count < 50.
     let id: i64 = ctx
         .pool()
-        .run_with_retry(move |conn| {
+        .run_with_retry(move |conn| -> Result<i64, String> {
+            let tx = rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )
+            .map_err(|e| e.to_string())?;
+
+            // Rate limiting: max 50 new memories per session.
+            // Skip for key-based upserts that update an existing row.
+            // Fail-closed: DB errors are treated as limit reached.
+            if let Some(ref sid) = session_id {
+                // Bypass check uses the full upsert identity from store_memory_sync:
+                // (key, project_id, scope, team_id, user_id).
+                let is_keyed_update = key.as_ref().is_some_and(|k| {
+                    tx.query_row(
+                        "SELECT COUNT(*) FROM memory_facts
+                         WHERE key = ?1 AND project_id IS ?2
+                           AND COALESCE(scope, 'project') = ?3
+                           AND COALESCE(team_id, 0) = COALESCE(?4, 0)
+                           AND (?3 != 'personal' OR COALESCE(user_id, '') = COALESCE(?5, ''))",
+                        rusqlite::params![k, project_id, &scope, team_id, user_id.as_deref()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap_or(0)
+                        > 0
+                });
+
+                if !is_keyed_update {
+                    let count: i64 = tx
+                        .query_row(
+                            "SELECT COUNT(*) FROM memory_facts WHERE first_session_id = ?1",
+                            [sid],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(MAX_MEMORIES_PER_SESSION); // fail-closed
+                    if count >= MAX_MEMORIES_PER_SESSION {
+                        // tx drops here -> auto-rollback, releases write lock
+                        return Err(format!(
+                            "Rate limit exceeded: {} memories already created this session (max {}).",
+                            count, MAX_MEMORIES_PER_SESSION
+                        ));
+                    }
+                }
+            }
+
             let params = StoreMemoryParams {
                 project_id,
                 key: key.as_deref(),
@@ -446,7 +449,9 @@ pub async fn remember<C: ToolContext>(
                 team_id,
                 suspicious,
             };
-            store_memory_sync(conn, params)
+            let id = store_memory_sync(&tx, params).map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(id)
         })
         .await
         .map_err(|e| format!("Failed to store memory: {}", e))?;
@@ -890,8 +895,8 @@ mod tests {
 
     #[test]
     fn rate_limit_constant_is_reasonable() {
-        assert!(MAX_MEMORIES_PER_SESSION > 0);
-        assert!(MAX_MEMORIES_PER_SESSION <= 100);
+        const { assert!(MAX_MEMORIES_PER_SESSION > 0) };
+        const { assert!(MAX_MEMORIES_PER_SESSION <= 100) };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

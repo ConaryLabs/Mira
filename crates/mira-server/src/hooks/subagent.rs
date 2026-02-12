@@ -145,6 +145,7 @@ pub async fn run_start() -> Result<()> {
         }
         serde_json::json!({
             "hookSpecificOutput": {
+                "hookEventName": "SubagentStart",
                 "additionalContext": context
             }
         })

@@ -39,14 +39,21 @@ pub async fn run() -> Result<()> {
         if matches {
             // Auto-approve
             write_hook_output(&serde_json::json!({
-                "decision": "allow"
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": { "behavior": "allow" }
+                }
             }));
             return Ok(());
         }
     }
 
     // No matching rule - let Claude Code handle it
-    write_hook_output(&serde_json::json!({}));
+    write_hook_output(&serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest"
+        }
+    }));
     Ok(())
 }
 

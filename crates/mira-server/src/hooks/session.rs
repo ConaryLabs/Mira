@@ -42,6 +42,21 @@ fn goals_shown_path() -> PathBuf {
     home.join(".mira/tmp/goals_shown")
 }
 
+/// Write a file with restricted permissions (0o600 on Unix).
+/// Used for sensitive session files (session ID, cwd, task list ID, goals marker).
+fn write_file_restricted(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
+    f.write_all(content.as_bytes())
+}
+
 /// Mark that goals have been injected into the session context.
 /// Called by SessionStart after injecting goals, so other hooks can skip them.
 fn mark_goals_shown() {
@@ -51,7 +66,7 @@ fn mark_goals_shown() {
     {
         tracing::debug!("Failed to create goals_shown dir: {e}");
     }
-    if let Err(e) = fs::write(&path, Utc::now().to_rfc3339()) {
+    if let Err(e) = write_file_restricted(&path, &Utc::now().to_rfc3339()) {
         tracing::debug!("Failed to write goals_shown marker: {e}");
     }
 }
@@ -124,7 +139,7 @@ pub async fn run() -> Result<()> {
     let session_id = input.get("session_id").and_then(|v| v.as_str());
     if let Some(sid) = session_id {
         let path = session_file_path();
-        fs::write(&path, sid)?;
+        write_file_restricted(&path, sid)?;
         eprintln!("[mira] Captured Claude session: {}", sid);
     }
 
@@ -132,7 +147,7 @@ pub async fn run() -> Result<()> {
     let cwd = input.get("cwd").and_then(|v| v.as_str());
     if let Some(cwd_val) = cwd {
         let path = cwd_file_path();
-        fs::write(&path, cwd_val)?;
+        write_file_restricted(&path, cwd_val)?;
         eprintln!("[mira] Captured Claude cwd: {}", cwd_val);
     }
 
@@ -173,7 +188,7 @@ pub async fn run() -> Result<()> {
 
     if let Some(ref list_id) = task_list_id {
         let path = task_list_file_path();
-        fs::write(&path, list_id)?;
+        write_file_restricted(&path, list_id)?;
         eprintln!("[mira] Captured Claude task list: {}", list_id);
     }
 
@@ -320,6 +335,7 @@ pub async fn run() -> Result<()> {
     if let Some(ctx) = context {
         let output = serde_json::json!({
             "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
                 "additionalContext": ctx
             }
         });

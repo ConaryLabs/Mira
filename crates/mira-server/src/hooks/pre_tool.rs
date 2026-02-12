@@ -16,6 +16,65 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const COOLDOWN_SECS: u64 = 3;
 const MAX_RECENT_QUERIES: usize = 5;
 
+/// Try to acquire an exclusive lock for the PreToolUse hook.
+///
+/// When multiple Grep/Glob calls fire in parallel, Claude Code launches a
+/// PreToolUse hook for each one simultaneously. Without serialization, all
+/// instances race past the cooldown check and call the embedding API, easily
+/// exceeding the 2-3s hook timeout.
+///
+/// This uses a PID-based lock file: write our PID atomically via O_EXCL.
+/// If the file already exists and the PID is still alive, another instance
+/// is running — return None so the caller can skip immediately. Stale lock
+/// files (dead PID) are cleaned up automatically.
+fn try_acquire_lock() -> Option<LockGuard> {
+    let lock_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".mira")
+        .join("tmp")
+        .join("pretool.lock");
+
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // Check for existing lock
+    if let Ok(contents) = std::fs::read_to_string(&lock_path)
+        && let Ok(pid) = contents.trim().parse::<u32>()
+    {
+        // Check if the process is still alive
+        if Path::new(&format!("/proc/{}", pid)).exists() {
+            return None; // another instance is running
+        }
+        // Stale lock — remove it
+        let _ = std::fs::remove_file(&lock_path);
+    }
+
+    // Try to create lock file exclusively (O_EXCL prevents race between check and create)
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&lock_path).ok()?;
+    let _ = write!(file, "{}", std::process::id());
+
+    Some(LockGuard { path: lock_path })
+}
+
+/// RAII guard that removes the lock file on drop.
+struct LockGuard {
+    path: std::path::PathBuf,
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct CooldownState {
     last_fired_at: u64,
@@ -138,6 +197,18 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Serialize parallel invocations: if another PreToolUse hook is already
+    // running (e.g., 8 Grep calls fired in parallel), skip immediately rather
+    // than all racing to call the embedding API and timing out.
+    let _lock = match try_acquire_lock() {
+        Some(lock) => lock,
+        None => {
+            eprintln!("[mira] PreToolUse skipped (another instance running)");
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    };
+
     let _timer = HookTimer::start("PreToolUse");
 
     eprintln!(
@@ -197,6 +268,7 @@ pub async fn run() -> Result<()> {
         let context = format!("[Mira/memory] Relevant context:\n{}", memories.join("\n\n"));
         serde_json::json!({
             "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
                 "additionalContext": context
             }
         })

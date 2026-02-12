@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
+    let _ = tracing::subscriber::set_global_default(subscriber);
 
     match cli.command {
         None | Some(Commands::Serve) => {
@@ -56,38 +56,40 @@ async fn main() -> Result<()> {
         }) => {
             cli::run_index(path, no_embed, quiet).await?;
         }
-        Some(Commands::Hook { action }) => match action {
-            HookAction::Permission => {
-                mira::hooks::permission::run().await?;
+        Some(Commands::Hook { action }) => {
+            // Hooks must NEVER exit with a non-zero code -- Claude Code
+            // treats any non-zero exit as a "hook error".  Catch all errors
+            // AND panics, log them to stderr, and emit `{}` on stdout so the
+            // hook is silently ignored rather than flagged as broken.
+            use std::io::Write;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    match action {
+                        HookAction::Permission => mira::hooks::permission::run().await,
+                        HookAction::SessionStart => mira::hooks::session::run().await,
+                        HookAction::PreCompact => mira::hooks::precompact::run().await,
+                        HookAction::PreTool => mira::hooks::pre_tool::run().await,
+                        HookAction::UserPrompt => mira::hooks::user_prompt::run().await,
+                        HookAction::PostTool => mira::hooks::post_tool::run().await,
+                        HookAction::Stop => mira::hooks::stop::run().await,
+                        HookAction::SessionEnd => mira::hooks::stop::run_session_end().await,
+                        HookAction::SubagentStart => mira::hooks::subagent::run_start().await,
+                        HookAction::SubagentStop => mira::hooks::subagent::run_stop().await,
+                    }
+                })
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    eprintln!("[mira] Hook error (non-fatal): {e:#}");
+                    let _ = writeln!(std::io::stdout(), "{{}}");
+                }
+                Err(_panic) => {
+                    eprintln!("[mira] Hook panic (non-fatal)");
+                    let _ = writeln!(std::io::stdout(), "{{}}");
+                }
             }
-            HookAction::SessionStart => {
-                mira::hooks::session::run().await?;
-            }
-            HookAction::PreCompact => {
-                mira::hooks::precompact::run().await?;
-            }
-            HookAction::PreTool => {
-                mira::hooks::pre_tool::run().await?;
-            }
-            HookAction::UserPrompt => {
-                mira::hooks::user_prompt::run().await?;
-            }
-            HookAction::PostTool => {
-                mira::hooks::post_tool::run().await?;
-            }
-            HookAction::Stop => {
-                mira::hooks::stop::run().await?;
-            }
-            HookAction::SessionEnd => {
-                mira::hooks::stop::run_session_end().await?;
-            }
-            HookAction::SubagentStart => {
-                mira::hooks::subagent::run_start().await?;
-            }
-            HookAction::SubagentStop => {
-                mira::hooks::subagent::run_stop().await?;
-            }
-        },
+        }
         Some(Commands::DebugCarto { path }) => {
             cli::run_debug_carto(path).await?;
         }

@@ -80,6 +80,20 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-02-12
+
+### Fixed
+- **Hook protocol compliance** -- Added missing `hookEventName` field to SessionStart, PreToolUse, and SubagentStart hook output. Claude Code 2.1.39 expects this field inside `hookSpecificOutput`.
+- **PermissionRequest output format** -- Changed from deprecated top-level `{"decision": "allow"}` to proper `hookSpecificOutput` wrapper with `{"behavior": "allow"}` object format.
+- **Broken pipe panic in hook error handler** -- Replaced `println!` with non-panicking `writeln!` in both `write_hook_output` and the main.rs catch-all, preventing crashes when Claude Code kills a timed-out hook.
+- **write_hook_output silent failure** -- Serialization errors now emit fallback `{}` on stdout instead of leaving stdout empty.
+- **Pre-catch-all panic paths** -- Wrapped hook dispatch in `catch_unwind` to catch panics in addition to errors. Tracing initialization changed to non-fatal `let _ =` to prevent non-zero exits before the catch-all.
+- **Session file permissions** -- All files written to `~/.mira/` by hooks now use explicit mode 0o600 via new `write_file_restricted` helper, consistent with lock/cooldown files.
+- **Clippy warnings** -- Fixed collapsible `if` in `pre_tool.rs`, `map_or` -> `is_some_and` in `memory.rs`, constant assertions in `memory.rs`.
+
+### Changed
+- **Hook timeouts increased** -- SessionEnd 5s to 15s (LLM distillation), Stop 5s to 8s (multi-write), UserPromptSubmit 5s to 8s (cold start resilience). PreToolUse aligned to 3s across all copies.
+
 ## [0.7.4] - 2026-02-12
 
 ### Added

@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook user-prompt",
-            "timeout": 5
+            "timeout": 8
           }
         ]
       }
@@ -41,7 +41,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook pre-tool",
-            "timeout": 2
+            "timeout": 3
           }
         ]
       }
@@ -77,7 +77,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook stop",
-            "timeout": 5
+            "timeout": 8
           }
         ]
       }
@@ -88,7 +88,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook session-end",
-            "timeout": 5
+            "timeout": 15
           }
         ]
       }
