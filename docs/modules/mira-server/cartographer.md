@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/cartographer.md -->
 # cartographer
 
 Codebase mapping and structure analysis. Detects modules, entry points, and dependencies to generate a navigable codebase map.

@@ -1,56 +1,59 @@
-# team
+<!-- docs/tools/team.md -->
+# Team
 
-Team intelligence for Claude Code Agent Teams. Actions: `status` (overview), `review` (teammate's work), `distill` (extract findings).
+Team intelligence for Claude Code Agent Teams. Provides visibility into team activity, file conflicts, and knowledge distillation.
 
-## Usage
-
-```json
-{
-  "name": "team",
-  "arguments": {
-    "action": "status"
-  }
-}
-```
-
-## Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| action | String | Yes | `status`, `review`, or `distill` |
-| teammate | String | No | Teammate name (for `review`; defaults to self) |
+Requires an active Agent Teams session. Returns an informational message (not an error) when no team is active.
 
 ## Actions
 
-### `status` — Team overview
+### status
 
-Returns active team members, files they've modified, and potential conflicts (multiple teammates editing the same file).
+Get team overview: active members, files they have modified, and file conflicts (multiple teammates editing the same file).
+
+**Parameters:**
+- `action` (string, required) - `"status"`
+
+**Returns:** Team name, team ID, active member count, member details (name, role, status, last heartbeat, files), and file conflicts (file path with list of editors).
+
+### review
+
+Review a teammate's modified files.
+
+**Parameters:**
+- `action` (string, required) - `"review"`
+- `teammate` (string, optional) - Teammate name to review (defaults to self)
+
+**Returns:** Member name, list of modified files, and file count.
+
+**Note:** If the specified teammate is not found, the error includes a list of active members.
+
+### distill
+
+Extract key findings and decisions from team work into team-scoped memories for future recall. Uses LLM-powered knowledge distillation.
+
+**Parameters:**
+- `action` (string, required) - `"distill"`
+
+**Returns:** Team name, findings count, memories processed, files touched, and distilled findings with categories and source counts.
+
+**Note:** Requires sufficient team activity (at least 2 memories or file modifications) to produce results.
+
+## Examples
 
 ```json
-{ "action": "status" }
+{"action": "status"}
 ```
-
-### `review` — Review teammate's work
-
-Shows files modified by a specific teammate with operation details.
 
 ```json
-{ "action": "review", "teammate": "researcher" }
+{"action": "review", "teammate": "researcher"}
 ```
-
-### `distill` — Extract key findings
-
-Distills key findings and decisions from team work into team-scoped memories for future recall.
 
 ```json
-{ "action": "distill" }
+{"action": "distill"}
 ```
-
-## Requirements
-
-Requires an active Claude Code Agent Teams session. Returns an error if no team is active.
 
 ## See Also
 
-- [**session**](./session.md): Session management
-- [**memory**](./memory.md): Team-scoped memories via `scope="team"`
+- [recipe](./recipe.md) - Team recipes for spawning Agent Teams
+- [memory](./memory.md) - Team-scoped memories via `scope="team"`

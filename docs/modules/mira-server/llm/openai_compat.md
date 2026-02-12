@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/llm/openai_compat.md -->
 # llm/openai_compat
 
 Shared OpenAI-compatible request/response handling. Used by DeepSeek and other providers that implement the OpenAI chat completions API format.

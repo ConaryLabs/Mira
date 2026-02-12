@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/cli.md -->
 # cli
 
 Command-line interface using clap. Defines subcommands and dispatches to handlers.

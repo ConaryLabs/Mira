@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/error.md -->
 # error
 
 Standardized error types using thiserror.

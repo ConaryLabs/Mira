@@ -1,130 +1,80 @@
-# project
+<!-- docs/tools/project.md -->
+# Project
 
-Manage project context. Initializes sessions with a codebase map, switches between projects, and shows the current project.
+Manage project context and workspace initialization.
 
-## Usage
+## Actions
 
-```json
-{
-  "name": "project",
-  "arguments": {
-    "action": "start",
-    "project_path": "/home/user/myproject"
-  }
-}
-```
+### start
 
-## Parameters
+Initialize a session with full project context. Detects project type, imports CLAUDE.local.md memories, loads preferences, recent sessions, health alerts, and generates a codebase map (Rust projects).
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| action | String | Yes | Action to perform: `start`, `set`, or `get` |
-| project_path | String | Conditional | Absolute path to project root (required for `start` and `set`) |
-| name | String | No | Project name (auto-detected from Cargo.toml, package.json, or directory name if omitted) |
-| session_id | String | No | Session ID for `start` action (auto-generated if omitted) |
+**Parameters:**
+- `action` (string, required) - `"start"`
+- `project_path` (string, required) - Absolute path to the project root
+- `name` (string, optional) - Project name override (auto-detected from Cargo.toml/package.json if omitted)
+- `session_id` (string, optional) - Session ID (falls back to Claude's hook-generated ID, then UUID)
 
-### Actions
+**Returns:** Project ID, name, type, codebase map, recent sessions, preferences, health alerts, pending documentation count, and database path.
 
-| Action | Description | Required Params |
-|--------|-------------|-----------------|
-| `start` | Initialize a session with full project context, codebase map, and insights | `action`, `project_path` |
-| `set` | Switch the active project without full initialization | `action`, `project_path` |
-| `get` | Show the current active project | `action` |
+### set
 
-## Returns
+Change the active project without full session initialization.
 
-### `start`
+**Parameters:**
+- `action` (string, required) - `"set"`
+- `project_path` (string, required) - Absolute path to the project root
+- `name` (string, optional) - Project name override
 
-A comprehensive project initialization report containing:
+**Returns:** Project ID and name.
 
-- **Project header**: Name and detected type (rust, node, python, go, java)
-- **CLAUDE.local.md import**: Count of memory entries imported, if the file exists (bidirectional: imported on start, auto-exported on session close via Stop hook)
-- **What's new briefing**: Summary of changes since last session
-- **Recent sessions**: Last few sessions with timestamps and summaries
-- **Session insights**: User preferences, recent context, health alerts, proactive analysis results, and pending documentation count
-- **Codebase map**: Hierarchical module structure with purposes and key exports (Rust projects)
-- **Database path**: Location of the project database
+### get
 
-Also performs side effects: creates/updates the project and session in the database, imports CLAUDE.local.md memories, stores system context, registers the file watcher, and generates the codebase map.
+Show the currently active project.
 
-### `set`
+**Parameters:**
+- `action` (string, required) - `"get"`
 
-Confirmation message:
-
-```
-Project set: myproject (id: 5)
-```
-
-### `get`
-
-Current project info:
-
-```
-Current project:
-  Path: /home/user/myproject
-  Name: myproject
-  ID: 5
-```
-
-Or if no project is active: `No active project. Auto-detection failed — call project(action="start", project_path="/your/path") to set one explicitly.`
-
-## Examples
-
-**Example 1: Initialize a session**
-```json
-{
-  "name": "project",
-  "arguments": {
-    "action": "start",
-    "project_path": "/home/user/myproject"
-  }
-}
-```
-
-**Example 2: Switch to a different project**
-```json
-{
-  "name": "project",
-  "arguments": {
-    "action": "set",
-    "project_path": "/home/user/other-project",
-    "name": "other-project"
-  }
-}
-```
-
-**Example 3: Check current project**
-```json
-{
-  "name": "project",
-  "arguments": {
-    "action": "get"
-  }
-}
-```
+**Returns:** Project ID, name, and path. Returns an error message if no project is active.
 
 ## Auto-Detection
 
-The `start` and `set` actions auto-detect project metadata:
-
 | File | Detected Type | Name Source |
 |------|--------------|-------------|
-| `Cargo.toml` | rust | `[package] name` |
+| `Cargo.toml` | rust | `[package] name` (workspace falls back to directory name) |
 | `package.json` | node | `"name"` field |
-| `pyproject.toml` | python | directory name |
+| `pyproject.toml` / `setup.py` | python | directory name |
 | `go.mod` | go | directory name |
-| `pom.xml` | java | directory name |
+| `pom.xml` / `build.gradle` | java | directory name |
 | *(none)* | unknown | directory name |
+
+## Examples
+
+```json
+{"action": "start", "project_path": "/home/user/my-project"}
+```
+
+```json
+{"action": "set", "project_path": "/home/user/other-project", "name": "Other"}
+```
+
+```json
+{"action": "get"}
+```
 
 ## Errors
 
-- **"project_path is required for action 'start'"**: The `start` action needs a `project_path`.
-- **"project_path is required for action 'set'"**: The `set` action needs a `project_path`.
-- **"No active project"**: The `get` action returns this when no project is initialized.
-- **Database errors**: Failed to create or query the project record.
+- **"project_path is required"** - The `start` and `set` actions need a `project_path`.
+- **"No active project"** - The `get` action returns this when no project is initialized.
+
+## Notes
+
+- The `start` action is typically called automatically by Mira's session hooks. Manual use is rarely needed.
+- Side effects: creates/updates project and session records, imports CLAUDE.local.md, stores system context, registers file watcher, generates codebase map.
+- Project context is required by most other tools (memory, code, documentation, etc.).
 
 ## See Also
 
-- [**session**](./session.md): Session recap (`action="recap"`) and history (`action="get_history"`)
-- **index**: Index project code for semantic search and symbols
-- **documentation**: Manage documentation tasks for the project
+- [session](./session.md) - Session management and recap
+- [index](./index.md) - Codebase indexing (uses module summaries from project start)
+- [documentation](./documentation.md) - Documentation tasks scoped to project

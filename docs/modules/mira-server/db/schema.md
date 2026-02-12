@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/db/schema.md -->
 # db/schema
 
 Database schema creation and migration system.

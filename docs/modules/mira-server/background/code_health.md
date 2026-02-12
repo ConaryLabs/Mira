@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/background/code_health.md -->
 # background/code_health
 
 Background worker for detecting code health issues. Combines concrete signal detection with LLM-powered analysis.

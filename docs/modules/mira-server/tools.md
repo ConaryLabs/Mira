@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/tools.md -->
 # tools
 
 MCP tool implementations. Contains the business logic for all user-facing tools exposed through the MCP protocol.

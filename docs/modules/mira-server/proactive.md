@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/proactive.md -->
 # proactive
 
 Proactive intelligence engine for anticipating developer needs through pattern recognition. Detects behavioral patterns and generates interventions before the user asks.

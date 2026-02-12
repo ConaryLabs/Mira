@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/background/documentation.md -->
 # background/documentation
 
 Background worker for tracking documentation gaps and staleness. Detects when source code changes make existing documentation outdated.

@@ -1,135 +1,115 @@
-# memory
+<!-- docs/tools/memory.md -->
+# Memory
 
-Manage persistent memories. Actions: `remember` (store), `recall` (search), `forget` (delete), `archive` (exclude from auto-export), `export_claude_local` (export to CLAUDE.local.md).
-
-## Usage
-
-```json
-{
-  "name": "memory",
-  "arguments": {
-    "action": "remember",
-    "content": "The team uses builder pattern for config structs",
-    "fact_type": "decision",
-    "category": "architecture"
-  }
-}
-```
-
-## Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| action | String | Yes | `remember`, `recall`, `forget`, `archive`, or `export_claude_local` |
-| content | String | For remember | The factual content to store |
-| key | String | No | Unique key for upsert (remember) |
-| fact_type | String | No | `preference`, `decision`, `context`, or `general` (default: `general`). For `remember`: sets the type. For `recall`: filters results by type. |
-| category | String | No | Organizational category for grouping. For `remember`: sets the category. For `recall`: filters results by category. |
-| confidence | Float | No | 0.0–1.0 (default: 0.5 — evidence-based system starts low) |
-| scope | String | No | `personal`, `project` (default), or `team` |
-| query | String | For recall | Search query for semantic similarity |
-| limit | Integer | No | Max results for recall (default: 10) |
-| id | Integer | For forget/archive | Memory ID to delete or archive |
+Persistent cross-session knowledge base. Store and retrieve decisions, preferences, patterns, and context across sessions.
 
 ## Actions
 
-### `remember` — Store a fact
+### remember
 
-Stores a memory with optional metadata. Supports upsert via `key`.
+Store a fact for future recall.
+
+**Parameters:**
+- `action` (string, required) - `"remember"`
+- `content` (string, required) - The fact to store (max 10KB)
+- `key` (string, optional) - Upsert key; if a memory with this key exists, it is replaced
+- `fact_type` (string, optional) - One of: `preference`, `decision`, `context`, `general` (default: `general`)
+- `category` (string, optional) - Freeform category for organization
+- `confidence` (float, optional) - Confidence score 0.0-1.0 (default: 0.8)
+- `scope` (string, optional) - Visibility: `personal`, `project` (default), `team`
+
+**Returns:** Memory ID.
+
+**Security:** Content is scanned for secrets (API keys, tokens, passwords). Memories containing secrets are rejected with an error.
+
+### recall
+
+Search memories using semantic similarity with keyword fallback.
+
+**Parameters:**
+- `action` (string, required) - `"recall"`
+- `query` (string, required) - Search query
+- `limit` (integer, optional) - Max results, 1-100 (default: 10)
+- `category` (string, optional) - Filter by category
+- `fact_type` (string, optional) - Filter by fact type
+
+**Returns:** List of matching memories with IDs, content, similarity scores, and fact types.
+
+**Search strategy:** Tries semantic (embedding) search first, falls back to fuzzy search, then SQL LIKE. Results are branch-aware and entity-boosted.
+
+### forget
+
+Delete a memory by ID.
+
+**Parameters:**
+- `action` (string, required) - `"forget"`
+- `id` (integer, required) - Memory ID to delete (must be positive)
+
+**Returns:** Confirmation or "not found" message.
+
+### archive
+
+Exclude a memory from auto-export to CLAUDE.local.md while keeping it in the database.
+
+**Parameters:**
+- `action` (string, required) - `"archive"`
+- `id` (integer, required) - Memory ID to archive (must be positive)
+
+**Returns:** Confirmation message.
+
+### export_claude_local
+
+Export active project memories to CLAUDE.local.md in the project root. Organizes by fact type (Preferences, Decisions, General).
+
+**Parameters:**
+- `action` (string, required) - `"export_claude_local"`
+
+**Returns:** Export path and count of exported memories.
+
+## Scoping
+
+| Scope | Visibility | Requirements |
+|-------|-----------|-------------|
+| `project` | Anyone working on the same project | Default |
+| `personal` | Only the creator | Requires user identity |
+| `team` | Only members of the active team | Requires active team session |
+
+Access control is enforced on `forget` and `archive` -- you cannot modify memories outside your scope.
+
+## Examples
 
 ```json
-{
-  "name": "memory",
-  "arguments": {
-    "action": "remember",
-    "content": "We use TypeScript strict mode with noImplicitAny",
-    "key": "typescript_config",
-    "fact_type": "decision",
-    "category": "development",
-    "scope": "project"
-  }
-}
+{"action": "remember", "content": "Use builder pattern for Config structs", "fact_type": "decision", "category": "patterns"}
 ```
-
-Returns: `Stored memory (id: 123)` or `Stored memory (id: 123) with key`
-
-### `recall` — Search memories
-
-Searches memories using semantic similarity with keyword/fuzzy fallback. Optionally filter by `fact_type` and/or `category`.
 
 ```json
-{
-  "name": "memory",
-  "arguments": {
-    "action": "recall",
-    "query": "authentication decisions",
-    "fact_type": "decision",
-    "limit": 5
-  }
-}
+{"action": "recall", "query": "authentication design", "limit": 5}
 ```
-
-Returns: JSON array of matching memories with similarity scores.
-
-### `forget` — Delete a memory
-
-Removes a memory from both the SQL database and vector index.
 
 ```json
-{
-  "name": "memory",
-  "arguments": {
-    "action": "forget",
-    "id": 42
-  }
-}
+{"action": "remember", "content": "Always use debug builds", "key": "build_mode", "fact_type": "preference"}
 ```
-
-Returns: `Memory 42 deleted.` or `Memory 42 not found.`
-
-### `archive` — Exclude from auto-export
-
-Archives a memory so it is excluded from CLAUDE.local.md auto-export but kept in the database for history.
 
 ```json
-{
-  "name": "memory",
-  "arguments": {
-    "action": "archive",
-    "id": 42
-  }
-}
+{"action": "forget", "id": 42}
 ```
-
-Returns: Confirmation that the memory was archived.
-
-### `export_claude_local` — Export memories to CLAUDE.local.md
-
-Exports all non-archived project memories to the `CLAUDE.local.md` file in the project root. Organizes memories by fact type (preferences, decisions, context, general).
 
 ```json
-{
-  "name": "memory",
-  "arguments": {
-    "action": "export_claude_local"
-  }
-}
+{"action": "export_claude_local"}
 ```
-
-Returns: Confirmation with the number of memories exported.
 
 ## Errors
 
-- **Invalid action**: Must be `remember`, `recall`, `forget`, `archive`, or `export_claude_local`
-- **Missing content**: `remember` requires `content`
-- **Missing query**: `recall` requires `query`
-- **Missing id**: `forget` and `archive` require `id`
-- **Invalid confidence**: Must be 0.0–1.0
-- **Invalid scope**: Must be `personal`, `project`, or `team`
-- **Secret detection**: Blocks storage of API keys, tokens, and passwords
+- **"content is required"** - `remember` needs content
+- **"query is required"** - `recall` needs a query
+- **"id is required"** - `forget` and `archive` need an ID
+- **"Content appears to contain a secret"** - Secret detected in content; use `~/.mira/.env` instead
+- **"Invalid scope"** - Must be `personal`, `project`, or `team`
+- **"Memory content too large"** - Content exceeds 10KB limit
+- **"Access denied"** - Cannot modify memories from another scope/user/team
 
 ## See Also
 
-- [**code**](./code.md): Search code by meaning
-- [**session**](./session.md): Session recap includes recent memories
-- [**project**](./project.md): Initialize project context (imports CLAUDE.local.md)
+- [project](./project.md) - Project context (memories are scoped to projects)
+- [session](./session.md) - Recap includes relevant memories
+- [team](./team.md) - Team-scoped memories via `scope="team"`

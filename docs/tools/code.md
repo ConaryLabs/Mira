@@ -1,132 +1,139 @@
-# code
+<!-- docs/tools/code.md -->
+# Code
 
-Code intelligence. Actions: `search` (semantic), `symbols` (file structure), `callers`/`callees` (call graph), `dependencies` (module graph), `patterns` (architectural detection), `tech_debt` (per-module scores), `diff` (semantic git diff analysis).
-
-## Usage
-
-```json
-{
-  "name": "code",
-  "arguments": {
-    "action": "search",
-    "query": "authentication middleware"
-  }
-}
-```
-
-## Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| action | String | Yes | `search`, `symbols`, `callers`, `callees`, `dependencies`, `patterns`, `tech_debt`, `diff` |
-| query | String | For search | Natural language query or identifier name |
-| file_path | String | For symbols | Path to the file to analyze |
-| function_name | String | For callers/callees | Function name to trace |
-| symbol_type | String | No | Filter symbols by type (e.g. `function`, `struct`) |
-| limit | Integer | No | Max results (default varies by action) |
-| from_ref | String | No | Starting git ref for `diff` (commit, branch, tag). Default: `HEAD~1` or staged/working changes if present |
-| to_ref | String | No | Ending git ref for `diff`. Default: `HEAD` |
-| include_impact | Boolean | No | Include impact analysis in `diff` (find affected callers). Default: `true` |
+Code intelligence: semantic search, call graph tracing, and static analysis.
 
 ## Actions
 
-### `search` — Hybrid semantic + keyword code search
+### search
 
-Runs semantic (vector) and keyword (FTS5) searches in parallel, merges and deduplicates, then applies intent-based reranking.
+Find code by meaning using hybrid semantic + keyword search. Also detects cross-reference queries (e.g., "who calls X") and routes them to the call graph automatically.
+
+**Parameters:**
+- `action` (string, required) - `"search"`
+- `query` (string, required) - Natural language search query
+- `limit` (integer, optional) - Max results (default: 10)
+
+**Returns:** Matching code snippets with file paths, similarity scores, symbol info, and expanded context.
+
+**Search pipeline:** Cross-reference detection, parallel semantic + FTS5 search, symbol matching, tree-guided scope boost, intent reranking, graceful fallback to keyword/fuzzy when embeddings are unavailable.
+
+### symbols
+
+List all definitions (functions, structs, traits, etc.) in a file using tree-sitter parsing.
+
+**Parameters:**
+- `action` (string, required) - `"symbols"`
+- `file_path` (string, required) - Absolute path to the file (must be within the project directory)
+- `symbol_type` (string, optional) - Filter by type (e.g., `function`, `struct`, `trait`)
+
+**Returns:** List of symbols with names, types, and line ranges.
+
+### callers
+
+Find all functions that call a given function.
+
+**Parameters:**
+- `action` (string, required) - `"callers"`
+- `function_name` (string, required) - Function name to search for
+- `limit` (integer, optional) - Max results (default: 20)
+
+**Returns:** List of calling functions with file paths.
+
+### callees
+
+Find all functions called by a given function.
+
+**Parameters:**
+- `action` (string, required) - `"callees"`
+- `function_name` (string, required) - Function name to search for
+- `limit` (integer, optional) - Max results (default: 20)
+
+**Returns:** List of called functions with file paths.
+
+### dependencies
+
+Analyze module dependency graph and detect circular dependencies.
+
+**Parameters:**
+- `action` (string, required) - `"dependencies"`
+
+**Returns:** Dependency edges with call/import counts and circular dependency warnings. Auto-queues a health scan if no data exists.
+
+### patterns
+
+Detect architectural patterns (repository, builder, factory, etc.) across modules.
+
+**Parameters:**
+- `action` (string, required) - `"patterns"`
+
+**Returns:** Per-module pattern detections with confidence scores and evidence. Auto-queues a health scan if no data exists.
+
+### tech_debt
+
+Compute per-module tech debt scores with tier rankings (A-F).
+
+**Parameters:**
+- `action` (string, required) - `"tech_debt"`
+
+**Returns:** Modules sorted worst-first with tier, overall score, line count, finding count, and top contributing factors for D/F tier modules. Auto-queues a health scan if no data exists.
+
+### diff
+
+Analyze git changes semantically with impact and risk assessment.
+
+**Parameters:**
+- `action` (string, required) - `"diff"`
+- `from_ref` (string, optional) - Starting git ref (commit, branch, tag). Max 256 characters
+- `to_ref` (string, optional) - Ending git ref. Max 256 characters
+- `include_impact` (boolean, optional) - Include impact analysis finding affected callers (default: true)
+
+**Returns:** Files changed, lines added/removed, change summary, risk level, and historical risk data from mined change patterns.
+
+**Auto-detection:** When no refs are provided, checks staged changes first, then working directory changes, then falls back to HEAD~1..HEAD.
+
+## Examples
 
 ```json
-{ "action": "search", "query": "error handling patterns", "limit": 10 }
+{"action": "search", "query": "authentication handling"}
 ```
-
-**How it works:**
-- **Cross-reference detection**: Routes "who calls X" queries directly to call graph
-- **FTS5 search**: AND-first query with OR fallback, code-aware tokenizer (`unicode61`, `tokenchars '_'`)
-- **Symbol matching**: Exact (0.95), substring (0.85), partial (0.55–0.75)
-- **Tree-guided scope**: Top 3 matching modules get 1.3x boost
-- **Intent reranking**: Documentation (1.2x), implementation (1.15x), examples (1.25x)
-- **Graceful degradation**: Falls back to keyword + fuzzy search when embeddings are unavailable (fuzzy optional)
-
-### `symbols` — Get symbols from a file
-
-Parses a file with tree-sitter and returns functions, structs, classes, etc.
 
 ```json
-{ "action": "symbols", "file_path": "src/main.rs", "symbol_type": "function" }
+{"action": "symbols", "file_path": "/home/user/project/src/main.rs"}
 ```
-
-Returns: Formatted list of symbols with types and line ranges.
-
-### `callers` — Find what calls a function
 
 ```json
-{ "action": "callers", "function_name": "handle_login", "limit": 20 }
+{"action": "callers", "function_name": "handle_memory"}
 ```
-
-Returns: List of calling functions with file paths and call counts, sorted by frequency.
-
-### `callees` — Find what a function calls
 
 ```json
-{ "action": "callees", "function_name": "process_request", "limit": 20 }
+{"action": "diff"}
 ```
-
-Returns: List of called functions with file locations.
-
-### `dependencies` — Module dependency graph
-
-Analyzes module dependencies and detects circular dependencies.
 
 ```json
-{ "action": "dependencies" }
+{"action": "diff", "from_ref": "main", "to_ref": "feature-branch"}
 ```
-
-Returns: Dependency graph with circular dependency warnings.
-
-### `patterns` — Architectural pattern detection
-
-Detects common patterns (repository, builder, factory, etc.) in the codebase.
 
 ```json
-{ "action": "patterns" }
+{"action": "tech_debt"}
 ```
 
-Returns: Detected patterns with locations and confidence.
+## Prerequisites
 
-### `tech_debt` — Per-module tech debt scores
-
-Computes tech debt scores per module based on complexity, test coverage gaps, and code health indicators.
-
-```json
-{ "action": "tech_debt" }
-```
-
-Returns: Ranked list of modules by tech debt score.
-
-### `diff` — Semantic git diff analysis
-
-Analyzes git changes for change types, impact, and risk. Uses LLM-powered analysis with heuristic fallback.
-
-```json
-{ "action": "diff", "from_ref": "HEAD~1", "to_ref": "HEAD" }
-```
-
-**Behavior:**
-- If no refs are provided, Mira analyzes staged changes first, then working tree changes, otherwise `HEAD~1..HEAD`.
-- Impact analysis uses the call graph (if indexed) to surface affected callers.
-
-## Dependencies
-
-- **Embeddings** (`OPENAI_API_KEY`) — Required for semantic search; without them Mira uses keyword + fuzzy fallback
-- **Code index** — Run `index(action="project")` first for FTS5 and symbol data
-- **Cartographer** — Module tree for scope narrowing (populated by background workers)
+- `search`, `callers`, `callees` require the project to be indexed via `index(action="project")`
+- `symbols` requires the `parsers` compile-time feature
+- `dependencies`, `patterns`, `tech_debt` require a health scan (auto-queued if missing)
 
 ## Errors
 
-- **"File not found"**: For `symbols`, the specified file doesn't exist
-- **"function_name is required"**: For `callers`/`callees`
-- **No results**: Function/file may not be indexed yet — run `index(action="project")`
+- **"query is required"** - `search` needs a query
+- **"file_path is required"** - `symbols` needs a file path
+- **"function_name is required"** - `callers`/`callees` need a function name
+- **"File not found"** - The specified file does not exist
+- **"File path must be within the project directory"** - Security check for `symbols`
+- **"No active project"** - `dependencies`, `patterns`, `tech_debt` require a project
 
 ## See Also
 
-- [**index**](./index.md): Index project to build the code intelligence database
-- [**memory**](./memory.md): Search memories by meaning
+- [index](./index.md) - Build the code index that powers search and call graph
+- [memory](./memory.md) - Search memories by meaning

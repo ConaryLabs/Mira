@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/mcp.md -->
 # mcp
 
 MCP (Model Context Protocol) server implementation. Exposes all of Mira's intelligence tools to Claude Code via the standardized MCP protocol.
@@ -24,13 +25,15 @@ Built on the **`rmcp`** library (Rust MCP). Implements the `ServerHandler` trait
 
 The central server state holding:
 
-- `pool` / `code_pool` - Database connection pools (main + code index)
-- `embeddings` - Embedding client for semantic search
-- `llm_factory` - LLM provider factory for background tasks
-- `project` - Current project context
-- `session_id` / `branch` - Session tracking
-- `mcp_client_manager` - Connections to external MCP servers
-- `tool_router` - Routes MCP tool calls to handlers
+- `pool` / `code_pool` -- Database connection pools (main + code index)
+- `embeddings` -- Embedding client for semantic search
+- `llm_factory` -- LLM provider factory for background tasks
+- `project` -- Current project context (`Arc<RwLock<Option<ProjectContext>>>`)
+- `session_id` / `branch` -- Session tracking
+- `fuzzy_cache` -- Nucleo-based fuzzy fallback when embeddings unavailable
+- `peer` -- MCP sampling peer for zero-key LLM fallback
+- `processor` -- Async long-running task processor
+- `tool_router` -- Routes MCP tool calls to handlers
 
 ## Tool Registration
 

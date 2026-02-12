@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/background.md -->
 # background
 
 Background workers for idle-time processing. Split into two lanes based on latency requirements.

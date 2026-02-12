@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/identity.md -->
 # identity
 
 User identity detection for multi-user memory sharing. Determines user identity through a fallback chain.

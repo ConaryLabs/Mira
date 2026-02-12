@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/cartographer/detection.md -->
 # cartographer/detection
 
 Polyglot module detection. Dispatches to language-specific implementations to detect module boundaries, entry points, and structure.

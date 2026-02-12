@@ -1,90 +1,108 @@
-# index
+<!-- docs/tools/index.md -->
+# Index
 
-Index codebase. Actions: `project` (full index), `file` (single file), `status` (stats), `compact` (vacuum storage), `summarize` (module summaries), `health` (code health scan).
-
-## Usage
-
-```json
-{
-  "name": "index",
-  "arguments": {
-    "action": "project"
-  }
-}
-```
-
-## Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| action | String | Yes | `project`, `file`, `status`, `compact`, `summarize`, or `health` |
-| path | String | No | Path to index (defaults to current project) |
-| skip_embed | Boolean | No | Skip embedding generation for faster indexing (default: false) |
+Index codebase for semantic search and analysis. Builds embeddings, symbol tables, and module summaries.
 
 ## Actions
 
-### `project` — Full project index
+### project
 
-Parses files, extracts symbols, generates chunks and embeddings, summarizes modules. Long-running operations auto-enqueue as background tasks via MCP Tasks.
+Full project index. Parses files, extracts symbols, generates chunks and embeddings, auto-summarizes modules, and queues a health scan.
+
+**Parameters:**
+- `action` (string, required) - `"project"`
+- `path` (string, optional) - Project root path (defaults to active project)
+- `skip_embed` (boolean, optional) - Skip embedding generation for faster indexing (default: false)
+
+**Returns:** File count, symbol count, chunk count, and number of modules summarized.
+
+### file
+
+Index a single file.
+
+**Parameters:**
+- `action` (string, required) - `"file"`
+- `path` (string, required) - Path to the file to index
+
+**Returns:** Indexing statistics for the file.
+
+### status
+
+Show index statistics.
+
+**Parameters:**
+- `action` (string, required) - `"status"`
+
+**Returns:** Symbol count and embedded chunk count.
+
+### compact
+
+Compact vec_code storage and VACUUM the database to reclaim space from deleted embeddings.
+
+**Parameters:**
+- `action` (string, required) - `"compact"`
+
+**Returns:** Rows preserved and estimated storage savings in MB.
+
+### summarize
+
+Generate LLM-powered summaries for modules that lack descriptions. Falls back to heuristic analysis when no LLM is configured. Also triggered automatically after `project` indexing.
+
+**Parameters:**
+- `action` (string, required) - `"summarize"`
+
+**Returns:** Number of modules summarized and their summaries.
+
+### health
+
+Run a full code health scan: dependency graphs, architectural pattern detection, tech debt scoring, and convention checking.
+
+**Parameters:**
+- `action` (string, required) - `"health"`
+
+**Returns:** Number of issues found.
+
+**Prerequisites:** Requires the project to be indexed first (`action="project"`).
+
+## Examples
 
 ```json
-{ "action": "project" }
-{ "action": "project", "skip_embed": true }
+{"action": "project"}
 ```
-
-### `file` — Index a single file
 
 ```json
-{ "action": "file", "path": "src/main.rs" }
+{"action": "project", "skip_embed": true}
 ```
-
-### `status` — Show index statistics
 
 ```json
-{ "action": "status" }
+{"action": "status"}
 ```
-
-Returns: Symbol count, embedded chunk count, and index health info.
-
-### `compact` — Compact storage
-
-VACUUMs vec tables to reclaim space from deleted embeddings and compacts sqlite-vec storage.
 
 ```json
-{ "action": "compact" }
+{"action": "compact"}
 ```
-
-### `summarize` — Generate module summaries
-
-Generates LLM-powered summaries for modules that lack descriptions. Falls back to heuristic analysis (file counts, language distribution, symbols) when no LLM is available. Also triggered automatically after `project` indexing.
 
 ```json
-{ "action": "summarize" }
+{"action": "health"}
 ```
 
-### `health` — Code health scan
+## Notes
 
-Runs a full code health analysis: dependency graphs, architectural pattern detection, tech debt scoring, and convention checking. Auto-enqueues as a background task.
-
-```json
-{ "action": "health" }
-```
-
-## FTS5 Tokenizer
-
-Indexing creates an FTS5 full-text search index (`code_fts`) with a code-aware tokenizer:
-- **Tokenizer**: `unicode61` with `remove_diacritics 1` and `tokenchars '_'`
-- **No stemming** — identifiers like `database_pool` are indexed as single tokens
-- **Migration**: Tokenizer config changes trigger automatic FTS index rebuild
+- The `project` and `file` actions require the `parsers` compile-time feature.
+- After indexing, module summaries are auto-generated if an LLM provider is configured.
+- A health scan is auto-queued after project indexing.
+- File watching provides automatic incremental re-indexing when files change.
+- The FTS5 index uses a code-aware tokenizer (`unicode61` with `tokenchars '_'`, no stemming).
 
 ## Errors
 
-- **"Path not found"**: The specified path does not exist
-- **"No project path specified"**: No path provided and no active project
-- **Database errors**: Failed to write index data
+- **"Path not found"** - The specified path does not exist
+- **"No active project"** - No path provided and no active project
+- **"No code indexed yet"** - `health` requires prior indexing
+- **"Code indexing requires the 'parsers' feature"** - Feature not enabled at compile time
 
 ## See Also
 
-- [**code**](./code.md): Search, symbols, call graph (uses the index)
-- [**session**](./session.md): Check status of background index operations via `session(action="tasks_list")`
-- [**project**](./project.md): Initialize project context (uses module summaries)
+- [code](./code.md) - Search, symbols, and call graph (uses the index)
+- [session](./session.md) - Track background index tasks via `tasks_list`/`tasks_get`
+- [project](./project.md) - Project context (codebase map uses module summaries)

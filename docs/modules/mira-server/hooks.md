@@ -1,21 +1,33 @@
+<!-- docs/modules/mira-server/hooks.md -->
 # hooks
 
-Claude Code hook handlers for lifecycle integration points. Hooks are invoked by Claude Code at specific events.
+Claude Code hook handlers for lifecycle integration points.
 
-## I/O
+## Overview
 
-- `read_hook_input()` - Reads JSON input from stdin
-- `write_hook_output()` - Writes JSON output to stdout
+Hooks are invoked by Claude Code at specific events during a session. Each hook reads JSON input from stdin, performs its work (usually database operations), and writes JSON output to stdout. Hooks run as separate short-lived processes (`mira hook <action>`), not inside the MCP server process.
+
+## Key Functions
+
+- `read_hook_input()` -- Reads JSON from stdin (capped at 1MB)
+- `write_hook_output(value)` -- Writes JSON to stdout
+- `resolve_project(pool)` -- Resolve active project ID and path from database
+- `get_session_modified_files_sync(conn, session_id)` -- Get files modified during a session
+- `HookTimer` -- RAII guard that logs hook execution time (warns if >100ms)
 
 ## Sub-modules
 
 | Module | Hook Event | Purpose |
 |--------|-----------|---------|
-| `session` | Session start/end | Initialize/finalize Mira session, capture task list ID |
-| `pre_tool` | Before tool execution | Inject context before Grep/Glob/Read searches |
-| `post_tool` | After tool execution | Track file changes, queue re-indexing |
-| `user_prompt` | User prompt submission | Inject context into prompts |
-| `precompact` | Before context compaction | Preserve important context |
-| `permission` | Permission requests | Handle permission checks |
-| `stop` | Session stop | Save state, auto-export CLAUDE.local.md |
-| `subagent` | Subagent start/stop | Inject context for subagents, capture discoveries |
+| `session` | SessionStart | Initialize Mira session, capture session ID, working directory, and team membership |
+| `user_prompt` | UserPromptSubmit | Inject pending tasks, relevant memories, proactive predictions, and team context |
+| `pre_tool` | PreToolUse | Inject relevant memories before Grep/Glob/Read searches |
+| `post_tool` | PostToolUse | Track file modifications, queue re-indexing, detect team conflicts |
+| `precompact` | PreCompact | Extract decisions, TODOs, and errors from transcript before summarization |
+| `stop` | Stop / SessionEnd | Session snapshot, task export, goal progress check, auto-export to CLAUDE.local.md |
+| `permission` | PermissionRequest | Auto-approve tools based on stored permission rules |
+| `subagent` | SubagentStart/Stop | Inject context for subagents, capture discoveries from subagent work |
+
+## Architecture Notes
+
+Hooks share utility functions from `mod.rs` (database path resolution, project lookup, performance monitoring). The `session` module also provides `read_claude_session_id()` and `read_claude_cwd()` which read from hook-written files in `~/.mira/` to share state between the hook process and the MCP server process.

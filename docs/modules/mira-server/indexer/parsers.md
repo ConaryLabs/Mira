@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/indexer/parsers.md -->
 # indexer/parsers
 
 Tree-sitter based code parsing framework. Provides a unified interface for extracting symbols, imports, and call relationships from source files.

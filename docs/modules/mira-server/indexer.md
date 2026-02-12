@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/indexer.md -->
 # indexer
 
 Code indexing for symbol extraction, call graph construction, and semantic search chunking.

@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/git.md -->
 # git
 
 Git operations using git2 (branch detection) and git CLI (commits, diffs).

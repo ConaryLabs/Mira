@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/utils.md -->
 # utils
 
 Shared utility functions used across the codebase. Organized as a directory with sub-modules.

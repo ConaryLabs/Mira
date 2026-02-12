@@ -1,130 +1,138 @@
-# documentation
+<!-- docs/tools/documentation.md -->
+# Documentation
 
-Manage documentation tasks. Tracks what needs documenting across the project, provides writing guidelines, and manages task lifecycle from pending through completion or skip.
+Manage documentation gap detection and writing tasks. Tracks what needs documenting, provides writing guidelines, and manages the task lifecycle.
 
-## Usage
+## Actions
 
-```json
-{
-  "name": "documentation",
-  "arguments": {
-    "action": "list",
-    "status": "pending"
-  }
-}
-```
+### list
 
-## Parameters
+Show documentation tasks, optionally filtered by status, type, or priority.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| action | String | Yes | Action to perform: `list`, `get`, `complete`, `skip`, `batch_skip`, `inventory`, or `scan` |
-| task_id | Integer | Conditional | Task ID (required for `get`, `complete`, `skip`) |
-| task_ids | Array[Integer] | No | List of task IDs (used with `batch_skip`) |
-| reason | String | No | Reason for skipping (used with `skip`/`batch_skip`, defaults to "Skipped by user") |
-| doc_type | String | No | Filter by documentation type: `api`, `architecture`, `guide` |
-| priority | String | No | Filter by priority: `urgent`, `high`, `medium`, `low` |
-| status | String | No | Filter by status: `pending`, `completed`, `skipped` |
-| limit | Integer | No | Max results for `list` (default: 50, max: 500) |
-| offset | Integer | No | Offset for `list` pagination (default: 0) |
+**Parameters:**
+- `action` (string, required) - `"list"`
+- `status` (string, optional) - Filter: `pending`, `completed`, `skipped`
+- `doc_type` (string, optional) - Filter: `api`, `architecture`, `guide`
+- `priority` (string, optional) - Filter: `urgent`, `high`, `medium`, `low`
+- `limit` (integer, optional) - Max results (default: 50, max: 500)
+- `offset` (integer, optional) - Pagination offset (default: 0)
 
-### Actions
+**Returns:** List of tasks with status icons, IDs, categories, target paths, priorities, source paths, and reasons.
 
-| Action | Description | Required Params |
-|--------|-------------|-----------------|
-| `list` | Show documentation tasks, optionally filtered | `action` |
-| `get` | Get full task details with writing guidelines for a specific task | `action`, `task_id` |
-| `complete` | Mark a task as done after writing the documentation | `action`, `task_id` |
-| `skip` | Mark a task as not needed | `action`, `task_id` |
-| `batch_skip` | Skip multiple tasks at once | `action`, plus `task_ids` or filters |
-| `inventory` | Show all existing documentation with staleness indicators and impact data | `action` |
-| `scan` | Trigger a fresh documentation scan of the project | `action` |
+### get
 
-## Returns
+Get full task details with category-specific writing guidelines.
 
-### `list`
+**Parameters:**
+- `action` (string, required) - `"get"`
+- `task_id` (integer, required) - Task ID
 
-Markdown-formatted list of documentation tasks with status icons, IDs, priorities, source paths, and reasons.
+**Returns:** Target path, source file, type, priority, reason, and writing guidelines tailored to the doc category (mcp_tool, module, public_api, or general).
 
-### `get`
+**Note:** Only pending tasks can be retrieved. Completed or skipped tasks return an error.
 
-Full task details including target path, source file, type, priority, and category-specific writing guidelines (parameter tables for tools, architecture notes for modules, etc.).
+### complete
 
-### `complete`
+Mark a documentation task as done after writing the documentation.
 
-Confirmation message: `Task {id} marked complete. Documentation written to {path}.`
+**Parameters:**
+- `action` (string, required) - `"complete"`
+- `task_id` (integer, required) - Task ID
 
-### `skip`
+**Returns:** Confirmation with target path.
 
-Confirmation message: `Task {id} skipped: {reason}`
+### skip
 
-### `batch_skip`
+Mark a documentation task as not needed.
 
-Summary of skipped tasks with IDs and any errors for tasks that couldn't be skipped.
+**Parameters:**
+- `action` (string, required) - `"skip"`
+- `task_id` (integer, required) - Task ID
+- `reason` (string, optional) - Reason for skipping (default: "Skipped by user")
 
-### `inventory`
+**Returns:** Confirmation with reason.
 
-Markdown inventory of all existing documentation grouped by type (stable alphabetical ordering), with staleness warnings and impact analysis (`change_impact`, `change_summary`) for docs whose source files have changed.
+### batch_skip
 
-### `scan`
+Skip multiple documentation tasks at once, either by IDs or by filter.
 
-Confirmation that the scan was triggered. Results appear in subsequent `list` calls.
+**Parameters:**
+- `action` (string, required) - `"batch_skip"`
+- `task_ids` (array of integers, optional) - Specific task IDs to skip
+- `doc_type` (string, optional) - Filter matching pending tasks by type
+- `priority` (string, optional) - Filter matching pending tasks by priority
+- `reason` (string, optional) - Reason for skipping (default: "Batch skipped by user")
 
-## Examples
+**Returns:** Count and IDs of skipped tasks, plus any errors.
 
-**Example 1: List all pending high-priority tasks**
-```json
-{
-  "name": "documentation",
-  "arguments": {
-    "action": "list",
-    "status": "pending",
-    "priority": "high"
-  }
-}
-```
+**Note:** Requires either `task_ids` or at least one filter (`doc_type`/`priority`).
 
-**Example 2: Get task details and writing guidelines**
-```json
-{
-  "name": "documentation",
-  "arguments": {
-    "action": "get",
-    "task_id": 117
-  }
-}
-```
+### inventory
 
-**Example 3: Skip a task that doesn't need documentation**
-```json
-{
-  "name": "documentation",
-  "arguments": {
-    "action": "skip",
-    "task_id": 42,
-    "reason": "Internal function, not user-facing"
-  }
-}
-```
+Show all existing documentation with staleness indicators and impact analysis.
+
+**Parameters:**
+- `action` (string, required) - `"inventory"`
+
+**Returns:** Documentation inventory grouped by type, with staleness warnings and change impact/summary for docs whose source files have been modified.
+
+### scan
+
+Trigger a fresh documentation scan of the project. Clears the scan marker so the background worker re-scans.
+
+**Parameters:**
+- `action` (string, required) - `"scan"`
+
+**Returns:** Confirmation that the scan was triggered. Results appear in subsequent `list` calls.
 
 ## Workflow
 
 1. `documentation(action="list", status="pending")` - See what needs docs
-2. `documentation(action="get", task_id=N)` - Get the source path, target path, and writing guidelines
+2. `documentation(action="get", task_id=N)` - Get source path, target path, and writing guidelines
 3. Read the source file, write the documentation to the target path
 4. `documentation(action="complete", task_id=N)` - Mark done
 
+## Examples
+
+```json
+{"action": "list", "status": "pending", "priority": "high"}
+```
+
+```json
+{"action": "get", "task_id": 117}
+```
+
+```json
+{"action": "complete", "task_id": 117}
+```
+
+```json
+{"action": "skip", "task_id": 42, "reason": "Internal function, not user-facing"}
+```
+
+```json
+{"action": "batch_skip", "doc_type": "api", "reason": "Auto-generated API docs exist"}
+```
+
+```json
+{"action": "inventory"}
+```
+
+```json
+{"action": "scan"}
+```
+
 ## Errors
 
-- **"No active project"**: Requires an active project context.
-- **"Task {id} not found"**: The specified task ID does not exist.
-- **"Task {id} belongs to a different project"**: The task is associated with another project.
-- **"Task {id} is not pending (status: {status}). Cannot skip."**: Only pending tasks can be completed or skipped.
-- **"task_id is required for action '{action}'"**: The `get`, `complete`, and `skip` actions require a `task_id`.
-- **"batch_skip requires either task_ids or a filter"**: The `batch_skip` action needs `task_ids` or `doc_type`/`priority` filters.
+- **"No active project"** - All actions require an active project context
+- **"Task not found"** - The specified task ID does not exist
+- **"Task belongs to a different project"** - Cross-project access denied
+- **"Task is not pending"** - Only pending tasks can be completed, skipped, or retrieved via `get`
+- **"task_id is required"** - `get`, `complete`, and `skip` need a task_id
+- **"batch_skip requires either task_ids or a filter"** - Must provide `task_ids` or `doc_type`/`priority`
 
 ## See Also
 
-- **project**: Initialize project context (required before using documentation)
-- **index**: Index project code, which feeds into documentation scanning
-- [**code**](./code.md): Inspect file structure via `code(action="symbols")` when writing docs
+- [project](./project.md) - Project context (required before using documentation)
+- [index](./index.md) - Code indexing feeds into documentation scanning
+- [code](./code.md) - Inspect file structure via `symbols` when writing docs

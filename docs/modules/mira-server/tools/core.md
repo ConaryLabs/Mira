@@ -1,3 +1,4 @@
+<!-- docs/modules/mira-server/tools/core.md -->
 # tools/core
 
 Implementation layer for all MCP tool handlers. Each file contains the business logic for one or more related tools, separated from the MCP protocol layer.
