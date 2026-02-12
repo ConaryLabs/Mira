@@ -8,8 +8,8 @@ use crate::db::{
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    HistoryEntry, InsightItem, InsightsData, SessionCurrentData, SessionData,
-    SessionHistoryData, SessionListData, SessionOutput, SessionSummary,
+    HistoryEntry, InsightItem, InsightsData, SessionCurrentData, SessionData, SessionHistoryData,
+    SessionListData, SessionOutput, SessionSummary,
 };
 use crate::tools::core::session_notes;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};

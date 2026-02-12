@@ -80,6 +80,21 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-02-11
+
+### Removed
+- **Dead WebSocket and reply_to_mira infrastructure** -- ~670 lines of dead code from the pre-hook era: `WsEvent` enum, `AgentRole` enum, `broadcast()`/`is_collaborative()` on `ToolContext` and `MiraServer`, the `reply_to_mira` tool, `PendingResponseMap`, and all associated docs/tests/CLI handlers. Experts now use team recipes instead.
+
+### Fixed
+- **PreCompact `"matcher": "*"` drift** -- `install.sh` had a stale matcher that diverged from the plugin hooks config.
+- **PermissionRequest timeout mismatch** -- Docs said 2s, actual is 3s. Fixed docs to match reality.
+- **Tool count drift** -- Updated 10 → 9 across docs, skills, and plugin manifests after `reply_to_mira` removal.
+- **Stale doc references** -- Corrected tools-reference session schema (was documenting non-existent nested sub-actions), added missing `dismiss_insight` and `export_claude_local` actions to tool docs, fixed file references from `.rs` to directories, added legacy/inactive notes to removed features.
+- **Skills missing argument hints** -- Added argument-hint metadata to skill manifests for better discoverability.
+
+### Changed
+- **Marketplace description updated** -- Reflects current feature set.
+
 ## [0.7.1] - 2026-02-11
 
 ### Added
