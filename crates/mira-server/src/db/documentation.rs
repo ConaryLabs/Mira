@@ -63,50 +63,41 @@ pub struct DocGap {
 }
 
 /// Create a new documentation task.
-/// Skips creation if a task with the same target already exists as skipped or completed.
+/// Silently skips creation if a row for this (project, target) already exists
+/// (any status) thanks to the unconditional unique index.
 pub fn create_doc_task(
     conn: &rusqlite::Connection,
     gap: &DocGap,
     git_commit: Option<&str>,
 ) -> Result<i64, String> {
-    // Don't re-create tasks that were already skipped or completed
-    let already_handled: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM documentation_tasks
-             WHERE project_id = ?1 AND target_doc_path = ?2
-               AND status IN ('skipped', 'completed'))",
-            params![gap.project_id, gap.target_doc_path],
-            |row| row.get(0),
+    let changed = conn
+        .execute(
+            "INSERT OR IGNORE INTO documentation_tasks (
+                project_id, doc_type, doc_category, source_file_path,
+                target_doc_path, priority, status, reason, git_commit,
+                source_signature_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9)",
+            params![
+                gap.project_id,
+                gap.doc_type,
+                gap.doc_category,
+                gap.source_file_path,
+                gap.target_doc_path,
+                gap.priority,
+                gap.reason,
+                git_commit,
+                gap.source_signature_hash,
+            ],
         )
         .str_err()?;
 
-    if already_handled {
+    if changed == 0 {
         return Err(format!(
-            "Task for {} already skipped or completed",
+            "Task for {} already exists",
             gap.target_doc_path
         ));
     }
-
-    conn.execute(
-        "INSERT INTO documentation_tasks (
-            project_id, doc_type, doc_category, source_file_path,
-            target_doc_path, priority, status, reason, git_commit,
-            source_signature_hash
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9)",
-        params![
-            gap.project_id,
-            gap.doc_type,
-            gap.doc_category,
-            gap.source_file_path,
-            gap.target_doc_path,
-            gap.priority,
-            gap.reason,
-            git_commit,
-            gap.source_signature_hash,
-        ],
-    )
-    .map(|_| conn.last_insert_rowid())
-    .str_err()
+    Ok(conn.last_insert_rowid())
 }
 
 /// Get pending documentation tasks, ordered by priority

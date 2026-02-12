@@ -216,6 +216,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "injection_feedback",
             func: migrate_injection_feedback,
         },
+        Migration {
+            version: 37,
+            name: "doc_tasks_unique_all_statuses",
+            func: migrate_doc_tasks_unique_all_statuses,
+        },
     ]
 }
 
@@ -385,6 +390,41 @@ fn migrate_injection_feedback(conn: &Connection) -> Result<()> {
             ON injection_feedback(project_id, created_at DESC);
     "#,
     )
+}
+
+/// Deduplicate documentation_tasks and replace the partial unique index with an
+/// unconditional one covering all statuses. The old index only prevented
+/// duplicate *pending* rows, so skipped/completed tasks were re-created on
+/// every scan cycle.
+fn migrate_doc_tasks_unique_all_statuses(conn: &Connection) -> Result<()> {
+    // Keep only the row with the highest priority status per (project_id, target_doc_path).
+    // Priority: completed > skipped > pending (prefer keeping terminal states).
+    conn.execute_batch(
+        "DELETE FROM documentation_tasks
+         WHERE id NOT IN (
+             SELECT id FROM (
+                 SELECT id,
+                     ROW_NUMBER() OVER (
+                         PARTITION BY project_id, target_doc_path
+                         ORDER BY
+                             CASE status
+                                 WHEN 'completed' THEN 1
+                                 WHEN 'skipped' THEN 2
+                                 WHEN 'pending' THEN 3
+                                 ELSE 4
+                             END,
+                             updated_at DESC
+                     ) AS rn
+                 FROM documentation_tasks
+             ) WHERE rn = 1
+         );
+
+         DROP INDEX IF EXISTS idx_doc_tasks_unique;
+
+         CREATE UNIQUE INDEX idx_doc_tasks_unique
+             ON documentation_tasks(project_id, target_doc_path);",
+    )?;
+    Ok(())
 }
 
 /// Drop tables that are no longer used by any code path.

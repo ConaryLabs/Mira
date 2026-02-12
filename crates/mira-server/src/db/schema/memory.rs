@@ -97,10 +97,9 @@ pub fn migrate_documentation_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_doc_tasks_status ON documentation_tasks(project_id, status);
         CREATE INDEX IF NOT EXISTS idx_doc_tasks_type ON documentation_tasks(doc_type, doc_category);
         CREATE INDEX IF NOT EXISTS idx_doc_tasks_priority ON documentation_tasks(project_id, priority, status);
-        -- Uniqueness constraint to prevent duplicate tasks for same target
+        -- One row per (project, target) regardless of status
         CREATE UNIQUE INDEX IF NOT EXISTS idx_doc_tasks_unique
-            ON documentation_tasks(project_id, target_doc_path, doc_type, doc_category)
-            WHERE status = 'pending';
+            ON documentation_tasks(project_id, target_doc_path);
 
         CREATE TABLE IF NOT EXISTS documentation_inventory (
             id INTEGER PRIMARY KEY,
