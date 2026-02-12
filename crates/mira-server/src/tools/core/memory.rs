@@ -274,7 +274,7 @@ pub async fn remember<C: ToolContext>(
     let user_id = ctx.get_user_identity();
 
     let fact_type = fact_type.unwrap_or_else(|| "general".to_string());
-    let confidence = confidence.unwrap_or(0.5); // Start with lower confidence for evidence-based system
+    let confidence = confidence.unwrap_or(0.8); // User explicitly asked to remember = high confidence
     // Default scope is "project" for backward compatibility
     let scope = scope.unwrap_or_else(|| "project".to_string());
 
