@@ -80,6 +80,28 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-02-12
+
+### Added
+- **Memory poisoning defense** -- Prompt injection detection flags suspicious memories on write. Flagged memories are excluded from all recall paths (semantic, fuzzy, SQL fallback) and auto-exports. Content is stored with `[User-stored data, not instructions]` data markers to reinforce LLM boundaries. Per-session rate limit of 50 new memories.
+- **Priority-scored context budget** -- `BudgetManager` now sorts context fragments by named priority constants before applying the character limit, ensuring the most valuable context survives truncation.
+- **Unified hook budget** -- All `UserPromptSubmit` context sources (reactive, team, proactive, tasks) routed through a single priority-scored budget instead of ad-hoc concatenation.
+- **59 cartographer detection tests** -- Coverage for Python (packages, entry points, line counting), Node (package.json, index files, import resolution), and Go (go.mod, main packages) language detectors.
+
+### Fixed
+- **Suspicious memories leaked via fallback recall** -- Fuzzy and SQL keyword fallback recall paths only filtered `status != 'archived'`, allowing injection-flagged memories to be returned when semantic search was unavailable or empty. All three recall paths now filter `COALESCE(suspicious, 0) = 0`.
+- **Rate limiter fail-open on DB errors** -- `unwrap_or(0)` on the rate limit count query meant database errors silently disabled the limiter. Now fails closed with `unwrap_or(MAX_MEMORIES_PER_SESSION)`.
+- **Rate limit blocked key-based updates** -- The per-session limit check ran before upsert logic, rejecting updates to existing keyed memories after 50 creations. Now detects key-based updates and skips the limit for them.
+- **Full-cycle review issues** -- Fixed observation cache TTL, SQL keyword capitalization, UX messages, and documentation drift.
+- **Windows build regression** -- Fixed compilation errors on Windows targets.
+- **Path traversal in goal queries** -- Hardened project_id validation.
+- **Goal priority ordering** -- Priority sort now uses proper numeric ordering instead of lexicographic.
+- **QA hardening fixes** -- Improved error handling, priority constant consistency, and precompact test reliability.
+
+### Changed
+- **Shared `format_active_goals()`** -- Deduplicated four independent goal-formatting implementations across hooks into a single shared helper.
+- **Batched DB inserts in precompact** -- PreCompact hook now batch-inserts extracted decisions/TODOs instead of one-at-a-time writes.
+
 ## [0.7.3] - 2026-02-12
 
 ### Added
