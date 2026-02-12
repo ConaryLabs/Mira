@@ -59,15 +59,8 @@ pub fn spawn_tool_extraction(
     );
 
     tokio::spawn(async move {
-        if let Err(e) = extract_and_store(
-            &pool,
-            &*llm_client,
-            project_id,
-            &tool_name,
-            &args,
-            &result,
-        )
-        .await
+        if let Err(e) =
+            extract_and_store(&pool, &*llm_client, project_id, &tool_name, &args, &result).await
         {
             warn!("Tool extraction failed for {}: {}", tool_name, e);
         }

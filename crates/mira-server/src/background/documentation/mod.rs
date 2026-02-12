@@ -6,8 +6,7 @@ mod inventory;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    StoreObservationParams, get_scan_info_sync, is_time_older_than_sync,
-    store_observation_sync,
+    StoreObservationParams, get_scan_info_sync, is_time_older_than_sync, store_observation_sync,
 };
 use crate::utils::{ResultExt, truncate_at_boundary};
 use std::sync::Arc;

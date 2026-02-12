@@ -116,7 +116,10 @@ pub async fn run_start() -> Result<()> {
     if let Some(task) = &start_input.task_description {
         let memories = crate::hooks::recall::recall_memories(&pool, project_id, task).await;
         if !memories.is_empty() {
-            context_parts.push(format!("[Mira/memory] Relevant context:\n{}", memories.join("\n")));
+            context_parts.push(format!(
+                "[Mira/memory] Relevant context:\n{}",
+                memories.join("\n")
+            ));
         }
     }
 
@@ -446,5 +449,4 @@ mod tests {
         assert!(!summary.contains("Files:"));
         assert!(summary.contains("Identifiers:"));
     }
-
 }

@@ -147,8 +147,7 @@ pub fn is_simple_command(message: &str) -> bool {
     ];
     if simple_prefixes.iter().any(|&prefix| {
         lower.starts_with(prefix)
-            && (lower.len() == prefix.len()
-                || lower.as_bytes().get(prefix.len()) == Some(&b' '))
+            && (lower.len() == prefix.len() || lower.as_bytes().get(prefix.len()) == Some(&b' '))
     }) {
         return true;
     }
@@ -173,19 +172,81 @@ fn is_code_related(message: &str) -> bool {
     let lower = message.to_lowercase();
     let code_keywords = [
         // Code structure
-        "function", "struct", "class", "module", "import", "export", "variable", "constant",
-        "type", "interface", "trait", "impl", "def", "fn", "method", "property", "attribute",
-        "enum", "const", "let", "var", "field", "member",
+        "function",
+        "struct",
+        "class",
+        "module",
+        "import",
+        "export",
+        "variable",
+        "constant",
+        "type",
+        "interface",
+        "trait",
+        "impl",
+        "def",
+        "fn",
+        "method",
+        "property",
+        "attribute",
+        "enum",
+        "const",
+        "let",
+        "var",
+        "field",
+        "member",
         // Questions
-        "where is", "how does", "show me", "what is", "explain", "find", "search", "look for",
-        "locate", "where are", "how to", "help with",
+        "where is",
+        "how does",
+        "show me",
+        "what is",
+        "explain",
+        "find",
+        "search",
+        "look for",
+        "locate",
+        "where are",
+        "how to",
+        "help with",
         // Implementation
-        "implement", "refactor", "fix", "bug", "error", "issue", "problem", "debug", "test",
-        "optimize", "performance", "memory", "concurrent", "async", "thread", "parallel",
+        "implement",
+        "refactor",
+        "fix",
+        "bug",
+        "error",
+        "issue",
+        "problem",
+        "debug",
+        "test",
+        "optimize",
+        "performance",
+        "memory",
+        "concurrent",
+        "async",
+        "thread",
+        "parallel",
         // Codebase concepts
-        "api", "endpoint", "route", "handler", "controller", "service", "repository", "dao",
-        "middleware", "auth", "authentication", "authorization", "database", "db", "query",
-        "schema", "migration", "config", "configuration", "setting", "environment",
+        "api",
+        "endpoint",
+        "route",
+        "handler",
+        "controller",
+        "service",
+        "repository",
+        "dao",
+        "middleware",
+        "auth",
+        "authentication",
+        "authorization",
+        "database",
+        "db",
+        "query",
+        "schema",
+        "migration",
+        "config",
+        "configuration",
+        "setting",
+        "environment",
     ];
 
     let has_code_keyword = code_keywords.iter().any(|&kw| lower.contains(kw));

@@ -26,10 +26,10 @@ pub async fn recall_memories(
     query: &str,
 ) -> Vec<String> {
     // Try embedding-based recall first
-    if let Some(memories) = try_semantic_recall(pool, project_id, query).await {
-        if !memories.is_empty() {
-            return memories;
-        }
+    if let Some(memories) = try_semantic_recall(pool, project_id, query).await
+        && !memories.is_empty()
+    {
+        return memories;
     }
 
     // Fall back to keyword matching
@@ -90,11 +90,7 @@ async fn try_semantic_recall(
 }
 
 /// Keyword-based memory matching (fallback when embeddings are unavailable).
-async fn keyword_recall(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    query: &str,
-) -> Vec<String> {
+async fn keyword_recall(pool: &Arc<DatabasePool>, project_id: i64, query: &str) -> Vec<String> {
     let pool_clone = pool.clone();
     let query = query.to_string();
 
@@ -224,7 +220,7 @@ mod tests {
     #[test]
     fn semantic_distance_threshold_is_moderate() {
         // Sanity check: threshold should be between 0 and 1
-        assert!(SEMANTIC_DISTANCE_THRESHOLD > 0.0);
-        assert!(SEMANTIC_DISTANCE_THRESHOLD < 1.0);
+        const { assert!(SEMANTIC_DISTANCE_THRESHOLD > 0.0) };
+        const { assert!(SEMANTIC_DISTANCE_THRESHOLD < 1.0) };
     }
 }

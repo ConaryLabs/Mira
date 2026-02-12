@@ -226,5 +226,4 @@ mod tests {
         assert!(input.tool_name.is_empty());
         assert!(input.file_path.is_none());
     }
-
 }

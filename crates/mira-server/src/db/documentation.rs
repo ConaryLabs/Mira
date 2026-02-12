@@ -92,10 +92,7 @@ pub fn create_doc_task(
         .str_err()?;
 
     if changed == 0 {
-        return Err(format!(
-            "Task for {} already exists",
-            gap.target_doc_path
-        ));
+        return Err(format!("Task for {} already exists", gap.target_doc_path));
     }
     Ok(conn.last_insert_rowid())
 }

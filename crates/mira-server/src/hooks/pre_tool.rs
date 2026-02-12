@@ -2,10 +2,10 @@
 // PreToolUse hook handler - injects relevant context before Grep/Glob searches
 
 use crate::db::pool::DatabasePool;
+use crate::hooks::recall;
 use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
-use crate::hooks::recall;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -171,10 +171,7 @@ pub async fn run() -> Result<()> {
     let output = if memories.is_empty() {
         serde_json::json!({})
     } else {
-        let context = format!(
-            "[Mira/memory] Relevant context:\n{}",
-            memories.join("\n\n")
-        );
+        let context = format!("[Mira/memory] Relevant context:\n{}", memories.join("\n\n"));
         serde_json::json!({
             "hookSpecificOutput": {
                 "additionalContext": context

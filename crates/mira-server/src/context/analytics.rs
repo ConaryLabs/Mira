@@ -203,8 +203,9 @@ pub fn extract_key_terms(context: &str) -> Vec<String> {
         }
 
         for word in trimmed.split_whitespace() {
-            let clean = word
-                .trim_matches(|c: char| c.is_ascii_punctuation() && c != '_' && c != '/' && c != '.');
+            let clean = word.trim_matches(|c: char| {
+                c.is_ascii_punctuation() && c != '_' && c != '/' && c != '.'
+            });
 
             if clean.is_empty() || clean.len() < 4 {
                 continue;
@@ -219,7 +220,10 @@ pub fn extract_key_terms(context: &str) -> Vec<String> {
             // Identifiers: snake_case or CamelCase names (at least 4 chars)
             if clean.contains('_')
                 || (clean.len() >= 4
-                    && clean.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                    && clean
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic())
                     && clean.chars().any(|c| c.is_ascii_uppercase())
                     && clean.chars().any(|c| c.is_ascii_lowercase()))
             {
@@ -301,7 +305,13 @@ fn insert_injection_feedback_sync(
         "INSERT INTO injection_feedback
             (session_id, project_id, sources, key_terms, context_len)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![session_id, project_id, sources_json, terms_json, context_len as i64],
+        rusqlite::params![
+            session_id,
+            project_id,
+            sources_json,
+            terms_json,
+            context_len as i64
+        ],
     )?;
     Ok(())
 }
@@ -420,7 +430,8 @@ mod tests {
 
     #[test]
     fn test_extract_key_terms_identifiers() {
-        let context = "The DatabasePool struct handles connections.\nSee inject_context for details.";
+        let context =
+            "The DatabasePool struct handles connections.\nSee inject_context for details.";
         let terms = extract_key_terms(context);
         assert!(terms.contains(&"databasepool".to_string()));
         assert!(terms.contains(&"inject_context".to_string()));
@@ -451,9 +462,7 @@ mod tests {
     #[test]
     fn test_extract_key_terms_caps_at_30() {
         // Generate context with many unique identifiers
-        let lines: Vec<String> = (0..50)
-            .map(|i| format!("function_name_{}", i))
-            .collect();
+        let lines: Vec<String> = (0..50).map(|i| format!("function_name_{}", i)).collect();
         let context = lines.join(" ");
         let terms = extract_key_terms(&context);
         assert!(terms.len() <= 30);
@@ -472,10 +481,7 @@ mod tests {
                 sources: vec![InjectionSource::Semantic],
                 context_len: 200,
                 message_preview: "test feedback".to_string(),
-                key_terms: vec![
-                    "databasepool".to_string(),
-                    "inject_context".to_string(),
-                ],
+                key_terms: vec!["databasepool".to_string(), "inject_context".to_string()],
             })
             .await;
 
@@ -538,7 +544,10 @@ mod tests {
 
         // Response that does NOT reference the key term
         analytics
-            .record_response_feedback("no-ref-sess", "Just a generic response about something else.")
+            .record_response_feedback(
+                "no-ref-sess",
+                "Just a generic response about something else.",
+            )
             .await;
 
         let was_ref: bool = pool

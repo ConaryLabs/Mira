@@ -385,13 +385,11 @@ pub(crate) async fn build_startup_context(cwd: Option<&str>) -> Option<String> {
 
         if let Some(snapshot_json) = snapshot
             && let Ok(snap) = serde_json::from_str::<serde_json::Value>(&snapshot_json)
+            && let Some(working_on) = build_working_on_summary(&snap)
+            && context_parts.is_empty()
         {
-            if let Some(working_on) = build_working_on_summary(&snap) {
-                if context_parts.is_empty() {
-                    // Only add if we didn't already have a summary
-                    context_parts.push(format!("**Last session:** {}", working_on));
-                }
-            }
+            // Only add if we didn't already have a summary
+            context_parts.push(format!("**Last session:** {}", working_on));
         }
     }
 
@@ -410,7 +408,10 @@ pub(crate) async fn build_startup_context(cwd: Option<&str>) -> Option<String> {
             .iter()
             .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
             .collect();
-        context_parts.push(format!("[Mira/goals] Active goals:\n{}", goal_lines.join("\n")));
+        context_parts.push(format!(
+            "[Mira/goals] Active goals:\n{}",
+            goal_lines.join("\n")
+        ));
         mark_goals_shown();
     }
 
@@ -584,7 +585,10 @@ pub(crate) async fn build_resume_context(
             .iter()
             .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
             .collect();
-        context_parts.push(format!("[Mira/goals] Active goals:\n{}", goal_lines.join("\n")));
+        context_parts.push(format!(
+            "[Mira/goals] Active goals:\n{}",
+            goal_lines.join("\n")
+        ));
         mark_goals_shown();
     }
 

@@ -500,7 +500,7 @@ impl SlowLaneWorker {
                         .await?;
                     // Also clean up expired system observations (TTL-based)
                     let obs_count = pool
-                        .run(|conn| crate::db::cleanup_expired_observations_sync(conn))
+                        .run(crate::db::cleanup_expired_observations_sync)
                         .await?;
                     Ok(retention_count + obs_count)
                 })

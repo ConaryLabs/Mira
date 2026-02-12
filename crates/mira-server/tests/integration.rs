@@ -882,7 +882,8 @@ async fn test_context_injection_basic() {
 
     // Create injection manager
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None).await;
+        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+            .await;
 
     // Test with a code-related message
     let result = manager
@@ -906,7 +907,8 @@ async fn test_context_injection_skip_simple_commands() {
 
     let ctx = TestContext::new().await;
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None).await;
+        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+            .await;
 
     // Simple commands should be skipped
     let result = manager
@@ -931,7 +933,8 @@ async fn test_context_injection_skip_short_messages() {
 
     let ctx = TestContext::new().await;
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None).await;
+        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+            .await;
 
     // Very short messages should be skipped
     let result = manager.get_context_for_message("hi", "test-session").await;
@@ -944,7 +947,8 @@ async fn test_context_injection_config() {
 
     let ctx = TestContext::new().await;
     let mut manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None).await;
+        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+            .await;
 
     // Verify default config
     assert!(manager.config().enabled);
@@ -1007,7 +1011,8 @@ async fn test_context_injection_with_goals() {
 
     // Create injection manager
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None).await;
+        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+            .await;
 
     // Get context - should include goal info if task-aware injection is enabled
     // Note: due to sampling, this might be skipped

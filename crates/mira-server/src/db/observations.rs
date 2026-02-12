@@ -131,6 +131,7 @@ pub fn store_observation_sync(
 }
 
 /// Query observations by type for a project
+#[allow(clippy::type_complexity)]
 pub fn query_observations_by_type_sync(
     conn: &Connection,
     project_id: i64,
@@ -188,9 +189,7 @@ pub fn query_observations_by_categories_sync(
         param_values.iter().map(|p| p.as_ref()).collect();
 
     let rows = stmt
-        .query_map(param_refs.as_slice(), |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
+        .query_map(param_refs.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
         .filter_map(log_and_discard)
         .collect();
     Ok(rows)
@@ -716,13 +715,9 @@ mod tests {
         )
         .unwrap();
 
-        let results = query_observations_by_categories_sync(
-            &conn,
-            pid,
-            "health",
-            &["complexity", "todo"],
-        )
-        .unwrap();
+        let results =
+            query_observations_by_categories_sync(&conn, pid, "health", &["complexity", "todo"])
+                .unwrap();
         assert_eq!(results.len(), 2);
 
         // System type should not be included
@@ -871,7 +866,11 @@ mod tests {
         .unwrap();
 
         let results = get_health_observations_sync(&conn, pid, 10).unwrap();
-        assert_eq!(results.len(), 1, "only high-confidence alerts should appear");
+        assert_eq!(
+            results.len(),
+            1,
+            "only high-confidence alerts should appear"
+        );
         assert_eq!(results[0].0, "high confidence health issue");
     }
 }

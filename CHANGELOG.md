@@ -80,6 +80,33 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-02-12
+
+### Added
+- **System observations table** -- New `system_observations` table and `db/observations.rs` module for structured, TTL-aware storage of background analysis results. All readers and writers migrated from the previous ad-hoc storage.
+- **TTL cleanup for observations** -- Automatic expiration of system observations with configurable retention (default 90 days).
+- **`mira config` CLI command** -- Inspect and validate Mira configuration from the command line.
+- **Status line redesign** -- Rainbow Mira display with provider info and improved ordering.
+- **Lightweight startup context** -- Fresh sessions now get injected context without requiring a full recap.
+- **Recall module extraction** -- Hook-side recall logic extracted into dedicated `hooks/recall.rs` with injection feedback tracking.
+
+### Fixed
+- **Doc task re-creation loop** -- Documentation tasks that were already skipped or completed would be re-created on every scan. Added unconditional unique index on `(project_id, target_doc_path)` with deterministic tie-breaking to prevent duplicates.
+- **Migration ordering** -- `pattern_provenance` now dropped before `cross_project_patterns` to respect foreign key constraints.
+- **DB schema drift** -- Aligned migration SQL with actual codebase column usage.
+- **Proactive/reactive gating unification** -- Merged duplicated gating logic for hook-injected context.
+- **Hook system DB access** -- Fixed incorrect database pool usage and removed dead code in hook system.
+- **TTL timestamp resolution** -- Relative TTL durations now resolved to absolute timestamps before storage.
+- **Cartographer pool mismatch** -- Map generation now uses `code_pool` instead of the main pool.
+- **Memory confidence default** -- User-created memories default to 0.8 confidence (was 0.5), reflecting that explicit user storage implies high confidence.
+- **Health scan cold-start** -- Auto-queue health scan only on genuine cold start, not on valid empty states.
+- **Config hardening** -- Reject `sampling` as a configurable provider, fail loudly on config read errors, improved validation and error messages.
+- **Team tool consistency** -- Consistent error messages and task retention cache behavior.
+- **Clippy warnings** -- Collapsed nested `if let` chains, removed redundant closures, stabilized constant assertions.
+
+### Changed
+- **Dead table cleanup** -- Dropped unused tables: `corrections`, `users`, `pattern_provenance`, `cross_project_patterns`, `pattern_sharing_log`, `cross_project_preferences`.
+
 ## [0.7.2] - 2026-02-11
 
 ### Removed

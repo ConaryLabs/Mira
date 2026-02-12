@@ -5,7 +5,9 @@ use crate::config::EnvConfig;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
-use crate::hooks::{get_code_db_path, get_db_path, read_hook_input, resolve_project, write_hook_output};
+use crate::hooks::{
+    get_code_db_path, get_db_path, read_hook_input, resolve_project, write_hook_output,
+};
 use crate::proactive::background::get_pre_generated_suggestions;
 use crate::proactive::{behavior::BehaviorTracker, predictor};
 use crate::utils::truncate_at_boundary;
@@ -610,9 +612,7 @@ mod tests {
         assert!(!is_simple_command(
             "how does the authentication module work?"
         ));
-        assert!(!is_simple_command(
-            "refactor the database connection pool"
-        ));
+        assert!(!is_simple_command("refactor the database connection pool"));
     }
 
     #[test]

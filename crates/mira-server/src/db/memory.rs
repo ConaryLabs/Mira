@@ -696,30 +696,27 @@ pub fn get_health_alerts_sync(
          LIMIT ?2",
     )?;
 
-    let rows = stmt.query_map(
-        rusqlite::params![project_id, limit as i64],
-        |row| {
-            Ok(mira_types::MemoryFact {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                key: row.get(2)?,
-                content: row.get(3)?,
-                fact_type: row.get(4)?,
-                category: row.get(5)?,
-                confidence: row.get(6)?,
-                created_at: row.get(7)?,
-                session_count: 1,
-                first_session_id: None,
-                last_session_id: None,
-                status: "confirmed".to_string(),
-                user_id: None,
-                scope: row.get(8)?,
-                team_id: row.get(9)?,
-                updated_at: None,
-                branch: None,
-            })
-        },
-    )?;
+    let rows = stmt.query_map(rusqlite::params![project_id, limit as i64], |row| {
+        Ok(mira_types::MemoryFact {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            key: row.get(2)?,
+            content: row.get(3)?,
+            fact_type: row.get(4)?,
+            category: row.get(5)?,
+            confidence: row.get(6)?,
+            created_at: row.get(7)?,
+            session_count: 1,
+            first_session_id: None,
+            last_session_id: None,
+            status: "confirmed".to_string(),
+            user_id: None,
+            scope: row.get(8)?,
+            team_id: row.get(9)?,
+            updated_at: None,
+            branch: None,
+        })
+    })?;
     rows.collect()
 }
 

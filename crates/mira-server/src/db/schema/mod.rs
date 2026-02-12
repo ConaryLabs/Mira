@@ -413,7 +413,8 @@ fn migrate_doc_tasks_unique_all_statuses(conn: &Connection) -> Result<()> {
                                  WHEN 'pending' THEN 3
                                  ELSE 4
                              END,
-                             updated_at DESC
+                             updated_at DESC,
+                            id DESC
                      ) AS rn
                  FROM documentation_tasks
              ) WHERE rn = 1

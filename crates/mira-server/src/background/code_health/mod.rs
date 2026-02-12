@@ -84,7 +84,8 @@ async fn find_project_for_llm_health(
                     continue;
                 }
                 // Check if fast scans have completed more recently than this LLM task
-                let scan_time = crate::db::get_observation_info_sync(conn, project_id, "health_scan_time");
+                let scan_time =
+                    crate::db::get_observation_info_sync(conn, project_id, "health_scan_time");
                 let llm_time = crate::db::get_observation_info_sync(conn, project_id, &key);
 
                 let needs_run = match (&scan_time, &llm_time) {
@@ -993,7 +994,11 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(observation_key_exists_sync(&conn, pid, "health_fast_scan_done"));
+        assert!(observation_key_exists_sync(
+            &conn,
+            pid,
+            "health_fast_scan_done"
+        ));
 
         // Simulate cycle N: module analysis times out → marker NOT cleaned.
         // (mark_health_scanned was never called)
@@ -1025,13 +1030,15 @@ mod tests {
 
         // LLM task has never run — scan_time exists but llm_time doesn't
         let scan_time = crate::db::get_observation_info_sync(&conn, pid, "health_scan_time");
-        let llm_time = crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
+        let llm_time =
+            crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
         assert!(scan_time.is_some(), "health_scan_time should exist");
         assert!(llm_time.is_none(), "llm time should not exist yet");
 
         // Mark LLM task as done
         mark_llm_health_done_sync(&conn, pid, "health_llm_complexity_time").unwrap();
-        let llm_time = crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
+        let llm_time =
+            crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
         assert!(
             llm_time.is_some(),
             "llm time should exist after marking done"
@@ -1063,7 +1070,8 @@ mod tests {
 
         // Now health_scan_time (just set) is newer than health_llm_complexity_time (1 hour ago)
         let (_, st) = crate::db::get_observation_info_sync(&conn, pid, "health_scan_time").unwrap();
-        let (_, lt) = crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time").unwrap();
+        let (_, lt) =
+            crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time").unwrap();
         assert!(
             st > lt,
             "scan time ({}) should be newer than llm time ({})",

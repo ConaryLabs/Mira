@@ -15,8 +15,8 @@ mod index;
 mod insights;
 mod memory;
 mod migration_helpers;
-pub mod observations;
 mod milestones;
+pub mod observations;
 pub mod pool;
 mod project;
 pub mod retention;
@@ -136,6 +136,13 @@ pub use milestones::{
     delete_milestone_sync, get_milestone_by_id_sync, get_milestones_for_goal_sync,
     parse_milestone_row, update_goal_progress_from_milestones_sync, update_milestone_sync,
 };
+pub use observations::{
+    StoreObservationParams, cleanup_expired_observations_sync, delete_observation_by_key_sync,
+    delete_observations_by_categories_sync, delete_observations_by_type_sync,
+    get_health_observations_sync, get_observation_info_sync, observation_key_exists_sync,
+    query_observations_by_categories_sync, query_observations_by_type_sync,
+    query_team_observations_sync, store_observation_sync,
+};
 pub use project::{
     clear_active_project_sync, delete_server_state_sync, get_active_project_ids_sync,
     get_active_projects_sync, get_health_alerts_sync, get_indexed_project_ids_sync,
@@ -146,13 +153,6 @@ pub use project::{
     mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
     set_server_state_sync, update_project_briefing_sync, update_project_name_sync,
     upsert_session_sync, upsert_session_with_branch_sync,
-};
-pub use observations::{
-    StoreObservationParams, cleanup_expired_observations_sync, delete_observation_by_key_sync,
-    delete_observations_by_categories_sync, delete_observations_by_type_sync,
-    get_health_observations_sync, get_observation_info_sync, observation_key_exists_sync,
-    query_observations_by_categories_sync, query_observations_by_type_sync,
-    query_team_observations_sync, store_observation_sync,
 };
 pub use retention::run_data_retention_sync;
 pub use search::{
