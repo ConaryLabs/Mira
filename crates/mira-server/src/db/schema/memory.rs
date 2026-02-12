@@ -451,6 +451,23 @@ pub fn migrate_memory_facts_to_observations(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate memory_facts to add suspicious column for prompt injection detection
+pub fn migrate_memory_facts_suspicious(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "memory_facts") {
+        return Ok(());
+    }
+
+    if !column_exists(conn, "memory_facts", "suspicious") {
+        tracing::info!("Adding suspicious column to memory_facts for injection detection");
+        conn.execute(
+            "ALTER TABLE memory_facts ADD COLUMN suspicious INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Drop OLD teams tables (pre-team-intelligence-layer).
 ///
 /// The old `teams` table lacked a `config_path` column. New tables created by

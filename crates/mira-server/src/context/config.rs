@@ -42,7 +42,7 @@ impl Default for InjectionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_chars: 1500,
+            max_chars: 3000,
             min_message_len: 30,
             max_message_len: 500,
             sample_rate: 1.0, // Quality gates (is_simple_command, length, is_code_related) prevent over-injection
@@ -167,7 +167,7 @@ mod tests {
     fn test_default_config() {
         let config = InjectionConfig::default();
         assert!(config.enabled);
-        assert_eq!(config.max_chars, 1500);
+        assert_eq!(config.max_chars, 3000);
         assert_eq!(config.sample_rate, 1.0);
     }
 
@@ -190,7 +190,7 @@ mod tests {
     fn test_summary() {
         let config = InjectionConfig::default();
         let summary = config.summary();
-        assert!(summary.contains("1500"));
+        assert!(summary.contains("3000"));
         assert!(summary.contains("100%"));
     }
 

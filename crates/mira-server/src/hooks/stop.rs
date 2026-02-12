@@ -74,23 +74,14 @@ pub async fn run() -> Result<()> {
     let goal_lines = super::format_active_goals(&pool, project_id, 5).await;
 
     // Build output
-    let mut output = serde_json::json!({});
+    let output = serde_json::json!({});
 
     if !goal_lines.is_empty() {
-        let context = format!(
-            "Active goals (not completed/abandoned):\n{}",
-            goal_lines.join("\n")
-        );
-
-        // Add as additional context (informational, not blocking)
-        output = serde_json::json!({
-            "hookSpecificOutput": {
-                "hookEventName": "Stop",
-                "additionalContext": context
-            }
-        });
-
-        eprintln!("[mira] {} active goal(s) found", goal_lines.len());
+        // Log active goals to stderr (Stop hook doesn't support additionalContext)
+        eprintln!("[mira] {} active goal(s) found:", goal_lines.len());
+        for line in &goal_lines {
+            eprintln!("[mira]   {}", line);
+        }
     }
 
     // Build session summary, save snapshot, and close the session

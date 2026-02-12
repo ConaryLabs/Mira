@@ -86,6 +86,7 @@ pub fn store_memory_helper(
             scope: "project",
             branch: None,
             team_id: None,
+            suspicious: false,
         },
     )
     .map_err(Into::into)
@@ -117,6 +118,7 @@ pub fn store_memory_with_session_helper(
             scope: "project",
             branch: None,
             team_id: None,
+            suspicious: false,
         },
     )
     .map_err(Into::into)

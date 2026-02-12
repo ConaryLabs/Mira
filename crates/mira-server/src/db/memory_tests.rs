@@ -778,6 +778,7 @@ mod tests {
                 scope: "project",
                 branch: None,
                 team_id: None,
+                suspicious: false,
             },
         )
         .map_err(Into::into));
@@ -808,6 +809,7 @@ mod tests {
                 scope: "project",
                 branch: None,
                 team_id: None,
+                suspicious: false,
             },
         )
         .map_err(Into::into));
@@ -836,6 +838,7 @@ mod tests {
                 scope: "project",
                 branch: None,
                 team_id: None,
+                suspicious: false,
             },
         )
         .map_err(Into::into));

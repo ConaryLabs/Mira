@@ -24,6 +24,13 @@ VERSION_FILE="${BIN_DIR}/.mira-version"
 UPDATE_CACHE="${MIRA_HOME}/.last-update-check"
 CACHE_TTL=86400  # 24 hours
 
+# --- Dev override: if MIRA_BIN is a symlink, the developer has linked a local
+# build. Respect it unconditionally — skip version checks and auto-updates.
+# To revert to managed mode, remove the symlink: rm ~/.mira/bin/mira
+if [ -L "$MIRA_BIN" ] && [ -x "$MIRA_BIN" ]; then
+    exec "$MIRA_BIN" "$@"
+fi
+
 # --- Fast path: binary exists, version known, update cache fresh ---
 if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ]; then
     installed="$(cat "$VERSION_FILE")"

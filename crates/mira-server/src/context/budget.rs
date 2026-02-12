@@ -60,7 +60,7 @@ impl Default for BudgetManager {
 impl BudgetManager {
     pub fn new() -> Self {
         Self {
-            max_chars: 1500, // ~375 tokens - balanced for DeepSeek without compaction
+            max_chars: 3000, // ~750 tokens - cheap on DeepSeek, gives context room
         }
     }
 
@@ -93,7 +93,7 @@ impl BudgetManager {
             if result.len() + entry.content.len() + 2 > self.max_chars {
                 // Truncate and add ellipsis
                 let remaining = self.max_chars.saturating_sub(result.len());
-                if remaining > 40 {
+                if remaining >= 40 {
                     result.push_str("\n\n[Context truncated due to token limit]");
                 }
                 break;
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn test_budget_manager_default() {
         let manager = BudgetManager::new();
-        assert_eq!(manager.max_chars, 1500);
+        assert_eq!(manager.max_chars, 3000);
     }
 
     #[test]

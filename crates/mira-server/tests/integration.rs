@@ -952,7 +952,7 @@ async fn test_context_injection_config() {
 
     // Verify default config
     assert!(manager.config().enabled);
-    assert_eq!(manager.config().max_chars, 1500);
+    assert_eq!(manager.config().max_chars, 3000);
     assert_eq!(manager.config().sample_rate, 1.0);
 
     // Update config

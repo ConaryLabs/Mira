@@ -134,6 +134,7 @@ static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
          WHERE {}
            AND {USER_FACT_TYPES_SQL}
            AND f.status != 'archived'
+           AND COALESCE(f.suspicious, 0) = 0
          ORDER BY distance
          LIMIT ?3",
         scope_filter_sql("f.")
@@ -165,6 +166,7 @@ pub struct StoreMemoryParams<'a> {
     pub scope: &'a str,
     pub branch: Option<&'a str>,
     pub team_id: Option<i64>,
+    pub suspicious: bool,
 }
 
 /// Store a memory with full scope/user support (sync version for pool.interact())
@@ -208,10 +210,12 @@ pub fn store_memory_sync(
                 conn.execute(
                     "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
                      session_count = session_count + 1, last_session_id = ?, user_id = COALESCE(user_id, ?),
-                     scope = ?, branch = ?, team_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                     scope = ?, branch = ?, team_id = ?, suspicious = ?,
+                     updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     rusqlite::params![
                         params.content, params.fact_type, params.category, params.confidence,
-                        params.session_id, params.user_id, params.scope, params.branch, params.team_id, id
+                        params.session_id, params.user_id, params.scope, params.branch, params.team_id,
+                        params.suspicious as i32, id
                     ],
                 )?;
                 // Check for promotion
@@ -223,11 +227,12 @@ pub fn store_memory_sync(
             } else {
                 conn.execute(
                     "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
-                     user_id = COALESCE(user_id, ?), scope = ?, branch = ?, team_id = ?,
+                     user_id = COALESCE(user_id, ?), scope = ?, branch = ?, team_id = ?, suspicious = ?,
                      updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     rusqlite::params![
                         params.content, params.fact_type, params.category, params.confidence,
-                        params.user_id, params.scope, params.branch, params.team_id, id
+                        params.user_id, params.scope, params.branch, params.team_id,
+                        params.suspicious as i32, id
                     ],
                 )?;
             }
@@ -243,8 +248,8 @@ pub fn store_memory_sync(
     };
     conn.execute(
         "INSERT INTO memory_facts (project_id, key, content, fact_type, category, confidence,
-         session_count, first_session_id, last_session_id, status, user_id, scope, branch, team_id)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?, ?, ?)",
+         session_count, first_session_id, last_session_id, status, user_id, scope, branch, team_id, suspicious)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'candidate', ?, ?, ?, ?, ?)",
         rusqlite::params![
             params.project_id,
             params.key,
@@ -257,7 +262,8 @@ pub fn store_memory_sync(
             params.user_id,
             params.scope,
             params.branch,
-            params.team_id
+            params.team_id,
+            params.suspicious as i32
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -866,6 +872,7 @@ pub fn fetch_ranked_memories_for_export_sync(
           AND scope = 'project'
           AND confidence >= 0.5
           AND fact_type NOT IN ('health', 'persona', 'system', 'session_event', 'extracted', 'tool_outcome', 'convergence_alert', 'distilled')
+          AND COALESCE(suspicious, 0) = 0
         ORDER BY hotness DESC
         LIMIT ?2
     "#;
@@ -1010,6 +1017,7 @@ mod scope_tests {
                 scope,
                 branch: None,
                 team_id,
+                suspicious: false,
             },
         )
         .expect("store_memory_sync failed")
@@ -1038,6 +1046,7 @@ mod scope_tests {
                 scope,
                 branch: None,
                 team_id,
+                suspicious: false,
             },
         )
         .expect("store_memory_sync failed")
@@ -1371,6 +1380,7 @@ mod scope_tests {
                 scope: "project",
                 branch: None,
                 team_id: None,
+                suspicious: false,
             },
         )
         .unwrap();
@@ -1389,6 +1399,7 @@ mod scope_tests {
                 scope: "personal",
                 branch: None,
                 team_id: None,
+                suspicious: false,
             },
         )
         .unwrap();
@@ -1407,6 +1418,7 @@ mod scope_tests {
                 scope: "team",
                 branch: None,
                 team_id: Some(10),
+                suspicious: false,
             },
         )
         .unwrap();
@@ -1448,6 +1460,7 @@ mod scope_tests {
                 scope: "project",
                 branch: None,
                 team_id: None,
+                suspicious: false,
             },
         )
         .unwrap();
@@ -1467,6 +1480,7 @@ mod scope_tests {
                 scope: "project",
                 branch: None,
                 team_id: None,
+                suspicious: false,
             },
         )
         .unwrap();

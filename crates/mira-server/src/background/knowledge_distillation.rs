@@ -468,6 +468,7 @@ mod tests {
                     scope: "team",
                     branch: None,
                     team_id: Some(tid),
+                    suspicious: false,
                 },
             )?;
             crate::db::store_memory_sync(
@@ -484,6 +485,7 @@ mod tests {
                     scope: "team",
                     branch: None,
                     team_id: Some(tid),
+                    suspicious: false,
                 },
             )?;
             crate::db::store_memory_sync(
@@ -500,6 +502,7 @@ mod tests {
                     scope: "team",
                     branch: None,
                     team_id: Some(tid),
+                    suspicious: false,
                 },
             )?;
             Ok::<_, anyhow::Error>(())
@@ -540,6 +543,7 @@ mod tests {
                     scope: "team",
                     branch: None,
                     team_id: Some(tid),
+                    suspicious: false,
                 },
             )?;
             Ok::<_, anyhow::Error>(())

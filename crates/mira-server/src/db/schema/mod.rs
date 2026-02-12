@@ -221,6 +221,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "doc_tasks_unique_all_statuses",
             func: migrate_doc_tasks_unique_all_statuses,
         },
+        Migration {
+            version: 38,
+            name: "memory_facts_suspicious",
+            func: memory::migrate_memory_facts_suspicious,
+        },
     ]
 }
 
