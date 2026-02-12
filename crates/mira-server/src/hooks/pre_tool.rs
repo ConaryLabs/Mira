@@ -238,20 +238,28 @@ async fn query_relevant_memories(
         .interact(move |conn| {
             // Search for relevant memories using keyword match
             // (semantic search would be better but requires embeddings)
+            // Escape LIKE wildcards to prevent injection
+            let escaped_query = query
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+
             let sql = r#"
                 SELECT content, fact_type, category
                 FROM memory_facts
                 WHERE project_id = ?1
                   AND (scope = 'project' OR scope IS NULL)
-                  AND (content LIKE '%' || ?2 || '%'
-                       OR category LIKE '%' || ?2 || '%')
+                  AND fact_type IN ('general','preference','decision','pattern','context','persona')
+                  AND status != 'archived'
+                  AND (content LIKE '%' || ?2 || '%' ESCAPE '\'
+                       OR category LIKE '%' || ?2 || '%' ESCAPE '\')
                 ORDER BY created_at DESC
                 LIMIT 2
             "#;
 
             let mut stmt = conn.prepare(sql)?;
             let memories: Vec<String> = stmt
-                .query_map(rusqlite::params![project_id, query], |row| {
+                .query_map(rusqlite::params![project_id, escaped_query], |row| {
                     let content: String = row.get(0)?;
                     let fact_type: Option<String> = row.get(1)?;
                     let category: Option<String> = row.get(2)?;

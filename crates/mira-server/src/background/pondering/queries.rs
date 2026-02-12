@@ -83,6 +83,7 @@ pub(super) async fn get_recent_memories(
                 SELECT content, fact_type, category, status
                 FROM memory_facts
                 WHERE project_id = ?
+                  AND fact_type IN ('general','preference','decision','pattern','context','persona')
                   AND updated_at > datetime('now', '-7 days')
                 ORDER BY updated_at DESC
                 LIMIT 50

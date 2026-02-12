@@ -5,7 +5,7 @@ use crate::db::dependencies::{
     ModuleDependency, clear_module_dependencies_sync, upsert_module_dependency_sync,
 };
 use crate::db::pool::DatabasePool;
-use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::db::{StoreObservationParams, store_observation_sync};
 use crate::utils::ResultExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,20 +67,20 @@ pub(super) async fn scan_dependencies_sharded(
                         "[circular-dependency] Circular dependency: {} <-> {}",
                         src, tgt
                     );
-                    store_memory_sync(
+                    store_observation_sync(
                         conn,
-                        StoreMemoryParams {
+                        StoreObservationParams {
                             project_id: Some(project_id),
                             key: Some(&key),
                             content: &content,
-                            fact_type: "health",
+                            observation_type: "health",
                             category: Some("circular_dependency"),
                             confidence: 0.9,
+                            source: "code_health",
                             session_id: None,
-                            user_id: None,
-                            scope: "project",
-                            branch: None,
                             team_id: None,
+                            scope: "project",
+                            expires_at: None,
                         },
                     )
                     .str_err()?;

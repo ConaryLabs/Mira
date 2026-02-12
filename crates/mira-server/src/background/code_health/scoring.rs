@@ -212,8 +212,8 @@ fn gather_findings(
     // Query all health findings for this project
     let mut stmt = conn
         .prepare(
-            "SELECT content, category FROM memory_facts
-             WHERE project_id = ? AND fact_type = 'health'
+            "SELECT content, category FROM system_observations
+             WHERE project_id = ? AND observation_type = 'health'
              AND category IN ('complexity', 'error_handling', 'error_quality', 'unwrap', 'todo', 'unimplemented', 'unused')",
         )
         .str_err()?;

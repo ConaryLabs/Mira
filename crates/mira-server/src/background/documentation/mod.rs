@@ -6,8 +6,8 @@ mod inventory;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    StoreMemoryParams, delete_memory_by_key_sync, get_scan_info_sync, is_time_older_than_sync,
-    store_memory_sync,
+    StoreObservationParams, get_scan_info_sync, is_time_older_than_sync,
+    store_observation_sync,
 };
 use crate::utils::{ResultExt, truncate_at_boundary};
 use std::sync::Arc;
@@ -497,20 +497,20 @@ pub fn mark_documentation_scanned_sync(
 ) -> Result<(), String> {
     let commit = get_git_head(project_path).unwrap_or_else(|| "unknown".to_string());
 
-    store_memory_sync(
+    store_observation_sync(
         conn,
-        StoreMemoryParams {
+        StoreObservationParams {
             project_id: Some(project_id),
             key: Some(DOC_SCAN_MARKER_KEY),
             content: &commit,
-            fact_type: "system",
+            observation_type: "system",
             category: Some("documentation"),
             confidence: 1.0,
+            source: "documentation",
             session_id: None,
-            user_id: None,
-            scope: "project",
-            branch: None,
             team_id: None,
+            scope: "project",
+            expires_at: None,
         },
     )
     .str_err()?;
@@ -522,7 +522,7 @@ pub fn clear_documentation_scan_marker_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
 ) -> Result<(), String> {
-    delete_memory_by_key_sync(conn, project_id, DOC_SCAN_MARKER_KEY)
+    crate::db::delete_observation_by_key_sync(conn, project_id, DOC_SCAN_MARKER_KEY)
         .map(|_| ())
         .str_err()
 }

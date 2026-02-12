@@ -220,12 +220,13 @@ impl FuzzyCache {
                     })
                 };
                 let lim = MAX_MEMORY_ITEMS as i64;
+                let user_type_filter = "AND fact_type IN ('general','preference','decision','pattern','context','persona') AND status != 'archived'";
                 match project_id_for_query {
                     Some(pid) => {
                         let sql = format!(
-                            "SELECT {cols} FROM memory_facts WHERE project_id = ?1 \
+                            "SELECT {cols} FROM memory_facts WHERE project_id = ?1 {user_type_filter} \
                              UNION ALL \
-                             SELECT {cols} FROM memory_facts WHERE project_id IS NULL \
+                             SELECT {cols} FROM memory_facts WHERE project_id IS NULL {user_type_filter} \
                              LIMIT ?2"
                         );
                         let mut stmt = conn.prepare(&sql)?;
@@ -234,7 +235,7 @@ impl FuzzyCache {
                     }
                     None => {
                         let sql = format!(
-                            "SELECT {cols} FROM memory_facts WHERE project_id IS NULL LIMIT ?1"
+                            "SELECT {cols} FROM memory_facts WHERE project_id IS NULL {user_type_filter} LIMIT ?1"
                         );
                         let mut stmt = conn.prepare(&sql)?;
                         stmt.query_map(params![lim], parse_row)?

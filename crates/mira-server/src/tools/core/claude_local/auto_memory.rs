@@ -78,7 +78,7 @@ fn fetch_auto_memory_candidates_sync(
         WHERE project_id = ?1
           AND scope = 'project'
           AND status = 'confirmed'
-          AND fact_type NOT IN ('health', 'persona')
+          AND fact_type NOT IN ('health', 'persona', 'system', 'session_event', 'extracted', 'tool_outcome', 'convergence_alert', 'distilled')
           -- Tiered thresholds: fresh memories (≤14 days) vs older memories
           AND (
               (julianday('now') - julianday(COALESCE(updated_at, created_at)) <= 14

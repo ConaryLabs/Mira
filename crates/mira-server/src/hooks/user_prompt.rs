@@ -439,7 +439,7 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
         .interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT content, COALESCE(category, 'general')
-                 FROM memory_facts
+                 FROM system_observations
                  WHERE scope = 'team' AND team_id = ?1
                    AND COALESCE(updated_at, created_at) > datetime('now', '-1 hour')
                  ORDER BY COALESCE(updated_at, created_at) DESC

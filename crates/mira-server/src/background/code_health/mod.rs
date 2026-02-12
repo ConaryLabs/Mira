@@ -11,10 +11,10 @@ pub mod scoring;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    StoreMemoryParams, clear_health_issues_by_categories_sync, clear_old_health_issues_sync,
-    get_indexed_project_ids_sync, get_project_paths_by_ids_sync, get_scan_info_sync,
+    StoreObservationParams, clear_health_issues_by_categories_sync, clear_old_health_issues_sync,
+    delete_observation_by_key_sync, get_indexed_project_ids_sync, get_project_paths_by_ids_sync,
     get_unused_functions_sync, is_time_older_than_sync, mark_health_scanned_sync,
-    mark_llm_health_done_sync, memory_key_exists_sync, store_memory_sync,
+    mark_llm_health_done_sync, observation_key_exists_sync, store_observation_sync,
 };
 use crate::llm::LlmClient;
 use crate::utils::ResultExt;
@@ -84,8 +84,8 @@ async fn find_project_for_llm_health(
                     continue;
                 }
                 // Check if fast scans have completed more recently than this LLM task
-                let scan_time = get_scan_info_sync(conn, project_id, "health_scan_time");
-                let llm_time = get_scan_info_sync(conn, project_id, &key);
+                let scan_time = crate::db::get_observation_info_sync(conn, project_id, "health_scan_time");
+                let llm_time = crate::db::get_observation_info_sync(conn, project_id, &key);
 
                 let needs_run = match (&scan_time, &llm_time) {
                     (Some(_), None) => true,                   // Scanned but LLM task never ran
@@ -127,10 +127,7 @@ pub async fn process_health_fast_scans(
     // marker, letting module analysis incorrectly consume health_scan_needed.
     let mp = main_pool.clone();
     mp.run(move |conn| {
-        conn.execute(
-            "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_fast_scan_done'",
-            [project_id],
-        )?;
+        delete_observation_by_key_sync(conn, project_id, "health_fast_scan_done")?;
         Ok::<_, rusqlite::Error>(())
     })
     .await?;
@@ -238,20 +235,20 @@ pub async fn process_health_fast_scans(
     // won't be suppressed by a subsequent successful module-analysis pass.
     let mp = main_pool.clone();
     mp.run(move |conn| {
-        store_memory_sync(
+        store_observation_sync(
             conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id: Some(project_id),
                 key: Some("health_fast_scan_done"),
                 content: "done",
-                fact_type: "system",
+                observation_type: "system",
                 category: Some("health"),
                 confidence: 1.0,
+                source: "code_health",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
     })
@@ -459,7 +456,7 @@ pub async fn process_health_module_analysis(
     // finalization clearing the flag.
     let fast_scan_done = main_pool
         .run(move |conn| {
-            Ok::<bool, rusqlite::Error>(memory_key_exists_sync(
+            Ok::<bool, rusqlite::Error>(observation_key_exists_sync(
                 conn,
                 project_id,
                 "health_fast_scan_done",
@@ -583,12 +580,12 @@ pub async fn scan_project_health_full(
 /// 3. Fallback: > 1 day since last scan
 fn needs_health_scan(conn: &rusqlite::Connection, project_id: i64) -> bool {
     // Check if the "needs scan" flag is set (triggered by file watcher)
-    if memory_key_exists_sync(conn, project_id, "health_scan_needed") {
+    if observation_key_exists_sync(conn, project_id, "health_scan_needed") {
         return true;
     }
 
     // Check last scan time for fallback
-    let scan_info = get_scan_info_sync(conn, project_id, "health_scan_time");
+    let scan_info = crate::db::get_observation_info_sync(conn, project_id, "health_scan_time");
 
     match scan_info {
         None => true, // Never scanned
@@ -613,20 +610,20 @@ pub fn mark_health_scan_needed_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
 ) -> Result<(), String> {
-    store_memory_sync(
+    store_observation_sync(
         conn,
-        StoreMemoryParams {
+        StoreObservationParams {
             project_id: Some(project_id),
             key: Some("health_scan_needed"),
             content: "pending",
-            fact_type: "system",
+            observation_type: "system",
             category: Some("health"),
             confidence: 1.0,
+            source: "code_health",
             session_id: None,
-            user_id: None,
-            scope: "project",
-            branch: None,
             team_id: None,
+            scope: "project",
+            expires_at: None,
         },
     )
     .str_err()?;
@@ -651,24 +648,24 @@ async fn scan_patterns_sharded(
 
     let count = pattern_findings.len();
 
-    // Store pattern findings in main DB (memory_facts)
+    // Store pattern findings in main DB (system_observations)
     main_pool
         .run(move |conn| {
             for finding in &pattern_findings {
-                store_memory_sync(
+                store_observation_sync(
                     conn,
-                    StoreMemoryParams {
+                    StoreObservationParams {
                         project_id: Some(project_id),
                         key: Some(&finding.key),
                         content: &finding.content,
-                        fact_type: "health",
+                        observation_type: "health",
                         category: Some("architecture"),
                         confidence: finding.confidence,
+                        source: "code_health",
                         session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
                         team_id: None,
+                        scope: "project",
+                        expires_at: None,
                     },
                 )
                 .str_err()?;
@@ -744,20 +741,20 @@ async fn scan_unused_functions_sharded(
                 );
                 let key = format!("health:unused:{}:{}", file_path, name);
 
-                store_memory_sync(
+                store_observation_sync(
                     conn,
-                    StoreMemoryParams {
+                    StoreObservationParams {
                         project_id: Some(project_id),
                         key: Some(&key),
                         content: &content,
-                        fact_type: "health",
+                        observation_type: "health",
                         category: Some("unused"),
                         confidence: CONFIDENCE_UNUSED,
+                        source: "code_health",
                         session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
                         team_id: None,
+                        scope: "project",
+                        expires_at: None,
                     },
                 )?;
 
@@ -826,21 +823,28 @@ mod tests {
     #[test]
     fn test_clear_old_health_issues() {
         let (conn, pid) = setup_main_db_with_project();
-        // Store some health findings
-        crate::db::test_support::store_memory_helper(
+        // Store some health findings in system_observations
+        store_observation_sync(
             &conn,
-            Some(pid),
-            Some("health:test:issue1"),
-            "[unused] test finding",
-            "health",
-            Some("unused"),
-            0.5,
+            StoreObservationParams {
+                project_id: Some(pid),
+                key: Some("health:test:issue1"),
+                content: "[unused] test finding",
+                observation_type: "health",
+                category: Some("unused"),
+                confidence: 0.5,
+                source: "code_health",
+                session_id: None,
+                team_id: None,
+                scope: "project",
+                expires_at: None,
+            },
         )
         .unwrap();
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND observation_type = 'health'",
                 [pid],
                 |row| row.get(0),
             )
@@ -851,7 +855,7 @@ mod tests {
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND observation_type = 'health'",
                 [pid],
                 |row| row.get(0),
             )
@@ -873,20 +877,20 @@ mod tests {
 
         // Simulate what fast scans do: they set a done marker but do NOT
         // call mark_health_scanned. The scan-needed flag should remain set.
-        store_memory_sync(
+        store_observation_sync(
             &conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id: Some(pid),
                 key: Some("health_fast_scan_done"),
                 content: "done",
-                fact_type: "system",
+                observation_type: "system",
                 category: Some("health"),
                 confidence: 1.0,
+                source: "code_health",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
         .unwrap();
@@ -905,20 +909,20 @@ mod tests {
         assert!(needs_health_scan(&conn, pid));
 
         // Fast scans signal completion
-        store_memory_sync(
+        store_observation_sync(
             &conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id: Some(pid),
                 key: Some("health_fast_scan_done"),
                 content: "done",
-                fact_type: "system",
+                observation_type: "system",
                 category: Some("health"),
                 confidence: 1.0,
+                source: "code_health",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
         .unwrap();
@@ -931,7 +935,7 @@ mod tests {
         );
         // Fast scan done marker should also be cleared
         assert!(
-            !memory_key_exists_sync(&conn, pid, "health_fast_scan_done"),
+            !observation_key_exists_sync(&conn, pid, "health_fast_scan_done"),
             "fast scan done marker should be cleared"
         );
     }
@@ -948,7 +952,7 @@ mod tests {
         // Fast scans failed — no health_fast_scan_done marker set.
         // Module analysis checks for the marker and skips finalization.
         assert!(
-            !memory_key_exists_sync(&conn, pid, "health_fast_scan_done"),
+            !observation_key_exists_sync(&conn, pid, "health_fast_scan_done"),
             "fast scan done marker should not exist after failure"
         );
 
@@ -972,39 +976,35 @@ mod tests {
         mark_health_scan_needed_sync(&conn, pid).unwrap();
 
         // Simulate cycle N: fast scans succeed → marker set
-        store_memory_sync(
+        store_observation_sync(
             &conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id: Some(pid),
                 key: Some("health_fast_scan_done"),
                 content: "done",
-                fact_type: "system",
+                observation_type: "system",
                 category: Some("health"),
                 confidence: 1.0,
+                source: "code_health",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
         .unwrap();
-        assert!(memory_key_exists_sync(&conn, pid, "health_fast_scan_done"));
+        assert!(observation_key_exists_sync(&conn, pid, "health_fast_scan_done"));
 
         // Simulate cycle N: module analysis times out → marker NOT cleaned.
         // (mark_health_scanned was never called)
 
         // Simulate cycle N+1: fast scans START → must clear stale marker.
         // This is the new behavior added in the fix.
-        conn.execute(
-            "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_fast_scan_done'",
-            [pid],
-        )
-        .unwrap();
+        delete_observation_by_key_sync(&conn, pid, "health_fast_scan_done").unwrap();
 
         // Simulate cycle N+1: fast scans FAIL → marker not re-set.
         assert!(
-            !memory_key_exists_sync(&conn, pid, "health_fast_scan_done"),
+            !observation_key_exists_sync(&conn, pid, "health_fast_scan_done"),
             "stale marker must be gone after fast scan start clears it"
         );
 
@@ -1024,14 +1024,14 @@ mod tests {
         mark_health_scanned(&conn, pid).unwrap();
 
         // LLM task has never run — scan_time exists but llm_time doesn't
-        let scan_time = get_scan_info_sync(&conn, pid, "health_scan_time");
-        let llm_time = get_scan_info_sync(&conn, pid, "health_llm_complexity_time");
+        let scan_time = crate::db::get_observation_info_sync(&conn, pid, "health_scan_time");
+        let llm_time = crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
         assert!(scan_time.is_some(), "health_scan_time should exist");
         assert!(llm_time.is_none(), "llm time should not exist yet");
 
         // Mark LLM task as done
         mark_llm_health_done_sync(&conn, pid, "health_llm_complexity_time").unwrap();
-        let llm_time = get_scan_info_sync(&conn, pid, "health_llm_complexity_time");
+        let llm_time = crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
         assert!(
             llm_time.is_some(),
             "llm time should exist after marking done"
@@ -1051,8 +1051,8 @@ mod tests {
 
         // Cycle 1: LLM task ran — backdate it to simulate a past run
         conn.execute(
-            "INSERT OR REPLACE INTO memory_facts (project_id, key, content, fact_type, category, confidence, created_at, updated_at)
-             VALUES (?, 'health_llm_complexity_time', 'scanned', 'system', 'health', 1.0, datetime('now', '-1 hour'), datetime('now', '-1 hour'))",
+            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
+             VALUES (?, 'health_llm_complexity_time', 'scanned', 'system', 'health', 1.0, 'code_health', 'project', datetime('now', '-1 hour'), datetime('now', '-1 hour'))",
             [pid],
         )
         .unwrap();
@@ -1062,8 +1062,8 @@ mod tests {
         mark_health_scanned(&conn, pid).unwrap();
 
         // Now health_scan_time (just set) is newer than health_llm_complexity_time (1 hour ago)
-        let (_, st) = get_scan_info_sync(&conn, pid, "health_scan_time").unwrap();
-        let (_, lt) = get_scan_info_sync(&conn, pid, "health_llm_complexity_time").unwrap();
+        let (_, st) = crate::db::get_observation_info_sync(&conn, pid, "health_scan_time").unwrap();
+        let (_, lt) = crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time").unwrap();
         assert!(
             st > lt,
             "scan time ({}) should be newer than llm time ({})",
@@ -1078,21 +1078,28 @@ mod tests {
         // in addition to "architecture" so stale findings don't persist.
         let (conn, pid) = setup_main_db_with_project();
 
-        // Store a circular dependency finding
-        crate::db::test_support::store_memory_helper(
+        // Store a circular dependency finding in system_observations
+        store_observation_sync(
             &conn,
-            Some(pid),
-            Some("health:circular:mod_a:mod_b"),
-            "[circular-dependency] Circular dependency: mod_a <-> mod_b",
-            "health",
-            Some("circular_dependency"),
-            0.9,
+            StoreObservationParams {
+                project_id: Some(pid),
+                key: Some("health:circular:mod_a:mod_b"),
+                content: "[circular-dependency] Circular dependency: mod_a <-> mod_b",
+                observation_type: "health",
+                category: Some("circular_dependency"),
+                confidence: 0.9,
+                source: "code_health",
+                session_id: None,
+                team_id: None,
+                scope: "project",
+                expires_at: None,
+            },
         )
         .unwrap();
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND category = 'circular_dependency'",
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND category = 'circular_dependency'",
                 [pid],
                 |row| row.get(0),
             )
@@ -1109,7 +1116,7 @@ mod tests {
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND category = 'circular_dependency'",
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND category = 'circular_dependency'",
                 [pid],
                 |row| row.get(0),
             )

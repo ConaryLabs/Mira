@@ -5,10 +5,8 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::db::pool::DatabasePool;
-use crate::db::{StoreMemoryParams, store_fact_embedding_sync, store_memory_sync};
-use crate::embeddings::EmbeddingClient;
+use crate::db::{StoreObservationParams, store_observation_sync};
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
-use crate::search::embedding_to_bytes;
 use crate::utils::json::parse_json_hardened;
 use crate::utils::truncate_at_boundary;
 
@@ -22,7 +20,7 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
 /// Spawn background extraction for a tool call
 pub fn spawn_tool_extraction(
     pool: Arc<DatabasePool>,
-    embeddings: Option<Arc<EmbeddingClient>>,
+    _embeddings: Option<Arc<crate::embeddings::EmbeddingClient>>,
     llm_client: Option<Arc<dyn LlmClient>>,
     project_id: Option<i64>,
     tool_name: String,
@@ -63,7 +61,6 @@ pub fn spawn_tool_extraction(
     tokio::spawn(async move {
         if let Err(e) = extract_and_store(
             &pool,
-            embeddings.as_ref(),
             &*llm_client,
             project_id,
             &tool_name,
@@ -80,7 +77,6 @@ pub fn spawn_tool_extraction(
 /// Perform extraction and store results
 async fn extract_and_store(
     pool: &Arc<DatabasePool>,
-    embeddings: Option<&Arc<EmbeddingClient>>,
     llm_client: &dyn LlmClient,
     project_id: Option<i64>,
     tool_name: &str,
@@ -147,44 +143,30 @@ async fn extract_and_store(
             .map(|k| format!("tool:{}:{}", tool_name, k))
             .unwrap_or_else(|| format!("tool:{}:{}", tool_name, uuid::Uuid::new_v4()));
 
-        // Store memory using pool
+        // Store observation using pool
         let content_clone = outcome.content.clone();
         let key_clone = key.clone();
         let category_clone = outcome.category.clone();
-        let id = pool
-            .interact(move |conn| {
-                store_memory_sync(
-                    conn,
-                    StoreMemoryParams {
-                        project_id,
-                        key: Some(&key_clone),
-                        content: &content_clone,
-                        fact_type: "tool_outcome",
-                        category: Some(&category_clone),
-                        confidence: 0.85,
-                        session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
-                        team_id: None,
-                    },
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await?;
-
-        // Store embedding if available
-        if let Some(embeddings) = embeddings
-            && let Ok(embedding) = embeddings.embed(&outcome.content).await
-        {
-            let embedding_bytes = embedding_to_bytes(&embedding);
-            let content_for_embed = outcome.content.clone();
-            pool.try_interact("store outcome embedding", move |conn| {
-                store_fact_embedding_sync(conn, id, &content_for_embed, &embedding_bytes)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await;
-        }
+        pool.interact(move |conn| {
+            store_observation_sync(
+                conn,
+                StoreObservationParams {
+                    project_id,
+                    key: Some(&key_clone),
+                    content: &content_clone,
+                    observation_type: "tool_outcome",
+                    category: Some(&category_clone),
+                    confidence: 0.85,
+                    source: "extraction",
+                    session_id: None,
+                    team_id: None,
+                    scope: "project",
+                    expires_at: Some("+30 days"),
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await?;
 
         debug!(
             "Stored tool outcome: {} (category: {})",

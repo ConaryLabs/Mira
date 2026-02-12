@@ -5,7 +5,7 @@
 // All detectors run in a single pass over each file, reducing IO and traversal
 // overhead by ~3-4x compared to separate per-detector walks.
 
-use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::db::{StoreObservationParams, store_observation_sync};
 use crate::project_files;
 use crate::utils::ResultExt;
 use regex::Regex;
@@ -353,20 +353,20 @@ pub fn store_detection_findings(
     findings: &[DetectionFinding],
 ) -> Result<usize, String> {
     for finding in findings {
-        store_memory_sync(
+        store_observation_sync(
             conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id: Some(project_id),
                 key: Some(&finding.key),
                 content: &finding.content,
-                fact_type: "health",
+                observation_type: "health",
                 category: Some(finding.category),
                 confidence: finding.confidence,
+                source: "code_health",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
         .str_err()?;
@@ -888,7 +888,7 @@ mod tests {
 
         let stored: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND observation_type = 'health'",
                 [pid],
                 |row| row.get(0),
             )

@@ -3,7 +3,8 @@
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    StoreMemoryParams, get_error_heavy_functions_sync, get_large_functions_sync, store_memory_sync,
+    StoreObservationParams, get_error_heavy_functions_sync, get_large_functions_sync,
+    store_observation_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
 use crate::utils::{ResultExt, safe_join, truncate_at_boundary};
@@ -193,20 +194,20 @@ where
 
                     ctx.main_pool
                         .run(move |conn| {
-                            store_memory_sync(
+                            store_observation_sync(
                                 conn,
-                                StoreMemoryParams {
+                                StoreObservationParams {
                                     project_id: Some(project_id),
                                     key: Some(&key),
                                     content: &issue_content,
-                                    fact_type: "health",
+                                    observation_type: "health",
                                     category: Some(category),
                                     confidence: 0.75,
+                                    source: "code_health",
                                     session_id: None,
-                                    user_id: None,
-                                    scope: "project",
-                                    branch: None,
                                     team_id: None,
+                                    scope: "project",
+                                    expires_at: None,
                                 },
                             )
                         })

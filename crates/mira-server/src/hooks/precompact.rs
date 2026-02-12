@@ -2,7 +2,7 @@
 // PreCompact hook handler - preserves context before summarization
 
 use crate::db::pool::DatabasePool;
-use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::db::{StoreObservationParams, store_observation_sync};
 use crate::hooks::get_db_path;
 use crate::utils::truncate_at_boundary;
 use anyhow::Result;
@@ -78,22 +78,22 @@ async fn save_pre_compaction_state(
         truncate_at_boundary(session_id, 8)
     );
 
-    // Store as a session event
+    // Store as a session event observation
     pool.interact(move |conn| {
-        store_memory_sync(
+        store_observation_sync(
             conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id,
                 key: None,
                 content: &note_content,
-                fact_type: "session_event",
+                observation_type: "session_event",
                 category: Some("compaction"),
                 confidence: COMPACTION_CONFIDENCE,
+                source: "precompact",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: Some("+7 days"),
             },
         )
         .map_err(|e| anyhow::anyhow!("{}", e))
@@ -165,20 +165,20 @@ async fn extract_and_save_context(
         let category_owned = category.to_string();
         let session_id_clone = session_id_owned.clone();
         pool.interact(move |conn| {
-            store_memory_sync(
+            store_observation_sync(
                 conn,
-                StoreMemoryParams {
+                StoreObservationParams {
                     project_id,
                     key: None,
                     content: &content,
-                    fact_type: "extracted",
+                    observation_type: "extracted",
                     category: Some(&category_owned),
-                    confidence: 0.4, // Moderate confidence - auto-extracted
+                    confidence: 0.4,
+                    source: "precompact",
                     session_id: Some(&session_id_clone),
-                    user_id: None,
-                    scope: "project",
-                    branch: None,
                     team_id: None,
+                    scope: "project",
+                    expires_at: Some("+7 days"),
                 },
             )
             .map_err(|e| anyhow::anyhow!("{}", e))

@@ -6,7 +6,7 @@
 // Uses heuristic summarization (no LLM calls) for speed.
 
 use crate::db::pool::DatabasePool;
-use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::db::{StoreObservationParams, store_observation_sync};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -104,20 +104,20 @@ pub fn distill_team_session_sync(
             finding.category,
             hash_content(&finding.content)
         );
-        if let Err(e) = store_memory_sync(
+        if let Err(e) = store_observation_sync(
             conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id,
                 key: Some(&key),
                 content: &finding.content,
-                fact_type: "distilled",
+                observation_type: "distilled",
                 category: Some("distilled"),
                 confidence: 0.7,
+                source: "distillation",
                 session_id: None,
-                user_id: None,
-                scope: "team",
-                branch: None,
                 team_id: Some(team_id),
+                scope: "team",
+                expires_at: Some("+30 days"),
             },
         ) {
             tracing::warn!("Failed to store distilled finding: {}", e);
@@ -452,11 +452,11 @@ mod tests {
         let pool = setup_pool().await;
         let (pid, tid) = setup_pool_with_team(&pool).await;
 
-        // Store some team memories
+        // Store some team memories (using store_memory_sync to populate memory_facts for reading)
         pool.interact(move |conn| {
-            store_memory_sync(
+            crate::db::store_memory_sync(
                 conn,
-                StoreMemoryParams {
+                crate::db::StoreMemoryParams {
                     project_id: Some(pid),
                     key: Some("test-decision-1"),
                     content: "Decided to use builder pattern for Config",
@@ -470,9 +470,9 @@ mod tests {
                     team_id: Some(tid),
                 },
             )?;
-            store_memory_sync(
+            crate::db::store_memory_sync(
                 conn,
-                StoreMemoryParams {
+                crate::db::StoreMemoryParams {
                     project_id: Some(pid),
                     key: Some("test-decision-2"),
                     content: "Chose async-first API for database layer",
@@ -486,9 +486,9 @@ mod tests {
                     team_id: Some(tid),
                 },
             )?;
-            store_memory_sync(
+            crate::db::store_memory_sync(
                 conn,
-                StoreMemoryParams {
+                crate::db::StoreMemoryParams {
                     project_id: Some(pid),
                     key: Some("test-context-1"),
                     content: "Project uses SQLite with connection pooling",
@@ -526,9 +526,9 @@ mod tests {
             crate::db::record_file_ownership_sync(conn, tid, "s1", "alice", "src/main.rs", "Edit")?;
             crate::db::record_file_ownership_sync(conn, tid, "s2", "bob", "src/lib.rs", "Write")?;
             // Need at least MIN_MEMORIES_FOR_DISTILLATION memories OR files to produce a result
-            store_memory_sync(
+            crate::db::store_memory_sync(
                 conn,
-                StoreMemoryParams {
+                crate::db::StoreMemoryParams {
                     project_id: Some(pid),
                     key: Some("test-mem-1"),
                     content: "First finding",

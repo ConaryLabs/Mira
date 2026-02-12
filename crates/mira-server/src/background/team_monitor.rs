@@ -56,20 +56,20 @@ pub async fn process_team_monitor(pool: &Arc<DatabasePool>) -> Result<usize, Str
                 );
 
                 let key = format!("convergence:files:{}", team_id);
-                if let Err(e) = crate::db::store_memory_sync(
+                if let Err(e) = crate::db::store_observation_sync(
                     conn,
-                    crate::db::StoreMemoryParams {
+                    crate::db::StoreObservationParams {
                         project_id: None,
                         key: Some(&key),
                         content: &alert_content,
-                        fact_type: "convergence_alert",
+                        observation_type: "convergence_alert",
                         category: Some("convergence_alert"),
                         confidence: 0.7,
+                        source: "team_monitor",
                         session_id: None,
-                        user_id: None,
-                        scope: "team",
-                        branch: None,
                         team_id: Some(team_id),
+                        scope: "team",
+                        expires_at: Some("+1 day"),
                     },
                 ) {
                     tracing::warn!("Failed to store convergence alert: {}", e);

@@ -583,40 +583,40 @@ mod tests {
     async fn test_get_health_alerts() {
         let (pool, project_id) = setup_test_pool_with_project().await;
 
-        // Add high-confidence health alert
-        db!(pool, |conn| store_memory_sync(
+        // Add high-confidence health alert to system_observations
+        db!(pool, |conn| crate::db::store_observation_sync(
             conn,
-            StoreMemoryParams {
+            crate::db::StoreObservationParams {
                 project_id: Some(project_id),
                 key: Some("health-1"),
                 content: "critical issue found",
-                fact_type: "health",
+                observation_type: "health",
                 category: Some("security"),
                 confidence: 0.9,
+                source: "test",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
         .map_err(Into::into));
 
         // Add low-confidence (should not appear)
-        db!(pool, |conn| store_memory_sync(
+        db!(pool, |conn| crate::db::store_observation_sync(
             conn,
-            StoreMemoryParams {
+            crate::db::StoreObservationParams {
                 project_id: Some(project_id),
                 key: Some("health-2"),
                 content: "minor issue",
-                fact_type: "health",
+                observation_type: "health",
                 category: None,
                 confidence: 0.5,
+                source: "test",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
         .map_err(Into::into));

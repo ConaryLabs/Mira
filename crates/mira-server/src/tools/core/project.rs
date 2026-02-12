@@ -8,11 +8,11 @@ use std::process::Command;
 use crate::cartographer;
 use crate::db::documentation::count_doc_tasks_by_status;
 use crate::db::{
-    StoreMemoryParams, get_health_alerts_sync, get_or_create_project_sync, get_preferences_sync,
-    get_project_briefing_sync, get_recent_sessions_sync, get_session_stats_sync,
-    mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
-    set_server_state_sync, store_memory_sync, update_project_name_sync,
-    upsert_session_with_branch_sync,
+    StoreObservationParams, get_health_alerts_sync, get_or_create_project_sync,
+    get_preferences_sync, get_project_briefing_sync, get_recent_sessions_sync,
+    get_session_stats_sync, mark_session_for_briefing_sync, save_active_project_sync,
+    search_memories_text_sync, set_server_state_sync, store_observation_sync,
+    update_project_name_sync, upsert_session_with_branch_sync,
 };
 use crate::git::get_git_branch;
 use crate::mcp::responses::Json;
@@ -310,20 +310,20 @@ async fn persist_session<C: ToolContext>(
             set_server_state_sync(conn, "active_session_id", &sid_owned).str_err()?;
 
             if let Some(ref content) = system_context
-                && let Err(e) = store_memory_sync(
+                && let Err(e) = store_observation_sync(
                     conn,
-                    StoreMemoryParams {
+                    StoreObservationParams {
                         project_id: None,
                         key: Some("system_context"),
                         content,
-                        fact_type: "context",
+                        observation_type: "system",
                         category: Some("system"),
                         confidence: 1.0,
+                        source: "project",
                         session_id: None,
-                        user_id: None,
-                        scope: "project",
-                        branch: None,
                         team_id: None,
+                        scope: "project",
+                        expires_at: None,
                     },
                 )
             {

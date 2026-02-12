@@ -19,14 +19,14 @@ pub type SymbolRow = (
 // Common scan time/rate limiting functions
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Get scan info (content/commit, updated_at) for a memory key
+/// Get scan info (content/commit, updated_at) for a system observation key
 pub fn get_scan_info_sync(
     conn: &Connection,
     project_id: i64,
     key: &str,
 ) -> Option<(String, String)> {
     conn.query_row(
-        "SELECT content, updated_at FROM memory_facts
+        "SELECT content, updated_at FROM system_observations
          WHERE project_id = ? AND key = ?",
         params![project_id, key],
         |row| Ok((row.get(0)?, row.get(1)?)),
@@ -44,10 +44,10 @@ pub fn is_time_older_than_sync(conn: &Connection, time: &str, duration: &str) ->
     .unwrap_or(false)
 }
 
-/// Check if a memory key exists for a project
+/// Check if a system observation key exists for a project
 pub fn memory_key_exists_sync(conn: &Connection, project_id: i64, key: &str) -> bool {
     conn.query_row(
-        "SELECT 1 FROM memory_facts WHERE project_id = ? AND key = ?",
+        "SELECT 1 FROM system_observations WHERE project_id = ? AND key = ?",
         params![project_id, key],
         |_| Ok(true),
     )
@@ -66,7 +66,7 @@ pub fn delete_memory_by_key_sync(
     )
 }
 
-/// Insert a system memory marker (for scan times, flags)
+/// Insert a system observation marker (for scan times, flags)
 pub fn insert_system_marker_sync(
     conn: &Connection,
     project_id: i64,
@@ -74,11 +74,26 @@ pub fn insert_system_marker_sync(
     content: &str,
     category: &str,
 ) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT OR REPLACE INTO memory_facts (project_id, key, content, fact_type, category, confidence, created_at, updated_at)
-         VALUES (?, ?, ?, 'system', ?, 1.0, datetime('now'), datetime('now'))",
-        params![project_id, key, content, category],
-    )?;
+    // Manual UPSERT: check if key exists, then update or insert
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM system_observations WHERE project_id = ? AND key = ?",
+            params![project_id, key],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(id) = existing {
+        conn.execute(
+            "UPDATE system_observations SET content = ?, category = ?, updated_at = datetime('now') WHERE id = ?",
+            params![content, category, id],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
+             VALUES (?, ?, ?, 'system', ?, 1.0, 'background', 'project', datetime('now'), datetime('now'))",
+            params![project_id, key, content, category],
+        )?;
+    }
     Ok(())
 }
 
@@ -91,20 +106,34 @@ pub fn insert_system_marker_sync(
 pub fn mark_health_scanned_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
     // Clear the "needs scan" flag
     conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_scan_needed'",
+        "DELETE FROM system_observations WHERE project_id = ? AND key = 'health_scan_needed'",
         [project_id],
     )?;
     // Clear the fast-scan-done marker
     conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND key = 'health_fast_scan_done'",
+        "DELETE FROM system_observations WHERE project_id = ? AND key = 'health_fast_scan_done'",
         [project_id],
     )?;
-    // Update last scan time
-    conn.execute(
-        "INSERT OR REPLACE INTO memory_facts (project_id, key, content, fact_type, category, confidence, created_at, updated_at)
-         VALUES (?, 'health_scan_time', 'scanned', 'system', 'health', 1.0, datetime('now'), datetime('now'))",
-        [project_id],
-    )?;
+    // Update last scan time (manual UPSERT)
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM system_observations WHERE project_id = ? AND key = 'health_scan_time'",
+            [project_id],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(id) = existing {
+        conn.execute(
+            "UPDATE system_observations SET content = 'scanned', updated_at = datetime('now') WHERE id = ?",
+            [id],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
+             VALUES (?, 'health_scan_time', 'scanned', 'system', 'health', 1.0, 'code_health', 'project', datetime('now'), datetime('now'))",
+            [project_id],
+        )?;
+    }
     Ok(())
 }
 
@@ -116,18 +145,33 @@ pub fn mark_llm_health_done_sync(
     project_id: i64,
     task_key: &str,
 ) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT OR REPLACE INTO memory_facts (project_id, key, content, fact_type, category, confidence, created_at, updated_at)
-         VALUES (?, ?, 'scanned', 'system', 'health', 1.0, datetime('now'), datetime('now'))",
-        params![project_id, task_key],
-    )?;
+    // Manual UPSERT
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM system_observations WHERE project_id = ? AND key = ?",
+            params![project_id, task_key],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(id) = existing {
+        conn.execute(
+            "UPDATE system_observations SET content = 'scanned', updated_at = datetime('now') WHERE id = ?",
+            [id],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
+             VALUES (?, ?, 'scanned', 'system', 'health', 1.0, 'code_health', 'project', datetime('now'), datetime('now'))",
+            params![project_id, task_key],
+        )?;
+    }
     Ok(())
 }
 
 /// Clear old health issues before refresh
 pub fn clear_old_health_issues_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
     conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'health'",
+        "DELETE FROM system_observations WHERE project_id = ? AND observation_type = 'health'",
         [project_id],
     )?;
     Ok(())
@@ -141,7 +185,7 @@ pub fn clear_health_issues_by_categories_sync(
 ) -> rusqlite::Result<()> {
     for category in categories {
         conn.execute(
-            "DELETE FROM memory_facts WHERE project_id = ? AND fact_type = 'health' AND category = ?",
+            "DELETE FROM system_observations WHERE project_id = ? AND observation_type = 'health' AND category = ?",
             params![project_id, category],
         )?;
     }

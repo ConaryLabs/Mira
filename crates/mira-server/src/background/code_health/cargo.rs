@@ -1,7 +1,7 @@
 // crates/mira-server/src/background/code_health/cargo.rs
 // Cargo check integration for detecting compiler warnings
 
-use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::db::{StoreObservationParams, store_observation_sync};
 use crate::utils::ResultExt;
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -61,20 +61,20 @@ pub fn store_cargo_findings(
     findings: &[CargoFinding],
 ) -> Result<usize, String> {
     for finding in findings {
-        store_memory_sync(
+        store_observation_sync(
             conn,
-            StoreMemoryParams {
+            StoreObservationParams {
                 project_id: Some(project_id),
                 key: Some(&finding.key),
                 content: &finding.content,
-                fact_type: "health",
+                observation_type: "health",
                 category: Some("warning"),
                 confidence: 0.9,
+                source: "code_health",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: None,
             },
         )
         .str_err()?;
@@ -264,7 +264,7 @@ mod tests {
 
         let stored: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ? AND category = 'warning'",
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND category = 'warning'",
                 [pid],
                 |row| row.get(0),
             )

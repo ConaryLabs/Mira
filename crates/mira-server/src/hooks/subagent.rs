@@ -207,22 +207,22 @@ pub async fn run_stop() -> Result<()> {
     // Build condensed summary from entities
     let entity_summary = build_entity_summary(&stop_input.subagent_type, &entities);
 
-    // Store as a subagent discovery memory
+    // Store as a subagent discovery observation
     pool.try_interact_warn("subagent discovery", move |conn| {
-        crate::db::store_memory_sync(
+        crate::db::store_observation_sync(
             conn,
-            crate::db::StoreMemoryParams {
+            crate::db::StoreObservationParams {
                 project_id: Some(project_id),
                 key: None,
                 content: &entity_summary,
-                fact_type: "context",
+                observation_type: "subagent_discovery",
                 category: Some("subagent_discovery"),
                 confidence: 0.6,
+                source: "subagent",
                 session_id: None,
-                user_id: None,
-                scope: "project",
-                branch: None,
                 team_id: None,
+                scope: "project",
+                expires_at: Some("+7 days"),
             },
         )?;
         Ok(())
@@ -419,12 +419,22 @@ async fn get_keyword_memories(
         return Vec::new();
     }
 
+    // Escape LIKE wildcards to prevent injection
+    let escaped_keywords: Vec<String> = keywords
+        .iter()
+        .map(|kw| {
+            kw.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        })
+        .collect();
+
     let result = pool_clone
         .interact(move |conn| {
             // Build a simple keyword match query
-            let like_clauses: Vec<String> = keywords
+            let like_clauses: Vec<String> = escaped_keywords
                 .iter()
-                .map(|_| "content LIKE '%' || ? || '%'".to_string())
+                .map(|_| "content LIKE '%' || ? || '%' ESCAPE '\\'".to_string())
                 .collect();
             let where_clause = like_clauses.join(" OR ");
 
@@ -434,6 +444,8 @@ async fn get_keyword_memories(
                 FROM memory_facts
                 WHERE project_id = ?
                   AND (scope = 'project' OR scope IS NULL)
+                  AND fact_type IN ('general','preference','decision','pattern','context','persona')
+                  AND status != 'archived'
                   AND ({})
                 ORDER BY
                     CASE fact_type
@@ -449,9 +461,9 @@ async fn get_keyword_memories(
 
             let mut stmt = conn.prepare(&sql)?;
 
-            // Build params: project_id + all keywords
+            // Build params: project_id + all escaped keywords
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(project_id)];
-            for kw in &keywords {
+            for kw in &escaped_keywords {
                 params.push(Box::new(kw.clone()));
             }
             let params_refs: Vec<&dyn rusqlite::ToSql> =

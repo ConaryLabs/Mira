@@ -119,12 +119,18 @@ pub fn scope_filter_sql(prefix: &str) -> String {
 ///
 /// Returns SQL that selects (fact_id, content, distance, branch, team_id) from vec_memory + memory_facts.
 /// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id, ?5 = team_id
+/// User memory fact_types -- system types live in system_observations now
+const USER_FACT_TYPES_SQL: &str =
+    "f.fact_type IN ('general','preference','decision','pattern','context','persona')";
+
 static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "SELECT v.fact_id, f.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch, f.team_id
          FROM vec_memory v
          JOIN memory_facts f ON v.fact_id = f.id
          WHERE {}
+           AND {USER_FACT_TYPES_SQL}
+           AND f.status != 'archived'
          ORDER BY distance
          LIMIT ?3",
         scope_filter_sql("f.")
@@ -522,6 +528,8 @@ pub fn search_memories_sync(
                 user_id, scope, team_id
          FROM memory_facts
          WHERE {}
+           AND fact_type IN ('general','preference','decision','pattern','context','persona')
+           AND status != 'archived'
            AND content LIKE ?2 ESCAPE '\\'
          ORDER BY updated_at DESC
          LIMIT ?3",
@@ -665,35 +673,47 @@ pub fn get_preferences_sync(
 
 /// Get health alerts for a project (sync version for pool.interact())
 ///
-/// When `user_id` and `team_id` are provided, uses full scope filtering.
-/// Otherwise falls back to simple project_id filtering.
+/// Reads from system_observations (health findings live there now).
+/// Returns MemoryFact-shaped results for backward compatibility.
 pub fn get_health_alerts_sync(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
     limit: usize,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
+    _user_id: Option<&str>,
+    _team_id: Option<i64>,
 ) -> rusqlite::Result<Vec<mira_types::MemoryFact>> {
-    let sql = format!(
-        "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
-                session_count, first_session_id, last_session_id, status,
-                user_id, scope, team_id
-         FROM memory_facts
-         WHERE {}
-           AND fact_type = 'health'
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, key, content, observation_type, category, confidence,
+                COALESCE(updated_at, created_at)
+         FROM system_observations
+         WHERE project_id IS ?1
+           AND observation_type = 'health'
            AND confidence >= 0.7
-         ORDER BY confidence DESC, updated_at DESC
-         LIMIT ?4",
-        scope_filter_sql("")
-            .replace("?{pid}", "?1")
-            .replace("?{uid}", "?2")
-            .replace("?{tid}", "?3")
-    );
-    let mut stmt = conn.prepare(&sql)?;
+         ORDER BY confidence DESC, COALESCE(updated_at, created_at) DESC
+         LIMIT ?2",
+    )?;
 
     let rows = stmt.query_map(
-        rusqlite::params![project_id, user_id, team_id, limit as i64],
-        parse_memory_fact_row,
+        rusqlite::params![project_id, limit as i64],
+        |row| {
+            Ok(mira_types::MemoryFact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                key: row.get(2)?,
+                content: row.get(3)?,
+                fact_type: row.get(4)?,
+                category: row.get(5)?,
+                confidence: row.get(6)?,
+                created_at: row.get(7)?,
+                session_count: 1,
+                first_session_id: None,
+                last_session_id: None,
+                status: "confirmed".to_string(),
+                user_id: None,
+                scope: "project".to_string(),
+                team_id: None,
+            })
+        },
     )?;
     rows.collect()
 }
@@ -756,6 +776,7 @@ pub fn find_facts_without_embeddings_sync(
                 user_id, scope, team_id
          FROM memory_facts
          WHERE has_embedding = 0
+           AND fact_type IN ('general','preference','decision','pattern','context','persona')
          ORDER BY created_at ASC
          LIMIT ?",
     )?;
@@ -840,7 +861,7 @@ pub fn fetch_ranked_memories_for_export_sync(
         WHERE project_id = ?1
           AND scope = 'project'
           AND confidence >= 0.5
-          AND fact_type NOT IN ('health', 'persona')
+          AND fact_type NOT IN ('health', 'persona', 'system', 'session_event', 'extracted', 'tool_outcome', 'convergence_alert', 'distilled')
         ORDER BY hotness DESC
         LIMIT ?2
     "#;
