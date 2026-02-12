@@ -88,6 +88,16 @@ pub async fn index<C: ToolContext>(
                     }
                 }
 
+                // Auto-queue health scan after project indexing
+                if let Some(pid) = project_id {
+                    let pool_clone = ctx.pool().clone();
+                    let _ = pool_clone
+                        .run(move |conn| {
+                            crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
+                        })
+                        .await;
+                }
+
                 Ok(Json(IndexOutput {
                     action: "project".into(),
                     message: response,

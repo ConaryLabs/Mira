@@ -19,10 +19,18 @@ pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput
         .await?;
 
     if deps.is_empty() {
+        // Auto-queue health scan so data will be available soon
+        let pid = project_id;
+        let pool = ctx.pool().clone();
+        let _ = pool
+            .run(move |conn| {
+                crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
+            })
+            .await;
+
         return Ok(Json(CodeOutput {
             action: "dependencies".into(),
-            message: "No module dependencies found. Run a health scan or index the project first."
-                .to_string(),
+            message: "No dependency data yet — a health scan has been queued and will complete shortly. Try again in a moment.".to_string(),
             data: Some(CodeData::Dependencies(DependenciesData {
                 edges: vec![],
                 circular_count: 0,
@@ -106,9 +114,18 @@ pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
         .await?;
 
     if patterns.is_empty() {
+        // Auto-queue health scan so data will be available soon
+        let pid = project_id;
+        let pool = ctx.pool().clone();
+        let _ = pool
+            .run(move |conn| {
+                crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
+            })
+            .await;
+
         return Ok(Json(CodeOutput {
             action: "patterns".into(),
-            message: "No architectural patterns detected yet. Run a health scan first.".to_string(),
+            message: "No pattern data yet — a health scan has been queued and will complete shortly. Try again in a moment.".to_string(),
             data: Some(CodeData::Patterns(PatternsData {
                 modules: vec![],
                 total: 0,
@@ -185,9 +202,18 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
         .await?;
 
     if scores.is_empty() {
+        // Auto-queue health scan so data will be available soon
+        let pid = project_id;
+        let pool = ctx.pool().clone();
+        let _ = pool
+            .run(move |conn| {
+                crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
+            })
+            .await;
+
         return Ok(Json(CodeOutput {
             action: "tech_debt".into(),
-            message: "No tech debt scores computed yet. Run a health scan first.".to_string(),
+            message: "No tech debt data yet — a health scan has been queued and will complete shortly. Try again in a moment.".to_string(),
             data: Some(CodeData::TechDebt(TechDebtData {
                 modules: vec![],
                 summary: vec![],
