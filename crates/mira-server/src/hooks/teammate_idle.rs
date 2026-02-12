@@ -2,9 +2,11 @@
 // Hook handler for TeammateIdle events - monitors team member activity
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{get_db_path, read_hook_input, resolve_project_id, write_hook_output, HookTimer};
-use crate::proactive::behavior::BehaviorTracker;
+use crate::hooks::{
+    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
+};
 use crate::proactive::EventType;
+use crate::proactive::behavior::BehaviorTracker;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 

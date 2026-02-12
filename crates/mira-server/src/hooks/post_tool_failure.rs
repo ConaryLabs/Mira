@@ -2,9 +2,11 @@
 // Hook handler for PostToolUseFailure events - tracks and learns from tool failures
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{get_db_path, read_hook_input, resolve_project_id, write_hook_output, HookTimer};
-use crate::proactive::behavior::BehaviorTracker;
+use crate::hooks::{
+    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
+};
 use crate::proactive::EventType;
+use crate::proactive::behavior::BehaviorTracker;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
@@ -116,9 +118,11 @@ pub async fn run() -> Result<()> {
                   AND json_extract(event_data, '$.tool_name') = ?
             "#;
             let count = conn
-                .query_row(sql, rusqlite::params![session_id_for_count, tool_name_for_count], |row| {
-                    row.get::<_, i64>(0)
-                })
+                .query_row(
+                    sql,
+                    rusqlite::params![session_id_for_count, tool_name_for_count],
+                    |row| row.get::<_, i64>(0),
+                )
                 .unwrap_or(0);
             Ok::<_, anyhow::Error>(count)
         })

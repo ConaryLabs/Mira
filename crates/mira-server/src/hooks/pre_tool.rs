@@ -42,8 +42,8 @@ fn try_acquire_lock() -> Option<LockGuard> {
     if let Ok(contents) = std::fs::read_to_string(&lock_path)
         && let Ok(pid) = contents.trim().parse::<u32>()
     {
-        // Check if the process is still alive
-        if Path::new(&format!("/proc/{}", pid)).exists() {
+        // Check if the process is still alive (cross-platform)
+        if is_process_alive(pid) {
             return None; // another instance is running
         }
         // Stale lock — remove it
@@ -62,6 +62,18 @@ fn try_acquire_lock() -> Option<LockGuard> {
     let _ = write!(file, "{}", std::process::id());
 
     Some(LockGuard { path: lock_path })
+}
+
+/// Check if a process with the given PID is still alive.
+/// Uses `kill -0` on Unix which works on both Linux and macOS.
+fn is_process_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// RAII guard that removes the lock file on drop.

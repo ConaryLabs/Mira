@@ -788,11 +788,10 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
         .await?;
 
     let Some(scope_info) = scope_info else {
-        return Ok(Json(MemoryOutput {
-            action: "forget".into(),
-            message: format!("Memory not found (id: {})", id),
-            data: None,
-        }));
+        return Err(format!(
+            "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
+            id
+        ));
     };
 
     let project_id = ctx.project_id().await;
@@ -816,11 +815,10 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
             data: None,
         }))
     } else {
-        Ok(Json(MemoryOutput {
-            action: "forget".into(),
-            message: format!("Memory not found (id: {})", id),
-            data: None,
-        }))
+        Err(format!(
+            "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
+            id
+        ))
     }
 }
 
@@ -839,11 +837,10 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
         .await?;
 
     let Some(scope_info) = scope_info else {
-        return Ok(Json(MemoryOutput {
-            action: "archive".into(),
-            message: format!("Memory not found (id: {})", id),
-            data: None,
-        }));
+        return Err(format!(
+            "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
+            id
+        ));
     };
 
     let project_id = ctx.project_id().await;
@@ -877,11 +874,10 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
             data: None,
         }))
     } else {
-        Ok(Json(MemoryOutput {
-            action: "archive".into(),
-            message: format!("Memory not found (id: {})", id),
-            data: None,
-        }))
+        Err(format!(
+            "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
+            id
+        ))
     }
 }
 

@@ -165,7 +165,7 @@ pub fn get_session_events(
     "#;
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([session_id, &limit.to_string()], |row| {
+    let rows = stmt.query_map(rusqlite::params![session_id, limit], |row| {
         let event_type_str: String = row.get(0)?;
         let event_data_str: String = row.get(1)?;
         let created_at_str: String = row.get(2)?;

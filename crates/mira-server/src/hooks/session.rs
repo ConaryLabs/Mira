@@ -806,13 +806,27 @@ pub async fn read_team_membership_from_db(
         .flatten()
 }
 
-/// Write team membership atomically (temp + rename).
+/// Write team membership atomically (temp + rename) with restricted permissions (0o600).
 pub fn write_team_membership(session_id: &str, membership: &TeamMembership) -> Result<()> {
     let path = team_file_path_for_session(session_id)
         .ok_or_else(|| anyhow::anyhow!("Invalid session_id for team file path: {session_id:?}"))?;
     let json = serde_json::to_string(membership)?;
     let temp_path = path.with_extension("tmp");
-    fs::write(&temp_path, &json)?;
+
+    // Write temp file with restricted permissions (0o600)
+    {
+        use std::io::Write;
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&temp_path)?;
+        f.write_all(json.as_bytes())?;
+    }
+
     fs::rename(&temp_path, &path)?;
     Ok(())
 }

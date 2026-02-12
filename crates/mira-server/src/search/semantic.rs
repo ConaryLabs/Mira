@@ -197,7 +197,7 @@ fn rerank_results_with_intent(
             trimmed.starts_with("///")
                 || trimmed.starts_with("/**")
                 || trimmed.starts_with("\"\"\"")
-                || trimmed.starts_with("#")
+                || trimmed.starts_with("# ")
         });
         if has_docs {
             boost *= 1.10;

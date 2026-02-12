@@ -201,13 +201,12 @@ pub async fn run_stop() -> Result<()> {
     let mut entities = crate::entities::extract_entities_heuristic(&subagent_output);
 
     // Extract additional entities from full transcript if available
-    if let Some(transcript_entities) = extract_transcript_entities(&stop_input.agent_transcript_path)
+    if let Some(transcript_entities) =
+        extract_transcript_entities(&stop_input.agent_transcript_path)
     {
         // Merge transcript entities, deduplicating by canonical_name
-        let existing: std::collections::HashSet<String> = entities
-            .iter()
-            .map(|e| e.canonical_name.clone())
-            .collect();
+        let existing: std::collections::HashSet<String> =
+            entities.iter().map(|e| e.canonical_name.clone()).collect();
         for entity in transcript_entities {
             if !existing.contains(&entity.canonical_name) {
                 entities.push(entity);
@@ -308,19 +307,14 @@ fn validate_transcript_path(path_str: &str) -> Option<PathBuf> {
 /// Extract entities from a subagent's JSONL transcript file.
 /// Returns None if the path is missing, invalid, or unreadable.
 /// Errors are logged but never block the hook.
-fn extract_transcript_entities(
-    path: &Option<String>,
-) -> Option<Vec<crate::entities::RawEntity>> {
+fn extract_transcript_entities(path: &Option<String>) -> Option<Vec<crate::entities::RawEntity>> {
     let path_str = path.as_deref()?;
     let canonical = validate_transcript_path(path_str)?;
 
     let content = match std::fs::read_to_string(&canonical) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!(
-                "[mira] SubagentStop failed to read transcript: {}",
-                e
-            );
+            eprintln!("[mira] SubagentStop failed to read transcript: {}", e);
             return None;
         }
     };

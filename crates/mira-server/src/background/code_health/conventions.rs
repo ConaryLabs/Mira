@@ -426,11 +426,15 @@ fn get_module_chunks(
     project_id: i64,
     module_path: &str,
 ) -> Result<Vec<String>, String> {
-    let pattern = format!("{}%", module_path);
+    let escaped = module_path
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     let mut stmt = conn
         .prepare(
             "SELECT chunk_content FROM code_chunks
-             WHERE project_id = ? AND file_path LIKE ?",
+             WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'",
         )
         .str_err()?;
 
@@ -451,11 +455,15 @@ fn get_module_imports(
     project_id: i64,
     module_path: &str,
 ) -> Result<Vec<ImportInfo>, String> {
-    let pattern = format!("{}%", module_path);
+    let escaped = module_path
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     let mut stmt = conn
         .prepare(
             "SELECT file_path, import_path FROM imports
-             WHERE project_id = ? AND file_path LIKE ?",
+             WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'",
         )
         .str_err()?;
 
@@ -479,11 +487,15 @@ fn get_module_symbols(
     project_id: i64,
     module_path: &str,
 ) -> Result<Vec<SymbolBasic>, String> {
-    let pattern = format!("{}%", module_path);
+    let escaped = module_path
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     let mut stmt = conn
         .prepare(
             "SELECT name, symbol_type FROM code_symbols
-             WHERE project_id = ? AND file_path LIKE ?",
+             WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'",
         )
         .str_err()?;
 
@@ -507,9 +519,13 @@ fn get_module_file_count(
     project_id: i64,
     module_path: &str,
 ) -> Result<usize, String> {
-    let pattern = format!("{}%", module_path);
+    let escaped = module_path
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     conn.query_row(
-        "SELECT COUNT(DISTINCT file_path) FROM imports WHERE project_id = ? AND file_path LIKE ?",
+        "SELECT COUNT(DISTINCT file_path) FROM imports WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'",
         rusqlite::params![project_id, pattern],
         |row| row.get::<_, i64>(0),
     )

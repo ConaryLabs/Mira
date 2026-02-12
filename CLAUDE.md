@@ -116,6 +116,9 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | `SubagentStart` | Injects relevant memories and active goals for subagent context |
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PermissionRequest` | Auto-approve tools based on stored rules |
+| `PostToolFailure` | Tracks tool failures, recalls relevant memories after 3+ repeated failures |
+| `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |
+| `TeammateIdle` | Logs teammate idle events for team activity tracking |
 
 **Don't:** Manually inject session info, pending tasks, or file tracking that hooks already provide.
 

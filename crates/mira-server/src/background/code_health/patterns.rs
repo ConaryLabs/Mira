@@ -358,11 +358,15 @@ fn get_module_symbols(
     project_id: i64,
     path: &str,
 ) -> Result<Vec<SymbolInfo>, String> {
-    let pattern = format!("{}%", path);
+    let escaped = path
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     let mut stmt = conn
         .prepare(
             "SELECT name, symbol_type, signature FROM code_symbols
-             WHERE project_id = ? AND file_path LIKE ?",
+             WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'",
         )
         .str_err()?;
 
@@ -387,11 +391,15 @@ fn get_module_imports(
     project_id: i64,
     path: &str,
 ) -> Result<Vec<String>, String> {
-    let pattern = format!("{}%", path);
+    let escaped = path
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT import_path FROM imports
-             WHERE project_id = ? AND file_path LIKE ?",
+             WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'",
         )
         .str_err()?;
 
@@ -408,10 +416,14 @@ fn get_module_imports(
 
 /// Count implementations of a trait across the project
 fn count_trait_implementations(conn: &Connection, project_id: i64, trait_name: &str) -> usize {
-    let pattern = format!("{}%", trait_name);
+    let escaped = trait_name
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     conn.query_row(
         "SELECT COUNT(DISTINCT file_path) FROM code_symbols
-         WHERE project_id = ? AND symbol_type = 'impl' AND name LIKE ?",
+         WHERE project_id = ? AND symbol_type = 'impl' AND name LIKE ? ESCAPE '\\'",
         rusqlite::params![project_id, pattern],
         |row| row.get::<_, i64>(0),
     )

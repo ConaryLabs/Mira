@@ -2,9 +2,11 @@
 // Hook handler for TaskCompleted events - auto-links tasks to Mira goals
 
 use crate::db::pool::DatabasePool;
-use crate::hooks::{get_db_path, read_hook_input, resolve_project_id, write_hook_output, HookTimer};
-use crate::proactive::behavior::BehaviorTracker;
+use crate::hooks::{
+    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
+};
 use crate::proactive::EventType;
+use crate::proactive::behavior::BehaviorTracker;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
@@ -159,16 +161,28 @@ fn auto_link_milestone(
         return Ok(());
     }
 
-    // Fuzzy match: check if task subject or description contains milestone title or vice versa
+    // Fuzzy match: check if task subject or description contains milestone title or vice versa.
+    // To prevent overly aggressive matching (e.g., short milestone "fix" matching everything),
+    // require a minimum length for substring matching. Below the threshold, require exact match.
+    const MIN_SUBSTRING_LEN: usize = 4;
     let task_lower = task_subject.to_lowercase();
     let desc_lower = task_description.map(|d| d.to_lowercase());
     for (milestone_id, goal_id, milestone_title) in &milestones {
         let ms_lower = milestone_title.to_lowercase();
         let subject_matches =
-            task_lower.contains(&ms_lower) || ms_lower.contains(&task_lower);
-        let desc_matches = desc_lower
-            .as_ref()
-            .is_some_and(|d| d.contains(&ms_lower) || ms_lower.contains(d));
+            if ms_lower.len() < MIN_SUBSTRING_LEN || task_lower.len() < MIN_SUBSTRING_LEN {
+                // Short strings: require exact case-insensitive match
+                task_lower == ms_lower
+            } else {
+                task_lower.contains(&ms_lower) || ms_lower.contains(&task_lower)
+            };
+        let desc_matches = desc_lower.as_ref().is_some_and(|d| {
+            if ms_lower.len() < MIN_SUBSTRING_LEN || d.len() < MIN_SUBSTRING_LEN {
+                *d == ms_lower
+            } else {
+                d.contains(&ms_lower) || ms_lower.contains(d)
+            }
+        });
         if subject_matches || desc_matches {
             // Mark milestone as completed
             conn.execute(
@@ -257,11 +271,9 @@ mod tests {
 
         // Get the goal ID
         let goal_id: i64 = conn
-            .query_row(
-                "SELECT id FROM goals WHERE project_id = ?",
-                [pid],
-                |row| row.get(0),
-            )
+            .query_row("SELECT id FROM goals WHERE project_id = ?", [pid], |row| {
+                row.get(0)
+            })
             .unwrap();
 
         // Add a milestone
@@ -293,11 +305,9 @@ mod tests {
         crate::db::test_support::seed_goal(&conn, pid, "API Work", "in_progress", 0);
 
         let goal_id: i64 = conn
-            .query_row(
-                "SELECT id FROM goals WHERE project_id = ?",
-                [pid],
-                |row| row.get(0),
-            )
+            .query_row("SELECT id FROM goals WHERE project_id = ?", [pid], |row| {
+                row.get(0)
+            })
             .unwrap();
 
         conn.execute(
@@ -327,11 +337,9 @@ mod tests {
         crate::db::test_support::seed_goal(&conn, pid, "Refactor", "in_progress", 0);
 
         let goal_id: i64 = conn
-            .query_row(
-                "SELECT id FROM goals WHERE project_id = ?",
-                [pid],
-                |row| row.get(0),
-            )
+            .query_row("SELECT id FROM goals WHERE project_id = ?", [pid], |row| {
+                row.get(0)
+            })
             .unwrap();
 
         conn.execute(
@@ -361,11 +369,9 @@ mod tests {
         crate::db::test_support::seed_goal(&conn, pid, "Backend Work", "in_progress", 0);
 
         let goal_id: i64 = conn
-            .query_row(
-                "SELECT id FROM goals WHERE project_id = ?",
-                [pid],
-                |row| row.get(0),
-            )
+            .query_row("SELECT id FROM goals WHERE project_id = ?", [pid], |row| {
+                row.get(0)
+            })
             .unwrap();
 
         conn.execute(
@@ -391,5 +397,77 @@ mod tests {
             )
             .unwrap();
         assert!(completed);
+    }
+
+    #[test]
+    fn auto_link_short_milestone_no_false_positive() {
+        // A short milestone like "fix" should NOT match via substring
+        let conn = crate::db::test_support::setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/tmp/short-test", None).unwrap();
+        crate::db::test_support::seed_goal(&conn, pid, "Bug Fixes", "in_progress", 0);
+
+        let goal_id: i64 = conn
+            .query_row("SELECT id FROM goals WHERE project_id = ?", [pid], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        conn.execute(
+            "INSERT INTO milestones (goal_id, title, completed, weight) VALUES (?, ?, 0, 1)",
+            rusqlite::params![goal_id, "fix"],
+        )
+        .unwrap();
+
+        // Task "Fix login bug" should NOT match short milestone "fix" via substring
+        auto_link_milestone(&conn, pid, "Fix login bug", None).unwrap();
+
+        let completed: bool = conn
+            .query_row(
+                "SELECT completed FROM milestones WHERE goal_id = ?",
+                [goal_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !completed,
+            "Short milestone 'fix' should not match via substring"
+        );
+    }
+
+    #[test]
+    fn auto_link_short_milestone_exact_match() {
+        // A short milestone should still match if the task subject is exactly the same
+        let conn = crate::db::test_support::setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/tmp/exact-test", None).unwrap();
+        crate::db::test_support::seed_goal(&conn, pid, "Quick Tasks", "in_progress", 0);
+
+        let goal_id: i64 = conn
+            .query_row("SELECT id FROM goals WHERE project_id = ?", [pid], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        conn.execute(
+            "INSERT INTO milestones (goal_id, title, completed, weight) VALUES (?, ?, 0, 1)",
+            rusqlite::params![goal_id, "Fix"],
+        )
+        .unwrap();
+
+        // Exact match (case-insensitive) should still work
+        auto_link_milestone(&conn, pid, "fix", None).unwrap();
+
+        let completed: bool = conn
+            .query_row(
+                "SELECT completed FROM milestones WHERE goal_id = ?",
+                [goal_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            completed,
+            "Short milestone should match on exact case-insensitive match"
+        );
     }
 }

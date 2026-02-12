@@ -65,30 +65,30 @@ pub async fn run() -> Result<()> {
 
     // Handle Bash commands: detect file-modifying commands and log them
     if post_input.tool_name == "Bash" {
-        if let Some(ref command) = post_input.command {
-            if is_file_modifying_command(command) {
-                let db_path = get_db_path();
-                if let Ok(pool) = DatabasePool::open(&db_path).await {
-                    let pool = Arc::new(pool);
-                    if let Some(project_id) = resolve_project_id(&pool).await {
-                        let session_id = post_input.session_id.clone();
-                        let cmd = crate::utils::truncate(command, 500);
-                        pool.try_interact("bash file modify logging", move |conn| {
-                            let mut tracker =
-                                BehaviorTracker::for_session(conn, session_id, project_id);
-                            let data = serde_json::json!({
-                                "behavior_type": "bash_file_modify",
-                                "command": cmd,
-                            });
-                            if let Err(e) =
-                                tracker.log_event(conn, crate::proactive::EventType::ToolUse, data)
-                            {
-                                tracing::debug!("Failed to log bash file modify: {e}");
-                            }
-                            Ok(())
-                        })
-                        .await;
-                    }
+        if let Some(ref command) = post_input.command
+            && is_file_modifying_command(command)
+        {
+            let db_path = get_db_path();
+            if let Ok(pool) = DatabasePool::open(&db_path).await {
+                let pool = Arc::new(pool);
+                if let Some(project_id) = resolve_project_id(&pool).await {
+                    let session_id = post_input.session_id.clone();
+                    let cmd = crate::utils::truncate(command, 500);
+                    pool.try_interact("bash file modify logging", move |conn| {
+                        let mut tracker =
+                            BehaviorTracker::for_session(conn, session_id, project_id);
+                        let data = serde_json::json!({
+                            "behavior_type": "bash_file_modify",
+                            "command": cmd,
+                        });
+                        if let Err(e) =
+                            tracker.log_event(conn, crate::proactive::EventType::ToolUse, data)
+                        {
+                            tracing::debug!("Failed to log bash file modify: {e}");
+                        }
+                        Ok(())
+                    })
+                    .await;
                 }
             }
         }
@@ -235,9 +235,7 @@ fn is_file_modifying_command(command: &str) -> bool {
     }
 
     // File-modifying commands (anywhere in pipeline)
-    const MODIFY_COMMANDS: &[&str] = &[
-        "mv ", "cp ", "rm ", "mkdir ", "touch ", "chmod ", "chown ",
-    ];
+    const MODIFY_COMMANDS: &[&str] = &["mv ", "cp ", "rm ", "mkdir ", "touch ", "chmod ", "chown "];
     for cmd in MODIFY_COMMANDS {
         if trimmed.contains(cmd) {
             return true;
@@ -245,9 +243,7 @@ fn is_file_modifying_command(command: &str) -> bool {
     }
 
     // Git operations that modify working tree
-    const GIT_MODIFY_PREFIXES: &[&str] = &[
-        "git checkout", "git merge", "git rebase", "git reset",
-    ];
+    const GIT_MODIFY_PREFIXES: &[&str] = &["git checkout", "git merge", "git rebase", "git reset"];
     for prefix in GIT_MODIFY_PREFIXES {
         if trimmed.contains(prefix) {
             return true;
@@ -438,7 +434,9 @@ mod tests {
     #[test]
     fn detects_piped_mv() {
         // "find ... | xargs mv" - contains "mv " inside pipeline
-        assert!(is_file_modifying_command("find . -name '*.bak' | xargs mv target/"));
+        assert!(is_file_modifying_command(
+            "find . -name '*.bak' | xargs mv target/"
+        ));
     }
 
     #[test]

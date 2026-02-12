@@ -8,7 +8,7 @@
 
 Claude Code is stateless. Every session starts from zero — your architecture decisions forgotten, your preferences lost, your codebase understood only as far as it can grep. Mira fixes that.
 
-Mira is a Rust MCP server that gives Claude Code long-term memory and deep code understanding. It runs locally, stores everything in SQLite, and integrates through Claude Code's plugin system with 10 hooks that make context injection automatic — relevant memories recalled on every prompt, file changes tracked, session continuity preserved, and subagent context shared.
+Mira is a Rust MCP server that gives Claude Code long-term memory and deep code understanding. It runs locally, stores everything in SQLite, and integrates through Claude Code's plugin system with 13 hooks that make context injection automatic — relevant memories recalled on every prompt, file changes tracked, session continuity preserved, and subagent context shared.
 
 ## What Mira Does
 
@@ -142,7 +142,10 @@ The plugin install auto-configures hooks. For MCP-only installs, add to `~/.clau
     "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
     "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5000}]}],
     "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}]
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}],
+    "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "mira hook post-tool-failure", "timeout": 5000, "async": true}]}],
+    "TaskCompleted": [{"hooks": [{"type": "command", "command": "mira hook task-completed", "timeout": 5000}]}],
+    "TeammateIdle": [{"hooks": [{"type": "command", "command": "mira hook teammate-idle", "timeout": 5000}]}]
   }
 }
 ```

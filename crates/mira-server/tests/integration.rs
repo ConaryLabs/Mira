@@ -856,18 +856,16 @@ async fn test_pool_error_handling() {
         "recall should handle missing project gracefully"
     );
 
-    // Try forget with non-existent ID
+    // Try forget with non-existent ID (should return Err with not-found message)
     let result = forget(&ctx, 999999).await;
-    assert!(
-        result.is_ok(),
-        "forget should handle non-existent ID gracefully"
-    );
-    let output = result.unwrap();
-    assert!(
-        msg!(output).contains("not found"),
-        "Should indicate memory not found: {}",
-        msg!(output)
-    );
+    match result {
+        Err(ref err) => assert!(
+            err.contains("not found"),
+            "Should indicate memory not found: {}",
+            err
+        ),
+        Ok(_) => panic!("forget should return error for non-existent ID"),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

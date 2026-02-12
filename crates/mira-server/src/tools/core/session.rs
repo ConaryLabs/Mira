@@ -355,7 +355,7 @@ pub(crate) async fn session_history<C: ToolContext>(
             let items: Vec<HistoryEntry> = history
                 .into_iter()
                 .map(|entry| {
-                    let status = if entry.success { "✓" } else { "✗" };
+                    let status = if entry.success { "[ok]" } else { "[err]" };
                     let preview = entry
                         .result_summary
                         .as_ref()

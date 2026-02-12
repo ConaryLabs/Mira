@@ -88,6 +88,46 @@ async fn verify_milestone_project<C: ToolContext>(
     Ok(())
 }
 
+/// Valid goal statuses.
+const VALID_STATUSES: &[&str] = &[
+    "planning",
+    "in_progress",
+    "blocked",
+    "completed",
+    "abandoned",
+];
+
+/// Valid goal priorities.
+const VALID_PRIORITIES: &[&str] = &["low", "medium", "high", "critical"];
+
+/// Validate a status value, if provided.
+fn validate_status(status: &Option<String>) -> Result<(), String> {
+    if let Some(s) = status
+        && !VALID_STATUSES.contains(&s.as_str())
+    {
+        return Err(format!(
+            "Invalid status '{}'. Must be one of: {}",
+            s,
+            VALID_STATUSES.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a priority value, if provided.
+fn validate_priority(priority: &Option<String>) -> Result<(), String> {
+    if let Some(p) = priority
+        && !VALID_PRIORITIES.contains(&p.as_str())
+    {
+        return Err(format!(
+            "Invalid priority '{}'. Must be one of: {}",
+            p,
+            VALID_PRIORITIES.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 /// Validate that an ID is positive (non-zero, non-negative).
 fn validate_positive_id(id: i64, field: &str) -> Result<i64, String> {
     if id <= 0 {
@@ -164,6 +204,9 @@ async fn action_create<C: ToolContext>(
     priority: Option<String>,
     progress_percent: Option<i32>,
 ) -> Result<Json<GoalOutput>, String> {
+    validate_status(&status)?;
+    validate_priority(&priority)?;
+
     let title_for_result = title.clone();
 
     let id = ctx
@@ -208,6 +251,12 @@ async fn action_bulk_create<C: ToolContext>(
 
     if bulk_goals.len() > 100 {
         return Err("Too many goals: maximum 100 per bulk_create call".into());
+    }
+
+    // Validate status/priority for all goals before writing any
+    for g in &bulk_goals {
+        validate_status(&g.status)?;
+        validate_priority(&g.priority)?;
     }
 
     let results = ctx
@@ -263,10 +312,15 @@ async fn action_list<C: ToolContext>(
 ) -> Result<Json<GoalOutput>, String> {
     let limit_usize = limit.max(0) as usize;
     let goals = if include_finished {
-        ctx.pool()
+        let mut all = ctx
+            .pool()
             .run(move |conn| get_goals_sync(conn, project_id, None))
             .await
-            .map_err(|e| format!("Failed to list goals: {}", e))?
+            .map_err(|e| format!("Failed to list goals: {}", e))?;
+        if limit_usize > 0 {
+            all.truncate(limit_usize);
+        }
+        all
     } else {
         ctx.pool()
             .run(move |conn| get_active_goals_sync(conn, project_id, limit_usize))
@@ -369,6 +423,9 @@ async fn action_update<C: ToolContext>(
     priority: Option<String>,
     progress_percent: Option<i32>,
 ) -> Result<Json<GoalOutput>, String> {
+    validate_status(&status)?;
+    validate_priority(&priority)?;
+
     get_authorized_goal(ctx, goal_id).await?;
 
     ctx.pool()
@@ -727,6 +784,45 @@ mod tests {
         let json = r#"{"description": "no title"}"#;
         let result = serde_json::from_str::<BulkGoal>(json);
         assert!(result.is_err());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GoalRequest dispatcher validation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Status and priority validation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_validate_status_valid() {
+        for s in VALID_STATUSES {
+            assert!(validate_status(&Some(s.to_string())).is_ok());
+        }
+        // None is always valid (field is optional)
+        assert!(validate_status(&None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_status_invalid() {
+        let err = validate_status(&Some("typo".into())).unwrap_err();
+        assert!(err.contains("Invalid status 'typo'"));
+        assert!(err.contains("planning"));
+    }
+
+    #[test]
+    fn test_validate_priority_valid() {
+        for p in VALID_PRIORITIES {
+            assert!(validate_priority(&Some(p.to_string())).is_ok());
+        }
+        assert!(validate_priority(&None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_priority_invalid() {
+        let err = validate_priority(&Some("urgent".into())).unwrap_err();
+        assert!(err.contains("Invalid priority 'urgent'"));
+        assert!(err.contains("low"));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

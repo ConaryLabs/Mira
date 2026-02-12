@@ -141,10 +141,6 @@ Where it all began - a personal AI assistant with memory.
 - **Clippy warnings** -- Collapsed nested `if let` chains, removed redundant closures, stabilized constant assertions.
 
 ### Changed
-- **Priority-based context budget** -- BudgetManager now sorts context fragments by priority before applying the char limit, so the most valuable context survives truncation. Named priority constants defined in `budget.rs`.
-- **Unified hook budget** -- All UserPromptSubmit context sources (reactive, team, proactive, tasks) routed through a single priority-scored budget instead of ad-hoc concatenation.
-- **Shared `format_active_goals()`** -- Deduplicated four independent goal-formatting implementations across hooks into a single shared helper (~75 lines removed).
-- **Batched DB inserts in precompact** -- PreCompact hook now batch-inserts extracted decisions/TODOs instead of one-at-a-time writes.
 - **Cooldown file permissions** -- Cooldown state files now written with mode 0600 instead of world-readable defaults.
 - **Dead table cleanup** -- Dropped unused tables: `corrections`, `users`, `pattern_provenance`, `cross_project_patterns`, `pattern_sharing_log`, `cross_project_preferences`.
 

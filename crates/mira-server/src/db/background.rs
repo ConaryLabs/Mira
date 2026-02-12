@@ -500,19 +500,24 @@ pub fn map_files_to_symbols_sync(
     let mut symbols = Vec::new();
 
     for file in changed_files {
-        let file_pattern = format!("%{}", file);
+        // Escape LIKE wildcards in file path to prevent injection
+        let escaped = file
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let file_pattern = format!("%{}", escaped);
         let sql = match project_id {
             Some(_) => {
                 "SELECT name, symbol_type, file_path FROM code_symbols \
-                 WHERE project_id = ?1 AND file_path LIKE ?2 \
+                 WHERE project_id = ?1 AND file_path LIKE ?2 ESCAPE '\\' \
                  UNION ALL \
                  SELECT name, symbol_type, file_path FROM code_symbols \
-                 WHERE project_id IS NULL AND file_path LIKE ?2 \
+                 WHERE project_id IS NULL AND file_path LIKE ?2 ESCAPE '\\' \
                  ORDER BY start_line"
             }
             None => {
                 "SELECT name, symbol_type, file_path FROM code_symbols \
-                 WHERE project_id IS NULL AND file_path LIKE ?2 \
+                 WHERE project_id IS NULL AND file_path LIKE ?2 ESCAPE '\\' \
                  ORDER BY start_line"
             }
         };
