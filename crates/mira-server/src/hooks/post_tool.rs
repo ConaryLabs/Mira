@@ -99,15 +99,6 @@ pub async fn run() -> Result<()> {
         .await;
     }
 
-    // Queue file for re-indexing (background)
-    {
-        let file_path_clone = file_path.clone();
-        pool.try_interact("queue file indexing", move |conn| {
-            queue_file_for_indexing(conn, project_id, &file_path_clone)
-        })
-        .await;
-    }
-
     // Track file ownership for team intelligence (only for file-mutating tools)
     let is_write_tool = matches!(
         post_input.tool_name.as_str(),
@@ -192,30 +183,6 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-/// Queue a file for background re-indexing
-fn queue_file_for_indexing(
-    conn: &rusqlite::Connection,
-    project_id: i64,
-    file_path: &str,
-) -> Result<()> {
-    // Add to pending_files table if it exists
-    let sql = r#"
-        INSERT OR REPLACE INTO pending_files (project_id, path, queued_at, status)
-        VALUES (?, ?, datetime('now'), 'pending')
-    "#;
-
-    match conn.execute(sql, rusqlite::params![project_id, file_path]) {
-        Ok(_) => {
-            eprintln!("[mira] Queued {} for re-indexing", file_path);
-        }
-        Err(e) => {
-            // Table might not exist - that's ok
-            eprintln!("[mira] Could not queue file: {}", e);
-        }
-    }
-
-    Ok(())
-}
 
 /// Find related test files for a source file
 fn find_related_tests(file_path: &str) -> Option<String> {

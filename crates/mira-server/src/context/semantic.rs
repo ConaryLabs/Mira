@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 pub struct SemanticInjector {
     pool: Arc<DatabasePool>,
+    code_pool: Option<Arc<DatabasePool>>,
     embeddings: Option<Arc<EmbeddingClient>>,
     fuzzy: Option<Arc<FuzzyCache>>,
 }
@@ -18,11 +19,13 @@ pub struct SemanticInjector {
 impl SemanticInjector {
     pub fn new(
         pool: Arc<DatabasePool>,
+        code_pool: Option<Arc<DatabasePool>>,
         embeddings: Option<Arc<EmbeddingClient>>,
         fuzzy: Option<Arc<FuzzyCache>>,
     ) -> Self {
         Self {
             pool,
+            code_pool,
             embeddings,
             fuzzy,
         }
@@ -39,9 +42,11 @@ impl SemanticInjector {
         // For now, ignore session_id (could be used for session-specific memories later)
         let _ = session_id;
 
-        // Perform hybrid search (falls back to keyword search if embeddings is None)
+        // Use code_pool for hybrid search (vec_code/code_fts live in mira-code.db),
+        // falling back to main pool for backward compatibility
+        let search_pool = self.code_pool.as_ref().unwrap_or(&self.pool);
         let result = hybrid_search(
-            &self.pool,
+            search_pool,
             self.embeddings.as_ref(),
             self.fuzzy.as_ref(),
             user_message,

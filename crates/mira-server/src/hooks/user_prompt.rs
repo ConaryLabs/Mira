@@ -5,7 +5,7 @@ use crate::config::EnvConfig;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
-use crate::hooks::{get_db_path, read_hook_input, resolve_project, write_hook_output};
+use crate::hooks::{get_code_db_path, get_db_path, read_hook_input, resolve_project, write_hook_output};
 use crate::proactive::background::get_pre_generated_suggestions;
 use crate::proactive::{behavior::BehaviorTracker, predictor};
 use crate::utils::truncate_at_boundary;
@@ -189,6 +189,53 @@ fn get_task_context() -> Option<String> {
     }
 }
 
+/// Check if a message is a simple command that doesn't need proactive context.
+/// This is a lightweight standalone version of the gating logic in
+/// ContextInjectionManager::is_simple_command, used to gate proactive suggestions
+/// without constructing a full manager instance.
+fn is_simple_command_standalone(message: &str) -> bool {
+    let trimmed = message.trim();
+
+    // Very short messages (1 word)
+    if trimmed.split_whitespace().count() <= 1 {
+        return true;
+    }
+
+    // Slash commands
+    if trimmed.starts_with('/') {
+        return true;
+    }
+
+    // URLs
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return true;
+    }
+
+    let lower = trimmed.to_lowercase();
+
+    // Common CLI command prefixes
+    let simple_prefixes = [
+        "git", "cargo", "ls", "cd", "pwd", "echo", "cat", "rm", "mkdir", "touch", "mv", "cp",
+        "npm", "yarn", "docker", "kubectl", "ps", "grep", "find", "which",
+    ];
+    if simple_prefixes.iter().any(|&prefix| {
+        lower.starts_with(prefix)
+            && (lower.len() == prefix.len()
+                || lower.as_bytes().get(prefix.len()) == Some(&b' '))
+    }) {
+        return true;
+    }
+
+    false
+}
+
+/// Check if a message length is within bounds for proactive context injection.
+/// Uses the same defaults as InjectionConfig (min=30, max=500).
+fn is_message_length_in_bounds(message: &str) -> bool {
+    let len = message.trim().len();
+    len >= 30 && len <= 500
+}
+
 /// Run UserPromptSubmit hook
 pub async fn run() -> Result<()> {
     let input = read_hook_input()?;
@@ -213,9 +260,21 @@ pub async fn run() -> Result<()> {
         input.as_object().map(|obj| obj.keys().collect::<Vec<_>>())
     );
 
-    // Open database and create context injection manager
+    // Open database pools (main + code index)
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(std::path::Path::new(&db_path)).await?);
+    let code_db_path = get_code_db_path();
+    let code_pool = if code_db_path.exists() {
+        match DatabasePool::open_code_db(&code_db_path).await {
+            Ok(cp) => Some(Arc::new(cp)),
+            Err(e) => {
+                eprintln!("[mira] Failed to open code database: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
     let env_config = EnvConfig::load();
     let embeddings = get_embeddings(Some(pool.clone()));
     let fuzzy = if env_config.fuzzy_fallback {
@@ -224,7 +283,8 @@ pub async fn run() -> Result<()> {
         None
     };
     let manager =
-        crate::context::ContextInjectionManager::new(pool.clone(), embeddings, fuzzy).await;
+        crate::context::ContextInjectionManager::new(pool.clone(), code_pool, embeddings, fuzzy)
+            .await;
 
     // Resolve project once (eliminates duplicate get_last_active_project_sync calls)
     let (project_id, project_path) = resolve_project(&pool).await;
@@ -242,20 +302,31 @@ pub async fn run() -> Result<()> {
         .get_context_for_message(user_message, session_id)
         .await;
 
-    // Get proactive predictions if enabled
+    // Get proactive predictions if enabled.
+    // Gate proactive context with simple command and length checks to avoid
+    // injecting suggestions for CLI commands or large code pastes.
+    // (Proactive has its own rate limiting so sampling is not applied here.)
     let session_id_for_proactive = if session_id.is_empty() {
         None
     } else {
         Some(session_id)
     };
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
-        get_proactive_context(
-            &pool,
-            project_id,
-            project_path.as_deref(),
-            session_id_for_proactive,
-        )
-        .await
+        if is_simple_command_standalone(user_message) {
+            eprintln!("[mira] Proactive context skipped: simple command");
+            None
+        } else if !is_message_length_in_bounds(user_message) {
+            eprintln!("[mira] Proactive context skipped: message length out of bounds");
+            None
+        } else {
+            get_proactive_context(
+                &pool,
+                project_id,
+                project_path.as_deref(),
+                session_id_for_proactive,
+            )
+            .await
+        }
     } else {
         None
     };
@@ -549,5 +620,37 @@ mod tests {
 
         // Log behavior without seeding a session — should not panic
         log_behavior(&pool, project_id, "nonexistent-sess", "test query").await;
+    }
+
+    #[test]
+    fn simple_command_standalone_detects_cli_commands() {
+        assert!(is_simple_command_standalone("git status"));
+        assert!(is_simple_command_standalone("cargo build"));
+        assert!(is_simple_command_standalone("ls -la"));
+        assert!(is_simple_command_standalone("/commit"));
+        assert!(is_simple_command_standalone("https://example.com"));
+        assert!(is_simple_command_standalone("ok"));
+    }
+
+    #[test]
+    fn simple_command_standalone_allows_real_queries() {
+        assert!(!is_simple_command_standalone(
+            "how does the authentication module work?"
+        ));
+        assert!(!is_simple_command_standalone(
+            "refactor the database connection pool"
+        ));
+    }
+
+    #[test]
+    fn message_length_bounds_check() {
+        // Too short (< 30 chars)
+        assert!(!is_message_length_in_bounds("short"));
+        // Too long (> 500 chars)
+        assert!(!is_message_length_in_bounds(&"x".repeat(501)));
+        // Within bounds
+        assert!(is_message_length_in_bounds(
+            "how does the authentication module work in this project?"
+        ));
     }
 }

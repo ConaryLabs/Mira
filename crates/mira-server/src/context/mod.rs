@@ -117,6 +117,7 @@ pub struct ContextInjectionManager {
 impl ContextInjectionManager {
     pub async fn new(
         pool: Arc<DatabasePool>,
+        code_pool: Option<Arc<DatabasePool>>,
         embeddings: Option<Arc<EmbeddingClient>>,
         fuzzy: Option<Arc<FuzzyCache>>,
     ) -> Self {
@@ -125,7 +126,7 @@ impl ContextInjectionManager {
 
         Self {
             pool: pool.clone(),
-            semantic_injector: SemanticInjector::new(pool.clone(), embeddings, fuzzy),
+            semantic_injector: SemanticInjector::new(pool.clone(), code_pool, embeddings, fuzzy),
             file_injector: FileAwareInjector::new(pool.clone()),
             goal_injector: GoalAwareInjector::new(pool.clone()),
             convention_injector: ConventionInjector::new(pool.clone()),

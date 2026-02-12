@@ -24,6 +24,11 @@ pub fn get_db_path() -> PathBuf {
     home.join(".mira/mira.db")
 }
 
+/// Get the Mira code database path (~/.mira/mira-code.db)
+pub fn get_code_db_path() -> PathBuf {
+    get_db_path().with_file_name("mira-code.db")
+}
+
 /// Resolve active project ID and path in a single DB call.
 /// Returns (Option<project_id>, Option<project_path>).
 pub async fn resolve_project(
