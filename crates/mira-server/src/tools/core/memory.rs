@@ -17,8 +17,10 @@ static INJECTION_PATTERNS: LazyLock<Vec<(&str, Regex)>> = LazyLock::new(|| {
     vec![
         (
             "ignore instructions",
-            Regex::new(r"(?i)ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|context|rules)")
-                .expect("valid regex"),
+            Regex::new(
+                r"(?i)ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|context|rules)",
+            )
+            .expect("valid regex"),
         ),
         (
             "behavioral override",
@@ -40,8 +42,7 @@ static INJECTION_PATTERNS: LazyLock<Vec<(&str, Regex)>> = LazyLock::new(|| {
         ),
         (
             "do not follow",
-            Regex::new(r"(?i)do\s+not\s+follow\s+(any|the|previous)\b")
-                .expect("valid regex"),
+            Regex::new(r"(?i)do\s+not\s+follow\s+(any|the|previous)\b").expect("valid regex"),
         ),
         (
             "from now on",
@@ -317,25 +318,49 @@ pub async fn remember<C: ToolContext>(
         return Err("Memory content cannot be empty or whitespace-only.".to_string());
     }
 
-    // Rate limiting: max 50 new memories per session
+    // Rate limiting: max 50 new memories per session.
+    // Skip for key-based upserts that update an existing memory (not a new creation).
+    // Fail-closed: DB errors are treated as limit reached to prevent bypass.
+    // Note: SQLite's single-writer model minimizes the TOCTOU race between
+    // this check and the subsequent insert.
     if let Some(ref sid) = ctx.get_session_id().await {
-        let sid_clone = sid.clone();
-        let count: i64 = ctx
-            .pool()
-            .run(move |conn| {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM memory_facts WHERE first_session_id = ?1",
-                    [&sid_clone],
-                    |row| row.get(0),
-                )
-            })
-            .await
-            .unwrap_or(0);
-        if count >= MAX_MEMORIES_PER_SESSION {
-            return Err(format!(
-                "Rate limit exceeded: {} memories already created this session (max {}).",
-                count, MAX_MEMORIES_PER_SESSION
-            ));
+        let is_keyed_update = if let Some(ref k) = key {
+            let k2 = k.clone();
+            let pid = ctx.project_id().await;
+            ctx.pool()
+                .run(move |conn| {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM memory_facts WHERE key = ?1 AND project_id IS ?2",
+                        rusqlite::params![k2, pid],
+                        |row| row.get::<_, i64>(0),
+                    )
+                })
+                .await
+                .unwrap_or(0)
+                > 0
+        } else {
+            false
+        };
+
+        if !is_keyed_update {
+            let sid_clone = sid.clone();
+            let count: i64 = ctx
+                .pool()
+                .run(move |conn| {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM memory_facts WHERE first_session_id = ?1",
+                        [&sid_clone],
+                        |row| row.get(0),
+                    )
+                })
+                .await
+                .unwrap_or(MAX_MEMORIES_PER_SESSION); // fail-closed
+            if count >= MAX_MEMORIES_PER_SESSION {
+                return Err(format!(
+                    "Rate limit exceeded: {} memories already created this session (max {}).",
+                    count, MAX_MEMORIES_PER_SESSION
+                ));
+            }
         }
     }
 

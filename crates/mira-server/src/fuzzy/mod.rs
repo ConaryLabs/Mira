@@ -220,7 +220,7 @@ impl FuzzyCache {
                     })
                 };
                 let lim = MAX_MEMORY_ITEMS as i64;
-                let user_type_filter = "AND fact_type IN ('general','preference','decision','pattern','context','persona') AND status != 'archived'";
+                let user_type_filter = "AND fact_type IN ('general','preference','decision','pattern','context','persona') AND status != 'archived' AND COALESCE(suspicious, 0) = 0";
                 match project_id_for_query {
                     Some(pid) => {
                         let sql = format!(

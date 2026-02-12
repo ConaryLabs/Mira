@@ -541,6 +541,7 @@ pub fn search_memories_sync(
          WHERE {}
            AND fact_type IN ('general','preference','decision','pattern','context','persona')
            AND status != 'archived'
+           AND COALESCE(suspicious, 0) = 0
            AND content LIKE ?2 ESCAPE '\\'
          ORDER BY updated_at DESC
          LIMIT ?3",
