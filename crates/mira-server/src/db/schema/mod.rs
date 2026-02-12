@@ -196,6 +196,16 @@ fn migration_registry() -> Vec<Migration> {
             name: "doc_skip_reason_and_completed_status",
             func: memory::migrate_documentation_skip_reason_and_completed_status,
         },
+        Migration {
+            version: 33,
+            name: "system_observations_table",
+            func: memory::migrate_system_observations_table,
+        },
+        Migration {
+            version: 34,
+            name: "migrate_memory_facts_to_observations",
+            func: memory::migrate_memory_facts_to_observations,
+        },
     ]
 }
 

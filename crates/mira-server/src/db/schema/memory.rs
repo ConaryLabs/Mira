@@ -292,6 +292,166 @@ pub fn migrate_documentation_skip_reason_and_completed_status(conn: &Connection)
     Ok(())
 }
 
+/// Create the system_observations table for ephemeral system-generated data.
+///
+/// Unlike memory_facts (user memories), observations are TTL-based, not embedded,
+/// and not exported. Stores health findings, scan markers, extracted outcomes, etc.
+pub fn migrate_system_observations_table(conn: &Connection) -> Result<()> {
+    create_table_if_missing(
+        conn,
+        "system_observations",
+        r#"
+        CREATE TABLE IF NOT EXISTS system_observations (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            key TEXT,
+            content TEXT NOT NULL,
+            observation_type TEXT NOT NULL,
+            category TEXT,
+            confidence REAL DEFAULT 0.5,
+            source TEXT NOT NULL,
+            session_id TEXT,
+            team_id INTEGER,
+            scope TEXT DEFAULT 'project',
+            expires_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_obs_upsert
+            ON system_observations(COALESCE(project_id, -1), COALESCE(team_id, -1), scope, key)
+            WHERE key IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_obs_project ON system_observations(project_id);
+        CREATE INDEX IF NOT EXISTS idx_obs_type ON system_observations(project_id, observation_type);
+        CREATE INDEX IF NOT EXISTS idx_obs_expires ON system_observations(expires_at) WHERE expires_at IS NOT NULL;
+    "#,
+    )
+}
+
+/// Migrate system data from memory_facts to system_observations.
+///
+/// Moves health findings, system markers, session events, extracted outcomes,
+/// convergence alerts, and distilled data. Deduplicates keyed rows first, then
+/// moves data atomically: insert -> delete -> clean orphaned embeddings.
+pub fn migrate_memory_facts_to_observations(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "system_observations") || !table_exists(conn, "memory_facts") {
+        return Ok(());
+    }
+
+    // Check if there's anything to migrate
+    let system_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_facts
+         WHERE fact_type IN ('health','system','session_event','extracted','tool_outcome','convergence_alert','distilled')
+            OR (fact_type = 'context' AND category = 'subagent_discovery')
+            OR (fact_type = 'context' AND category = 'system')",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if system_count == 0 {
+        tracing::info!("No system data to migrate from memory_facts");
+        return Ok(());
+    }
+
+    tracing::info!(
+        "Migrating {} system rows from memory_facts to system_observations",
+        system_count
+    );
+
+    // Step 0: Deduplicate keyed rows in memory_facts.
+    // memory_facts has no UNIQUE(project_id, key) constraint, and INSERT OR REPLACE
+    // in insert_system_marker_sync silently creates duplicates. Keep only the latest
+    // row per (project_id, key) group for system rows.
+    let deduped: usize = conn.execute(
+        "DELETE FROM memory_facts WHERE id NOT IN (
+            SELECT MAX(id) FROM memory_facts
+            WHERE key IS NOT NULL
+              AND fact_type IN ('health','system','session_event','extracted','tool_outcome','convergence_alert','distilled')
+            GROUP BY COALESCE(project_id, -1), key
+        ) AND key IS NOT NULL
+          AND fact_type IN ('health','system','session_event','extracted','tool_outcome','convergence_alert','distilled')",
+        [],
+    )?;
+    if deduped > 0 {
+        tracing::info!("Deduplicated {} keyed system rows in memory_facts", deduped);
+    }
+
+    // Step 1: INSERT into system_observations with type mapping.
+    // Map fact_type -> observation_type, infer source from (fact_type, category).
+    conn.execute_batch(
+        "INSERT INTO system_observations
+            (project_id, key, content, observation_type, category, confidence,
+             source, session_id, team_id, scope, created_at, updated_at)
+         SELECT
+            project_id, key, content,
+            -- observation_type mapping
+            CASE
+                WHEN fact_type = 'health' THEN 'health'
+                WHEN fact_type = 'system' THEN 'system'
+                WHEN fact_type = 'session_event' THEN 'session_event'
+                WHEN fact_type = 'extracted' THEN 'extracted'
+                WHEN fact_type = 'tool_outcome' THEN 'tool_outcome'
+                WHEN fact_type = 'convergence_alert' THEN 'convergence_alert'
+                WHEN fact_type = 'distilled' THEN 'distilled'
+                WHEN fact_type = 'context' AND category = 'subagent_discovery' THEN 'subagent_discovery'
+                WHEN fact_type = 'context' AND category = 'system' THEN 'system'
+                ELSE fact_type
+            END,
+            category, confidence,
+            -- source inference
+            CASE
+                WHEN fact_type = 'health' AND category IN ('todo','unimplemented','unwrap','error_handling') THEN 'code_health'
+                WHEN fact_type = 'health' AND category = 'warning' THEN 'code_health'
+                WHEN fact_type = 'health' AND category IN ('complexity','error_quality') THEN 'code_health'
+                WHEN fact_type = 'health' AND category = 'circular_dependency' THEN 'code_health'
+                WHEN fact_type = 'health' AND category IN ('architecture','unused') THEN 'code_health'
+                WHEN fact_type = 'health' THEN 'code_health'
+                WHEN fact_type = 'system' AND category = 'health' THEN 'code_health'
+                WHEN fact_type = 'system' AND category = 'documentation' THEN 'documentation'
+                WHEN fact_type = 'system' THEN 'system'
+                WHEN fact_type = 'session_event' THEN 'precompact'
+                WHEN fact_type = 'extracted' THEN 'precompact'
+                WHEN fact_type = 'tool_outcome' THEN 'extraction'
+                WHEN fact_type = 'convergence_alert' THEN 'team_monitor'
+                WHEN fact_type = 'distilled' THEN 'distillation'
+                WHEN fact_type = 'context' AND category = 'subagent_discovery' THEN 'subagent'
+                WHEN fact_type = 'context' AND category = 'system' THEN 'project'
+                ELSE 'unknown'
+            END,
+            first_session_id,
+            team_id,
+            COALESCE(scope, 'project'),
+            created_at,
+            COALESCE(updated_at, created_at)
+         FROM memory_facts
+         WHERE fact_type IN ('health','system','session_event','extracted','tool_outcome','convergence_alert','distilled')
+            OR (fact_type = 'context' AND category = 'subagent_discovery')
+            OR (fact_type = 'context' AND category = 'system')",
+    )?;
+
+    // Step 2: DELETE migrated rows from memory_facts
+    let deleted: usize = conn.execute(
+        "DELETE FROM memory_facts
+         WHERE fact_type IN ('health','system','session_event','extracted','tool_outcome','convergence_alert','distilled')
+            OR (fact_type = 'context' AND category = 'subagent_discovery')
+            OR (fact_type = 'context' AND category = 'system')",
+        [],
+    )?;
+
+    // Step 3: Clean orphaned vec_memory entries
+    let orphaned: usize = conn.execute(
+        "DELETE FROM vec_memory WHERE fact_id NOT IN (SELECT id FROM memory_facts)",
+        [],
+    )?;
+
+    tracing::info!(
+        "Migration complete: {} rows moved to system_observations, {} orphaned embeddings cleaned",
+        deleted,
+        orphaned
+    );
+
+    Ok(())
+}
+
 /// Drop OLD teams tables (pre-team-intelligence-layer).
 ///
 /// The old `teams` table lacked a `config_path` column. New tables created by
