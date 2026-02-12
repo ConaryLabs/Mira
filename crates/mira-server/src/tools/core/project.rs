@@ -485,7 +485,7 @@ pub async fn session_start<C: ToolContext>(
     // Phase 5: Codebase map
     if project_type == "rust" {
         match cartographer::get_or_generate_map_pool(
-            ctx.pool().clone(),
+            ctx.code_pool().clone(),
             project_id,
             project_path.clone(),
             display_name.to_string(),

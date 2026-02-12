@@ -67,6 +67,8 @@ pub async fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
     println!("\n--- Database Integration ---\n");
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let code_db_path = db_path.with_file_name("mira-code.db");
+    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
 
     let project_path_str = path_to_string(&project_path);
     let (project_id, name) = {
@@ -80,7 +82,7 @@ pub async fn run_debug_carto(path: Option<PathBuf>) -> Result<()> {
     println!("Project ID: {}, Name: {:?}", project_id, name);
 
     match mira::cartographer::get_or_generate_map_pool(
-        pool,
+        code_pool,
         project_id,
         project_path_str,
         name.unwrap_or_else(|| "unknown".to_string()),
