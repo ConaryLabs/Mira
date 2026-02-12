@@ -4,12 +4,12 @@
 // This handler takes &MiraServer directly (not &impl ToolContext) because
 // it needs access to the OperationProcessor which is MCP-specific.
 
+use crate::mcp::CachedTaskResult;
 use crate::mcp::MiraServer;
 use crate::mcp::requests::SessionAction;
 use crate::mcp::responses::{
     Json, TaskSummary, TasksData, TasksListData, TasksOutput, TasksStatusData,
 };
-use crate::mcp::{CachedTaskResult};
 use crate::utils::truncate;
 use rmcp::task_manager::ToolCallTaskResult;
 use std::time::{Duration, Instant};

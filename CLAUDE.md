@@ -68,7 +68,7 @@ mira debug-carto     # Debug cartographer module detection
 
 API keys are in `~/.mira/.env` (optional with MCP Sampling):
 - `DEEPSEEK_API_KEY` - Background LLM tasks (pondering, summaries)
-- `ZHIPU_API_KEY` - Alternative LLM provider (GLM-4.7)
+- `ZHIPU_API_KEY` - Alternative LLM provider (GLM-5)
 - `OPENAI_API_KEY` - Embeddings (OpenAI text-embedding-3-small)
 - `OLLAMA_HOST` - Local LLM for background tasks (no API key needed)
 

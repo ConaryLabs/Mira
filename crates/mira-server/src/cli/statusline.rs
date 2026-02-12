@@ -140,33 +140,48 @@ fn query_pending(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
+/// Check if a provider has credentials configured via env vars.
+fn provider_has_key(provider: Provider) -> bool {
+    match provider {
+        Provider::DeepSeek => std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .is_some(),
+        Provider::Zhipu => std::env::var("ZHIPU_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .is_some(),
+        Provider::Ollama => std::env::var("OLLAMA_HOST")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .is_some(),
+        Provider::Sampling => true, // always available when MCP is running
+    }
+}
+
 /// Determine the active background LLM provider and its model name.
-/// Reads from config.toml + checks env vars for API keys to verify the provider is usable.
+/// Mirrors the runtime fallback chain in ProviderFactory::client_for_background():
+/// background_provider -> default_provider -> DeepSeek -> Zhipu -> Ollama
 fn get_llm_info() -> Option<(String, String)> {
     let config = MiraConfig::load();
 
-    // Determine which provider would be used for background tasks
-    let provider = config.background_provider().or_else(|| {
-        config.default_provider().or_else(|| {
-            std::env::var("DEFAULT_LLM_PROVIDER")
-                .ok()
-                .and_then(|s| Provider::from_str(&s))
-        })
+    let default_provider = config.default_provider().or_else(|| {
+        std::env::var("DEFAULT_LLM_PROVIDER")
+            .ok()
+            .and_then(|s| Provider::from_str(&s))
     });
 
-    let provider = provider?;
+    // Build candidate list matching ProviderFactory::client_for_background()
+    let fallback_chain = [Provider::DeepSeek, Provider::Zhipu, Provider::Ollama];
+    let candidates: Vec<Provider> = config
+        .background_provider()
+        .into_iter()
+        .chain(default_provider)
+        .chain(fallback_chain)
+        .collect();
 
-    // Check if the provider actually has credentials configured
-    let has_key = match provider {
-        Provider::DeepSeek => std::env::var("DEEPSEEK_API_KEY").is_ok(),
-        Provider::Zhipu => std::env::var("ZHIPU_API_KEY").is_ok(),
-        Provider::Ollama => std::env::var("OLLAMA_HOST").is_ok(),
-        Provider::Sampling => true, // always available when MCP is running
-    };
-
-    if !has_key {
-        return None;
-    }
+    // Pick the first candidate that actually has credentials
+    let provider = candidates.into_iter().find(|p| provider_has_key(*p))?;
 
     let model = match provider {
         Provider::Ollama => std::env::var("OLLAMA_MODEL")
@@ -262,7 +277,9 @@ pub fn run() -> Result<()> {
 
     // 2. LLM provider info
     if let Some((provider, model)) = get_llm_info() {
-        parts.push(format!("{DIM}background:{RESET} {DIM}{provider}/{model}{RESET}"));
+        parts.push(format!(
+            "{DIM}background:{RESET} {DIM}{provider}/{model}{RESET}"
+        ));
     }
 
     // 3. Active workload

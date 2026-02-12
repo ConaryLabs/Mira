@@ -1,6 +1,7 @@
 // crates/mira-server/src/config/env.rs
 // Environment-based configuration - single source of truth for all env vars
 
+use crate::llm::Provider;
 use tracing::{debug, info, warn};
 
 /// API keys loaded from environment variables
@@ -285,14 +286,13 @@ impl EnvConfig {
         }
 
         // Validate default provider if set
-        if let Some(ref provider) = self.default_provider {
-            let valid_providers = ["deepseek", "zhipu", "ollama"];
-            if !valid_providers.contains(&provider.to_lowercase().as_str()) {
-                validation.add_warning(format!(
-                    "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, zhipu, ollama",
-                    provider
-                ));
-            }
+        if let Some(ref provider) = self.default_provider
+            && Provider::from_str(provider).is_none()
+        {
+            validation.add_warning(format!(
+                "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, zhipu, ollama, sampling",
+                provider
+            ));
         }
 
         validation
@@ -304,7 +304,15 @@ fn parse_bool_env(name: &str) -> Option<bool> {
     match value.as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
+        _ => {
+            warn!(
+                env = name,
+                value = %value,
+                "Unrecognized boolean value for {}. Expected: true/false, 1/0, yes/no, on/off. Treating as unset.",
+                name
+            );
+            None
+        }
     }
 }
 
@@ -367,5 +375,183 @@ mod tests {
         let validation = config.validate();
         assert!(validation.is_valid()); // Warnings don't make it invalid
         assert!(!validation.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validation_invalid_provider() {
+        let config = EnvConfig {
+            api_keys: ApiKeys::default(),
+            embeddings: EmbeddingsConfig::default(),
+            default_provider: Some("gpt4".to_string()),
+            user_id: None,
+            fuzzy_fallback: true,
+        };
+
+        let validation = config.validate();
+        assert!(
+            validation.warnings.iter().any(|w| w.contains("gpt4")),
+            "Should warn about invalid provider"
+        );
+    }
+
+    #[test]
+    fn test_validation_valid_provider() {
+        let config = EnvConfig {
+            api_keys: ApiKeys {
+                deepseek: Some("key".to_string()),
+                ..Default::default()
+            },
+            embeddings: EmbeddingsConfig::default(),
+            default_provider: Some("deepseek".to_string()),
+            user_id: None,
+            fuzzy_fallback: true,
+        };
+
+        let validation = config.validate();
+        // Should not warn about provider name
+        assert!(
+            !validation
+                .warnings
+                .iter()
+                .any(|w| w.contains("Unknown DEFAULT_LLM_PROVIDER")),
+        );
+    }
+
+    #[test]
+    fn test_validation_provider_alias() {
+        let config = EnvConfig {
+            api_keys: ApiKeys::default(),
+            embeddings: EmbeddingsConfig::default(),
+            default_provider: Some("glm".to_string()),
+            user_id: None,
+            fuzzy_fallback: true,
+        };
+
+        let validation = config.validate();
+        // "glm" is a valid alias for zhipu — should not warn
+        assert!(
+            !validation
+                .warnings
+                .iter()
+                .any(|w| w.contains("Unknown DEFAULT_LLM_PROVIDER")),
+        );
+    }
+
+    // ============================================================================
+    // parse_bool_env tests (C1)
+    // ============================================================================
+
+    // Note: parse_bool_env reads from actual env vars. These tests use unique
+    // env var names to avoid interference with each other and production vars.
+
+    #[test]
+    fn test_parse_bool_env_true_values() {
+        for (i, val) in ["1", "true", "True", "TRUE", "yes", "YES", "on", "ON"]
+            .iter()
+            .enumerate()
+        {
+            let name = format!("MIRA_TEST_BOOL_TRUE_{}", i);
+            // SAFETY: test-only, unique env var names avoid interference
+            unsafe {
+                std::env::set_var(&name, val);
+            }
+            assert_eq!(
+                parse_bool_env(&name),
+                Some(true),
+                "Expected true for '{}'",
+                val
+            );
+            unsafe {
+                std::env::remove_var(&name);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_bool_env_false_values() {
+        for (i, val) in ["0", "false", "False", "FALSE", "no", "NO", "off", "OFF"]
+            .iter()
+            .enumerate()
+        {
+            let name = format!("MIRA_TEST_BOOL_FALSE_{}", i);
+            // SAFETY: test-only, unique env var names avoid interference
+            unsafe {
+                std::env::set_var(&name, val);
+            }
+            assert_eq!(
+                parse_bool_env(&name),
+                Some(false),
+                "Expected false for '{}'",
+                val
+            );
+            unsafe {
+                std::env::remove_var(&name);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_bool_env_invalid_returns_none() {
+        let name = "MIRA_TEST_BOOL_INVALID";
+        // SAFETY: test-only, unique env var name
+        unsafe {
+            std::env::set_var(name, "banana");
+        }
+        assert_eq!(
+            parse_bool_env(name),
+            None,
+            "Invalid value should return None"
+        );
+        unsafe {
+            std::env::remove_var(name);
+        }
+    }
+
+    #[test]
+    fn test_parse_bool_env_unset_returns_none() {
+        assert_eq!(parse_bool_env("MIRA_TEST_BOOL_NONEXISTENT_XYZ"), None);
+    }
+
+    // ============================================================================
+    // read_key tests
+    // ============================================================================
+
+    #[test]
+    fn test_read_key_empty_value() {
+        // SAFETY: test-only, unique env var name
+        unsafe {
+            std::env::set_var("MIRA_TEST_EMPTY_KEY", "");
+        }
+        assert_eq!(ApiKeys::read_key("MIRA_TEST_EMPTY_KEY"), None);
+        unsafe {
+            std::env::remove_var("MIRA_TEST_EMPTY_KEY");
+        }
+    }
+
+    #[test]
+    fn test_read_key_whitespace_only() {
+        // SAFETY: test-only, unique env var name
+        unsafe {
+            std::env::set_var("MIRA_TEST_WS_KEY", "   ");
+        }
+        assert_eq!(ApiKeys::read_key("MIRA_TEST_WS_KEY"), None);
+        unsafe {
+            std::env::remove_var("MIRA_TEST_WS_KEY");
+        }
+    }
+
+    #[test]
+    fn test_read_key_valid() {
+        // SAFETY: test-only, unique env var name
+        unsafe {
+            std::env::set_var("MIRA_TEST_VALID_KEY", "sk-12345");
+        }
+        assert_eq!(
+            ApiKeys::read_key("MIRA_TEST_VALID_KEY"),
+            Some("sk-12345".to_string())
+        );
+        unsafe {
+            std::env::remove_var("MIRA_TEST_VALID_KEY");
+        }
     }
 }

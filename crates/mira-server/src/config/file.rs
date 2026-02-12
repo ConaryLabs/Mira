@@ -118,4 +118,80 @@ default_provider = "deepseek"
         assert_eq!(config.background_provider(), None);
         assert_eq!(config.default_provider(), None);
     }
+
+    #[test]
+    fn test_corrupt_toml_falls_back_to_default() {
+        // Malformed TOML should parse-fail, not panic
+        let bad_toml = r#"
+[llm
+background_provider = broken
+"#;
+        let result: Result<MiraConfig, _> = toml::from_str(bad_toml);
+        assert!(result.is_err(), "Corrupt TOML should fail to parse");
+
+        // In production, load() would return Self::default()
+        let config = result.unwrap_or_default();
+        assert_eq!(config.background_provider(), None);
+        assert_eq!(config.default_provider(), None);
+    }
+
+    #[test]
+    fn test_unknown_keys_ignored() {
+        // Serde ignores unknown fields by default (no deny_unknown_fields)
+        let toml = r#"
+[llm]
+background_provider = "deepseek"
+unknown_key = "should be ignored"
+typo_provider = "zhipu"
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.background_provider(), Some(Provider::DeepSeek));
+    }
+
+    #[test]
+    fn test_unknown_sections_ignored() {
+        let toml = r#"
+[llm]
+background_provider = "zhipu"
+
+[database]
+path = "/tmp/test.db"
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.background_provider(), Some(Provider::Zhipu));
+    }
+
+    #[test]
+    fn test_invalid_provider_name_returns_none() {
+        let toml = r#"
+[llm]
+background_provider = "gpt4"
+default_provider = "claude"
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        // Invalid provider names parse as strings but from_str returns None
+        assert_eq!(config.background_provider(), None);
+        assert_eq!(config.default_provider(), None);
+    }
+
+    #[test]
+    fn test_provider_aliases_work() {
+        let toml = r#"
+[llm]
+background_provider = "glm"
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.background_provider(), Some(Provider::Zhipu));
+    }
+
+    #[test]
+    fn test_wrong_type_for_provider_fails_parse() {
+        // Provider as integer instead of string
+        let toml = r#"
+[llm]
+background_provider = 123
+"#;
+        let result: Result<MiraConfig, _> = toml::from_str(toml);
+        assert!(result.is_err(), "Wrong type should fail to parse");
+    }
 }

@@ -11,7 +11,11 @@ use crate::utils::ResultExt;
 
 /// Try to queue a health scan for a cold-start project (never scanned before).
 /// Returns a user-facing message appropriate for the outcome.
-async fn maybe_queue_health_scan<C: ToolContext>(ctx: &C, project_id: i64, data_kind: &str) -> String {
+async fn maybe_queue_health_scan<C: ToolContext>(
+    ctx: &C,
+    project_id: i64,
+    data_kind: &str,
+) -> String {
     let pid = project_id;
     let already_scanned = ctx
         .pool()
@@ -29,13 +33,13 @@ async fn maybe_queue_health_scan<C: ToolContext>(ctx: &C, project_id: i64, data_
     let pid = project_id;
     let pool = ctx.pool().clone();
     let queued = pool
-        .run(move |conn| {
-            crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
-        })
+        .run(move |conn| crate::background::code_health::mark_health_scan_needed_sync(conn, pid))
         .await;
 
     if queued.is_ok() {
-        format!("No {data_kind} yet — a health scan has been queued and will complete shortly. Try again in a moment.")
+        format!(
+            "No {data_kind} yet — a health scan has been queued and will complete shortly. Try again in a moment."
+        )
     } else {
         format!("No {data_kind} yet. Run index(action=\"health\") to generate it.")
     }

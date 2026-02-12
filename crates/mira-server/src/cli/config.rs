@@ -1,15 +1,13 @@
 // crates/mira-server/src/cli/config.rs
 // CLI config subcommand for viewing and updating Mira configuration
 
+use anyhow::{Result, bail};
 use mira::config::MiraConfig;
-use anyhow::{bail, Result};
+use mira::llm::Provider;
 use std::io::Write;
 
 /// Valid config keys that can be set
 const VALID_KEYS: &[&str] = &["background_provider", "default_provider"];
-
-/// Valid provider values
-const VALID_PROVIDERS: &[&str] = &["deepseek", "zhipu", "ollama"];
 
 /// Run `mira config show`
 pub fn run_config_show() -> Result<()> {
@@ -31,7 +29,10 @@ pub fn run_config_show() -> Result<()> {
         None => {
             // Check env var fallback
             match std::env::var("DEFAULT_LLM_PROVIDER").ok() {
-                Some(v) => println!("default_provider    = \"{}\" (from DEFAULT_LLM_PROVIDER env)", v),
+                Some(v) => println!(
+                    "default_provider    = \"{}\" (from DEFAULT_LLM_PROVIDER env)",
+                    v
+                ),
                 None => println!("default_provider    = (not set)"),
             }
         }
@@ -50,11 +51,11 @@ pub fn run_config_set(key: &str, value: &str) -> Result<()> {
         );
     }
 
-    if !VALID_PROVIDERS.contains(&value) {
+    // Use the canonical provider parser instead of a hardcoded list
+    if Provider::from_str(value).is_none() {
         bail!(
-            "Unknown provider '{}'. Valid providers: {}",
-            value,
-            VALID_PROVIDERS.join(", ")
+            "Unknown provider '{}'. Valid providers: deepseek, zhipu (or glm), ollama, sampling",
+            value
         );
     }
 
@@ -63,16 +64,36 @@ pub fn run_config_set(key: &str, value: &str) -> Result<()> {
     // Read existing config or start fresh
     let content = std::fs::read_to_string(&path).unwrap_or_default();
 
-    // Parse, update, and rewrite
-    let mut table: toml::Table = toml::from_str(&content).unwrap_or_default();
+    // Parse existing TOML — fail loudly if malformed instead of silently overwriting
+    let mut table: toml::Table = match toml::from_str(&content) {
+        Ok(t) => t,
+        Err(e) if content.is_empty() => {
+            // Empty/missing file is fine — start fresh
+            let _ = e;
+            toml::Table::new()
+        }
+        Err(e) => {
+            bail!(
+                "Cannot update config: {} has a syntax error.\n  Error: {}\n  Fix the file manually or delete it to start fresh.",
+                path.display(),
+                e
+            );
+        }
+    };
 
-    // Ensure [llm] section exists
+    // Ensure [llm] section exists and is a table
     let llm = table
         .entry("llm")
         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
 
     if let toml::Value::Table(llm_table) = llm {
         llm_table.insert(key.to_string(), toml::Value::String(value.to_string()));
+    } else {
+        bail!(
+            "Cannot update config: 'llm' in {} is not a table section.\n  Expected [llm], found: llm = {:?}\n  Fix the file manually or delete it to start fresh.",
+            path.display(),
+            llm
+        );
     }
 
     // Write back with header comment
