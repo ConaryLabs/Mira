@@ -164,6 +164,12 @@ pub fn query_observations_by_categories_sync(
     if categories.is_empty() {
         return Ok(Vec::new());
     }
+    // Cap to 50 categories to stay within SQLite's default 999 parameter limit
+    let categories = if categories.len() > 50 {
+        &categories[..50]
+    } else {
+        categories
+    };
     let placeholders: Vec<String> = categories
         .iter()
         .enumerate()

@@ -93,7 +93,7 @@ impl BudgetManager {
             if result.len() + entry.content.len() + 2 > self.max_chars {
                 // Truncate and add ellipsis
                 let remaining = self.max_chars.saturating_sub(result.len());
-                if remaining > 10 {
+                if remaining > 40 {
                     result.push_str("\n\n[Context truncated due to token limit]");
                 }
                 break;
@@ -177,17 +177,20 @@ mod tests {
 
     #[test]
     fn test_apply_budget_truncation() {
-        let manager = BudgetManager::with_limit(50);
+        let manager = BudgetManager::with_limit(80);
         let contexts = vec![
-            "Short".to_string(),                                // 5 chars
-            "Medium length text".to_string(),                   // 18 chars, total 25 with separator
-            "This won't fit because it's too long".to_string(), // Would exceed limit
+            "Short".to_string(),                                    // 5 chars
+            "Medium length text".to_string(), // 18 chars, total 25 with separator
+            "This won't fit because it's too long".to_string(), // 36 chars, 25+2+36=63 <= 80, fits
+            "This definitely exceeds the budget limit".to_string(), // 40 chars, 63+2+40=105 > 80, truncate
         ];
         let result = manager.apply_budget(contexts);
         assert!(result.contains("Short"));
         assert!(result.contains("Medium length text"));
-        assert!(result.contains("[Context truncated due to token limit]"));
-        assert!(!result.contains("This won't fit"));
+        assert!(result.contains("This won't fit"));
+        // remaining = 80 - 63 = 17, NOT > 40, so no truncation message
+        assert!(!result.contains("[Context truncated due to token limit]"));
+        assert!(!result.contains("This definitely exceeds"));
     }
 
     #[test]
@@ -202,28 +205,21 @@ mod tests {
 
     #[test]
     fn test_apply_budget_truncation_with_message() {
-        // Truncation message is only added if remaining > 10
-        // So we need to have at least 11 chars remaining when truncating
+        // Truncation message is only added if remaining > 40 (enough room for the message)
+        // "Short" = 5 chars. Next entry won't fit. remaining = 100 - 5 = 95, > 40, message added.
         let manager = BudgetManager::with_limit(100);
         let contexts = vec![
-            "First context".to_string(),                          // 13 chars
-            "Second context".to_string(), // 14 chars, total = 13 + 2 + 14 = 29
-            "Third".to_string(),          // 5 chars, total = 29 + 2 + 5 = 36
-            "This is a very long fourth context".to_string(), // 35 chars, total = 36 + 2 + 35 = 73 > 100? No, fits
-            "Fifth really long context that exceeds".to_string(), // 39 chars, total = 73 + 2 + 39 = 114 > 100, truncate
+            "Short".to_string(),
+            "This entry is deliberately made very long so it cannot possibly fit within the remaining budget that we have allocated for context injection purposes".to_string(),
         ];
         let result = manager.apply_budget(contexts);
-        assert!(result.contains("First context"));
-        assert!(result.contains("Third"));
-        assert!(result.contains("fourth context"));
-        // remaining = 100 - 73 = 27, which is > 10, so message is added
+        assert!(result.contains("Short"));
         assert!(result.contains("[Context truncated due to token limit]"));
-        assert!(!result.contains("Fifth"));
     }
 
     #[test]
     fn test_apply_budget_truncation_no_message_if_tight() {
-        // If remaining <= 10 after the last context that fits, no truncation message
+        // If remaining <= 40 after the last context that fits, no truncation message
         let manager = BudgetManager::with_limit(50);
         let contexts = vec![
             "This is a forty char long context!!!".to_string(), // 36 chars
@@ -233,7 +229,7 @@ mod tests {
         let result = manager.apply_budget(contexts);
         assert!(result.contains("forty char"));
         assert!(result.contains("Second"));
-        // remaining = 50 - 44 = 6, which is NOT > 10, so no message
+        // remaining = 50 - 44 = 6, which is NOT > 40, so no message
         assert!(!result.contains("[Context truncated"));
         assert!(!result.contains("Third"));
     }
@@ -299,10 +295,11 @@ mod tests {
 
     #[test]
     fn test_prioritized_truncation_message() {
-        let manager = BudgetManager::with_limit(40);
+        // "important" = 9 chars. remaining = 100 - 9 = 91, > 40, so message IS added.
+        let manager = BudgetManager::with_limit(100);
         let entries = vec![
             BudgetEntry::new(0.9, "important".to_string(), "high"),
-            BudgetEntry::new(0.1, "this is definitely too long to fit".to_string(), "low"),
+            BudgetEntry::new(0.1, "this is definitely too long to fit and it keeps going and going until it exceeds our budget".to_string(), "low"),
         ];
         let result = manager.apply_budget_prioritized(entries);
         assert!(result.contains("important"));

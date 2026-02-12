@@ -41,7 +41,7 @@ Semantic memory storage with evidence-based confidence tracking.
 | content | TEXT | The fact/preference content |
 | fact_type | TEXT | `general`, `preference`, `decision`, `context` |
 | category | TEXT | Optional grouping (e.g., `coding`, `tooling`) |
-| confidence | REAL | 0.0-1.0, starts at 0.5 for candidates |
+| confidence | REAL | 0.0-1.0, defaults to 0.8 for user-created memories |
 | has_embedding | INTEGER | 1 if fact has embedding in vec_memory |
 | session_count | INTEGER | Number of sessions where this was seen/used |
 | first_session_id | TEXT | Session when first created |
@@ -52,24 +52,7 @@ Semantic memory storage with evidence-based confidence tracking.
 | created_at | TEXT | Timestamp |
 | updated_at | TEXT | Last modification |
 
-**Evidence-Based Memory**: New memories start as `candidate` with max confidence 0.5. After being accessed across 3+ sessions, they're promoted to `confirmed` with boosted confidence.
-
-### corrections
-
-Pattern corrections learned from code reviews.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| project_id | INTEGER FK | Project scope |
-| what_was_wrong | TEXT | The incorrect pattern/behavior |
-| what_is_right | TEXT | The correct approach |
-| correction_type | TEXT | Default: `pattern`. Also: `bug`, `style`, `security`, `performance` |
-| scope | TEXT | `project` or `global` |
-| confidence | REAL | 0.0-1.0 (default: 1.0) |
-| occurrence_count | INTEGER | Times pattern observed (default: 1) |
-| acceptance_rate | REAL | Rate of acceptance (default: 1.0) |
-| created_at | TEXT | Timestamp |
+**Evidence-Based Memory**: New memories start as `candidate` with confidence 0.8. After being accessed across 3+ sessions, they're promoted to `confirmed` with boosted confidence.
 
 ---
 

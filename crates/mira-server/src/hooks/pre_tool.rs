@@ -56,7 +56,8 @@ fn write_cooldown(query: &str) {
         tracing::debug!("Failed to create cooldown dir: {e}");
     }
     if let Ok(json) = serde_json::to_string(&state) {
-        // Write with mode 0600 (owner read/write only) to protect session state
+        // Write to temp file then rename for atomicity (prevents corruption on crash)
+        let temp = path.with_extension("tmp");
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true);
         #[cfg(unix)]
@@ -64,11 +65,16 @@ fn write_cooldown(query: &str) {
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
-        let file = opts.open(&path);
-        if let Ok(mut f) = file
-            && let Err(e) = f.write_all(json.as_bytes())
-        {
-            tracing::debug!("Failed to write cooldown file: {e}");
+        let file = opts.open(&temp);
+        if let Ok(mut f) = file {
+            if let Err(e) = f.write_all(json.as_bytes()) {
+                tracing::debug!("Failed to write cooldown temp file: {e}");
+                return;
+            }
+            drop(f);
+            if let Err(e) = std::fs::rename(&temp, &path) {
+                tracing::debug!("Failed to rename cooldown temp file: {e}");
+            }
         }
     }
 }

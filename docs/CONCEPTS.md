@@ -45,7 +45,7 @@ New Memory → Candidate
          Confirmed (confidence + 0.2, capped at 1.0)
 ```
 
-1. **Candidate**: New memories start here
+1. **Candidate**: New memories start here with 0.8 confidence
 2. **Confirmed**: If a memory is accessed across 3+ distinct sessions, it's promoted with boosted confidence
 
 This ensures only useful, recurring information becomes permanent.

@@ -485,6 +485,8 @@ pub fn get_memory_metadata_sync(
     if ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
+    // Cap to 500 IDs to stay within SQLite's default 999 parameter limit
+    let ids = if ids.len() > 500 { &ids[..500] } else { ids };
     let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
     let sql = format!(
         "SELECT id, fact_type, category FROM memory_facts WHERE id IN ({})",

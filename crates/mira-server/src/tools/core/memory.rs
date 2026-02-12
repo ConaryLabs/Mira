@@ -514,7 +514,10 @@ pub async fn recall<C: ToolContext>(
                     })
                     .collect();
                 let total = items.len();
-                let mut response = format!("{}Found {} memories:\n", context_header, total);
+                let mut response = format!(
+                    "{}Found {} memories (semantic search):\n",
+                    context_header, total
+                );
                 for (id, content, distance, branch, _team_id) in &results {
                     let score = 1.0 - distance;
                     let preview = truncate(content, 100);
@@ -599,7 +602,7 @@ pub async fn recall<C: ToolContext>(
     Ok(build_recall_output(
         &results,
         &context_header,
-        "",
+        " (keyword fallback)",
         &session_id,
         ctx.pool(),
     ))
@@ -658,7 +661,7 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
     let Some(scope_info) = scope_info else {
         return Ok(Json(MemoryOutput {
             action: "forget".into(),
-            message: format!("Memory '{}' not found", id),
+            message: format!("Memory not found (id: {})", id),
             data: None,
         }));
     };
@@ -686,7 +689,7 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
     } else {
         Ok(Json(MemoryOutput {
             action: "forget".into(),
-            message: format!("Memory '{}' not found", id),
+            message: format!("Memory not found (id: {})", id),
             data: None,
         }))
     }
@@ -709,7 +712,7 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
     let Some(scope_info) = scope_info else {
         return Ok(Json(MemoryOutput {
             action: "archive".into(),
-            message: format!("Memory '{}' not found", id),
+            message: format!("Memory not found (id: {})", id),
             data: None,
         }));
     };
@@ -747,7 +750,7 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
     } else {
         Ok(Json(MemoryOutput {
             action: "archive".into(),
-            message: format!("Memory '{}' not found", id),
+            message: format!("Memory not found (id: {})", id),
             data: None,
         }))
     }

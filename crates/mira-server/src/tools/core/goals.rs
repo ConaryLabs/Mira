@@ -38,10 +38,10 @@ fn verify_goal_project(
     match (goal_project_id, ctx_project_id) {
         // Both have project IDs — must match
         (Some(goal_pid), Some(ctx_pid)) if goal_pid != ctx_pid => {
-            Err("Goal not found or access denied".to_string())
+            Err("Access denied: goal belongs to a different project".to_string())
         }
         // Goal has a project but no context project — deny access
-        (Some(_), None) => Err("Goal not found or access denied".to_string()),
+        (Some(_), None) => Err("Access denied: goal belongs to a different project".to_string()),
         // Both match, goal is global, or both are None — allow
         _ => Ok(()),
     }
@@ -53,7 +53,7 @@ async fn get_authorized_goal<C: ToolContext>(ctx: &C, id: i64) -> Result<crate::
         .pool()
         .run(move |conn| get_goal_by_id_sync(conn, id))
         .await?
-        .ok_or_else(|| "Goal not found or access denied".to_string())?;
+        .ok_or_else(|| format!("Goal not found (id: {})", id))?;
 
     let ctx_project_id = ctx.project_id().await;
     verify_goal_project(goal.project_id, ctx_project_id)?;
@@ -70,7 +70,7 @@ async fn verify_milestone_project<C: ToolContext>(
         .pool()
         .run(move |conn| get_milestone_by_id_sync(conn, milestone_id))
         .await?
-        .ok_or_else(|| "Milestone not found or access denied".to_string())?;
+        .ok_or_else(|| format!("Milestone not found (id: {})", milestone_id))?;
 
     let goal_id = milestone
         .goal_id
@@ -80,7 +80,7 @@ async fn verify_milestone_project<C: ToolContext>(
         .pool()
         .run(move |conn| get_goal_by_id_sync(conn, goal_id))
         .await?
-        .ok_or_else(|| "Goal not found or access denied".to_string())?;
+        .ok_or_else(|| format!("Goal not found (id: {})", goal_id))?;
 
     let ctx_project_id = ctx.project_id().await;
     verify_goal_project(goal.project_id, ctx_project_id)?;
@@ -642,7 +642,9 @@ mod tests {
     fn test_verify_different_project_denied() {
         let result = verify_goal_project(Some(1), Some(2));
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("access denied"));
+        let err = result.unwrap_err();
+        assert!(err.contains("Access denied"));
+        assert!(err.contains("different project"));
     }
 
     #[test]

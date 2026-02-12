@@ -371,9 +371,9 @@ impl ContextInjectionManager {
         if self.config.sample_rate < 1.0 {
             let mut hasher = std::hash::DefaultHasher::new();
             user_message.hash(&mut hasher);
-            let hash = hasher.finish() as u32;
-            let threshold = (self.config.sample_rate * 100.0) as u32;
-            if hash % 100 >= threshold {
+            let hash = hasher.finish() % 100;
+            let threshold = (self.config.sample_rate * 100.0) as u64;
+            if hash >= threshold {
                 return InjectionResult::skipped("sampled_out");
             }
         }

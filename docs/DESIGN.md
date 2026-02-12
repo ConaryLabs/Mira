@@ -36,7 +36,7 @@ Mira, extend it, or embed it into their own workflows.
 Mira is built around a few durable goals:
 
 1. **Persistence across sessions**
-   - Remember preferences, decisions, recurring context, and learned corrections.
+   - Remember preferences, decisions, and recurring context.
    - Persist tool usage history and session identifiers for continuity.
 
 2. **High-leverage code intelligence**
@@ -374,7 +374,6 @@ The schema is "product-shaped," not purely technical:
 | Sessions | `sessions`, `tool_history` | Provenance and history |
 | Background | `pending_embeddings`, `project_briefings` | Work queues |
 | Workflow | `goals`, `milestones` | Goal and milestone tracking |
-| Learning | `corrections` | Learned patterns |
 | Proactive | `behavior_patterns`, `proactive_suggestions` | Behavior mining and predictions |
 | Cross-Project | `cross_project_patterns`, `cross_project_preferences` | Privacy-preserving pattern sharing (removed in v0.6.6; tables retained for future use) |
 

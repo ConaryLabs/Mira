@@ -11,7 +11,10 @@ impl InjectionCache {
     pub fn new() -> Self {
         Self {
             // Lock-free concurrent cache with 100 entry capacity
-            cache: Cache::builder().max_capacity(100).build(),
+            cache: Cache::builder()
+                .max_capacity(100)
+                .time_to_live(std::time::Duration::from_secs(300))
+                .build(),
         }
     }
 
