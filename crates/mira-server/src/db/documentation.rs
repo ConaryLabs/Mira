@@ -62,12 +62,31 @@ pub struct DocGap {
     pub source_signature_hash: Option<String>,
 }
 
-/// Create a new documentation task
+/// Create a new documentation task.
+/// Skips creation if a task with the same target already exists as skipped or completed.
 pub fn create_doc_task(
     conn: &rusqlite::Connection,
     gap: &DocGap,
     git_commit: Option<&str>,
 ) -> Result<i64, String> {
+    // Don't re-create tasks that were already skipped or completed
+    let already_handled: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documentation_tasks
+             WHERE project_id = ?1 AND target_doc_path = ?2
+               AND status IN ('skipped', 'completed'))",
+            params![gap.project_id, gap.target_doc_path],
+            |row| row.get(0),
+        )
+        .str_err()?;
+
+    if already_handled {
+        return Err(format!(
+            "Task for {} already skipped or completed",
+            gap.target_doc_path
+        ));
+    }
+
     conn.execute(
         "INSERT INTO documentation_tasks (
             project_id, doc_type, doc_category, source_file_path,
