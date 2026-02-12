@@ -1,4 +1,4 @@
-// src/hooks/session.rs
+// crates/mira-server/src/hooks/session.rs
 // SessionStart hook handler - captures Claude Code's session_id and cwd
 
 use crate::db::pool::DatabasePool;
@@ -33,6 +33,41 @@ pub fn source_file_path() -> PathBuf {
 pub fn task_list_file_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".mira/claude-task-list-id")
+}
+
+/// Marker file path for tracking whether goals were already shown this session.
+/// Other hooks can check this to avoid re-injecting goals.
+fn goals_shown_path() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    home.join(".mira/tmp/goals_shown")
+}
+
+/// Mark that goals have been injected into the session context.
+/// Called by SessionStart after injecting goals, so other hooks can skip them.
+fn mark_goals_shown() {
+    let path = goals_shown_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&path, Utc::now().to_rfc3339());
+}
+
+/// Check whether goals have already been shown this session.
+/// Returns true if goals were shown within the last 30 minutes
+/// (stale markers from crashed sessions are ignored).
+pub fn were_goals_shown() -> bool {
+    let path = goals_shown_path();
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    // Parse the timestamp and check if it's recent (within 30 minutes)
+    if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(content.trim()) {
+        let age = Utc::now().signed_duration_since(ts);
+        age.num_minutes() < 30
+    } else {
+        false
+    }
 }
 
 /// Source information captured from SessionStart hook
@@ -375,7 +410,8 @@ pub(crate) async fn build_startup_context(cwd: Option<&str>) -> Option<String> {
             .iter()
             .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
             .collect();
-        context_parts.push(format!("**Active goals:**\n{}", goal_lines.join("\n")));
+        context_parts.push(format!("[Mira/goals] Active goals:\n{}", goal_lines.join("\n")));
+        mark_goals_shown();
     }
 
     if context_parts.is_empty() {
@@ -548,7 +584,8 @@ pub(crate) async fn build_resume_context(
             .iter()
             .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
             .collect();
-        context_parts.push(format!("**Active goals:**\n{}", goal_lines.join("\n")));
+        context_parts.push(format!("[Mira/goals] Active goals:\n{}", goal_lines.join("\n")));
+        mark_goals_shown();
     }
 
     // Add team context if in a team

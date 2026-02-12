@@ -45,7 +45,7 @@ impl Default for InjectionConfig {
             max_chars: 1500,
             min_message_len: 30,
             max_message_len: 500,
-            sample_rate: 0.5, // 50% of eligible messages
+            sample_rate: 1.0, // Quality gates (is_simple_command, length, is_code_related) prevent over-injection
             enable_semantic: true,
             enable_file_aware: true,
             enable_task_aware: true,
@@ -168,7 +168,7 @@ mod tests {
         let config = InjectionConfig::default();
         assert!(config.enabled);
         assert_eq!(config.max_chars, 1500);
-        assert_eq!(config.sample_rate, 0.5);
+        assert_eq!(config.sample_rate, 1.0);
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod tests {
         let config = InjectionConfig::default();
         let summary = config.summary();
         assert!(summary.contains("1500"));
-        assert!(summary.contains("50%"));
+        assert!(summary.contains("100%"));
     }
 
     #[test]

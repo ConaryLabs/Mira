@@ -949,7 +949,7 @@ async fn test_context_injection_config() {
     // Verify default config
     assert!(manager.config().enabled);
     assert_eq!(manager.config().max_chars, 1500);
-    assert_eq!(manager.config().sample_rate, 0.5);
+    assert_eq!(manager.config().sample_rate, 1.0);
 
     // Update config
     let new_config = InjectionConfig::builder()
@@ -1055,6 +1055,7 @@ async fn test_context_injection_analytics() {
             sources: vec![InjectionSource::Semantic],
             context_len: 100,
             message_preview: "test message 1".to_string(),
+            key_terms: vec![],
         })
         .await;
 
@@ -1065,6 +1066,7 @@ async fn test_context_injection_analytics() {
             sources: vec![InjectionSource::Semantic, InjectionSource::TaskAware],
             context_len: 200,
             message_preview: "test message 2".to_string(),
+            key_terms: vec![],
         })
         .await;
 

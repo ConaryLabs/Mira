@@ -1,4 +1,4 @@
-// src/hooks/user_prompt.rs
+// crates/mira-server/src/hooks/user_prompt.rs
 // UserPromptSubmit hook handler for proactive context injection
 
 use crate::config::EnvConfig;
@@ -68,7 +68,7 @@ async fn get_proactive_context(
                     } else {
                         "suggested"
                     };
-                    format!("[Proactive] {} ({})", text, conf_label)
+                    format!("[Mira/proactive] {} ({})", text, conf_label)
                 })
                 .collect();
 
@@ -131,7 +131,7 @@ async fn get_proactive_context(
             )
         {
             for intervention in pending.iter().take(remaining_slots) {
-                context_lines.push(format!("[Insight] {}", intervention.format()));
+                context_lines.push(format!("[Mira/insight] {}", intervention.format()));
 
                 // Record that we showed this intervention (for cooldown/dedup/feedback)
                 let _ = crate::proactive::interventions::record_intervention_sync(
@@ -172,9 +172,9 @@ fn get_task_context() -> Option<String> {
             let total = crate::tasks::count_tasks(&dir)
                 .map(|(c, r)| c + r)
                 .unwrap_or(0);
-            let completed = total - pending.len();
+            let completed = total.saturating_sub(pending.len());
             Some(format!(
-                "[Mira] {} pending task(s) ({}/{} completed):\n{}",
+                "[Mira/tasks] {} pending task(s) ({}/{} completed):\n{}",
                 pending.len(),
                 completed,
                 total,
@@ -325,9 +325,15 @@ pub async fn run() -> Result<()> {
     if !final_context.is_empty() || task_context.is_some() {
         let mut output = serde_json::json!({});
 
+        // Combine reactive/proactive context and task context into a single
+        // additionalContext block. Using additionalContext (not systemMessage)
+        // so Claude treats user-stored memories as user-provided, not
+        // system-authoritative.
+        let mut additional_parts: Vec<String> = Vec::new();
+
         if !final_context.is_empty() {
             eprintln!("[mira] {}", result.summary());
-            output["systemMessage"] = serde_json::json!(final_context);
+            additional_parts.push(final_context);
             output["metadata"] = serde_json::json!({
                 "sources": result.sources,
                 "from_cache": result.from_cache,
@@ -336,9 +342,13 @@ pub async fn run() -> Result<()> {
         }
 
         if let Some(tc) = task_context {
+            additional_parts.push(tc);
+        }
+
+        if !additional_parts.is_empty() {
             output["hookSpecificOutput"] = serde_json::json!({
                 "hookEventName": "UserPromptSubmit",
-                "additionalContext": tc
+                "additionalContext": additional_parts.join("\n\n")
             });
         }
 
@@ -505,7 +515,7 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
             .map(|m| m.member_name.as_str())
             .collect();
         parts.push(format!(
-            "[Team: {}] You are {} ({} teammate(s) active: {})",
+            "[Mira/team] {} - You are {} ({} teammate(s) active: {})",
             team_name,
             member_name,
             other_count,
@@ -516,10 +526,10 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
     if !discoveries.is_empty() {
         let disc_lines: Vec<String> = discoveries
             .iter()
-            .map(|(content, cat)| format!("  • [{}] {}", cat, content))
+            .map(|(content, cat)| format!("  - [{}] {}", cat, content))
             .collect();
         parts.push(format!(
-            "[Team discoveries (last hour)]:\n{}",
+            "[Mira/team] Discoveries (last hour):\n{}",
             disc_lines.join("\n")
         ));
     }

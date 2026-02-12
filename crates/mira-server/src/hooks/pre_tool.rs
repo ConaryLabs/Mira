@@ -5,6 +5,7 @@ use crate::db::pool::DatabasePool;
 use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
+use crate::hooks::recall;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -160,8 +161,8 @@ pub async fn run() -> Result<()> {
         return Ok(());
     };
 
-    // Query for relevant memories
-    let memories = query_relevant_memories(&pool, project_id, &search_query).await;
+    // Query for relevant memories (semantic search with keyword fallback)
+    let memories = recall::recall_memories(&pool, project_id, &search_query).await;
 
     // Record this query in cooldown state
     write_cooldown(&search_query);
@@ -171,7 +172,7 @@ pub async fn run() -> Result<()> {
         serde_json::json!({})
     } else {
         let context = format!(
-            "Relevant context from Mira (based on your search):\n{}",
+            "[Mira/memory] Relevant context:\n{}",
             memories.join("\n\n")
         );
         serde_json::json!({
@@ -223,63 +224,6 @@ fn build_search_query(input: &PreToolInput) -> String {
     }
 
     parts.join(" ")
-}
-
-/// Query Mira for memories relevant to the search
-async fn query_relevant_memories(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    query: &str,
-) -> Vec<String> {
-    let pool_clone = pool.clone();
-    let query = query.to_string();
-
-    let result = pool_clone
-        .interact(move |conn| {
-            // Search for relevant memories using keyword match
-            // (semantic search would be better but requires embeddings)
-            // Escape LIKE wildcards to prevent injection
-            let escaped_query = query
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_");
-
-            let sql = r#"
-                SELECT content, fact_type, category
-                FROM memory_facts
-                WHERE project_id = ?1
-                  AND (scope = 'project' OR scope IS NULL)
-                  AND fact_type IN ('general','preference','decision','pattern','context','persona')
-                  AND status != 'archived'
-                  AND (content LIKE '%' || ?2 || '%' ESCAPE '\'
-                       OR category LIKE '%' || ?2 || '%' ESCAPE '\')
-                ORDER BY created_at DESC
-                LIMIT 2
-            "#;
-
-            let mut stmt = conn.prepare(sql)?;
-            let memories: Vec<String> = stmt
-                .query_map(rusqlite::params![project_id, escaped_query], |row| {
-                    let content: String = row.get(0)?;
-                    let fact_type: Option<String> = row.get(1)?;
-                    let category: Option<String> = row.get(2)?;
-
-                    let prefix = match (fact_type.as_deref(), category.as_deref()) {
-                        (Some("decision"), _) => "[Decision]",
-                        (Some("preference"), _) => "[Preference]",
-                        (_, Some(cat)) => return Ok(format!("[{}] {}", cat, content)),
-                        _ => "[Context]",
-                    };
-                    Ok(format!("{} {}", prefix, content))
-                })?
-                .filter_map(crate::db::log_and_discard)
-                .collect();
-
-            Ok::<_, anyhow::Error>(memories)
-        })
-        .await;
-
-    result.unwrap_or_default()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

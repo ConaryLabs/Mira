@@ -109,14 +109,14 @@ pub async fn run_start() -> Result<()> {
     // Get active goals
     let goals = get_active_goals(&pool, project_id).await;
     if !goals.is_empty() {
-        context_parts.push(format!("**Active Goals:**\n{}", goals.join("\n")));
+        context_parts.push(format!("[Mira/goals] Active goals:\n{}", goals.join("\n")));
     }
 
-    // Get relevant memories based on task description
+    // Get relevant memories based on task description (semantic with keyword fallback)
     if let Some(task) = &start_input.task_description {
-        let memories = get_relevant_memories(&pool, project_id, task).await;
+        let memories = crate::hooks::recall::recall_memories(&pool, project_id, task).await;
         if !memories.is_empty() {
-            context_parts.push(format!("**Relevant Context:**\n{}", memories.join("\n")));
+            context_parts.push(format!("[Mira/memory] Relevant context:\n{}", memories.join("\n")));
         }
     }
 
@@ -125,7 +125,7 @@ pub async fn run_start() -> Result<()> {
         serde_json::json!({})
     } else {
         let mut context = format!(
-            "Mira context for this subagent:\n\n{}",
+            "[Mira/context] Subagent context:\n\n{}",
             context_parts.join("\n\n")
         );
         if context.len() > MAX_CONTEXT_CHARS {
@@ -259,7 +259,7 @@ fn build_entity_summary(subagent_type: &str, entities: &[crate::entities::RawEnt
         .collect();
 
     let mut parts = Vec::new();
-    parts.push(format!("[Subagent:{}]", subagent_type));
+    parts.push(format!("[Mira/context] Subagent:{}", subagent_type));
 
     if !files.is_empty() {
         parts.push(format!("Files: {}", files.join(", ")));
@@ -308,188 +308,6 @@ async fn get_active_goals(pool: &Arc<DatabasePool>, project_id: i64) -> Vec<Stri
                 .collect();
 
             Ok::<_, anyhow::Error>(goals)
-        })
-        .await;
-
-    result.unwrap_or_default()
-}
-
-/// Get memories relevant to the task using embedding search with keyword fallback.
-///
-/// Tries semantic search first if an embedding client can be created, then falls
-/// back to the original keyword-based LIKE matching.
-async fn get_relevant_memories(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    task: &str,
-) -> Vec<String> {
-    // Try embedding-based recall first
-    if let Some(memories) = try_semantic_recall(pool, project_id, task).await
-        && !memories.is_empty()
-    {
-        return memories;
-    }
-
-    // Fall back to keyword matching
-    get_keyword_memories(pool, project_id, task).await
-}
-
-/// Attempt semantic recall using embeddings. Returns None if embeddings unavailable.
-async fn try_semantic_recall(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    task: &str,
-) -> Option<Vec<String>> {
-    use crate::config::{ApiKeys, EmbeddingsConfig};
-    use crate::embeddings::EmbeddingClient;
-    use crate::entities::extract_entities_heuristic;
-    use crate::search::embedding_to_bytes;
-
-    // Create embedding client directly (hooks don't have ToolContext)
-    let emb =
-        EmbeddingClient::from_config(&ApiKeys::from_env(), &EmbeddingsConfig::from_env(), None)?;
-
-    // Embed the task description
-    let query_embedding = emb.embed(task).await.ok()?;
-    let embedding_bytes = embedding_to_bytes(&query_embedding);
-
-    // Extract entities from query for boosting
-    let query_entity_names: Vec<String> = extract_entities_heuristic(task)
-        .into_iter()
-        .map(|e| e.canonical_name)
-        .collect();
-
-    let pool_clone = pool.clone();
-    let result: Vec<crate::db::RecallRow> = pool_clone
-        .interact(move |conn| {
-            Ok::<_, anyhow::Error>(crate::db::recall_semantic_with_entity_boost_sync(
-                conn,
-                &embedding_bytes,
-                Some(project_id),
-                None, // user_id - not available in hook context
-                None, // team_id
-                None, // current_branch
-                &query_entity_names,
-                5, // fetch 5, we'll filter and take top 3
-            )?)
-        })
-        .await
-        .ok()?;
-
-    // Filter low-quality results and format
-    let memories: Vec<String> = result
-        .into_iter()
-        .filter(|(_, _, distance, _, _)| *distance < 0.7)
-        .take(3)
-        .map(|(_, ref content, _, _, _)| format_memory_line(content))
-        .collect();
-
-    Some(memories)
-}
-
-/// Format a memory line with fact_type prefix and truncation.
-/// Since semantic search returns content without fact_type, we infer from content.
-fn format_memory_line(content: &str) -> String {
-    let truncated = if content.len() > 150 {
-        format!("{}...", truncate_at_boundary(content, 150))
-    } else {
-        content.to_string()
-    };
-    format!("- {}", truncated)
-}
-
-/// Original keyword-based memory matching (fallback)
-async fn get_keyword_memories(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    task: &str,
-) -> Vec<String> {
-    let pool_clone = pool.clone();
-    let task = task.to_string();
-
-    // Extract keywords from task for matching
-    let keywords: Vec<String> = task
-        .split_whitespace()
-        .filter(|w| w.len() > 3)
-        .take(5)
-        .map(|s| s.to_string())
-        .collect();
-
-    if keywords.is_empty() {
-        return Vec::new();
-    }
-
-    // Escape LIKE wildcards to prevent injection
-    let escaped_keywords: Vec<String> = keywords
-        .iter()
-        .map(|kw| {
-            kw.replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        })
-        .collect();
-
-    let result = pool_clone
-        .interact(move |conn| {
-            // Build a simple keyword match query
-            let like_clauses: Vec<String> = escaped_keywords
-                .iter()
-                .map(|_| "content LIKE '%' || ? || '%' ESCAPE '\\'".to_string())
-                .collect();
-            let where_clause = like_clauses.join(" OR ");
-
-            let sql = format!(
-                r#"
-                SELECT content, fact_type
-                FROM memory_facts
-                WHERE project_id = ?
-                  AND (scope = 'project' OR scope IS NULL)
-                  AND fact_type IN ('general','preference','decision','pattern','context','persona')
-                  AND status != 'archived'
-                  AND ({})
-                ORDER BY
-                    CASE fact_type
-                        WHEN 'decision' THEN 1
-                        WHEN 'preference' THEN 2
-                        ELSE 3
-                    END,
-                    created_at DESC
-                LIMIT 3
-            "#,
-                where_clause
-            );
-
-            let mut stmt = conn.prepare(&sql)?;
-
-            // Build params: project_id + all escaped keywords
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(project_id)];
-            for kw in &escaped_keywords {
-                params.push(Box::new(kw.clone()));
-            }
-            let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|b| b.as_ref()).collect();
-
-            let memories: Vec<String> = stmt
-                .query_map(params_refs.as_slice(), |row| {
-                    let content: String = row.get(0)?;
-                    let fact_type: Option<String> = row.get(1)?;
-                    let prefix = match fact_type.as_deref() {
-                        Some("decision") => "[Decision]",
-                        Some("preference") => "[Preference]",
-                        _ => "[Context]",
-                    };
-                    // Truncate long content
-                    let content = if content.len() > 150 {
-                        format!("{}...", truncate_at_boundary(&content, 150))
-                    } else {
-                        content
-                    };
-                    Ok(format!("{} {}", prefix, content))
-                })?
-                .filter_map(crate::db::log_and_discard)
-                .collect();
-
-            Ok::<_, anyhow::Error>(memories)
         })
         .await;
 
@@ -594,7 +412,7 @@ mod tests {
         ];
 
         let summary = build_entity_summary("Explore", &entities);
-        assert!(summary.contains("[Subagent:Explore]"));
+        assert!(summary.contains("[Mira/context] Subagent:Explore"));
         assert!(summary.contains("Files: src/db/pool.rs"));
         assert!(summary.contains("DatabasePool"));
         assert!(summary.contains("EmbeddingClient"));
@@ -624,20 +442,9 @@ mod tests {
         ];
 
         let summary = build_entity_summary("Plan", &entities);
-        assert!(summary.contains("[Subagent:Plan]"));
+        assert!(summary.contains("[Mira/context] Subagent:Plan"));
         assert!(!summary.contains("Files:"));
         assert!(summary.contains("Identifiers:"));
     }
 
-    #[test]
-    fn format_memory_line_truncates_long_content() {
-        let short = "Short memory";
-        assert_eq!(format_memory_line(short), "- Short memory");
-
-        let long = "A".repeat(200);
-        let result = format_memory_line(&long);
-        assert!(result.ends_with("..."));
-        // "- " prefix (2) + 150 chars + "..." (3) = 155
-        assert_eq!(result.len(), 155);
-    }
 }

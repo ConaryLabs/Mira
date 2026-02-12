@@ -211,6 +211,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "drop_dead_tables",
             func: drop_dead_tables,
         },
+        Migration {
+            version: 36,
+            name: "injection_feedback",
+            func: migrate_injection_feedback,
+        },
     ]
 }
 
@@ -348,6 +353,36 @@ fn migrate_module_conventions(conn: &Connection) -> Result<()> {
             UNIQUE(project_id, module_path)
         );
         CREATE INDEX IF NOT EXISTS idx_module_conventions_project ON module_conventions(project_id);
+    "#,
+    )
+}
+
+/// Add injection_feedback table for tracking whether injected context was used
+fn migrate_injection_feedback(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::create_table_if_missing;
+    create_table_if_missing(
+        conn,
+        "injection_feedback",
+        r#"
+        CREATE TABLE IF NOT EXISTS injection_feedback (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            project_id INTEGER REFERENCES projects(id),
+            sources TEXT NOT NULL,          -- JSON array of source names
+            key_terms TEXT NOT NULL,        -- JSON array of extracted key terms
+            context_len INTEGER NOT NULL,
+            was_referenced INTEGER,         -- NULL=pending, 0=not referenced, 1=referenced
+            matched_terms INTEGER,          -- count of key terms found in response
+            overlap_ratio REAL,             -- matched_terms / total key_terms
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            checked_at TEXT                 -- when feedback was evaluated
+        );
+        CREATE INDEX IF NOT EXISTS idx_injection_feedback_session
+            ON injection_feedback(session_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_injection_feedback_pending
+            ON injection_feedback(was_referenced) WHERE was_referenced IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_injection_feedback_project
+            ON injection_feedback(project_id, created_at DESC);
     "#,
     )
 }
