@@ -6,7 +6,7 @@ use anyhow::Result;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
     CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, MemoryRequest,
-    ProjectRequest, RecipeRequest, ReplyToMiraRequest, SessionAction, SessionRequest, TeamRequest,
+    ProjectRequest, RecipeRequest, SessionAction, SessionRequest, TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -77,17 +77,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                     .map(|output| output.0.message),
             }
         }
-        "reply_to_mira" => {
-            let req: ReplyToMiraRequest = serde_json::from_str(&args)?;
-            mira::tools::reply_to_mira(
-                &server,
-                req.in_reply_to,
-                req.content,
-                req.complete.unwrap_or(true),
-            )
-            .await
-            .map(|output| output.0.message)
-        }
         "documentation" => {
             let req: DocumentationRequest = serde_json::from_str(&args)?;
             mira::tools::documentation(&server, req)
@@ -127,7 +116,6 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "goal",
         "index",
         "session",
-        "reply_to_mira",
         "documentation",
         "team",
         "recipe",

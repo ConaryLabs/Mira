@@ -11,7 +11,6 @@ mod router;
 mod tasks;
 
 use crate::tools::core as tools;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -46,12 +45,8 @@ pub struct MiraServer {
     pub session_id: Arc<RwLock<Option<String>>>,
     /// Current git branch (detected from project path)
     pub branch: Arc<RwLock<Option<String>>>,
-    /// WebSocket broadcaster (unused in MCP-only mode)
-    pub ws_tx: Option<tokio::sync::broadcast::Sender<mira_types::WsEvent>>,
     /// File watcher handle for registering projects
     pub watcher: Option<WatcherHandle>,
-    /// Pending responses for agent collaboration (message_id -> response sender)
-    pub pending_responses: tools::PendingResponseMap,
     /// Fuzzy fallback cache for non-embedding searches
     pub fuzzy_cache: Arc<FuzzyCache>,
     /// Whether fuzzy fallback is enabled
@@ -91,9 +86,7 @@ impl MiraServer {
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
             branch: Arc::new(RwLock::new(None)),
-            ws_tx: None,
             watcher: None,
-            pending_responses: Arc::new(RwLock::new(HashMap::new())),
             fuzzy_cache: Arc::new(FuzzyCache::new()),
             fuzzy_enabled,
             team_membership: Arc::new(RwLock::new(None)),
@@ -223,21 +216,4 @@ impl MiraServer {
         }
     }
 
-    /// Broadcast an event (no-op in MCP-only mode)
-    pub fn broadcast(&self, event: mira_types::WsEvent) {
-        if let Some(tx) = &self.ws_tx {
-            let receiver_count = tx.receiver_count();
-            tracing::debug!(
-                "[BROADCAST] Sending {:?} to {} receivers",
-                event,
-                receiver_count
-            );
-            match tx.send(event) {
-                Ok(n) => tracing::debug!("[BROADCAST] Sent to {} receivers", n),
-                Err(e) => tracing::warn!("[BROADCAST] Error: {:?}", e),
-            }
-        } else {
-            tracing::debug!("[BROADCAST] No ws_tx configured!");
-        }
-    }
 }

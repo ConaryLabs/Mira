@@ -121,26 +121,6 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Send a response back to Mira during collaboration.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ReplyOutput>()
-            .expect("ReplyOutput schema")
-    )]
-    async fn reply_to_mira(
-        &self,
-        Parameters(req): Parameters<ReplyToMiraRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(
-            tools::reply_to_mira(
-                self,
-                req.in_reply_to,
-                req.content,
-                req.complete.unwrap_or(true),
-            )
-            .await,
-        )
-    }
-
-    #[tool(
         description = "Manage documentation gap detection and writing tasks. Actions: list (show needed docs), get (task details with writing guidelines), complete (mark done), skip (mark not needed), batch_skip (skip multiple tasks), inventory (show all docs), scan (trigger scan).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DocOutput>()
             .expect("DocOutput schema")
@@ -357,8 +337,6 @@ impl MiraServer {
         use rmcp::handler::server::tool::ToolCallContext;
 
         let tool_name = request.name.to_string();
-        let call_id = uuid::Uuid::new_v4().to_string();
-        let start = std::time::Instant::now();
 
         // Capture peer on first tool call (for MCP sampling fallback)
         if self.peer.read().await.is_none() {
@@ -390,27 +368,10 @@ impl MiraServer {
             .map(|a| serde_json::to_string(a).unwrap_or_default())
             .unwrap_or_default();
 
-        // Broadcast tool start (direct, no HTTP)
-        self.broadcast(mira_types::WsEvent::ToolStart {
-            tool_name: tool_name.clone(),
-            arguments: serde_json::Value::Object(request.arguments.clone().unwrap_or_default()),
-            call_id: call_id.clone(),
-        });
-
         let ctx = ToolCallContext::new(self, request, context);
         let result = self.tool_router.call(ctx).await;
 
-        // Extract result and broadcast
-        let duration_ms = start.elapsed().as_millis() as u64;
         let (success, result_text) = Self::extract_result_text(&result);
-
-        self.broadcast(mira_types::WsEvent::ToolResult {
-            tool_name: tool_name.clone(),
-            result: result_text.clone(),
-            success,
-            call_id,
-            duration_ms,
-        });
 
         // Persist to tool_history (fire-and-forget, never blocks tool response)
         {

@@ -5,10 +5,9 @@ use mira::{
     background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient,
     llm::ProviderFactory,
 };
-use mira_types::{ProjectContext, WsEvent};
-use std::collections::HashMap;
+use mira_types::ProjectContext;
 use std::sync::Arc;
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// Test context that implements ToolContext for integration testing
@@ -105,14 +104,6 @@ impl mira::tools::core::ToolContext for TestContext {
 
     async fn set_branch(&self, branch: Option<String>) {
         *self.branch_state.write().await = branch;
-    }
-
-    fn broadcast(&self, _event: WsEvent) {
-        // No-op for tests
-    }
-
-    fn pending_responses(&self) -> Option<&Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>> {
-        None
     }
 
     fn watcher(&self) -> Option<&WatcherHandle> {

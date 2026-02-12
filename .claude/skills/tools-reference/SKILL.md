@@ -5,7 +5,7 @@ description: Reference for all Mira MCP tool signatures, parameters, and workflo
 
 # Mira Consolidated Tools Reference
 
-Mira uses 10 action-based tools. Reference for tool signatures and workflows.
+Mira uses 9 action-based tools. Reference for tool signatures and workflows.
 
 ## `project` — Project/Session Management
 
@@ -112,8 +112,3 @@ recipe(action="get", name="expert-review")         # Get full recipe details
 recipe(action="get", name="full-cycle")
 ```
 
-## Other Tools
-
-```
-reply_to_mira(in_reply_to="msg_id", content="...", complete=true)
-```

@@ -7,20 +7,15 @@ use async_trait::async_trait;
 
 /// Standard error message when no project is active.
 pub const NO_ACTIVE_PROJECT_ERROR: &str = "No active project. Auto-detection failed — call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.";
-use mira_types::{ProjectContext, WsEvent};
+use mira_types::ProjectContext;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, oneshot};
 
 use crate::background::watcher::WatcherHandle;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::llm::ProviderFactory;
-
-/// Map of pending collaboration responses keyed by message ID.
-pub type PendingResponseMap = Arc<RwLock<HashMap<String, oneshot::Sender<String>>>>;
 
 /// Information about an MCP tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,23 +96,7 @@ pub trait ToolContext: Send + Sync {
         crate::hooks::session::read_team_membership()
     }
 
-    // === Event Broadcasting ===
-
-    /// Broadcast a WebSocket event to connected clients (no-op if no broadcaster)
-    fn broadcast(&self, event: WsEvent);
-
     // === Optional Services ===
-
-    /// Check if the context supports real-time collaboration (WebSocket active)
-    /// Returns true for MCP server with connected frontend, false for CLI
-    fn is_collaborative(&self) -> bool {
-        false
-    }
-
-    /// Pending responses for agent collaboration
-    fn pending_responses(&self) -> Option<&PendingResponseMap> {
-        None
-    }
 
     /// Watcher handle for file system monitoring (optional)
     fn watcher(&self) -> Option<&WatcherHandle> {
@@ -187,6 +166,6 @@ pub use goals::goal;
 pub use memory::{archive, forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
 pub use recipe::handle_recipe;
-pub use session::{ensure_session, get_session_recap, handle_session, reply_to_mira};
+pub use session::{ensure_session, get_session_recap, handle_session};
 pub use team::handle_team;
 pub use usage::{usage_list, usage_stats, usage_summary};

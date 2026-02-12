@@ -5,7 +5,6 @@
 //! This crate provides the core domain model for:
 //! - **Project context**: Mapping filesystem paths to database entities
 //! - **Semantic memory**: Evidence-based facts with lifecycle and scoping
-//! - **WebSocket protocol**: Real-time tool execution and agent collaboration
 //!
 //! These types are designed to work across native and WASM builds,
 //! with no native-only dependencies allowed.
@@ -109,81 +108,6 @@ fn default_scope() -> String {
     "project".to_string()
 }
 
-// ═══════════════════════════════════════
-// AGENT COLLABORATION
-// ═══════════════════════════════════════
-
-/// Identifies the speaker in a chat or collaboration stream.
-///
-/// Used by clients to determine avatar/styling and attribute messages correctly.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRole {
-    /// The local Mira orchestrator/server.
-    Mira,
-    /// The remote LLM intelligence (Claude).
-    Claude,
-}
-
-// ═══════════════════════════════════════
-// WEBSOCKET EVENTS
-// ═══════════════════════════════════════
-
-/// Real-time events for the Model Context Protocol (MCP) and chat stream.
-///
-/// # Protocol Flow
-///
-/// ## Tool Execution
-/// 1. Server emits [`WsEvent::ToolStart`] with a unique `call_id`.
-/// 2. Tool executes (either on server or client).
-/// 3. [`WsEvent::ToolResult`] is emitted with the matching `call_id` and output.
-///
-/// ## Chat Streaming
-/// - [`WsEvent::AgentResponse`] streams chunks of text.
-/// - `complete: true` signals the end of a turn.
-///
-/// # Correlation
-///
-/// `ToolStart` and `ToolResult` are correlated by `call_id`. Clients must track
-/// pending tool calls and match results to their corresponding starts.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum WsEvent {
-    /// The agent has decided to call a tool.
-    ToolStart {
-        /// Name of the tool being invoked.
-        tool_name: String,
-        /// JSON arguments map passed to the tool.
-        arguments: serde_json::Value,
-        /// Unique correlation ID to match with [`WsEvent::ToolResult`].
-        call_id: String,
-    },
-    /// The output of a tool execution.
-    ToolResult {
-        /// Name of the tool that was invoked.
-        tool_name: String,
-        /// The tool's output (typically JSON or plain text).
-        result: String,
-        /// Whether the tool executed successfully.
-        success: bool,
-        /// Must match the `call_id` from the corresponding [`WsEvent::ToolStart`].
-        call_id: String,
-        /// Execution time in milliseconds.
-        duration_ms: u64,
-    },
-    /// A chat message or thought from an agent.
-    AgentResponse {
-        /// ID of the user message this is replying to.
-        in_reply_to: String,
-        /// Which agent sent this response.
-        from: AgentRole,
-        /// The message content (may be a partial chunk if streaming).
-        content: String,
-        /// If false, this is a partial stream chunk. If true, the message is complete.
-        complete: bool,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,71 +192,5 @@ mod tests {
         assert_eq!(fact.status, "confirmed");
         assert_eq!(fact.scope, "team");
         assert_eq!(fact.team_id, Some(10));
-    }
-
-    // ============================================================================
-    // WsEvent tests
-    // ============================================================================
-
-    #[test]
-    fn test_ws_event_tool_start_serialize() {
-        let event = WsEvent::ToolStart {
-            tool_name: "search_code".to_string(),
-            arguments: serde_json::json!({"query": "test"}),
-            call_id: "call-123".to_string(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"tool_start\""));
-        assert!(json.contains("search_code"));
-        assert!(json.contains("call-123"));
-    }
-
-    #[test]
-    fn test_ws_event_tool_result_serialize() {
-        let event = WsEvent::ToolResult {
-            tool_name: "search_code".to_string(),
-            result: "Found 5 matches".to_string(),
-            success: true,
-            call_id: "call-123".to_string(),
-            duration_ms: 150,
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"tool_result\""));
-        assert!(json.contains("\"success\":true"));
-        assert!(json.contains("\"duration_ms\":150"));
-    }
-
-    #[test]
-    fn test_ws_event_agent_response_serialize() {
-        let event = WsEvent::AgentResponse {
-            in_reply_to: "msg-456".to_string(),
-            from: AgentRole::Mira,
-            content: "Here is my response".to_string(),
-            complete: true,
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"agent_response\""));
-        assert!(json.contains("\"from\":\"mira\""));
-        assert!(json.contains("\"complete\":true"));
-    }
-
-    #[test]
-    fn test_ws_event_deserialize_tool_start() {
-        let json = r#"{
-            "type": "tool_start",
-            "tool_name": "index",
-            "arguments": {"path": "/test"},
-            "call_id": "abc"
-        }"#;
-        let event: WsEvent = serde_json::from_str(json).unwrap();
-        match event {
-            WsEvent::ToolStart {
-                tool_name, call_id, ..
-            } => {
-                assert_eq!(tool_name, "index");
-                assert_eq!(call_id, "abc");
-            }
-            _ => panic!("Expected ToolStart"),
-        }
     }
 }

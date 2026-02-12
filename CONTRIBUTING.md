@@ -56,7 +56,7 @@ crates/
       http.rs        # Shared HTTP client factory
       identity.rs    # User identity detection
       project_files.rs # File discovery and filtering (.miraignore, .gitignore)
-  mira-types/        # Shared types (ProjectContext, MemoryFact, AgentRole, WsEvent)
+  mira-types/        # Shared types (ProjectContext, MemoryFact)
 docs/                # Documentation
 plugin/              # Claude Code plugin (hooks, skills, MCP config)
 ```

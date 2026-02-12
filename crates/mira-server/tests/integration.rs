@@ -10,7 +10,7 @@ use mira::mcp::responses::*;
 use mira::tools::core::{
     ToolContext, archive, ensure_session, find_function_callees, find_function_callers, forget,
     get_project, get_session_recap, get_symbols, goal, handle_recipe, handle_session, index,
-    recall, remember, reply_to_mira, search_code, session_start, set_project, summarize_codebase,
+    recall, remember, search_code, session_start, set_project, summarize_codebase,
 };
 use std::sync::Arc;
 use test_utils::TestContext;
@@ -1076,58 +1076,6 @@ async fn test_context_injection_analytics() {
     // Check recent events
     let recent = analytics.recent_events(5).await;
     assert_eq!(recent.len(), 2);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Reply to Mira Tests (Centralized Session Collaboration)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_reply_to_mira_no_frontend() {
-    // TestContext returns None for pending_responses() - simulates CLI mode
-    let ctx = TestContext::new().await;
-
-    let result = reply_to_mira(
-        &ctx,
-        "msg-123".to_string(),
-        "Test response content".to_string(),
-        true,
-    )
-    .await;
-
-    // Should succeed with "no frontend" message
-    assert!(result.is_ok(), "reply_to_mira should succeed in CLI mode");
-    let output = result.unwrap();
-    assert!(
-        msg!(output).contains("no frontend connected"),
-        "Output should indicate no frontend: {}",
-        msg!(output)
-    );
-    assert!(
-        msg!(output).contains("Test response content"),
-        "Output should contain the content: {}",
-        msg!(output)
-    );
-}
-
-#[tokio::test]
-async fn test_reply_to_mira_not_collaborative() {
-    // TestContext is not collaborative (is_collaborative returns false)
-    let ctx = TestContext::new().await;
-
-    // Even with a non-existent message_id, should succeed in non-collaborative mode
-    let result = reply_to_mira(
-        &ctx,
-        "non-existent-id".to_string(),
-        "Some content".to_string(),
-        false,
-    )
-    .await;
-
-    assert!(
-        result.is_ok(),
-        "Non-collaborative mode should not error on missing request"
-    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

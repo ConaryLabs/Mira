@@ -289,18 +289,6 @@ pub struct SessionRequest {
     pub insight_id: Option<i64>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ReplyToMiraRequest {
-    #[schemars(description = "The message_id you are replying to")]
-    pub in_reply_to: String,
-    #[schemars(description = "Your response content")]
-    pub content: String,
-    #[schemars(
-        description = "Is your response complete? Set to false if you need more information."
-    )]
-    pub complete: Option<bool>,
-}
-
 // Documentation request types
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

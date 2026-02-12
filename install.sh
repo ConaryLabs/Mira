@@ -227,7 +227,6 @@ MANUAL
   ],
   "PreCompact": [
     {
-      "matcher": "*",
       "hooks": [
         {
           "type": "command",

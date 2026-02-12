@@ -30,7 +30,6 @@ The central server state holding:
 - `project` - Current project context
 - `session_id` / `branch` - Session tracking
 - `mcp_client_manager` - Connections to external MCP servers
-- `pending_responses` - Agent collaboration message queue
 - `tool_router` - Routes MCP tool calls to handlers
 
 ## Tool Registration

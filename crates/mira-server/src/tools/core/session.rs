@@ -1,5 +1,5 @@
 // crates/mira-server/src/tools/core/session.rs
-// Unified session management and collaboration tools
+// Unified session management tools
 
 use crate::db::{
     build_session_recap_sync, create_session_ext_sync, dismiss_insight_sync,
@@ -8,13 +8,12 @@ use crate::db::{
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    HistoryEntry, InsightItem, InsightsData, ReplyOutput, SessionCurrentData, SessionData,
+    HistoryEntry, InsightItem, InsightsData, SessionCurrentData, SessionData,
     SessionHistoryData, SessionListData, SessionOutput, SessionSummary,
 };
 use crate::tools::core::session_notes;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::{truncate, truncate_at_boundary};
-use mira_types::{AgentRole, WsEvent};
 use uuid::Uuid;
 
 /// Unified session tool dispatcher
@@ -460,78 +459,6 @@ async fn find_previous_session_heuristic<C: ToolContext>(
         .await
         .ok()
         .flatten()
-}
-
-/// Send a response back to Mira during collaboration.
-///
-/// In MCP mode with WebSocket: Sends the response through the pending channel
-/// and broadcasts an AgentResponse event to the frontend.
-///
-/// In CLI mode: Returns a message indicating no frontend is connected.
-pub async fn reply_to_mira<C: ToolContext>(
-    ctx: &C,
-    in_reply_to: String,
-    content: String,
-    complete: bool,
-) -> Result<Json<ReplyOutput>, String> {
-    // Check if we have pending_responses (MCP with active collaboration)
-    let Some(pending) = ctx.pending_responses() else {
-        // CLI mode or no collaboration active - just acknowledge
-        return Ok(Json(ReplyOutput {
-            action: "reply".into(),
-            message: format!(
-                "(Reply not sent - no frontend connected) Content: {}",
-                content
-            ),
-        }));
-    };
-
-    // Try to find and fulfill the pending response
-    let sender = {
-        let mut pending_map = pending.write().await;
-        pending_map.remove(&in_reply_to)
-    };
-
-    match sender {
-        Some(tx) => {
-            // Send response through the channel
-            if tx.send(content.clone()).is_err() {
-                return Err(
-                    "Agent collaboration timed out - the partner agent may have disconnected."
-                        .to_string(),
-                );
-            }
-
-            // Broadcast AgentResponse event for frontend
-            ctx.broadcast(WsEvent::AgentResponse {
-                in_reply_to,
-                from: AgentRole::Claude,
-                content,
-                complete,
-            });
-
-            Ok(Json(ReplyOutput {
-                action: "reply".into(),
-                message: "Response sent to Mira".into(),
-            }))
-        }
-        None => {
-            // No pending request found
-            if ctx.is_collaborative() {
-                // Server mode: This is an error (request timed out or invalid ID)
-                Err(format!(
-                    "No pending request found for message_id: {}. It may have timed out or been answered already.",
-                    in_reply_to
-                ))
-            } else {
-                // CLI/Offline mode: Log it and succeed
-                Ok(Json(ReplyOutput {
-                    action: "reply".into(),
-                    message: format!("(Reply not sent - no pending request) Content: {}", content),
-                }))
-            }
-        }
-    }
 }
 
 /// Get session recap for MCP clients

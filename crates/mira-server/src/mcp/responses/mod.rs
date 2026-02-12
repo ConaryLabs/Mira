@@ -96,22 +96,6 @@ impl<T: Serialize + JsonSchema + HasMessage + 'static> IntoCallToolResult for Js
 }
 
 // ============================================================================
-// Reply (small enough to keep inline)
-// ============================================================================
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ReplyOutput {
-    pub action: String,
-    pub message: String,
-}
-
-impl HasMessage for ReplyOutput {
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
@@ -137,7 +121,6 @@ mod tests {
         );
         assert!(schema_for_output::<DocOutput>().is_ok(), "DocOutput");
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
-        assert!(schema_for_output::<ReplyOutput>().is_ok(), "ReplyOutput");
         assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");
         assert!(schema_for_output::<RecipeOutput>().is_ok(), "RecipeOutput");
         assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");

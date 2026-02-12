@@ -8,8 +8,6 @@ Shared data contracts between the Mira server and clients. WASM-compatible types
 |------|------|-------------|
 | `ProjectContext` | struct | Project identity: database ID, filesystem path, display name |
 | `MemoryFact` | struct | Semantic memory unit with evidence lifecycle, scoping, and confidence |
-| `AgentRole` | enum | Agent identity: `Mira` (local orchestrator) or `Claude` (remote LLM) |
-| `WsEvent` | enum | Internal broadcast events: `ToolStart`, `ToolResult`, `AgentResponse` (named historically; still used in router for tool lifecycle broadcasting) |
 
 ## Design
 

@@ -79,7 +79,7 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 10 action-based tools:
+The plugin bundles the Mira MCP server with 9 action-based tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
@@ -92,7 +92,6 @@ The plugin bundles the Mira MCP server with 10 action-based tools:
 | `index` | project, file, status, compact, summarize, health | Code indexing and health |
 | `team` | status, review, distill | Agent team intelligence |
 | `recipe` | list, get | Reusable team blueprints for Agent Teams |
-| `reply_to_mira` | — | Send a response back during collaboration |
 
 All tools return structured JSON via MCP outputSchema.
 

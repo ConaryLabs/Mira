@@ -153,7 +153,7 @@ The installer adds all hooks to `~/.claude/settings.json` using `jq` for JSON ma
 | `SessionEnd` | `mira hook session-end` | 5s | Snapshot tasks on user interrupt |
 | `SubagentStart` | `mira hook subagent-start` | 3s | Inject context when subagents spawn |
 | `SubagentStop` | `mira hook subagent-stop` | 3s | Capture discoveries from subagent work |
-| `PermissionRequest` | `mira hook permission` | 2s | Auto-approve tools based on stored rules |
+| `PermissionRequest` | `mira hook permission` | 3s | Auto-approve tools based on stored rules |
 
 ### Manual Configuration
 
@@ -164,7 +164,7 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
-    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 2000}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3000}]}],
     "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2000}]}],
     "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000, "async": true}]}],
     "PreCompact": [{"hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000, "async": true}]}],

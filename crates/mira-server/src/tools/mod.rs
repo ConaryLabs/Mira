@@ -7,7 +7,6 @@ pub mod mcp;
 // Re-export public API for CLI dispatcher, tests, and external callers
 pub use core::{
     // Trait & types
-    PendingResponseMap,
     ProjectInfo,
     ToolContext,
     // Tool handlers (used by CLI tool dispatcher and integration tests)
@@ -31,7 +30,6 @@ pub use core::{
     project,
     recall,
     remember,
-    reply_to_mira,
     search_code,
     session_start,
     set_project,
