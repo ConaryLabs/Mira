@@ -88,7 +88,7 @@ pub fn get_session_history_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at
+        "SELECT id, session_id, tool_name, arguments, result_summary, full_result, success, created_at
          FROM tool_history
          WHERE session_id = ?
          ORDER BY created_at DESC, id DESC
@@ -101,8 +101,9 @@ pub fn get_session_history_sync(
             tool_name: row.get(2)?,
             arguments: row.get(3)?,
             result_summary: row.get(4)?,
-            success: row.get::<_, i32>(5)? != 0,
-            created_at: row.get(6)?,
+            full_result: row.get(5)?,
+            success: row.get::<_, i32>(6)? != 0,
+            created_at: row.get(7)?,
         })
     })?;
     rows.collect()
@@ -378,7 +379,7 @@ pub fn get_history_after_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, tool_name, arguments, result_summary, success, created_at
+        "SELECT id, session_id, tool_name, arguments, result_summary, full_result, success, created_at
          FROM tool_history
          WHERE session_id = ? AND id > ?
          ORDER BY id ASC
@@ -391,8 +392,9 @@ pub fn get_history_after_sync(
             tool_name: row.get(2)?,
             arguments: row.get(3)?,
             result_summary: row.get(4)?,
-            success: row.get::<_, i32>(5)? != 0,
-            created_at: row.get(6)?,
+            full_result: row.get(5)?,
+            success: row.get::<_, i32>(6)? != 0,
+            created_at: row.get(7)?,
         })
     })?;
     rows.collect()

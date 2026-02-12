@@ -94,6 +94,12 @@ pub struct MemoryFact {
     /// Team ID (required if scope is "team").
     #[serde(default)]
     pub team_id: Option<i64>,
+    /// ISO 8601 timestamp of last update to this memory.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    /// Git branch where this memory was created/last referenced.
+    #[serde(default)]
+    pub branch: Option<String>,
 }
 
 fn default_session_count() -> i32 {

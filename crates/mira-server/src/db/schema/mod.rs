@@ -206,6 +206,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "migrate_memory_facts_to_observations",
             func: memory::migrate_memory_facts_to_observations,
         },
+        Migration {
+            version: 35,
+            name: "drop_dead_tables",
+            func: drop_dead_tables,
+        },
     ]
 }
 
@@ -347,6 +352,19 @@ fn migrate_module_conventions(conn: &Connection) -> Result<()> {
     )
 }
 
+/// Drop tables that are no longer used by any code path.
+fn drop_dead_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS corrections;
+         DROP TABLE IF EXISTS users;
+         DROP TABLE IF EXISTS cross_project_patterns;
+         DROP TABLE IF EXISTS pattern_sharing_log;
+         DROP TABLE IF EXISTS cross_project_preferences;
+         DROP TABLE IF EXISTS pattern_provenance;",
+    )?;
+    Ok(())
+}
+
 /// Database schema SQL
 pub const SCHEMA: &str = r#"
 -- =======================================
@@ -377,23 +395,17 @@ CREATE TABLE IF NOT EXISTS memory_facts (
     session_count INTEGER DEFAULT 1,       -- number of sessions where this was seen/used
     first_session_id TEXT,                 -- session when first created
     last_session_id TEXT,                  -- most recent session that referenced this
-    status TEXT DEFAULT 'candidate'        -- 'candidate' or 'confirmed'
+    status TEXT DEFAULT 'candidate',        -- 'candidate' or 'confirmed'
+    user_id TEXT,
+    scope TEXT DEFAULT 'project',
+    branch TEXT,
+    team_id INTEGER,
+    has_entities INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
 CREATE INDEX IF NOT EXISTS idx_memory_key ON memory_facts(key);
 CREATE INDEX IF NOT EXISTS idx_memory_no_embedding ON memory_facts(has_embedding) WHERE has_embedding = 0;
 -- Note: idx_memory_status is created in migrate_memory_facts_evidence_tracking() for compatibility with existing databases
-
-CREATE TABLE IF NOT EXISTS corrections (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER REFERENCES projects(id),
-    what_was_wrong TEXT NOT NULL,
-    what_is_right TEXT NOT NULL,
-    correction_type TEXT DEFAULT 'pattern',
-    scope TEXT DEFAULT 'project',
-    confidence REAL DEFAULT 1.0,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
 
 -- =======================================
 -- SESSIONS & HISTORY
@@ -404,7 +416,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     status TEXT DEFAULT 'active',
     summary TEXT,
     started_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    last_activity TEXT DEFAULT CURRENT_TIMESTAMP
+    last_activity TEXT DEFAULT CURRENT_TIMESTAMP,
+    source TEXT,
+    resumed_from TEXT,
+    branch TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_activity DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_status_activity ON sessions(status, last_activity DESC);

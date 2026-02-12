@@ -687,6 +687,8 @@ mod tests {
             user_id: None,
             scope: "project".to_string(),
             team_id: None,
+            updated_at: None,
+            branch: None,
         }
     }
 

@@ -12,6 +12,7 @@ pub struct ToolHistoryEntry {
     pub tool_name: String,
     pub arguments: Option<String>,
     pub result_summary: Option<String>,
+    pub full_result: Option<String>,
     pub success: bool,
     pub created_at: String,
 }

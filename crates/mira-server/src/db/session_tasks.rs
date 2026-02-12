@@ -31,7 +31,6 @@ pub fn snapshot_native_tasks_sync(
             raw_payload = excluded.raw_payload,
             goal_id = COALESCE(excluded.goal_id, session_tasks.goal_id),
             milestone_id = COALESCE(excluded.milestone_id, session_tasks.milestone_id),
-            version = session_tasks.version + 1,
             updated_at = datetime('now'),
             completed_at = CASE
                 WHEN excluded.status = 'completed' AND session_tasks.completed_at IS NULL

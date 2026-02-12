@@ -72,7 +72,8 @@ pub fn apply_branch_boost(
 
 /// Parse MemoryFact from a rusqlite Row with standard column order:
 /// (id, project_id, key, content, fact_type, category, confidence, created_at,
-///  session_count, first_session_id, last_session_id, status, user_id, scope, team_id)
+///  session_count, first_session_id, last_session_id, status, user_id, scope, team_id,
+///  updated_at, branch)
 pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact> {
     Ok(MemoryFact {
         id: row.get(0)?,
@@ -90,6 +91,8 @@ pub fn parse_memory_fact_row(row: &rusqlite::Row) -> rusqlite::Result<MemoryFact
         user_id: row.get(12).ok(),
         scope: row.get(13).unwrap_or_else(|_| "project".to_string()),
         team_id: row.get(14).ok(),
+        updated_at: row.get(15).ok(),
+        branch: row.get(16).ok(),
     })
 }
 
@@ -525,7 +528,7 @@ pub fn search_memories_sync(
     let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
-                user_id, scope, team_id
+                user_id, scope, team_id, updated_at, branch
          FROM memory_facts
          WHERE {}
            AND fact_type IN ('general','preference','decision','pattern','context','persona')
@@ -652,7 +655,7 @@ pub fn get_preferences_sync(
     let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
-                user_id, scope, team_id
+                user_id, scope, team_id, updated_at, branch
          FROM memory_facts
          WHERE {}
            AND fact_type = 'preference'
@@ -712,6 +715,8 @@ pub fn get_health_alerts_sync(
                 user_id: None,
                 scope: row.get(8)?,
                 team_id: row.get(9)?,
+                updated_at: None,
+                branch: None,
             })
         },
     )?;
@@ -728,7 +733,7 @@ pub fn get_global_memories_sync(
         (
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                     session_count, first_session_id, last_session_id, status,
-                    user_id, scope, team_id
+                    user_id, scope, team_id, updated_at, branch
              FROM memory_facts
              WHERE project_id IS NULL AND category = ?
              ORDER BY confidence DESC, updated_at DESC
@@ -739,7 +744,7 @@ pub fn get_global_memories_sync(
         (
             "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                     session_count, first_session_id, last_session_id, status,
-                    user_id, scope, team_id
+                    user_id, scope, team_id, updated_at, branch
              FROM memory_facts
              WHERE project_id IS NULL AND fact_type = 'personal'
              ORDER BY confidence DESC, updated_at DESC
@@ -773,7 +778,7 @@ pub fn find_facts_without_embeddings_sync(
     let mut stmt = conn.prepare(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
-                user_id, scope, team_id
+                user_id, scope, team_id, updated_at, branch
          FROM memory_facts
          WHERE has_embedding = 0
            AND fact_type IN ('general','preference','decision','pattern','context','persona')

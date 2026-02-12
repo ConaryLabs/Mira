@@ -2,7 +2,7 @@
 //!
 //! Retention policy:
 //! - 30 days: tool_history, chat_messages, chat_summaries, session_behavior_log, proactive_interventions
-//! - 60 days: diff_analyses, diff_outcomes, pattern_sharing_log
+//! - 60 days: diff_analyses, diff_outcomes
 //! - 90 days: llm_usage, embeddings_usage, sessions (completed only), session_snapshots
 
 use rusqlite::Connection;
@@ -57,12 +57,6 @@ const RULES: &[RetentionRule] = &[
     },
     RetentionRule {
         table: "diff_outcomes",
-        time_column: "created_at",
-        days: 60,
-        extra_filter: "",
-    },
-    RetentionRule {
-        table: "pattern_sharing_log",
         time_column: "created_at",
         days: 60,
         extra_filter: "",
