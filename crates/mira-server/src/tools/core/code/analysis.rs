@@ -9,6 +9,38 @@ use crate::mcp::responses::{
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::ResultExt;
 
+/// Try to queue a health scan for a cold-start project (never scanned before).
+/// Returns a user-facing message appropriate for the outcome.
+async fn maybe_queue_health_scan<C: ToolContext>(ctx: &C, project_id: i64, data_kind: &str) -> String {
+    let pid = project_id;
+    let already_scanned = ctx
+        .pool()
+        .run(move |conn| {
+            Ok::<_, String>(crate::db::get_scan_info_sync(conn, pid, "health_scan_time").is_some())
+        })
+        .await
+        .unwrap_or(false);
+
+    if already_scanned {
+        return format!("No {} found for this project.", data_kind);
+    }
+
+    // Cold start — queue a health scan
+    let pid = project_id;
+    let pool = ctx.pool().clone();
+    let queued = pool
+        .run(move |conn| {
+            crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
+        })
+        .await;
+
+    if queued.is_ok() {
+        format!("No {data_kind} yet — a health scan has been queued and will complete shortly. Try again in a moment.")
+    } else {
+        format!("No {data_kind} yet. Run index(action=\"health\") to generate it.")
+    }
+}
+
 /// Get module dependencies and circular dependency warnings
 pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
     let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
@@ -19,18 +51,10 @@ pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput
         .await?;
 
     if deps.is_empty() {
-        // Auto-queue health scan so data will be available soon
-        let pid = project_id;
-        let pool = ctx.pool().clone();
-        let _ = pool
-            .run(move |conn| {
-                crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
-            })
-            .await;
-
+        let message = maybe_queue_health_scan(ctx, project_id, "module dependencies").await;
         return Ok(Json(CodeOutput {
             action: "dependencies".into(),
-            message: "No dependency data yet — a health scan has been queued and will complete shortly. Try again in a moment.".to_string(),
+            message,
             data: Some(CodeData::Dependencies(DependenciesData {
                 edges: vec![],
                 circular_count: 0,
@@ -114,18 +138,10 @@ pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
         .await?;
 
     if patterns.is_empty() {
-        // Auto-queue health scan so data will be available soon
-        let pid = project_id;
-        let pool = ctx.pool().clone();
-        let _ = pool
-            .run(move |conn| {
-                crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
-            })
-            .await;
-
+        let message = maybe_queue_health_scan(ctx, project_id, "architectural patterns").await;
         return Ok(Json(CodeOutput {
             action: "patterns".into(),
-            message: "No pattern data yet — a health scan has been queued and will complete shortly. Try again in a moment.".to_string(),
+            message,
             data: Some(CodeData::Patterns(PatternsData {
                 modules: vec![],
                 total: 0,
@@ -202,18 +218,10 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
         .await?;
 
     if scores.is_empty() {
-        // Auto-queue health scan so data will be available soon
-        let pid = project_id;
-        let pool = ctx.pool().clone();
-        let _ = pool
-            .run(move |conn| {
-                crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
-            })
-            .await;
-
+        let message = maybe_queue_health_scan(ctx, project_id, "tech debt scores").await;
         return Ok(Json(CodeOutput {
             action: "tech_debt".into(),
-            message: "No tech debt data yet — a health scan has been queued and will complete shortly. Try again in a moment.".to_string(),
+            message,
             data: Some(CodeData::TechDebt(TechDebtData {
                 modules: vec![],
                 summary: vec![],
