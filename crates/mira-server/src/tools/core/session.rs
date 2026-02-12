@@ -98,7 +98,7 @@ async fn query_insights<C: ToolContext>(
         .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
     let filter_source = insight_source.clone();
-    let min_conf = min_confidence.unwrap_or(0.3);
+    let min_conf = min_confidence.unwrap_or(0.5);
     let days_back = since_days.unwrap_or(30) as i64;
     let lim = limit.unwrap_or(20).max(0) as usize;
 

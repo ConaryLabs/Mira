@@ -283,7 +283,7 @@ pub struct SessionRequest {
         description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)"
     )]
     pub insight_source: Option<String>,
-    #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.3)")]
+    #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.5)")]
     pub min_confidence: Option<f64>,
     #[schemars(description = "Insight row ID to dismiss (for dismiss_insight action)")]
     pub insight_id: Option<i64>,

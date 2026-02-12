@@ -5,6 +5,19 @@ use rusqlite::{Connection, params};
 
 use super::types::UnifiedInsight;
 
+/// Auto-dismiss pondering insights older than 14 days that haven't been re-triggered.
+fn auto_dismiss_stale_insights(conn: &Connection, project_id: i64) -> rusqlite::Result<usize> {
+    let rows = conn.execute(
+        "UPDATE behavior_patterns SET dismissed = 1 \
+         WHERE project_id = ?1 \
+           AND pattern_type LIKE 'insight_%' \
+           AND (dismissed IS NULL OR dismissed = 0) \
+           AND last_triggered_at < datetime('now', '-14 days')",
+        params![project_id],
+    )?;
+    Ok(rows)
+}
+
 /// Query-time merge of insight sources into a single ranked list.
 /// Proactive suggestions are excluded from the digest (available via their own API).
 pub fn get_unified_insights_sync(
@@ -15,6 +28,9 @@ pub fn get_unified_insights_sync(
     days_back: i64,
     limit: usize,
 ) -> rusqlite::Result<Vec<UnifiedInsight>> {
+    // Clean up stale insights before querying
+    let _ = auto_dismiss_stale_insights(conn, project_id);
+
     let mut all = Vec::new();
 
     let include = |src: &str| filter_source.is_none() || filter_source == Some(src);
@@ -146,7 +162,7 @@ fn fetch_pondering_insights(
 
         // Temporal decay: recent insights score higher, floor at 20%
         let age_days = compute_age_days(&timestamp);
-        let decay = (1.0 - (age_days / 30.0)).max(0.2);
+        let decay = (1.0 - (age_days / 14.0)).max(0.0);
         let priority_score = confidence * type_weight * decay;
 
         insights.push(UnifiedInsight {

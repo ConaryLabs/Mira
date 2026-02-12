@@ -344,8 +344,10 @@ impl SlowLaneWorker {
         // Get LLM client for background tasks (optional -- fallbacks used when absent)
         let client: Option<Arc<dyn LlmClient>> = self.llm_factory.client_for_background();
 
-        if client.is_none() {
-            tracing::debug!("Slow lane: no LLM provider available, using fallbacks");
+        if let Some(ref c) = client {
+            tracing::debug!(provider = %c.provider_type(), "Slow lane: using LLM provider");
+        } else {
+            tracing::info!("Slow lane: no LLM provider available, using fallbacks");
         }
 
         let client = client.as_ref();

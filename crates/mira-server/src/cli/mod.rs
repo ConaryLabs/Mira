@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 pub mod clients;
+pub mod config;
 pub mod debug;
 pub mod index;
 pub mod serve;
@@ -78,6 +79,12 @@ pub enum Commands {
         path: Option<PathBuf>,
     },
 
+    /// View or update provider configuration
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
     /// Interactive setup wizard for API keys and providers
     Setup {
         /// Read-only validation mode: show current config status without modifying
@@ -91,6 +98,21 @@ pub enum Commands {
     /// Output status line for Claude Code (reads stdin, prints stats to stdout)
     #[command(name = "statusline")]
     StatusLine,
+}
+
+#[derive(Subcommand)]
+pub enum ConfigAction {
+    /// Show current provider configuration
+    Show,
+    /// Set a config value (e.g. `mira config set background_provider zhipu`)
+    Set {
+        /// Config key (background_provider, default_provider)
+        #[arg(index = 1)]
+        key: String,
+        /// Value to set (deepseek, zhipu, ollama)
+        #[arg(index = 2)]
+        value: String,
+    },
 }
 
 #[derive(Subcommand)]

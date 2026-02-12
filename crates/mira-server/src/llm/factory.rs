@@ -37,9 +37,12 @@ impl ProviderFactory {
         // Load config file for provider preferences
         let config = MiraConfig::load();
 
-        let default_provider = std::env::var("DEFAULT_LLM_PROVIDER")
-            .ok()
-            .and_then(|s| Provider::from_str(&s));
+        // Config file takes precedence, env var is backwards-compat fallback
+        let default_provider = config.default_provider().or_else(|| {
+            std::env::var("DEFAULT_LLM_PROVIDER")
+                .ok()
+                .and_then(|s| Provider::from_str(&s))
+        });
 
         // Check for background provider from config
         let background_provider = config.background_provider();

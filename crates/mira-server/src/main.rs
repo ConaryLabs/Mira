@@ -8,7 +8,7 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use cli::{Cli, Commands, HookAction};
+use cli::{Cli, Commands, ConfigAction, HookAction};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
         Some(Commands::Index { .. }) => Level::INFO,
         Some(Commands::DebugCarto { .. }) => Level::DEBUG,
         Some(Commands::DebugSession { .. }) => Level::DEBUG,
+        Some(Commands::Config { .. }) => Level::WARN,
         Some(Commands::Setup { .. }) => Level::WARN,
         Some(Commands::StatusLine) => Level::WARN,
     };
@@ -93,6 +94,10 @@ async fn main() -> Result<()> {
         Some(Commands::DebugSession { path }) => {
             cli::run_debug_session(path).await?;
         }
+        Some(Commands::Config { action }) => match action {
+            ConfigAction::Show => cli::config::run_config_show()?,
+            ConfigAction::Set { key, value } => cli::config::run_config_set(&key, &value)?,
+        },
         Some(Commands::Setup { check, yes }) => {
             cli::setup::run(check, yes).await?;
         }

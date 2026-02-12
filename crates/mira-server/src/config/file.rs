@@ -18,6 +18,8 @@ pub struct MiraConfig {
 pub struct LlmConfig {
     /// Provider for background intelligence (summaries, briefings, capabilities, code health)
     pub background_provider: Option<String>,
+    /// Default provider for all other LLM tasks (overrides DEFAULT_LLM_PROVIDER env var)
+    pub default_provider: Option<String>,
 }
 
 impl MiraConfig {
@@ -43,20 +45,28 @@ impl MiraConfig {
         }
     }
 
-    /// Get the config file path
-    fn config_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".mira")
-            .join("config.toml")
-    }
-
     /// Get the background intelligence LLM provider from config
     pub fn background_provider(&self) -> Option<Provider> {
         self.llm
             .background_provider
             .as_deref()
             .and_then(Provider::from_str)
+    }
+
+    /// Get the default LLM provider from config
+    pub fn default_provider(&self) -> Option<Provider> {
+        self.llm
+            .default_provider
+            .as_deref()
+            .and_then(Provider::from_str)
+    }
+
+    /// Get the config file path (public for CLI config commands)
+    pub fn config_path() -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".mira")
+            .join("config.toml")
     }
 }
 
@@ -81,8 +91,31 @@ background_provider = "deepseek"
     }
 
     #[test]
+    fn test_parse_default_provider() {
+        let toml = r#"
+[llm]
+default_provider = "zhipu"
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.default_provider(), Some(Provider::Zhipu));
+    }
+
+    #[test]
+    fn test_parse_both_providers() {
+        let toml = r#"
+[llm]
+background_provider = "zhipu"
+default_provider = "deepseek"
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.background_provider(), Some(Provider::Zhipu));
+        assert_eq!(config.default_provider(), Some(Provider::DeepSeek));
+    }
+
+    #[test]
     fn test_default_config() {
         let config = MiraConfig::default();
         assert_eq!(config.background_provider(), None);
+        assert_eq!(config.default_provider(), None);
     }
 }
