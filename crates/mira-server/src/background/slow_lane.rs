@@ -495,8 +495,14 @@ impl SlowLaneWorker {
             }
             BackgroundTask::DataRetention => {
                 self.run_task(&name, async move {
-                    pool.run(crate::db::retention::run_data_retention_sync)
-                        .await
+                    let retention_count = pool
+                        .run(crate::db::retention::run_data_retention_sync)
+                        .await?;
+                    // Also clean up expired system observations (TTL-based)
+                    let obs_count = pool
+                        .run(|conn| crate::db::cleanup_expired_observations_sync(conn))
+                        .await?;
+                    Ok(retention_count + obs_count)
                 })
                 .await
             }

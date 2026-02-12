@@ -92,6 +92,13 @@ const RULES: &[RetentionRule] = &[
         days: 90,
         extra_filter: "",
     },
+    // 90-day hard cutoff for system observations (safety net beyond per-row TTL)
+    RetentionRule {
+        table: "system_observations",
+        time_column: "created_at",
+        days: 90,
+        extra_filter: "",
+    },
 ];
 
 /// Run data retention for all rules. Returns total deleted rows.
