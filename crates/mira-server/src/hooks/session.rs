@@ -267,27 +267,122 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // On resume, inject context about previous work
-    if source == "resume" {
-        let cwd_owned = cwd.map(String::from);
-        let session_id_owned = session_id.map(String::from);
+    // Inject context about previous work
+    let cwd_owned = cwd.map(String::from);
+    let session_id_owned = session_id.map(String::from);
 
-        let context = build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await;
+    let context = if source == "resume" {
+        build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await
+    } else {
+        build_startup_context(cwd_owned.as_deref()).await
+    };
 
-        if let Some(ctx) = context {
-            let output = serde_json::json!({
-                "hookSpecificOutput": {
-                    "additionalContext": ctx
+    if let Some(ctx) = context {
+        let output = serde_json::json!({
+            "hookSpecificOutput": {
+                "additionalContext": ctx
+            }
+        });
+        super::write_hook_output(&output);
+    } else {
+        super::write_hook_output(&serde_json::json!({}));
+    }
+    Ok(())
+}
+
+/// Build lightweight context for a fresh startup session.
+/// Includes active goals and a brief note about the last session.
+pub(crate) async fn build_startup_context(cwd: Option<&str>) -> Option<String> {
+    let db_path = get_db_path();
+    let pool = match DatabasePool::open(&db_path).await {
+        Ok(p) => Arc::new(p),
+        Err(_) => return None,
+    };
+
+    let project_id: Option<i64> = if let Some(cwd_path) = cwd {
+        let pool_clone = pool.clone();
+        let cwd_owned = cwd_path.to_string();
+        pool_clone
+            .interact(move |conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, &cwd_owned, None)
+                        .ok()
+                        .map(|(id, _)| id),
+                )
+            })
+            .await
+            .ok()
+            .flatten()
+    } else {
+        super::resolve_project_id(&pool).await
+    };
+    let project_id = project_id?;
+
+    let mut context_parts: Vec<String> = Vec::new();
+
+    // Brief note about last session (summary only, not detailed tool history)
+    let pool_clone = pool.clone();
+    let previous_session: Option<crate::db::SessionInfo> = pool_clone
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(
+                crate::db::get_recent_sessions_sync(conn, project_id, 2)
+                    .ok()
+                    .and_then(|sessions| sessions.into_iter().find(|s| s.status != "active")),
+            )
+        })
+        .await
+        .ok()
+        .flatten();
+
+    if let Some(ref prev_session) = previous_session {
+        if let Some(ref summary) = prev_session.summary {
+            context_parts.push(format!("**Last session:** {}", summary));
+        }
+
+        // Check snapshot for a brief "you were working on" note
+        let pool_clone = pool.clone();
+        let prev_id = prev_session.id.clone();
+        let snapshot: Option<String> = pool_clone
+            .interact(move |conn| Ok::<_, anyhow::Error>(get_session_snapshot_sync(conn, &prev_id)))
+            .await
+            .ok()
+            .flatten();
+
+        if let Some(snapshot_json) = snapshot
+            && let Ok(snap) = serde_json::from_str::<serde_json::Value>(&snapshot_json)
+        {
+            if let Some(working_on) = build_working_on_summary(&snap) {
+                if context_parts.is_empty() {
+                    // Only add if we didn't already have a summary
+                    context_parts.push(format!("**Last session:** {}", working_on));
                 }
-            });
-            super::write_hook_output(&output);
-            return Ok(());
+            }
         }
     }
 
-    // No context to inject
-    super::write_hook_output(&serde_json::json!({}));
-    Ok(())
+    // Active goals
+    let pool_clone = pool.clone();
+    let goals: Option<Vec<crate::db::Goal>> = pool_clone
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(crate::db::get_active_goals_sync(conn, Some(project_id), 5).ok())
+        })
+        .await
+        .ok()
+        .flatten();
+
+    if let Some(goals) = goals.filter(|g| !g.is_empty()) {
+        let goal_lines: Vec<String> = goals
+            .iter()
+            .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
+            .collect();
+        context_parts.push(format!("**Active goals:**\n{}", goal_lines.join("\n")));
+    }
+
+    if context_parts.is_empty() {
+        return None;
+    }
+
+    Some(context_parts.join("\n\n"))
 }
 
 /// Build context for a resumed session
