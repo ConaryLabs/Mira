@@ -44,7 +44,7 @@ impl PostToolInput {
 /// Run PostToolUse hook
 ///
 /// This hook fires after Write/Edit tools complete. We:
-/// 1. Queue the file for re-indexing
+/// 1. Track modified files for the session
 /// 2. Check for related tests that might need updating
 /// 3. Provide hints about the changed file
 pub async fn run() -> Result<()> {

@@ -101,6 +101,108 @@ impl InjectionSource {
     }
 }
 
+/// Check if message is a simple command that doesn't need context injection.
+/// Used by both reactive injection (ContextInjectionManager) and proactive
+/// gating (UserPromptSubmit hook) to ensure consistent filtering.
+pub fn is_simple_command(message: &str) -> bool {
+    let trimmed = message.trim();
+
+    // Very short messages (1 word) that aren't code-related
+    let word_count = trimmed.split_whitespace().count();
+    if word_count <= 1 {
+        return true;
+    }
+    // 2-word messages: skip only if not code-related
+    if word_count == 2 && !is_code_related(trimmed) {
+        return true;
+    }
+
+    // Slash commands (Claude Code commands)
+    if trimmed.starts_with('/') {
+        return true;
+    }
+
+    // URLs
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return true;
+    }
+
+    // File paths (absolute or relative with extensions)
+    if trimmed.contains('/')
+        && (trimmed.ends_with(".rs")
+            || trimmed.ends_with(".toml")
+            || trimmed.ends_with(".json")
+            || trimmed.ends_with(".md")
+            || trimmed.ends_with(".txt"))
+    {
+        return true;
+    }
+
+    let lower = trimmed.to_lowercase();
+
+    // Common command prefixes that don't need context
+    let simple_prefixes = [
+        "git", "cargo", "ls", "cd", "pwd", "echo", "cat", "rm", "mkdir", "touch", "mv", "cp",
+        "npm", "yarn", "docker", "kubectl", "ps", "grep", "find", "which",
+    ];
+    if simple_prefixes.iter().any(|&prefix| {
+        lower.starts_with(prefix)
+            && (lower.len() == prefix.len()
+                || lower.as_bytes().get(prefix.len()) == Some(&b' '))
+    }) {
+        return true;
+    }
+
+    // Questions about Claude Code itself (not about the codebase)
+    let claude_questions = [
+        "how do i use claude code",
+        "can claude code",
+        "does claude code",
+        "what is claude code",
+        "where is claude code",
+    ];
+    if claude_questions.iter().any(|&q| lower.contains(q)) {
+        return true;
+    }
+
+    false
+}
+
+/// Check if message is code-related (contains programming keywords or file mentions)
+fn is_code_related(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    let code_keywords = [
+        // Code structure
+        "function", "struct", "class", "module", "import", "export", "variable", "constant",
+        "type", "interface", "trait", "impl", "def", "fn", "method", "property", "attribute",
+        "enum", "const", "let", "var", "field", "member",
+        // Questions
+        "where is", "how does", "show me", "what is", "explain", "find", "search", "look for",
+        "locate", "where are", "how to", "help with",
+        // Implementation
+        "implement", "refactor", "fix", "bug", "error", "issue", "problem", "debug", "test",
+        "optimize", "performance", "memory", "concurrent", "async", "thread", "parallel",
+        // Codebase concepts
+        "api", "endpoint", "route", "handler", "controller", "service", "repository", "dao",
+        "middleware", "auth", "authentication", "authorization", "database", "db", "query",
+        "schema", "migration", "config", "configuration", "setting", "environment",
+    ];
+
+    let has_code_keyword = code_keywords.iter().any(|&kw| lower.contains(kw));
+
+    let has_file_mention = lower.contains(".rs")
+        || lower.contains(".toml")
+        || lower.contains(".json")
+        || lower.contains(".md")
+        || lower.contains(".txt")
+        || lower.contains(".py")
+        || lower.contains(".js")
+        || lower.contains(".ts")
+        || (lower.contains('/') && (lower.contains("src/") || lower.contains("crates/")));
+
+    has_code_keyword || has_file_mention
+}
+
 /// Main context injection manager
 pub struct ContextInjectionManager {
     pool: Arc<DatabasePool>,
@@ -174,168 +276,6 @@ impl ContextInjectionManager {
         })
     }
 
-    /// Check if message is a simple command that doesn't need context injection
-    fn is_simple_command(&self, message: &str) -> bool {
-        let trimmed = message.trim();
-
-        // Very short messages (1 word) that aren't code-related
-        let word_count = trimmed.split_whitespace().count();
-        if word_count <= 1 {
-            return true;
-        }
-        // 2-word messages: skip only if not code-related
-        if word_count == 2 && !self.is_code_related(trimmed) {
-            return true;
-        }
-
-        // Slash commands (Claude Code commands)
-        if trimmed.starts_with('/') {
-            return true;
-        }
-
-        // URLs
-        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            return true;
-        }
-
-        // File paths (absolute or relative with extensions)
-        if trimmed.contains('/')
-            && (trimmed.ends_with(".rs")
-                || trimmed.ends_with(".toml")
-                || trimmed.ends_with(".json")
-                || trimmed.ends_with(".md")
-                || trimmed.ends_with(".txt"))
-        {
-            return true;
-        }
-
-        let lower = trimmed.to_lowercase();
-
-        // Common command prefixes that don't need context
-        let simple_prefixes = [
-            "git", "cargo", "ls", "cd", "pwd", "echo", "cat", "rm", "mkdir", "touch", "mv", "cp",
-            "npm", "yarn", "docker", "kubectl", "ps", "grep", "find", "which",
-        ];
-        if simple_prefixes.iter().any(|&prefix| {
-            lower.starts_with(prefix)
-                && (lower.len() == prefix.len()
-                    || lower.as_bytes().get(prefix.len()) == Some(&b' '))
-        }) {
-            return true;
-        }
-
-        // Questions about Claude Code itself (not about the codebase)
-        let claude_questions = [
-            "how do i use claude code",
-            "can claude code",
-            "does claude code",
-            "what is claude code",
-            "where is claude code",
-        ];
-        if claude_questions.iter().any(|&q| lower.contains(q)) {
-            return true;
-        }
-
-        false
-    }
-
-    /// Check if message is code-related
-    fn is_code_related(&self, message: &str) -> bool {
-        let lower = message.to_lowercase();
-        let code_keywords = [
-            // Code structure
-            "function",
-            "struct",
-            "class",
-            "module",
-            "import",
-            "export",
-            "variable",
-            "constant",
-            "type",
-            "interface",
-            "trait",
-            "impl",
-            "def",
-            "fn",
-            "method",
-            "property",
-            "attribute",
-            "enum",
-            "const",
-            "let",
-            "var",
-            "field",
-            "member",
-            // Questions
-            "where is",
-            "how does",
-            "show me",
-            "what is",
-            "explain",
-            "find",
-            "search",
-            "look for",
-            "locate",
-            "where are",
-            "how to",
-            "help with",
-            // Implementation
-            "implement",
-            "refactor",
-            "fix",
-            "bug",
-            "error",
-            "issue",
-            "problem",
-            "debug",
-            "test",
-            "optimize",
-            "performance",
-            "memory",
-            "concurrent",
-            "async",
-            "thread",
-            "parallel",
-            // Codebase concepts
-            "api",
-            "endpoint",
-            "route",
-            "handler",
-            "controller",
-            "service",
-            "repository",
-            "dao",
-            "middleware",
-            "auth",
-            "authentication",
-            "authorization",
-            "database",
-            "db",
-            "query",
-            "schema",
-            "migration",
-            "config",
-            "configuration",
-            "setting",
-            "environment",
-        ];
-
-        let has_code_keyword = code_keywords.iter().any(|&kw| lower.contains(kw));
-
-        let has_file_mention = lower.contains(".rs")
-            || lower.contains(".toml")
-            || lower.contains(".json")
-            || lower.contains(".md")
-            || lower.contains(".txt")
-            || lower.contains(".py")
-            || lower.contains(".js")
-            || lower.contains(".ts")
-            || (lower.contains('/') && (lower.contains("src/") || lower.contains("crates/")));
-
-        has_code_keyword || has_file_mention
-    }
-
     /// Main entry point for proactive context injection
     /// Returns both the context string and metadata about what was injected
     pub async fn get_context_for_message(
@@ -349,7 +289,7 @@ impl ContextInjectionManager {
         }
 
         // Skip injection for simple commands
-        if self.is_simple_command(user_message) {
+        if is_simple_command(user_message) {
             return InjectionResult::skipped("simple_command");
         }
 
@@ -374,7 +314,7 @@ impl ContextInjectionManager {
         }
 
         // Check if message is code-related
-        if !self.is_code_related(user_message) {
+        if !is_code_related(user_message) {
             return InjectionResult::skipped("not_code_related");
         }
 

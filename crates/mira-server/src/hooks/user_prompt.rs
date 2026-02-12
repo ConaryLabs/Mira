@@ -189,53 +189,6 @@ fn get_task_context() -> Option<String> {
     }
 }
 
-/// Check if a message is a simple command that doesn't need proactive context.
-/// This is a lightweight standalone version of the gating logic in
-/// ContextInjectionManager::is_simple_command, used to gate proactive suggestions
-/// without constructing a full manager instance.
-fn is_simple_command_standalone(message: &str) -> bool {
-    let trimmed = message.trim();
-
-    // Very short messages (1 word)
-    if trimmed.split_whitespace().count() <= 1 {
-        return true;
-    }
-
-    // Slash commands
-    if trimmed.starts_with('/') {
-        return true;
-    }
-
-    // URLs
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        return true;
-    }
-
-    let lower = trimmed.to_lowercase();
-
-    // Common CLI command prefixes
-    let simple_prefixes = [
-        "git", "cargo", "ls", "cd", "pwd", "echo", "cat", "rm", "mkdir", "touch", "mv", "cp",
-        "npm", "yarn", "docker", "kubectl", "ps", "grep", "find", "which",
-    ];
-    if simple_prefixes.iter().any(|&prefix| {
-        lower.starts_with(prefix)
-            && (lower.len() == prefix.len()
-                || lower.as_bytes().get(prefix.len()) == Some(&b' '))
-    }) {
-        return true;
-    }
-
-    false
-}
-
-/// Check if a message length is within bounds for proactive context injection.
-/// Uses the same defaults as InjectionConfig (min=30, max=500).
-fn is_message_length_in_bounds(message: &str) -> bool {
-    let len = message.trim().len();
-    len >= 30 && len <= 500
-}
-
 /// Run UserPromptSubmit hook
 pub async fn run() -> Result<()> {
     let input = read_hook_input()?;
@@ -312,20 +265,24 @@ pub async fn run() -> Result<()> {
         Some(session_id)
     };
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
-        if is_simple_command_standalone(user_message) {
+        if crate::context::is_simple_command(user_message) {
             eprintln!("[mira] Proactive context skipped: simple command");
             None
-        } else if !is_message_length_in_bounds(user_message) {
-            eprintln!("[mira] Proactive context skipped: message length out of bounds");
-            None
         } else {
-            get_proactive_context(
-                &pool,
-                project_id,
-                project_path.as_deref(),
-                session_id_for_proactive,
-            )
-            .await
+            let config = manager.config();
+            let msg_len = user_message.trim().len();
+            if msg_len < config.min_message_len || msg_len > config.max_message_len {
+                eprintln!("[mira] Proactive context skipped: message length out of bounds");
+                None
+            } else {
+                get_proactive_context(
+                    &pool,
+                    project_id,
+                    project_path.as_deref(),
+                    session_id_for_proactive,
+                )
+                .await
+            }
         }
     } else {
         None
@@ -623,33 +580,45 @@ mod tests {
     }
 
     #[test]
-    fn simple_command_standalone_detects_cli_commands() {
-        assert!(is_simple_command_standalone("git status"));
-        assert!(is_simple_command_standalone("cargo build"));
-        assert!(is_simple_command_standalone("ls -la"));
-        assert!(is_simple_command_standalone("/commit"));
-        assert!(is_simple_command_standalone("https://example.com"));
-        assert!(is_simple_command_standalone("ok"));
+    fn simple_command_detects_cli_commands() {
+        use crate::context::is_simple_command;
+        assert!(is_simple_command("git status"));
+        assert!(is_simple_command("cargo build"));
+        assert!(is_simple_command("ls -la"));
+        assert!(is_simple_command("/commit"));
+        assert!(is_simple_command("https://example.com"));
+        assert!(is_simple_command("ok"));
+        // File paths
+        assert!(is_simple_command("src/main.rs"));
+        // Claude Code questions
+        assert!(is_simple_command("how do i use claude code to commit?"));
     }
 
     #[test]
-    fn simple_command_standalone_allows_real_queries() {
-        assert!(!is_simple_command_standalone(
+    fn simple_command_allows_real_queries() {
+        use crate::context::is_simple_command;
+        assert!(!is_simple_command(
             "how does the authentication module work?"
         ));
-        assert!(!is_simple_command_standalone(
+        assert!(!is_simple_command(
             "refactor the database connection pool"
         ));
     }
 
     #[test]
-    fn message_length_bounds_check() {
+    fn message_length_bounds_from_config() {
+        use crate::context::InjectionConfig;
+        let config = InjectionConfig::default();
+        let check = |msg: &str| {
+            let len = msg.trim().len();
+            len >= config.min_message_len && len <= config.max_message_len
+        };
         // Too short (< 30 chars)
-        assert!(!is_message_length_in_bounds("short"));
+        assert!(!check("short"));
         // Too long (> 500 chars)
-        assert!(!is_message_length_in_bounds(&"x".repeat(501)));
+        assert!(!check(&"x".repeat(501)));
         // Within bounds
-        assert!(is_message_length_in_bounds(
+        assert!(check(
             "how does the authentication module work in this project?"
         ));
     }
