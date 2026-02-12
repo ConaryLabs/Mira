@@ -286,13 +286,23 @@ impl EnvConfig {
         }
 
         // Validate default provider if set
-        if let Some(ref provider) = self.default_provider
-            && Provider::from_str(provider).is_none()
-        {
-            validation.add_warning(format!(
-                "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, zhipu, ollama, sampling",
-                provider
-            ));
+        if let Some(ref provider) = self.default_provider {
+            match Provider::from_str(provider) {
+                None => {
+                    validation.add_warning(format!(
+                        "Unknown DEFAULT_LLM_PROVIDER '{}'. Valid options: deepseek, zhipu, ollama",
+                        provider
+                    ));
+                }
+                Some(Provider::Sampling) => {
+                    validation.add_warning(
+                        "DEFAULT_LLM_PROVIDER='sampling' has no effect. \
+                         MCP sampling is used automatically as a last-resort fallback."
+                            .to_string(),
+                    );
+                }
+                Some(_) => {} // valid
+            }
         }
 
         validation
@@ -414,6 +424,26 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|w| w.contains("Unknown DEFAULT_LLM_PROVIDER")),
+        );
+    }
+
+    #[test]
+    fn test_validation_sampling_provider_warns() {
+        let config = EnvConfig {
+            api_keys: ApiKeys::default(),
+            embeddings: EmbeddingsConfig::default(),
+            default_provider: Some("sampling".to_string()),
+            user_id: None,
+            fuzzy_fallback: true,
+        };
+
+        let validation = config.validate();
+        assert!(
+            validation
+                .warnings
+                .iter()
+                .any(|w| w.contains("sampling") && w.contains("no effect")),
+            "Should warn that sampling has no effect as DEFAULT_LLM_PROVIDER"
         );
     }
 

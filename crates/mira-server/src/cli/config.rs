@@ -52,17 +52,36 @@ pub fn run_config_set(key: &str, value: &str) -> Result<()> {
     }
 
     // Use the canonical provider parser instead of a hardcoded list
-    if Provider::from_str(value).is_none() {
-        bail!(
-            "Unknown provider '{}'. Valid providers: deepseek, zhipu (or glm), ollama, sampling",
+    let provider = match Provider::from_str(value) {
+        Some(p) => p,
+        None => bail!(
+            "Unknown provider '{}'. Valid providers: deepseek, zhipu (or glm), ollama",
             value
+        ),
+    };
+
+    // Sampling is not a real background provider — it has no LlmClient impl,
+    // so setting it here would make the statusline lie about the active provider.
+    if provider == Provider::Sampling {
+        bail!(
+            "Provider 'sampling' cannot be set via config. \
+             MCP sampling is used automatically as a last-resort fallback \
+             when no API keys are configured."
         );
     }
 
     let path = MiraConfig::config_path();
 
-    // Read existing config or start fresh
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    // Read existing config — only treat missing file as empty, all other errors are fatal
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => bail!(
+            "Cannot read config file {}: {}\n  Check file permissions and encoding.",
+            path.display(),
+            e
+        ),
+    };
 
     // Parse existing TOML — fail loudly if malformed instead of silently overwriting
     let mut table: toml::Table = match toml::from_str(&content) {
@@ -111,4 +130,69 @@ pub fn run_config_set(key: &str, value: &str) -> Result<()> {
     println!("Set {} = \"{}\" in {}", key, value, path.display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reject_unknown_key() {
+        let err = run_config_set("unknown_key", "deepseek").unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown config key"),
+            "Should reject unknown key, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_unknown_provider() {
+        let err = run_config_set("background_provider", "gpt4").unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown provider"),
+            "Should reject unknown provider, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_sampling_provider() {
+        let err = run_config_set("background_provider", "sampling").unwrap_err();
+        assert!(
+            err.to_string().contains("cannot be set via config"),
+            "Should reject sampling, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_sampling_as_default() {
+        let err = run_config_set("default_provider", "sampling").unwrap_err();
+        assert!(
+            err.to_string().contains("cannot be set via config"),
+            "Should reject sampling for default_provider too, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_valid_providers_are_accepted() {
+        // Verify valid providers parse correctly and aren't Sampling
+        // (i.e. they'd pass the validation gates in run_config_set without touching disk)
+        for name in &["deepseek", "zhipu", "glm", "ollama"] {
+            let provider = Provider::from_str(name);
+            assert!(
+                provider.is_some(),
+                "Provider '{}' should parse successfully",
+                name
+            );
+            assert_ne!(
+                provider.unwrap(),
+                Provider::Sampling,
+                "Provider '{}' should not resolve to Sampling",
+                name
+            );
+        }
+    }
 }

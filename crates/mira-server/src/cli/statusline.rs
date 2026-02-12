@@ -155,7 +155,7 @@ fn provider_has_key(provider: Provider) -> bool {
             .ok()
             .filter(|k| !k.trim().is_empty())
             .is_some(),
-        Provider::Sampling => true, // always available when MCP is running
+        Provider::Sampling => false, // no LlmClient impl — not usable for background tasks
     }
 }
 
@@ -172,12 +172,14 @@ fn get_llm_info() -> Option<(String, String)> {
     });
 
     // Build candidate list matching ProviderFactory::client_for_background()
+    // Exclude Sampling — it has no LlmClient impl, so the factory can't use it.
     let fallback_chain = [Provider::DeepSeek, Provider::Zhipu, Provider::Ollama];
     let candidates: Vec<Provider> = config
         .background_provider()
         .into_iter()
         .chain(default_provider)
         .chain(fallback_chain)
+        .filter(|p| *p != Provider::Sampling)
         .collect();
 
     // Pick the first candidate that actually has credentials
