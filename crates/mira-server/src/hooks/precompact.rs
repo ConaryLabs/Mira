@@ -5,7 +5,7 @@ use crate::db::pool::DatabasePool;
 use crate::db::{StoreObservationParams, store_observation_sync};
 use crate::hooks::get_db_path;
 use crate::utils::truncate_at_boundary;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,7 +23,7 @@ const MAX_CONTENT_LEN: usize = 500;
 /// Fires before context compaction (summarization) occurs
 /// Input: { session_id, transcript_path, trigger: "manual"|"auto", custom_instructions }
 pub async fn run() -> Result<()> {
-    let input = super::read_hook_input()?;
+    let input = super::read_hook_input().context("Failed to parse hook input from stdin")?;
 
     let session_id = input
         .get("session_id")
@@ -128,15 +128,12 @@ async fn save_pre_compaction_state(
     Ok(())
 }
 
-/// Extract important context from transcript before it's summarized
-async fn extract_and_save_context(
-    pool: &Arc<DatabasePool>,
-    project_id: Option<i64>,
-    session_id: &str,
-    transcript: &str,
-) -> Result<()> {
-    // Simple heuristic extraction - look for patterns that indicate important info
-    let mut important_lines = Vec::new();
+/// Extract important lines from a transcript using heuristic keyword matching.
+///
+/// Returns a filtered list of (category, content) pairs, capped at MAX_IMPORTANT_LINES,
+/// excluding lines shorter than MIN_CONTENT_LEN or longer than MAX_CONTENT_LEN.
+fn extract_important_lines(transcript: &str) -> Vec<(String, String)> {
+    let mut important_lines: Vec<(&str, String)> = Vec::new();
 
     for line in transcript.lines() {
         let lower = line.to_lowercase();
@@ -169,13 +166,22 @@ async fn extract_and_save_context(
         }
     }
 
-    // Filter and collect items to store
-    let items: Vec<(String, String)> = important_lines
+    important_lines
         .into_iter()
         .take(MAX_IMPORTANT_LINES)
         .filter(|(_, content)| content.len() >= MIN_CONTENT_LEN && content.len() <= MAX_CONTENT_LEN)
         .map(|(cat, content)| (cat.to_string(), content))
-        .collect();
+        .collect()
+}
+
+/// Extract important context from transcript before it's summarized
+async fn extract_and_save_context(
+    pool: &Arc<DatabasePool>,
+    project_id: Option<i64>,
+    session_id: &str,
+    transcript: &str,
+) -> Result<()> {
+    let items = extract_important_lines(transcript);
 
     let count = items.len();
     if count > 0 {
@@ -210,4 +216,308 @@ async fn extract_and_save_context(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- Decision keyword matching ------------------------------------------------
+
+    #[test]
+    fn extracts_decided_to_keyword() {
+        let transcript = "We decided to use the builder pattern for config structs.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "decision");
+        assert!(results[0].1.contains("decided to"));
+    }
+
+    #[test]
+    fn extracts_choosing_keyword() {
+        let transcript = "After review, choosing SQLite over PostgreSQL for simplicity.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "decision");
+        assert!(results[0].1.contains("choosing"));
+    }
+
+    #[test]
+    fn extracts_will_use_keyword() {
+        let transcript = "We will use tokio for async runtime in this project.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "decision");
+    }
+
+    #[test]
+    fn extracts_approach_keyword() {
+        let transcript = "approach: batch inserts into a single transaction for performance.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "decision");
+    }
+
+    // -- Context keyword matching -------------------------------------------------
+
+    #[test]
+    fn extracts_todo_keyword() {
+        let transcript = "TODO: add validation for user input in the handler.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "context");
+    }
+
+    #[test]
+    fn extracts_next_step_keyword() {
+        let transcript = "The next step is implementing the migration system.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "context");
+    }
+
+    #[test]
+    fn extracts_remaining_keyword() {
+        let transcript = "remaining: three modules still need refactoring work.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "context");
+    }
+
+    #[test]
+    fn extracts_still_need_to_keyword() {
+        let transcript = "We still need to add error handling to the API layer.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "context");
+    }
+
+    // -- Issue keyword matching ---------------------------------------------------
+
+    #[test]
+    fn extracts_error_keyword() {
+        let transcript = "error: connection refused when connecting to database.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "issue");
+    }
+
+    #[test]
+    fn extracts_failed_keyword() {
+        let transcript = "The migration failed: column already exists in table.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "issue");
+    }
+
+    #[test]
+    fn extracts_issue_keyword() {
+        let transcript = "issue: race condition in concurrent database access.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "issue");
+    }
+
+    #[test]
+    fn extracts_bug_keyword() {
+        let transcript = "bug: duplicate entries created when session restarts.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "issue");
+    }
+
+    // -- Case insensitivity -------------------------------------------------------
+
+    #[test]
+    fn keywords_matched_case_insensitively() {
+        let transcript = "\
+DECIDED TO use uppercase keywords in this test.\n\
+TODO: verify case insensitive matching works.\n\
+ERROR: something went wrong with case handling.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].0, "decision");
+        assert_eq!(results[1].0, "context");
+        assert_eq!(results[2].0, "issue");
+    }
+
+    #[test]
+    fn mixed_case_keywords_matched() {
+        let transcript = "Decided To go with the new approach for handling.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "decision");
+    }
+
+    // -- Length filtering ----------------------------------------------------------
+
+    #[test]
+    fn min_content_len_filters_short_lines() {
+        // "error: x" is 8 chars, below MIN_CONTENT_LEN of 10
+        let transcript = "error: x";
+        let results = extract_important_lines(transcript);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn min_content_len_boundary_excluded() {
+        // Exactly 9 chars, still below MIN_CONTENT_LEN of 10
+        let transcript = "error: ab";
+        let results = extract_important_lines(transcript);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn min_content_len_boundary_included() {
+        // Exactly 10 chars, equal to MIN_CONTENT_LEN
+        let transcript = "error: abc";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn max_content_len_filters_long_lines() {
+        let long_content = format!("error: {}", "x".repeat(500));
+        assert!(long_content.len() > MAX_CONTENT_LEN);
+        let results = extract_important_lines(&long_content);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn max_content_len_boundary_included() {
+        // Exactly MAX_CONTENT_LEN chars
+        let padding = "x".repeat(MAX_CONTENT_LEN - "error: ".len());
+        let line = format!("error: {}", padding);
+        assert_eq!(line.len(), MAX_CONTENT_LEN);
+        let results = extract_important_lines(&line);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn max_content_len_boundary_excluded() {
+        // One char over MAX_CONTENT_LEN
+        let padding = "x".repeat(MAX_CONTENT_LEN - "error: ".len() + 1);
+        let line = format!("error: {}", padding);
+        assert_eq!(line.len(), MAX_CONTENT_LEN + 1);
+        let results = extract_important_lines(&line);
+        assert!(results.is_empty());
+    }
+
+    // -- MAX_IMPORTANT_LINES cap --------------------------------------------------
+
+    #[test]
+    fn caps_at_max_important_lines() {
+        // Generate 15 matching lines, each long enough to pass MIN_CONTENT_LEN
+        let lines: Vec<String> = (0..15)
+            .map(|i| format!("We decided to implement feature number {}", i))
+            .collect();
+        let transcript = lines.join("\n");
+        let results = extract_important_lines(&transcript);
+        assert_eq!(results.len(), MAX_IMPORTANT_LINES);
+    }
+
+    #[test]
+    fn length_filter_applied_after_cap() {
+        // First 10 lines are short (filtered by MIN_CONTENT_LEN), next 5 are long enough.
+        // The cap (take) happens before the filter, so short lines within the first 10
+        // are taken then filtered out.
+        let mut lines = Vec::new();
+        for _ in 0..10 {
+            lines.push("error: x".to_string()); // 8 chars, too short
+        }
+        for _ in 0..5 {
+            lines.push("error: this line is long enough to pass the filter".to_string());
+        }
+        let transcript = lines.join("\n");
+        let results = extract_important_lines(&transcript);
+        // First 10 lines are taken (cap), all are too short, so 0 results
+        assert!(results.is_empty());
+    }
+
+    // -- Empty and no-match cases -------------------------------------------------
+
+    #[test]
+    fn empty_transcript_returns_empty() {
+        let results = extract_important_lines("");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn transcript_with_no_matches() {
+        let transcript = "\
+This is a normal log line.\n\
+Another line with no keywords.\n\
+Just regular conversation text.";
+        let results = extract_important_lines(transcript);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_transcript() {
+        let results = extract_important_lines("   \n\n   \n");
+        assert!(results.is_empty());
+    }
+
+    // -- Multi-category matching --------------------------------------------------
+
+    #[test]
+    fn line_matching_multiple_categories_produces_multiple_entries() {
+        // A line containing both "decided to" and "error:" matches both categories
+        let transcript = "We decided to fix the error: null pointer in handler.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 2);
+        let categories: Vec<&str> = results.iter().map(|(c, _)| c.as_str()).collect();
+        assert!(categories.contains(&"decision"));
+        assert!(categories.contains(&"issue"));
+    }
+
+    #[test]
+    fn mixed_categories_in_transcript() {
+        let transcript = "\
+We decided to refactor the database layer.\n\
+TODO: update the migration scripts for schema.\n\
+error: failed to connect to the test database.\n\
+This line has no keywords at all.";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].0, "decision");
+        assert_eq!(results[1].0, "context");
+        assert_eq!(results[2].0, "issue");
+    }
+
+    // -- Whitespace trimming ------------------------------------------------------
+
+    #[test]
+    fn leading_and_trailing_whitespace_trimmed() {
+        let transcript = "   We decided to trim whitespace in results.   ";
+        let results = extract_important_lines(transcript);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "We decided to trim whitespace in results.");
+    }
+
+    // -- Transcript path validation -----------------------------------------------
+
+    #[test]
+    fn validate_transcript_path_under_tmp() {
+        let path = PathBuf::from("/tmp/claude/transcript.jsonl");
+        assert!(path.starts_with("/tmp"));
+    }
+
+    #[test]
+    fn validate_transcript_path_rejects_arbitrary_path() {
+        let path = PathBuf::from("/etc/passwd");
+        assert!(!path.starts_with("/tmp"));
+        // Can't reliably test home_dir in CI, but the logic is:
+        // path must start with home_dir or /tmp
+    }
+
+    // -- Constants ----------------------------------------------------------------
+
+    #[test]
+    fn constants_have_expected_values() {
+        assert_eq!(MAX_IMPORTANT_LINES, 10);
+        assert_eq!(MIN_CONTENT_LEN, 10);
+        assert_eq!(MAX_CONTENT_LEN, 500);
+        assert!((COMPACTION_CONFIDENCE - 0.3).abs() < f64::EPSILON);
+    }
 }

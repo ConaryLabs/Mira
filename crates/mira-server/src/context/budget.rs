@@ -1,6 +1,30 @@
 // crates/mira-server/src/context/budget.rs
 // Token budget management for context injection with priority-based sorting
 
+// --- Named priority constants (highest to lowest) ---
+// Used by UserPromptSubmit hook and ContextInjectionManager to assign
+// importance to each context source. The budget manager sorts entries
+// by priority descending, so higher values survive truncation.
+
+/// Priority for team context (highest -- collaboration is critical)
+pub const PRIORITY_TEAM: f32 = 0.95;
+/// Priority for coding conventions
+pub const PRIORITY_CONVENTION: f32 = 0.9;
+/// Priority for memory decisions
+pub const PRIORITY_MEMORY: f32 = 0.85;
+/// Priority for reactive/recalled context
+pub const PRIORITY_REACTIVE: f32 = 0.75;
+/// Priority for semantic search results
+pub const PRIORITY_SEMANTIC: f32 = 0.7;
+/// Priority for pending tasks
+pub const PRIORITY_TASKS: f32 = 0.65;
+/// Priority for active goals
+pub const PRIORITY_GOALS: f32 = 0.6;
+/// Priority for proactive predictions
+pub const PRIORITY_PROACTIVE: f32 = 0.5;
+/// Priority for file-aware context
+pub const PRIORITY_FILE_AWARE: f32 = 0.4;
+
 /// A single context entry with priority metadata for budget allocation.
 /// Higher priority entries are kept when the budget is tight.
 #[derive(Debug, Clone)]
@@ -16,7 +40,7 @@ pub struct BudgetEntry {
 impl BudgetEntry {
     pub fn new(priority: f32, content: String, source: impl Into<String>) -> Self {
         Self {
-            priority,
+            priority: priority.clamp(0.0, 1.0),
             content,
             source: source.into(),
         }

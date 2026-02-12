@@ -6,7 +6,7 @@ use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
 use crate::proactive::behavior::BehaviorTracker;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 
 /// PostToolUse hook input from Claude Code
@@ -48,7 +48,7 @@ impl PostToolInput {
 /// 2. Detect team file conflicts when write tools (Write/Edit) modify shared files
 pub async fn run() -> Result<()> {
     let _timer = HookTimer::start("PostToolUse");
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let post_input = PostToolInput::from_json(&input);
 
     eprintln!(
@@ -65,7 +65,13 @@ pub async fn run() -> Result<()> {
 
     // Open database
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let pool = match DatabasePool::open(&db_path).await {
+        Ok(p) => Arc::new(p),
+        Err(_) => {
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    };
 
     // Get current project
     let Some(project_id) = resolve_project_id(&pool).await else {

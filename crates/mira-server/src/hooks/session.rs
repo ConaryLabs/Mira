@@ -2,7 +2,7 @@
 // SessionStart hook handler - captures Claude Code's session_id and cwd
 
 use crate::db::pool::DatabasePool;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -46,10 +46,14 @@ fn goals_shown_path() -> PathBuf {
 /// Called by SessionStart after injecting goals, so other hooks can skip them.
 fn mark_goals_shown() {
     let path = goals_shown_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        tracing::debug!("Failed to create goals_shown dir: {e}");
     }
-    let _ = fs::write(&path, Utc::now().to_rfc3339());
+    if let Err(e) = fs::write(&path, Utc::now().to_rfc3339()) {
+        tracing::debug!("Failed to write goals_shown marker: {e}");
+    }
 }
 
 /// Check whether goals have already been shown this session.
@@ -102,7 +106,7 @@ impl SourceInfo {
 /// Extracts session_id, cwd, and source from stdin JSON and writes to files
 /// On resume, injects context about previous session work
 pub async fn run() -> Result<()> {
-    let input = super::read_hook_input()?;
+    let input = super::read_hook_input().context("Failed to parse hook input from stdin")?;
 
     // Log hook input keys for debugging
     eprintln!(

@@ -4,7 +4,7 @@
 use crate::db::pool::DatabasePool;
 use crate::hooks::{get_db_path, read_hook_input, resolve_project_id, write_hook_output};
 use crate::utils::truncate_at_boundary;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 
 /// Stop hook input from Claude Code
@@ -37,7 +37,7 @@ impl StopInput {
 /// 2. Save session state
 /// 3. Optionally block stopping if goals need completion
 pub async fn run() -> Result<()> {
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let stop_input = StopInput::from_json(&input);
 
     eprintln!(
@@ -55,7 +55,13 @@ pub async fn run() -> Result<()> {
 
     // Open database
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let pool = match DatabasePool::open(&db_path).await {
+        Ok(p) => Arc::new(p),
+        Err(_) => {
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    };
 
     // Get current project
     let Some(project_id) = resolve_project_id(&pool).await else {
@@ -163,7 +169,7 @@ pub async fn run() -> Result<()> {
 
 /// Run SessionEnd hook (fires on user interrupt — always approve, just snapshot)
 pub async fn run_session_end() -> Result<()> {
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let session_id = input
         .get("session_id")
         .and_then(|v| v.as_str())

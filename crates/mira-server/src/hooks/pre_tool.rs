@@ -6,7 +6,7 @@ use crate::hooks::recall;
 use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -51,8 +51,10 @@ fn write_cooldown(query: &str) {
         state.recent_queries.remove(0);
     }
     let path = cooldown_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::debug!("Failed to create cooldown dir: {e}");
     }
     if let Ok(json) = serde_json::to_string(&state) {
         // Write with mode 0600 (owner read/write only) to protect session state
@@ -62,8 +64,10 @@ fn write_cooldown(query: &str) {
             .truncate(true)
             .mode(0o600)
             .open(&path);
-        if let Ok(mut f) = file {
-            let _ = f.write_all(json.as_bytes());
+        if let Ok(mut f) = file
+            && let Err(e) = f.write_all(json.as_bytes())
+        {
+            tracing::debug!("Failed to write cooldown file: {e}");
         }
     }
 }
@@ -114,7 +118,7 @@ impl PreToolInput {
 /// 2. Query Mira for relevant memories about that code area
 /// 3. Inject context via additionalContext if found
 pub async fn run() -> Result<()> {
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let pre_input = PreToolInput::from_json(&input);
 
     // Only process Grep/Glob/Read operations

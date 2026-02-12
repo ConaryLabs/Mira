@@ -19,7 +19,11 @@ mod semantic;
 mod working_context;
 
 pub use analytics::{InjectionAnalytics, InjectionEvent, extract_key_terms};
-pub use budget::{BudgetEntry, BudgetManager};
+pub use budget::{
+    BudgetEntry, BudgetManager, PRIORITY_CONVENTION, PRIORITY_FILE_AWARE, PRIORITY_GOALS,
+    PRIORITY_MEMORY, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_SEMANTIC, PRIORITY_TASKS,
+    PRIORITY_TEAM,
+};
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;
 pub use convention::ConventionInjector;
@@ -403,7 +407,11 @@ impl ContextInjectionManager {
                 .inject_convention_context(session_id, project_id, project_path.as_deref())
                 .await;
             if !conv.is_empty() {
-                entries.push(budget::BudgetEntry::new(0.9, conv, "convention"));
+                entries.push(budget::BudgetEntry::new(
+                    PRIORITY_CONVENTION,
+                    conv,
+                    "convention",
+                ));
                 sources.push(InjectionSource::Convention);
             }
         }
@@ -420,7 +428,11 @@ impl ContextInjectionManager {
                 )
                 .await;
             if !semantic_context.is_empty() {
-                entries.push(budget::BudgetEntry::new(0.7, semantic_context, "semantic"));
+                entries.push(budget::BudgetEntry::new(
+                    PRIORITY_SEMANTIC,
+                    semantic_context,
+                    "semantic",
+                ));
                 sources.push(InjectionSource::Semantic);
             }
         }
@@ -431,7 +443,11 @@ impl ContextInjectionManager {
             if !file_paths.is_empty() {
                 let file_context = self.file_injector.inject_file_context(file_paths).await;
                 if !file_context.is_empty() {
-                    entries.push(budget::BudgetEntry::new(0.4, file_context, "files"));
+                    entries.push(budget::BudgetEntry::new(
+                        PRIORITY_FILE_AWARE,
+                        file_context,
+                        "files",
+                    ));
                     sources.push(InjectionSource::FileAware);
                 }
             }
@@ -443,7 +459,11 @@ impl ContextInjectionManager {
             if !goal_ids.is_empty() {
                 let goal_context = self.goal_injector.inject_goal_context(goal_ids).await;
                 if !goal_context.is_empty() {
-                    entries.push(budget::BudgetEntry::new(0.6, goal_context, "goals"));
+                    entries.push(budget::BudgetEntry::new(
+                        PRIORITY_GOALS,
+                        goal_context,
+                        "goals",
+                    ));
                     sources.push(InjectionSource::TaskAware);
                 }
             }

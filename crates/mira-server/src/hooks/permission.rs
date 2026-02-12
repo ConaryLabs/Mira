@@ -3,13 +3,13 @@
 
 use crate::db::{get_permission_rules_sync, pool::DatabasePool};
 use crate::hooks::{read_hook_input, write_hook_output};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Run permission hook
 pub async fn run() -> Result<()> {
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
 
     // Extract tool info from hook input
     let tool_name = input["tool_name"].as_str().unwrap_or("").to_string();

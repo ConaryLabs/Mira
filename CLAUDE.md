@@ -108,8 +108,8 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 |------|-----------------|
 | `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info |
 | `UserPromptSubmit` | Pending tasks, relevant memories, proactive predictions, team context |
-| `PreToolUse` | Relevant memories before Grep/Glob/Read (keyword-matched from search pattern) |
-| `PostToolUse` | Tracks file modifications, team conflict detection, test file hints (async) |
+| `PreToolUse` | Relevant memories before Grep/Glob/Read (semantic search with keyword fallback from search pattern) |
+| `PostToolUse` | Tracks file modifications, team conflict detection |
 | `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |
 | `Stop` | Session snapshot, task export, goal progress check, auto-export to CLAUDE.local.md |
 | `SessionEnd` | Snapshot tasks on user interrupt, team session cleanup |

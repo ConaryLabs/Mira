@@ -11,7 +11,7 @@ use crate::hooks::{
 use crate::proactive::background::get_pre_generated_suggestions;
 use crate::proactive::{behavior::BehaviorTracker, predictor};
 use crate::utils::truncate_at_boundary;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -193,7 +193,7 @@ fn get_task_context() -> Option<String> {
 
 /// Run UserPromptSubmit hook
 pub async fn run() -> Result<()> {
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
 
     let user_message = input
         .get("prompt")
@@ -299,26 +299,36 @@ pub async fn run() -> Result<()> {
     // Route ALL context through a unified budget with priority scoring.
     // This replaces the previous ad-hoc concatenation that had no cap on
     // team/proactive/task context.
-    use crate::context::BudgetEntry;
+    use crate::context::{
+        BudgetEntry, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_TASKS, PRIORITY_TEAM,
+    };
 
     let mut budget_entries: Vec<BudgetEntry> = Vec::new();
 
     // Reactive context (already priority-sorted internally by ContextInjectionManager)
     if !result.context.is_empty() {
-        budget_entries.push(BudgetEntry::new(0.75, result.context.clone(), "reactive"));
+        budget_entries.push(BudgetEntry::new(
+            PRIORITY_REACTIVE,
+            result.context.clone(),
+            "reactive",
+        ));
         eprintln!("[mira] {}", result.summary());
     }
 
     // Team context -- high priority since conflicts are blocking issues
     if let Some(ref tc) = team_context {
-        budget_entries.push(BudgetEntry::new(0.95, tc.clone(), "team"));
+        budget_entries.push(BudgetEntry::new(PRIORITY_TEAM, tc.clone(), "team"));
         eprintln!("[mira] Added team context");
     }
 
     // Proactive predictions
     let has_proactive = match proactive_context {
         Some(ref pc) if !pc.is_empty() => {
-            budget_entries.push(BudgetEntry::new(0.5, pc.clone(), "proactive"));
+            budget_entries.push(BudgetEntry::new(
+                PRIORITY_PROACTIVE,
+                pc.clone(),
+                "proactive",
+            ));
             eprintln!("[mira] Added proactive context suggestions");
             true
         }
@@ -327,7 +337,7 @@ pub async fn run() -> Result<()> {
 
     // Pending native tasks
     if let Some(ref tc) = task_context {
-        budget_entries.push(BudgetEntry::new(0.65, tc.clone(), "tasks"));
+        budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
     }
 
     // Apply unified budget (2x the per-injector budget to accommodate all sources)

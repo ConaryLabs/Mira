@@ -6,7 +6,7 @@ use crate::hooks::{
     HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
 };
 use crate::utils::truncate_at_boundary;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 
 /// Maximum total characters for injected context (~500 tokens)
@@ -72,7 +72,7 @@ impl SubagentStopInput {
 /// 3. Key memories that might help the subagent
 pub async fn run_start() -> Result<()> {
     let _timer = HookTimer::start("SubagentStart");
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let start_input = SubagentStartInput::from_json(&input);
 
     eprintln!(
@@ -161,7 +161,7 @@ pub async fn run_start() -> Result<()> {
 /// - If significant entities found (3+), stores a condensed memory
 pub async fn run_stop() -> Result<()> {
     let _timer = HookTimer::start("SubagentStop");
-    let input = read_hook_input()?;
+    let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let stop_input = SubagentStopInput::from_json(&input);
 
     eprintln!(
