@@ -80,13 +80,17 @@ pub async fn run() -> Result<()> {
         let session_id = task_input.session_id.clone();
         let task_id = task_input.task_id.clone();
         let task_subject = task_input.task_subject.clone();
+        let task_description = task_input.task_description.clone();
         pool.try_interact("task completion logging", move |conn| {
             let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
-            let data = serde_json::json!({
+            let mut data = serde_json::json!({
                 "behavior_type": "task_completed",
                 "task_id": task_id,
                 "task_subject": task_subject,
             });
+            if let Some(desc) = task_description {
+                data["task_description"] = serde_json::Value::String(desc);
+            }
             if let Err(e) = tracker.log_event(conn, EventType::GoalUpdate, data) {
                 tracing::debug!("Failed to log task completion: {e}");
             }
@@ -97,8 +101,9 @@ pub async fn run() -> Result<()> {
 
     // Try to auto-link task completion to goal milestones
     let task_subject = task_input.task_subject.clone();
+    let task_description = task_input.task_description.clone();
     pool.try_interact("milestone auto-link", move |conn| {
-        auto_link_milestone(conn, project_id, &task_subject)
+        auto_link_milestone(conn, project_id, &task_subject, task_description.as_deref())
     })
     .await;
 
@@ -107,10 +112,12 @@ pub async fn run() -> Result<()> {
 }
 
 /// Check if a completed task matches any active goal milestones and auto-complete them.
+/// Matches against both the task subject and optional description for better coverage.
 fn auto_link_milestone(
     conn: &rusqlite::Connection,
     project_id: i64,
     task_subject: &str,
+    task_description: Option<&str>,
 ) -> Result<()> {
     // Get active goals for this project
     let goals_sql = r#"
@@ -152,11 +159,17 @@ fn auto_link_milestone(
         return Ok(());
     }
 
-    // Simple fuzzy match: check if task_subject contains milestone title or vice versa
+    // Fuzzy match: check if task subject or description contains milestone title or vice versa
     let task_lower = task_subject.to_lowercase();
+    let desc_lower = task_description.map(|d| d.to_lowercase());
     for (milestone_id, goal_id, milestone_title) in &milestones {
         let ms_lower = milestone_title.to_lowercase();
-        if task_lower.contains(&ms_lower) || ms_lower.contains(&task_lower) {
+        let subject_matches =
+            task_lower.contains(&ms_lower) || ms_lower.contains(&task_lower);
+        let desc_matches = desc_lower
+            .as_ref()
+            .is_some_and(|d| d.contains(&ms_lower) || ms_lower.contains(d));
+        if subject_matches || desc_matches {
             // Mark milestone as completed
             conn.execute(
                 "UPDATE milestones SET completed = 1 WHERE id = ?",
@@ -231,7 +244,7 @@ mod tests {
         let conn = crate::db::test_support::setup_test_connection();
         crate::db::get_or_create_project_sync(&conn, "/tmp/test-proj", None).unwrap();
         // Should not error even with no goals
-        let result = auto_link_milestone(&conn, 1, "Some task");
+        let result = auto_link_milestone(&conn, 1, "Some task", None);
         assert!(result.is_ok());
     }
 
@@ -259,7 +272,7 @@ mod tests {
         .unwrap();
 
         // Auto-link with matching task subject
-        auto_link_milestone(&conn, pid, "Fix login bug").unwrap();
+        auto_link_milestone(&conn, pid, "Fix login bug", None).unwrap();
 
         // Check milestone was completed
         let completed: bool = conn
@@ -294,7 +307,7 @@ mod tests {
         .unwrap();
 
         // Task subject contains milestone title (case-insensitive)
-        auto_link_milestone(&conn, pid, "add authentication endpoint").unwrap();
+        auto_link_milestone(&conn, pid, "add authentication endpoint", None).unwrap();
 
         let completed: bool = conn
             .query_row(
@@ -328,7 +341,7 @@ mod tests {
         .unwrap();
 
         // Unrelated task
-        auto_link_milestone(&conn, pid, "Fix CSS styling").unwrap();
+        auto_link_milestone(&conn, pid, "Fix CSS styling", None).unwrap();
 
         let completed: bool = conn
             .query_row(
@@ -338,5 +351,45 @@ mod tests {
             )
             .unwrap();
         assert!(!completed);
+    }
+
+    #[test]
+    fn auto_link_matches_via_description() {
+        let conn = crate::db::test_support::setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/tmp/desc-test", None).unwrap();
+        crate::db::test_support::seed_goal(&conn, pid, "Backend Work", "in_progress", 0);
+
+        let goal_id: i64 = conn
+            .query_row(
+                "SELECT id FROM goals WHERE project_id = ?",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        conn.execute(
+            "INSERT INTO milestones (goal_id, title, completed, weight) VALUES (?, ?, 0, 1)",
+            rusqlite::params![goal_id, "Add rate limiting"],
+        )
+        .unwrap();
+
+        // Subject doesn't match, but description does
+        auto_link_milestone(
+            &conn,
+            pid,
+            "Implement middleware",
+            Some("Add rate limiting to API endpoints"),
+        )
+        .unwrap();
+
+        let completed: bool = conn
+            .query_row(
+                "SELECT completed FROM milestones WHERE goal_id = ?",
+                [goal_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(completed);
     }
 }
