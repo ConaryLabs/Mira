@@ -357,10 +357,10 @@ fn drop_dead_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "DROP TABLE IF EXISTS corrections;
          DROP TABLE IF EXISTS users;
+         DROP TABLE IF EXISTS pattern_provenance;
          DROP TABLE IF EXISTS cross_project_patterns;
          DROP TABLE IF EXISTS pattern_sharing_log;
-         DROP TABLE IF EXISTS cross_project_preferences;
-         DROP TABLE IF EXISTS pattern_provenance;",
+         DROP TABLE IF EXISTS cross_project_preferences;",
     )?;
     Ok(())
 }
