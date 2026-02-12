@@ -308,3 +308,215 @@ pub fn resolve_import_to_module(import: &str, module_ids: &[(String, String)]) -
 pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
     super::count_lines_with_walker(project_path, module_path, "node")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_package_json(dir: &Path, name: &str) {
+        std::fs::write(
+            dir.join("package.json"),
+            format!("{{\n  \"name\": \"{name}\",\n  \"version\": \"1.0.0\"\n}}\n"),
+        )
+        .unwrap();
+    }
+
+    // ============================================================================
+    // parse_package_json_name tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_package_json_name_simple() {
+        let content = "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\"\n}";
+        assert_eq!(parse_package_json_name(content), Some("my-app".to_string()));
+    }
+
+    #[test]
+    fn test_parse_package_json_name_scoped() {
+        let content = "{\n  \"name\": \"@scope/my-lib\",\n  \"version\": \"1.0.0\"\n}";
+        assert_eq!(
+            parse_package_json_name(content),
+            Some("@scope/my-lib".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_package_json_name_missing() {
+        let content = "{\n  \"version\": \"1.0.0\"\n}";
+        assert_eq!(parse_package_json_name(content), None);
+    }
+
+    // ============================================================================
+    // find_workspaces tests
+    // ============================================================================
+
+    #[test]
+    fn test_find_workspaces_monorepo() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            "{\n  \"name\": \"mono\",\n  \"workspaces\": [\"packages/*\"]\n}",
+        )
+        .unwrap();
+
+        let pkg_a = dir.path().join("packages/pkg-a");
+        let pkg_b = dir.path().join("packages/pkg-b");
+        std::fs::create_dir_all(&pkg_a).unwrap();
+        std::fs::create_dir_all(&pkg_b).unwrap();
+        write_package_json(&pkg_a, "pkg-a");
+        write_package_json(&pkg_b, "pkg-b");
+
+        let workspaces = find_workspaces(dir.path());
+        assert_eq!(workspaces.len(), 2);
+    }
+
+    #[test]
+    fn test_find_workspaces_no_workspaces_field() {
+        let dir = TempDir::new().unwrap();
+        write_package_json(dir.path(), "single-pkg");
+        let workspaces = find_workspaces(dir.path());
+        assert!(workspaces.is_empty());
+    }
+
+    #[test]
+    fn test_find_workspaces_no_package_json() {
+        let dir = TempDir::new().unwrap();
+        let workspaces = find_workspaces(dir.path());
+        assert!(workspaces.is_empty());
+    }
+
+    // ============================================================================
+    // resolve_import_to_module tests
+    // ============================================================================
+
+    #[test]
+    fn test_resolve_import_relative() {
+        let modules = vec![("my-app/utils".to_string(), "utils".to_string())];
+        assert_eq!(
+            resolve_import_to_module("./utils", &modules),
+            Some("my-app/utils".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_import_parent_relative() {
+        let modules = vec![("my-app/helpers".to_string(), "helpers".to_string())];
+        assert_eq!(
+            resolve_import_to_module("../helpers", &modules),
+            Some("my-app/helpers".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_import_by_name() {
+        let modules = vec![("my-app/config".to_string(), "config".to_string())];
+        assert_eq!(
+            resolve_import_to_module("config", &modules),
+            Some("my-app/config".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_import_no_match() {
+        let modules = vec![("my-app/db".to_string(), "db".to_string())];
+        assert_eq!(resolve_import_to_module("unknown", &modules), None);
+    }
+
+    #[test]
+    fn test_resolve_import_empty_modules() {
+        let modules: Vec<(String, String)> = vec![];
+        assert_eq!(resolve_import_to_module("./anything", &modules), None);
+    }
+
+    // ============================================================================
+    // find_entry_points tests
+    // ============================================================================
+
+    #[test]
+    fn test_find_entry_points_src_index() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("index.ts"), "export {}").unwrap();
+
+        let entries = find_entry_points(dir.path());
+        assert!(entries.contains(&"src/index.ts".to_string()));
+    }
+
+    #[test]
+    fn test_find_entry_points_root_js() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("index.js"), "module.exports = {}").unwrap();
+        std::fs::write(dir.path().join("app.js"), "const app = express()").unwrap();
+
+        let entries = find_entry_points(dir.path());
+        assert!(entries.contains(&"index.js".to_string()));
+        assert!(entries.contains(&"app.js".to_string()));
+    }
+
+    #[test]
+    fn test_find_entry_points_empty() {
+        let dir = TempDir::new().unwrap();
+        let entries = find_entry_points(dir.path());
+        assert!(entries.is_empty());
+    }
+
+    // ============================================================================
+    // detect tests
+    // ============================================================================
+
+    #[test]
+    fn test_detect_single_package_with_src() {
+        let dir = TempDir::new().unwrap();
+        write_package_json(dir.path(), "my-app");
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("index.ts"), "export {}").unwrap();
+        std::fs::write(src.join("utils.ts"), "export function helper() {}").unwrap();
+
+        let modules = detect(dir.path());
+        assert!(!modules.is_empty());
+        // Should find utils as a module (index.ts is skipped)
+        assert!(modules.iter().any(|m| m.name == "utils"));
+    }
+
+    #[test]
+    fn test_detect_with_index_subdirectory() {
+        let dir = TempDir::new().unwrap();
+        write_package_json(dir.path(), "my-app");
+        let src = dir.path().join("src");
+        let components = src.join("components");
+        std::fs::create_dir_all(&components).unwrap();
+        std::fs::write(components.join("index.ts"), "export {}").unwrap();
+
+        let modules = detect(dir.path());
+        assert!(modules.iter().any(|m| m.name == "components"));
+    }
+
+    #[test]
+    fn test_detect_skips_test_files() {
+        let dir = TempDir::new().unwrap();
+        write_package_json(dir.path(), "my-app");
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("app.ts"), "export {}").unwrap();
+        std::fs::write(src.join("app.test.ts"), "test('works', () => {})").unwrap();
+        std::fs::write(src.join("app.spec.ts"), "describe('app', () => {})").unwrap();
+
+        let modules = detect(dir.path());
+        let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"app"));
+        // test/spec files should not appear as modules
+        assert!(!modules.iter().any(|m| m.name.contains("test")));
+        assert!(!modules.iter().any(|m| m.name.contains("spec")));
+    }
+
+    #[test]
+    fn test_detect_empty_project() {
+        let dir = TempDir::new().unwrap();
+        let modules = detect(dir.path());
+        // Even empty projects get a fallback module
+        assert!(!modules.is_empty());
+    }
+}

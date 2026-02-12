@@ -293,3 +293,241 @@ pub fn resolve_import_to_module(import: &str, module_ids: &[(String, String)]) -
 pub fn count_lines_in_module(project_path: &Path, module_path: &str) -> u32 {
     super::count_lines_with_walker(project_path, module_path, "python")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // ============================================================================
+    // parse_pyproject_name tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_pyproject_name_project_section() {
+        let content = r#"
+[project]
+name = "my-package"
+version = "1.0.0"
+"#;
+        assert_eq!(
+            parse_pyproject_name(content),
+            Some("my-package".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_pyproject_name_poetry_section() {
+        let content = r#"
+[tool.poetry]
+name = "poetry-pkg"
+version = "0.1.0"
+"#;
+        assert_eq!(
+            parse_pyproject_name(content),
+            Some("poetry-pkg".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_pyproject_name_wrong_section() {
+        let content = r#"
+[build-system]
+name = "not-this"
+"#;
+        assert_eq!(parse_pyproject_name(content), None);
+    }
+
+    #[test]
+    fn test_parse_pyproject_name_single_quotes() {
+        let content = r#"
+[project]
+name = 'single-quoted'
+"#;
+        assert_eq!(
+            parse_pyproject_name(content),
+            Some("single-quoted".to_string())
+        );
+    }
+
+    // ============================================================================
+    // parse_setup_py_name tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_setup_py_name_double_quotes() {
+        let content = r#"
+from setuptools import setup
+setup(
+    name="my-setup-pkg",
+    version="1.0",
+)
+"#;
+        assert_eq!(
+            parse_setup_py_name(content),
+            Some("my-setup-pkg".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_setup_py_name_single_quotes() {
+        let content = "    name='single-setup',\n";
+        assert_eq!(
+            parse_setup_py_name(content),
+            Some("single-setup".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_setup_py_name_missing() {
+        let content = "from setuptools import setup\nsetup(version='1.0')\n";
+        assert_eq!(parse_setup_py_name(content), None);
+    }
+
+    // ============================================================================
+    // find_project_name tests
+    // ============================================================================
+
+    #[test]
+    fn test_find_project_name_from_pyproject() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"from-pyproject\"\n",
+        )
+        .unwrap();
+        assert_eq!(find_project_name(dir.path()), "from-pyproject");
+    }
+
+    #[test]
+    fn test_find_project_name_fallback_to_dir() {
+        let dir = TempDir::new().unwrap();
+        let name = find_project_name(dir.path());
+        // Should fall back to directory name (tempdir name)
+        assert!(!name.is_empty());
+    }
+
+    // ============================================================================
+    // resolve_import_to_module tests
+    // ============================================================================
+
+    #[test]
+    fn test_resolve_import_exact_match() {
+        let modules = vec![("mypackage.utils".to_string(), "utils".to_string())];
+        assert_eq!(
+            resolve_import_to_module("mypackage.utils", &modules),
+            Some("mypackage.utils".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_import_prefix_match() {
+        let modules = vec![("mypackage.db".to_string(), "db".to_string())];
+        assert_eq!(
+            resolve_import_to_module("mypackage.db.models", &modules),
+            Some("mypackage.db".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_import_by_name() {
+        let modules = vec![("mypackage.helpers".to_string(), "helpers".to_string())];
+        assert_eq!(
+            resolve_import_to_module("helpers", &modules),
+            Some("mypackage.helpers".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_import_no_match() {
+        let modules = vec![("mypackage.db".to_string(), "db".to_string())];
+        assert_eq!(resolve_import_to_module("unknown.module", &modules), None);
+    }
+
+    #[test]
+    fn test_resolve_import_empty_modules() {
+        let modules: Vec<(String, String)> = vec![];
+        assert_eq!(resolve_import_to_module("anything", &modules), None);
+    }
+
+    // ============================================================================
+    // find_entry_points tests
+    // ============================================================================
+
+    #[test]
+    fn test_find_entry_points_common_files() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("main.py"), "print('hi')").unwrap();
+        std::fs::write(dir.path().join("app.py"), "app = Flask()").unwrap();
+        std::fs::write(dir.path().join("utils.py"), "# not an entry point").unwrap();
+
+        let entries = find_entry_points(dir.path());
+        assert!(entries.contains(&"main.py".to_string()));
+        assert!(entries.contains(&"app.py".to_string()));
+        assert!(!entries.contains(&"utils.py".to_string()));
+    }
+
+    #[test]
+    fn test_find_entry_points_empty_project() {
+        let dir = TempDir::new().unwrap();
+        let entries = find_entry_points(dir.path());
+        assert!(entries.is_empty());
+    }
+
+    // ============================================================================
+    // detect tests
+    // ============================================================================
+
+    #[test]
+    fn test_detect_package_with_init() {
+        let dir = TempDir::new().unwrap();
+        let pkg = dir.path().join("mypackage");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("__init__.py"), "").unwrap();
+        std::fs::write(pkg.join("core.py"), "def main(): pass").unwrap();
+
+        let modules = detect(dir.path());
+        assert!(modules.iter().any(|m| m.name == "mypackage"));
+        assert!(modules.iter().any(|m| m.id == "mypackage"));
+    }
+
+    #[test]
+    fn test_detect_nested_packages() {
+        let dir = TempDir::new().unwrap();
+        let pkg = dir.path().join("mypackage");
+        let sub = pkg.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(pkg.join("__init__.py"), "").unwrap();
+        std::fs::write(sub.join("__init__.py"), "").unwrap();
+        std::fs::write(sub.join("models.py"), "class Model: pass").unwrap();
+
+        let modules = detect(dir.path());
+        assert!(modules.iter().any(|m| m.id == "mypackage"));
+        assert!(modules.iter().any(|m| m.id == "mypackage.sub"));
+    }
+
+    #[test]
+    fn test_detect_top_level_py_files() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("cli.py"), "import click").unwrap();
+        std::fs::write(dir.path().join("config.py"), "DEBUG = True").unwrap();
+        // Should skip these:
+        std::fs::write(dir.path().join("setup.py"), "").unwrap();
+        std::fs::write(dir.path().join("conftest.py"), "").unwrap();
+        std::fs::write(dir.path().join("test_main.py"), "").unwrap();
+
+        let modules = detect(dir.path());
+        assert!(modules.iter().any(|m| m.name == "cli"));
+        assert!(modules.iter().any(|m| m.name == "config"));
+        assert!(!modules.iter().any(|m| m.name == "setup"));
+        assert!(!modules.iter().any(|m| m.name == "conftest"));
+        assert!(!modules.iter().any(|m| m.name == "test_main"));
+    }
+
+    #[test]
+    fn test_detect_empty_project() {
+        let dir = TempDir::new().unwrap();
+        let modules = detect(dir.path());
+        assert!(modules.is_empty());
+    }
+}
