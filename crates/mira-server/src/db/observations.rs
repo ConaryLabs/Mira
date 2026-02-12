@@ -27,11 +27,29 @@ pub struct StoreObservationParams<'a> {
 ///
 /// Uses COALESCE on nullable principals to handle NULL safely (SQLite treats NULLs
 /// as distinct, so raw comparisons would create duplicate rows).
+///
+/// `expires_at` accepts either absolute timestamps ("2026-02-18 12:00:00") or
+/// SQLite relative modifiers ("+7 days", "-1 hour"). Relative values are resolved
+/// to absolute timestamps via `datetime('now', ?)` before storage so that TTL
+/// comparison in `cleanup_expired_observations_sync` works correctly.
+///
 /// Returns the observation ID.
 pub fn store_observation_sync(
     conn: &Connection,
     params: StoreObservationParams,
 ) -> rusqlite::Result<i64> {
+    // Resolve relative durations ("+7 days", "-1 hour") to absolute timestamps.
+    // Without this, the raw string would be stored and text-compared against
+    // datetime('now'), causing immediate false-positive expiration.
+    let resolved_expires: Option<String> = match params.expires_at {
+        Some(rel) if rel.starts_with('+') || rel.starts_with('-') => conn
+            .query_row("SELECT datetime('now', ?1)", [rel], |row| row.get(0))
+            .ok(),
+        Some(abs) => Some(abs.to_string()),
+        None => None,
+    };
+    let resolved_expires_ref = resolved_expires.as_deref();
+
     if let Some(key) = params.key {
         // Manual UPSERT: check for existing row first, then update or insert.
         // SQLite doesn't support ON CONFLICT with expression-based indexes.
@@ -61,7 +79,7 @@ pub fn store_observation_sync(
                     params.confidence,
                     params.source,
                     params.session_id,
-                    params.expires_at,
+                    resolved_expires_ref,
                     id,
                 ],
             )?;
@@ -83,7 +101,7 @@ pub fn store_observation_sync(
                     params.session_id,
                     params.team_id,
                     params.scope,
-                    params.expires_at,
+                    resolved_expires_ref,
                 ],
             )?;
             Ok(conn.last_insert_rowid())
@@ -105,7 +123,7 @@ pub fn store_observation_sync(
                 params.session_id,
                 params.team_id,
                 params.scope,
-                params.expires_at,
+                resolved_expires_ref,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -528,7 +546,7 @@ mod tests {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
 
-        // Insert expired observation
+        // Insert expired observation via raw SQL (absolute timestamp)
         conn.execute(
             "INSERT INTO system_observations
                 (project_id, key, content, observation_type, source, scope, expires_at)
@@ -537,7 +555,7 @@ mod tests {
         )
         .unwrap();
 
-        // Insert non-expired observation
+        // Insert non-expired observation via raw SQL (absolute timestamp)
         conn.execute(
             "INSERT INTO system_observations
                 (project_id, key, content, observation_type, source, scope, expires_at)
@@ -571,6 +589,74 @@ mod tests {
         assert!(!observation_key_exists_sync(&conn, pid, "expired"));
         assert!(observation_key_exists_sync(&conn, pid, "valid"));
         assert!(observation_key_exists_sync(&conn, pid, "permanent"));
+    }
+
+    /// Regression test: callers pass relative durations like "+7 days" to expires_at.
+    /// These must be resolved to absolute timestamps before storage, otherwise
+    /// cleanup_expired_observations_sync will purge them immediately ("+7 days" < "2026-..." in text comparison).
+    #[test]
+    fn ttl_relative_duration_resolved_before_storage() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+
+        // Store via the API with a relative "+7 days" TTL (the real caller pattern)
+        store_observation_sync(
+            &conn,
+            StoreObservationParams {
+                project_id: Some(pid),
+                key: Some("relative_ttl"),
+                content: "should survive cleanup",
+                observation_type: "session_event",
+                category: Some("compaction"),
+                confidence: 0.8,
+                source: "test",
+                session_id: None,
+                team_id: None,
+                scope: "project",
+                expires_at: Some("+7 days"),
+            },
+        )
+        .unwrap();
+
+        // Store an already-expired observation via the API
+        store_observation_sync(
+            &conn,
+            StoreObservationParams {
+                project_id: Some(pid),
+                key: Some("expired_relative"),
+                content: "should be cleaned up",
+                observation_type: "session_event",
+                category: Some("compaction"),
+                confidence: 0.8,
+                source: "test",
+                session_id: None,
+                team_id: None,
+                scope: "project",
+                expires_at: Some("-1 day"),
+            },
+        )
+        .unwrap();
+
+        // Verify the stored expires_at is an absolute timestamp, not "+7 days"
+        let stored: String = conn
+            .query_row(
+                "SELECT expires_at FROM system_observations WHERE key = 'relative_ttl'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !stored.starts_with('+'),
+            "expires_at should be an absolute timestamp, got: {}",
+            stored
+        );
+
+        // Cleanup should only purge the expired one
+        let cleaned = cleanup_expired_observations_sync(&conn).unwrap();
+        assert_eq!(cleaned, 1);
+
+        assert!(observation_key_exists_sync(&conn, pid, "relative_ttl"));
+        assert!(!observation_key_exists_sync(&conn, pid, "expired_relative"));
     }
 
     #[test]

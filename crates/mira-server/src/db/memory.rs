@@ -684,7 +684,7 @@ pub fn get_health_alerts_sync(
 ) -> rusqlite::Result<Vec<mira_types::MemoryFact>> {
     let mut stmt = conn.prepare(
         "SELECT id, project_id, key, content, observation_type, category, confidence,
-                COALESCE(updated_at, created_at)
+                COALESCE(updated_at, created_at), scope, team_id
          FROM system_observations
          WHERE project_id IS ?1
            AND observation_type = 'health'
@@ -710,8 +710,8 @@ pub fn get_health_alerts_sync(
                 last_session_id: None,
                 status: "confirmed".to_string(),
                 user_id: None,
-                scope: "project".to_string(),
-                team_id: None,
+                scope: row.get(8)?,
+                team_id: row.get(9)?,
             })
         },
     )?;
