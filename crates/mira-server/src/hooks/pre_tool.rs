@@ -9,7 +9,6 @@ use crate::hooks::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,12 +57,14 @@ fn write_cooldown(query: &str) {
     }
     if let Ok(json) = serde_json::to_string(&state) {
         // Write with mode 0600 (owner read/write only) to protect session state
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let file = opts.open(&path);
         if let Ok(mut f) = file
             && let Err(e) = f.write_all(json.as_bytes())
         {

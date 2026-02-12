@@ -96,10 +96,13 @@ pub fn get_active_goals_sync(
     match project_id {
         Some(pid) => {
             let sql = format!(
-                "SELECT {cols} FROM goals WHERE project_id = ?1 AND status NOT IN ('completed', 'abandoned') \
+                "SELECT * FROM (\
+                 SELECT {cols} FROM goals WHERE project_id = ?1 AND status NOT IN ('completed', 'abandoned') \
                  UNION ALL \
                  SELECT {cols} FROM goals WHERE project_id IS NULL AND status NOT IN ('completed', 'abandoned') \
-                 ORDER BY created_at DESC, id DESC LIMIT ?2"
+                 ) ORDER BY CASE priority \
+                   WHEN 'critical' THEN 0 WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, \
+                 created_at DESC, id DESC LIMIT ?2"
             );
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(params![pid, lim], parse_goal_row)?;
@@ -108,7 +111,9 @@ pub fn get_active_goals_sync(
         None => {
             let sql = format!(
                 "SELECT {cols} FROM goals WHERE project_id IS NULL AND status NOT IN ('completed', 'abandoned') \
-                 ORDER BY created_at DESC, id DESC LIMIT ?1"
+                 ORDER BY CASE priority \
+                   WHEN 'critical' THEN 0 WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, \
+                 created_at DESC, id DESC LIMIT ?1"
             );
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(params![lim], parse_goal_row)?;

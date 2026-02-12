@@ -77,7 +77,7 @@ pub async fn run() -> Result<()> {
     let mut output = serde_json::json!({});
 
     if !goal_lines.is_empty() {
-        let context = format!("Active goals in progress:\n{}", goal_lines.join("\n"));
+        let context = format!("Active goals (not completed/abandoned):\n{}", goal_lines.join("\n"));
 
         // Add as additional context (informational, not blocking)
         output = serde_json::json!({

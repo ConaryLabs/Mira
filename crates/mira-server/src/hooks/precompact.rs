@@ -38,15 +38,26 @@ pub async fn run() -> Result<()> {
         .and_then(|v| v.as_str())
         .and_then(|p| {
             let path = PathBuf::from(p);
+            // Canonicalize to resolve ".." segments before checking prefix
+            let canonical = match path.canonicalize() {
+                Ok(c) => c,
+                Err(_) => {
+                    eprintln!(
+                        "[mira] PreCompact rejected transcript_path (canonicalize failed): {}",
+                        p
+                    );
+                    return None;
+                }
+            };
             // Validate transcript_path is under user's home directory
             if let Some(home) = dirs::home_dir()
-                && path.starts_with(&home)
+                && canonical.starts_with(&home)
             {
-                return Some(path);
+                return Some(canonical);
             }
             // Also allow /tmp which Claude Code may use
-            if path.starts_with("/tmp") {
-                return Some(path);
+            if canonical.starts_with("/tmp") {
+                return Some(canonical);
             }
             eprintln!(
                 "[mira] PreCompact rejected transcript_path outside home directory: {}",
