@@ -2,6 +2,7 @@
 name: experts
 description: This skill should be used when the user asks "get expert opinion", "review this", "what would an architect say", "security review", or wants a second opinion from AI experts.
 argument-hint: "[context or focus area]"
+disable-model-invocation: true
 ---
 
 # Expert Consultation

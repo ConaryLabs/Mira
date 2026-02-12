@@ -137,6 +137,12 @@ pub enum HookAction {
     SubagentStart,
     /// Handle SubagentStop hooks - capture discoveries from subagent work
     SubagentStop,
+    /// Handle PostToolUseFailure hooks - track and learn from tool failures
+    PostToolFailure,
+    /// Handle TaskCompleted hooks - auto-link tasks to goals
+    TaskCompleted,
+    /// Handle TeammateIdle hooks - check teammate status
+    TeammateIdle,
 }
 
 /// Get the default database path

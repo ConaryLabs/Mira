@@ -15,13 +15,18 @@ struct PostToolInput {
     session_id: String,
     tool_name: String,
     file_path: Option<String>,
+    command: Option<String>,
 }
 
 impl PostToolInput {
     fn from_json(json: &serde_json::Value) -> Self {
-        let file_path = json
-            .get("tool_input")
+        let tool_input = json.get("tool_input");
+        let file_path = tool_input
             .and_then(|ti| ti.get("file_path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let command = tool_input
+            .and_then(|ti| ti.get("command"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -37,6 +42,7 @@ impl PostToolInput {
                 .unwrap_or("")
                 .to_string(),
             file_path,
+            command,
         }
     }
 }
@@ -56,6 +62,39 @@ pub async fn run() -> Result<()> {
         post_input.tool_name,
         post_input.file_path.as_deref().unwrap_or("none")
     );
+
+    // Handle Bash commands: detect file-modifying commands and log them
+    if post_input.tool_name == "Bash" {
+        if let Some(ref command) = post_input.command {
+            if is_file_modifying_command(command) {
+                let db_path = get_db_path();
+                if let Ok(pool) = DatabasePool::open(&db_path).await {
+                    let pool = Arc::new(pool);
+                    if let Some(project_id) = resolve_project_id(&pool).await {
+                        let session_id = post_input.session_id.clone();
+                        let cmd = crate::utils::truncate(command, 500);
+                        pool.try_interact("bash file modify logging", move |conn| {
+                            let mut tracker =
+                                BehaviorTracker::for_session(conn, session_id, project_id);
+                            let data = serde_json::json!({
+                                "behavior_type": "bash_file_modify",
+                                "command": cmd,
+                            });
+                            if let Err(e) =
+                                tracker.log_event(conn, crate::proactive::EventType::ToolUse, data)
+                            {
+                                tracing::debug!("Failed to log bash file modify: {e}");
+                            }
+                            Ok(())
+                        })
+                        .await;
+                    }
+                }
+            }
+        }
+        write_hook_output(&serde_json::json!({}));
+        return Ok(());
+    }
 
     // Only process Write/Edit operations with file paths
     let Some(file_path) = post_input.file_path else {
@@ -176,6 +215,48 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
+/// Check if a Bash command appears to modify files.
+///
+/// Returns true for commands that create, move, delete, or modify files.
+/// Returns false for read-only commands like ls, cat, grep, git status, etc.
+fn is_file_modifying_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Check for file-modifying patterns first (anywhere in the command,
+    // to catch pipelines like "find ... | xargs mv ..." and redirects
+    // like "echo ... > file")
+
+    // Redirect operators
+    if trimmed.contains("> ") || trimmed.contains(">> ") {
+        return true;
+    }
+
+    // File-modifying commands (anywhere in pipeline)
+    const MODIFY_COMMANDS: &[&str] = &[
+        "mv ", "cp ", "rm ", "mkdir ", "touch ", "chmod ", "chown ",
+    ];
+    for cmd in MODIFY_COMMANDS {
+        if trimmed.contains(cmd) {
+            return true;
+        }
+    }
+
+    // Git operations that modify working tree
+    const GIT_MODIFY_PREFIXES: &[&str] = &[
+        "git checkout", "git merge", "git rebase", "git reset",
+    ];
+    for prefix in GIT_MODIFY_PREFIXES {
+        if trimmed.contains(prefix) {
+            return true;
+        }
+    }
+
+    false
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -219,6 +300,19 @@ mod tests {
         }));
         assert_eq!(input.tool_name, "Bash");
         assert!(input.file_path.is_none());
+        assert_eq!(input.command.as_deref(), Some("ls"));
+    }
+
+    #[test]
+    fn post_input_parses_command() {
+        let input = PostToolInput::from_json(&serde_json::json!({
+            "session_id": "sess-1",
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "mv foo.rs bar.rs"
+            }
+        }));
+        assert_eq!(input.command.as_deref(), Some("mv foo.rs bar.rs"));
     }
 
     #[test]
@@ -231,5 +325,129 @@ mod tests {
         assert!(input.session_id.is_empty());
         assert!(input.tool_name.is_empty());
         assert!(input.file_path.is_none());
+        assert!(input.command.is_none());
+    }
+
+    // ── is_file_modifying_command ───────────────────────────────────────────
+
+    #[test]
+    fn detects_mv_command() {
+        assert!(is_file_modifying_command("mv old.rs new.rs"));
+    }
+
+    #[test]
+    fn detects_cp_command() {
+        assert!(is_file_modifying_command("cp src/a.rs src/b.rs"));
+    }
+
+    #[test]
+    fn detects_rm_command() {
+        assert!(is_file_modifying_command("rm -rf target/"));
+    }
+
+    #[test]
+    fn detects_mkdir_command() {
+        assert!(is_file_modifying_command("mkdir -p src/hooks"));
+    }
+
+    #[test]
+    fn detects_touch_command() {
+        assert!(is_file_modifying_command("touch new_file.rs"));
+    }
+
+    #[test]
+    fn detects_chmod_command() {
+        assert!(is_file_modifying_command("chmod +x script.sh"));
+    }
+
+    #[test]
+    fn detects_redirect() {
+        assert!(is_file_modifying_command("echo 'hello' > output.txt"));
+    }
+
+    #[test]
+    fn detects_append_redirect() {
+        assert!(is_file_modifying_command("echo 'more' >> output.txt"));
+    }
+
+    #[test]
+    fn detects_git_checkout() {
+        assert!(is_file_modifying_command("git checkout main"));
+    }
+
+    #[test]
+    fn detects_git_merge() {
+        assert!(is_file_modifying_command("git merge feature-branch"));
+    }
+
+    #[test]
+    fn detects_git_rebase() {
+        assert!(is_file_modifying_command("git rebase main"));
+    }
+
+    #[test]
+    fn detects_git_reset() {
+        assert!(is_file_modifying_command("git reset --hard HEAD~1"));
+    }
+
+    #[test]
+    fn skips_ls() {
+        assert!(!is_file_modifying_command("ls -la"));
+    }
+
+    #[test]
+    fn skips_cat() {
+        assert!(!is_file_modifying_command("cat foo.rs"));
+    }
+
+    #[test]
+    fn skips_grep() {
+        assert!(!is_file_modifying_command("grep -r 'pattern' src/"));
+    }
+
+    #[test]
+    fn skips_git_status() {
+        assert!(!is_file_modifying_command("git status"));
+    }
+
+    #[test]
+    fn skips_git_log() {
+        assert!(!is_file_modifying_command("git log --oneline"));
+    }
+
+    #[test]
+    fn skips_git_diff() {
+        assert!(!is_file_modifying_command("git diff HEAD~1"));
+    }
+
+    #[test]
+    fn skips_cargo_test() {
+        assert!(!is_file_modifying_command("cargo test -- --nocapture"));
+    }
+
+    #[test]
+    fn skips_cargo_check() {
+        assert!(!is_file_modifying_command("cargo check"));
+    }
+
+    #[test]
+    fn skips_echo_without_redirect() {
+        assert!(!is_file_modifying_command("echo hello world"));
+    }
+
+    #[test]
+    fn detects_piped_mv() {
+        // "find ... | xargs mv" - contains "mv " inside pipeline
+        assert!(is_file_modifying_command("find . -name '*.bak' | xargs mv target/"));
+    }
+
+    #[test]
+    fn handles_empty_command() {
+        assert!(!is_file_modifying_command(""));
+    }
+
+    #[test]
+    fn handles_whitespace_command() {
+        assert!(!is_file_modifying_command("   "));
     }
 }

@@ -7,7 +7,8 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook session-start",
-            "timeout": 10
+            "timeout": 10,
+            "statusMessage": "Mira: Loading session context..."
           }
         ]
       }
@@ -18,7 +19,8 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook user-prompt",
-            "timeout": 8
+            "timeout": 8,
+            "statusMessage": "Mira: Searching memories..."
           }
         ]
       }
@@ -29,32 +31,34 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook permission",
-            "timeout": 3
+            "timeout": 3,
+            "statusMessage": "Mira: Checking permissions..."
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Grep|Glob|Read",
+        "matcher": "Grep|Glob|Read|Task",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook pre-tool",
-            "timeout": 3
+            "timeout": 3,
+            "statusMessage": "Mira: Checking relevant context..."
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|NotebookEdit",
+        "matcher": "Write|Edit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook post-tool",
             "timeout": 5,
-            "async": true
+            "statusMessage": "Mira: Tracking changes..."
           }
         ]
       }
@@ -66,7 +70,8 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook pre-compact",
             "timeout": 30,
-            "async": true
+            "async": true,
+            "statusMessage": "Mira: Preserving context..."
           }
         ]
       }
@@ -77,7 +82,8 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook stop",
-            "timeout": 8
+            "timeout": 8,
+            "statusMessage": "Mira: Saving session..."
           }
         ]
       }
@@ -88,7 +94,8 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook session-end",
-            "timeout": 15
+            "timeout": 15,
+            "statusMessage": "Mira: Closing session..."
           }
         ]
       }
@@ -99,7 +106,8 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook subagent-start",
-            "timeout": 3
+            "timeout": 3,
+            "statusMessage": "Mira: Injecting agent context..."
           }
         ]
       }
@@ -111,7 +119,45 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook subagent-stop",
             "timeout": 3,
-            "async": true
+            "async": true,
+            "statusMessage": "Mira: Capturing discoveries..."
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook post-tool-failure",
+            "timeout": 5,
+            "async": true,
+            "statusMessage": "Mira: Analyzing failure..."
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook task-completed",
+            "timeout": 5,
+            "statusMessage": "Mira: Processing task completion..."
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook teammate-idle",
+            "timeout": 5,
+            "statusMessage": "Mira: Checking teammate status..."
           }
         ]
       }

@@ -1,6 +1,8 @@
 ---
 name: refactor
 description: This skill should be used when the user asks to "refactor this", "restructure code", "reorganize modules", "rename and move", "safe restructuring", or wants to reorganize code without changing behavior.
+argument-hint: "[refactoring goal]"
+disable-model-invocation: true
 ---
 
 # Safe Refactoring

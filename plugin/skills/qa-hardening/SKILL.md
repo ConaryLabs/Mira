@@ -1,6 +1,8 @@
 ---
 name: qa-hardening
 description: This skill should be used when the user asks for "QA review", "production readiness", "hardening pass", "test coverage review", "error handling audit", or wants to check code quality before release.
+argument-hint: "[area to review]"
+disable-model-invocation: true
 ---
 
 # QA Hardening

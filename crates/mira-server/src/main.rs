@@ -75,6 +75,9 @@ async fn main() -> Result<()> {
                         HookAction::SessionEnd => mira::hooks::stop::run_session_end().await,
                         HookAction::SubagentStart => mira::hooks::subagent::run_start().await,
                         HookAction::SubagentStop => mira::hooks::subagent::run_stop().await,
+                        HookAction::PostToolFailure => mira::hooks::post_tool_failure::run().await,
+                        HookAction::TaskCompleted => mira::hooks::task_completed::run().await,
+                        HookAction::TeammateIdle => mira::hooks::teammate_idle::run().await,
                     }
                 })
             }));

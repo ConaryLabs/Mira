@@ -9,11 +9,8 @@
   "repository": "https://github.com/ConaryLabs/Mira",
   "license": "Apache-2.0",
   "keywords": [
-    "memory",
-    "context",
-    "code-intelligence",
-    "semantic-search",
-    "goals"
+    "memory", "context", "code-intelligence", "semantic-search", "goals",
+    "persistent", "cross-session", "recall", "knowledge-base", "productivity", "mcp"
   ],
   "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
