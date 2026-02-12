@@ -1,5 +1,27 @@
 // crates/mira-server/src/context/budget.rs
-// Token budget management for context injection
+// Token budget management for context injection with priority-based sorting
+
+/// A single context entry with priority metadata for budget allocation.
+/// Higher priority entries are kept when the budget is tight.
+#[derive(Debug, Clone)]
+pub struct BudgetEntry {
+    /// Priority score (0.0 to 1.0). Higher = more important.
+    pub priority: f32,
+    /// The context content to inject.
+    pub content: String,
+    /// Human-readable source label (e.g. "convention", "semantic", "team").
+    pub source: String,
+}
+
+impl BudgetEntry {
+    pub fn new(priority: f32, content: String, source: impl Into<String>) -> Self {
+        Self {
+            priority,
+            content,
+            source: source.into(),
+        }
+    }
+}
 
 pub struct BudgetManager {
     max_chars: usize,
@@ -23,19 +45,28 @@ impl BudgetManager {
         Self { max_chars }
     }
 
-    /// Apply token budget to collected contexts
-    pub fn apply_budget(&self, contexts: Vec<String>) -> String {
-        // Filter out empty contexts
-        let non_empty: Vec<String> = contexts.into_iter().filter(|c| !c.is_empty()).collect();
+    /// Apply token budget to prioritized context entries.
+    /// Entries are sorted by priority descending before applying the char limit,
+    /// so the most important context is kept when truncation is needed.
+    pub fn apply_budget_prioritized(&self, entries: Vec<BudgetEntry>) -> String {
+        // Filter out empty entries and sort by priority descending
+        let mut entries: Vec<BudgetEntry> = entries
+            .into_iter()
+            .filter(|e| !e.content.is_empty())
+            .collect();
+        entries.sort_by(|a, b| {
+            b.priority
+                .partial_cmp(&a.priority)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        if non_empty.is_empty() {
+        if entries.is_empty() {
             return String::new();
         }
 
-        // Simple concatenation with character limit
         let mut result = String::new();
-        for context in non_empty {
-            if result.len() + context.len() + 2 > self.max_chars {
+        for entry in entries {
+            if result.len() + entry.content.len() + 2 > self.max_chars {
                 // Truncate and add ellipsis
                 let remaining = self.max_chars.saturating_sub(result.len());
                 if remaining > 10 {
@@ -46,10 +77,26 @@ impl BudgetManager {
             if !result.is_empty() {
                 result.push_str("\n\n");
             }
-            result.push_str(&context);
+            result.push_str(&entry.content);
         }
 
         result
+    }
+
+    /// Apply token budget to plain string contexts (insertion-order, no sorting).
+    /// Backward-compatible wrapper for callers that don't use priorities.
+    pub fn apply_budget(&self, contexts: Vec<String>) -> String {
+        let entries: Vec<BudgetEntry> = contexts
+            .into_iter()
+            .enumerate()
+            .map(|(i, content)| BudgetEntry {
+                // Assign decreasing priority to preserve insertion order
+                priority: 1.0 - (i as f32 * 0.001),
+                content,
+                source: String::new(),
+            })
+            .collect();
+        self.apply_budget_prioritized(entries)
     }
 }
 
@@ -165,5 +212,76 @@ mod tests {
         // remaining = 50 - 44 = 6, which is NOT > 10, so no message
         assert!(!result.contains("[Context truncated"));
         assert!(!result.contains("Third"));
+    }
+
+    // --- Priority-based tests ---
+
+    #[test]
+    fn test_prioritized_empty() {
+        let manager = BudgetManager::new();
+        let result = manager.apply_budget_prioritized(vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_prioritized_filters_empty_content() {
+        let manager = BudgetManager::new();
+        let entries = vec![
+            BudgetEntry::new(0.9, String::new(), "empty"),
+            BudgetEntry::new(0.5, "valid".to_string(), "test"),
+        ];
+        let result = manager.apply_budget_prioritized(entries);
+        assert_eq!(result, "valid");
+    }
+
+    #[test]
+    fn test_prioritized_sorts_by_priority() {
+        let manager = BudgetManager::new();
+        let entries = vec![
+            BudgetEntry::new(0.3, "low priority".to_string(), "low"),
+            BudgetEntry::new(0.9, "high priority".to_string(), "high"),
+            BudgetEntry::new(0.6, "mid priority".to_string(), "mid"),
+        ];
+        let result = manager.apply_budget_prioritized(entries);
+        // High priority should come first
+        let high_pos = result.find("high priority").unwrap();
+        let mid_pos = result.find("mid priority").unwrap();
+        let low_pos = result.find("low priority").unwrap();
+        assert!(high_pos < mid_pos);
+        assert!(mid_pos < low_pos);
+    }
+
+    #[test]
+    fn test_prioritized_truncation_drops_low_priority() {
+        let manager = BudgetManager::with_limit(60);
+        let entries = vec![
+            BudgetEntry::new(0.3, "low priority content here".to_string(), "low"),
+            BudgetEntry::new(0.9, "high priority content".to_string(), "high"),
+        ];
+        let result = manager.apply_budget_prioritized(entries);
+        // High priority should be included
+        assert!(result.contains("high priority content"));
+        // Low priority should be truncated (21 + 2 + 25 = 48 <= 60, actually fits)
+        // Let's adjust: make budget tighter
+        let manager = BudgetManager::with_limit(30);
+        let entries = vec![
+            BudgetEntry::new(0.3, "low priority content here".to_string(), "low"),
+            BudgetEntry::new(0.9, "high priority content".to_string(), "high"),
+        ];
+        let result = manager.apply_budget_prioritized(entries);
+        assert!(result.contains("high priority content"));
+        assert!(!result.contains("low priority content"));
+    }
+
+    #[test]
+    fn test_prioritized_truncation_message() {
+        let manager = BudgetManager::with_limit(40);
+        let entries = vec![
+            BudgetEntry::new(0.9, "important".to_string(), "high"),
+            BudgetEntry::new(0.1, "this is definitely too long to fit".to_string(), "low"),
+        ];
+        let result = manager.apply_budget_prioritized(entries);
+        assert!(result.contains("important"));
+        assert!(result.contains("[Context truncated due to token limit]"));
     }
 }

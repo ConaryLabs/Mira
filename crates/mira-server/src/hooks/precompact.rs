@@ -36,7 +36,24 @@ pub async fn run() -> Result<()> {
     let transcript_path = input
         .get("transcript_path")
         .and_then(|v| v.as_str())
-        .map(PathBuf::from);
+        .and_then(|p| {
+            let path = PathBuf::from(p);
+            // Validate transcript_path is under user's home directory
+            if let Some(home) = dirs::home_dir()
+                && path.starts_with(&home)
+            {
+                return Some(path);
+            }
+            // Also allow /tmp which Claude Code may use
+            if path.starts_with("/tmp") {
+                return Some(path);
+            }
+            eprintln!(
+                "[mira] PreCompact rejected transcript_path outside home directory: {}",
+                p
+            );
+            None
+        });
 
     eprintln!(
         "[mira] PreCompact hook triggered (session: {}, trigger: {})",
@@ -152,41 +169,43 @@ async fn extract_and_save_context(
         }
     }
 
-    // Store extracted context
-    let count = important_lines.len().min(MAX_IMPORTANT_LINES);
-    let session_id_owned = session_id.to_string();
+    // Filter and collect items to store
+    let items: Vec<(String, String)> = important_lines
+        .into_iter()
+        .take(MAX_IMPORTANT_LINES)
+        .filter(|(_, content)| content.len() >= MIN_CONTENT_LEN && content.len() <= MAX_CONTENT_LEN)
+        .map(|(cat, content)| (cat.to_string(), content))
+        .collect();
 
-    for (category, content) in important_lines.into_iter().take(MAX_IMPORTANT_LINES) {
-        // Skip very short or very long lines
-        if content.len() < MIN_CONTENT_LEN || content.len() > MAX_CONTENT_LEN {
-            continue;
-        }
-
-        let category_owned = category.to_string();
-        let session_id_clone = session_id_owned.clone();
+    let count = items.len();
+    if count > 0 {
+        let session_id_owned = session_id.to_string();
+        // Batch all inserts into a single database interaction
         pool.interact(move |conn| {
-            store_observation_sync(
-                conn,
-                StoreObservationParams {
-                    project_id,
-                    key: None,
-                    content: &content,
-                    observation_type: "extracted",
-                    category: Some(&category_owned),
-                    confidence: 0.4,
-                    source: "precompact",
-                    session_id: Some(&session_id_clone),
-                    team_id: None,
-                    scope: "project",
-                    expires_at: Some("+7 days"),
-                },
-            )
-            .map_err(|e| anyhow::anyhow!("{}", e))
+            for (category, content) in &items {
+                if let Err(e) = store_observation_sync(
+                    conn,
+                    StoreObservationParams {
+                        project_id,
+                        key: None,
+                        content,
+                        observation_type: "extracted",
+                        category: Some(category),
+                        confidence: 0.4,
+                        source: "precompact",
+                        session_id: Some(&session_id_owned),
+                        team_id: None,
+                        scope: "project",
+                        expires_at: Some("+7 days"),
+                    },
+                ) {
+                    eprintln!("[mira] Failed to store extracted context: {}", e);
+                }
+            }
+            Ok::<_, anyhow::Error>(())
         })
         .await?;
-    }
 
-    if count > 0 {
         eprintln!("[mira] Extracted {} context items from transcript", count);
     }
 

@@ -8,6 +8,8 @@ use crate::hooks::{
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -53,7 +55,16 @@ fn write_cooldown(query: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string(&state) {
-        let _ = std::fs::write(path, json);
+        // Write with mode 0600 (owner read/write only) to protect session state
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path);
+        if let Ok(mut f) = file {
+            let _ = f.write_all(json.as_bytes());
+        }
     }
 }
 
@@ -103,7 +114,6 @@ impl PreToolInput {
 /// 2. Query Mira for relevant memories about that code area
 /// 3. Inject context via additionalContext if found
 pub async fn run() -> Result<()> {
-    let _timer = HookTimer::start("PreToolUse");
     let input = read_hook_input()?;
     let pre_input = PreToolInput::from_json(&input);
 
@@ -116,6 +126,8 @@ pub async fn run() -> Result<()> {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     }
+
+    let _timer = HookTimer::start("PreToolUse");
 
     eprintln!(
         "[mira] PreToolUse hook triggered (tool: {}, pattern: {:?})",

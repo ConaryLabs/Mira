@@ -65,32 +65,13 @@ pub async fn run() -> Result<()> {
     };
 
     // Check for in-progress goals
-    let goals: Vec<GoalInfo> = {
-        let pool_clone = pool.clone();
-        pool_clone
-            .interact(move |conn| Ok::<_, anyhow::Error>(get_in_progress_goals(conn, project_id)))
-            .await
-            .unwrap_or_default()
-    };
+    let goal_lines = super::format_active_goals(&pool, project_id, 5).await;
 
     // Build output
     let mut output = serde_json::json!({});
 
-    if !goals.is_empty() {
-        // We have active goals - add context but don't block
-        let goal_summary: Vec<String> = goals
-            .iter()
-            .map(|g| {
-                format!(
-                    "- {} ({}%): {}",
-                    g.title,
-                    g.progress,
-                    g.next_milestone.as_deref().unwrap_or("no milestones")
-                )
-            })
-            .collect();
-
-        let context = format!("Active goals in progress:\n{}", goal_summary.join("\n"));
+    if !goal_lines.is_empty() {
+        let context = format!("Active goals in progress:\n{}", goal_lines.join("\n"));
 
         // Add as additional context (informational, not blocking)
         output = serde_json::json!({
@@ -100,7 +81,7 @@ pub async fn run() -> Result<()> {
             }
         });
 
-        eprintln!("[mira] {} active goal(s) found", goals.len());
+        eprintln!("[mira] {} active goal(s) found", goal_lines.len());
     }
 
     // Build session summary, save snapshot, and close the session
@@ -468,45 +449,6 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
     Some(parts.join(". "))
 }
 
-/// Goal info for stop hook
-struct GoalInfo {
-    title: String,
-    progress: i32,
-    next_milestone: Option<String>,
-}
-
-/// Get in-progress goals for a project
-fn get_in_progress_goals(conn: &rusqlite::Connection, project_id: i64) -> Vec<GoalInfo> {
-    let sql = r#"
-        SELECT g.title, g.progress_percent,
-               (SELECT title FROM milestones
-                WHERE goal_id = g.id AND completed = 0
-                ORDER BY id LIMIT 1) as next_milestone
-        FROM goals g
-        WHERE g.project_id = ? AND g.status = 'in_progress'
-        ORDER BY CASE g.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, g.created_at DESC
-        LIMIT 5
-    "#;
-
-    let mut stmt = match conn.prepare(sql) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!("Failed to prepare in-progress goals query: {e}");
-            return Vec::new();
-        }
-    };
-
-    stmt.query_map([project_id], |row| {
-        Ok(GoalInfo {
-            title: row.get(0)?,
-            progress: row.get(1)?,
-            next_milestone: row.get(2)?,
-        })
-    })
-    .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
-    .unwrap_or_default()
-}
-
 /// Save a structured session snapshot for future resume context.
 ///
 /// Captures tool usage counts, top tools, and modified files as JSON
@@ -712,12 +654,12 @@ mod tests {
         assert!(s.len() < 10_000);
     }
 
-    // ── get_in_progress_goals ─────────────────────────────────────────────
+    // ── format_active_goals_sync (shared) ─────────────────────────────────
 
     #[test]
     fn goals_empty_when_none_exist() {
         let conn = setup_test_connection();
-        let goals = get_in_progress_goals(&conn, 1);
+        let goals = crate::hooks::format_active_goals_sync(&conn, 1, 5);
         assert!(goals.is_empty());
     }
 
@@ -736,7 +678,7 @@ mod tests {
         seed_goal(&conn, pid, "Done Goal", "completed", 100);
         seed_goal(&conn, pid, "Blocked Goal", "blocked", 20);
 
-        let goals = get_in_progress_goals(&conn, pid);
+        let goals = crate::hooks::format_active_goals_sync(&conn, pid, 5);
         assert!(!goals.is_empty());
     }
 
@@ -746,7 +688,7 @@ mod tests {
         let pid = seed_project(&conn, "/tmp/ms-test");
         seed_goal(&conn, pid, "Goal With MS", "in_progress", 30);
 
-        let goals = get_in_progress_goals(&conn, pid);
+        let goals = crate::hooks::format_active_goals_sync(&conn, pid, 5);
         assert!(!goals.is_empty());
     }
 
@@ -758,7 +700,7 @@ mod tests {
             seed_goal(&conn, pid, &format!("Goal {}", i), "in_progress", 10);
         }
 
-        let goals = get_in_progress_goals(&conn, pid);
+        let goals = crate::hooks::format_active_goals_sync(&conn, pid, 5);
         assert!(goals.len() <= 5);
     }
 
@@ -770,9 +712,9 @@ mod tests {
         seed_goal(&conn, pid1, "Project 1 Goal", "in_progress", 40);
         seed_goal(&conn, pid2, "Project 2 Goal", "in_progress", 60);
 
-        let goals = get_in_progress_goals(&conn, pid1);
+        let goals = crate::hooks::format_active_goals_sync(&conn, pid1, 5);
         for g in &goals {
-            assert!(!g.title.contains("Project 2"));
+            assert!(!g.contains("Project 2"));
         }
     }
 }

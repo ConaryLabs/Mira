@@ -302,14 +302,15 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Inject context about previous work
+    // Inject context about previous work.
+    // Reuse the pool from session registration if available, avoiding a redundant open.
     let cwd_owned = cwd.map(String::from);
     let session_id_owned = session_id.map(String::from);
 
     let context = if source == "resume" {
-        build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await
+        build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref(), None).await
     } else {
-        build_startup_context(cwd_owned.as_deref()).await
+        build_startup_context(cwd_owned.as_deref(), None).await
     };
 
     if let Some(ctx) = context {
@@ -327,11 +328,19 @@ pub async fn run() -> Result<()> {
 
 /// Build lightweight context for a fresh startup session.
 /// Includes active goals and a brief note about the last session.
-pub(crate) async fn build_startup_context(cwd: Option<&str>) -> Option<String> {
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => return None,
+pub(crate) async fn build_startup_context(
+    cwd: Option<&str>,
+    pool: Option<Arc<DatabasePool>>,
+) -> Option<String> {
+    let pool = match pool {
+        Some(p) => p,
+        None => {
+            let db_path = get_db_path();
+            match DatabasePool::open(&db_path).await {
+                Ok(p) => Arc::new(p),
+                Err(_) => return None,
+            }
+        }
     };
 
     let project_id: Option<i64> = if let Some(cwd_path) = cwd {
@@ -394,20 +403,8 @@ pub(crate) async fn build_startup_context(cwd: Option<&str>) -> Option<String> {
     }
 
     // Active goals
-    let pool_clone = pool.clone();
-    let goals: Option<Vec<crate::db::Goal>> = pool_clone
-        .interact(move |conn| {
-            Ok::<_, anyhow::Error>(crate::db::get_active_goals_sync(conn, Some(project_id), 5).ok())
-        })
-        .await
-        .ok()
-        .flatten();
-
-    if let Some(goals) = goals.filter(|g| !g.is_empty()) {
-        let goal_lines: Vec<String> = goals
-            .iter()
-            .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
-            .collect();
+    let goal_lines = super::format_active_goals(&pool, project_id, 5).await;
+    if !goal_lines.is_empty() {
         context_parts.push(format!(
             "[Mira/goals] Active goals:\n{}",
             goal_lines.join("\n")
@@ -426,11 +423,17 @@ pub(crate) async fn build_startup_context(cwd: Option<&str>) -> Option<String> {
 pub(crate) async fn build_resume_context(
     cwd: Option<&str>,
     session_id: Option<&str>,
+    pool: Option<Arc<DatabasePool>>,
 ) -> Option<String> {
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => return None,
+    let pool = match pool {
+        Some(p) => p,
+        None => {
+            let db_path = get_db_path();
+            match DatabasePool::open(&db_path).await {
+                Ok(p) => Arc::new(p),
+                Err(_) => return None,
+            }
+        }
     };
 
     // Resolve project from cwd (current working directory) to ensure we get
@@ -571,20 +574,8 @@ pub(crate) async fn build_resume_context(
     }
 
     // Get incomplete goals
-    let pool_clone = pool.clone();
-    let goals: Option<Vec<crate::db::Goal>> = pool_clone
-        .interact(move |conn| {
-            Ok::<_, anyhow::Error>(crate::db::get_active_goals_sync(conn, Some(project_id), 3).ok())
-        })
-        .await
-        .ok()
-        .flatten();
-
-    if let Some(goals) = goals.filter(|g| !g.is_empty()) {
-        let goal_lines: Vec<String> = goals
-            .iter()
-            .map(|g| format!("  - {} [{}%] - {}", g.title, g.progress_percent, g.status))
-            .collect();
+    let goal_lines = super::format_active_goals(&pool, project_id, 3).await;
+    if !goal_lines.is_empty() {
         context_parts.push(format!(
             "[Mira/goals] Active goals:\n{}",
             goal_lines.join("\n")

@@ -43,9 +43,9 @@ impl PostToolInput {
 
 /// Run PostToolUse hook
 ///
-/// This hook fires after Write/Edit tools complete. We:
-/// 1. Track modified files for the session (behavior logging)
-/// 2. Detect team file conflicts when multiple agents edit the same file
+/// This hook fires after any tool that provides a file_path. We:
+/// 1. Track file access for the session (behavior logging for all tools)
+/// 2. Detect team file conflicts when write tools (Write/Edit) modify shared files
 pub async fn run() -> Result<()> {
     let _timer = HookTimer::start("PostToolUse");
     let input = read_hook_input()?;

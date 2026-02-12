@@ -107,9 +107,12 @@ pub async fn run_start() -> Result<()> {
     let mut context_parts: Vec<String> = Vec::new();
 
     // Get active goals
-    let goals = get_active_goals(&pool, project_id).await;
-    if !goals.is_empty() {
-        context_parts.push(format!("[Mira/goals] Active goals:\n{}", goals.join("\n")));
+    let goal_lines = super::format_active_goals(&pool, project_id, 3).await;
+    if !goal_lines.is_empty() {
+        context_parts.push(format!(
+            "[Mira/goals] Active goals:\n{}",
+            goal_lines.join("\n")
+        ));
     }
 
     // Get relevant memories based on task description (semantic with keyword fallback)
@@ -275,46 +278,6 @@ fn build_entity_summary(subagent_type: &str, entities: &[crate::entities::RawEnt
     }
 
     parts.join(" | ")
-}
-
-/// Get active goals for context injection
-async fn get_active_goals(pool: &Arc<DatabasePool>, project_id: i64) -> Vec<String> {
-    let pool_clone = pool.clone();
-
-    let result = pool_clone
-        .interact(move |conn| {
-            let sql = r#"
-                SELECT title, status, progress_percent
-                FROM goals
-                WHERE project_id = ?
-                  AND status IN ('planning', 'in_progress')
-                ORDER BY
-                    CASE priority
-                        WHEN 'critical' THEN 1
-                        WHEN 'high' THEN 2
-                        WHEN 'medium' THEN 3
-                        ELSE 4
-                    END,
-                    created_at DESC
-                LIMIT 3
-            "#;
-
-            let mut stmt = conn.prepare(sql)?;
-            let goals: Vec<String> = stmt
-                .query_map(rusqlite::params![project_id], |row| {
-                    let title: String = row.get(0)?;
-                    let status: String = row.get(1)?;
-                    let progress: i32 = row.get(2)?;
-                    Ok(format!("- {} [{}] ({}%)", title, status, progress))
-                })?
-                .filter_map(crate::db::log_and_discard)
-                .collect();
-
-            Ok::<_, anyhow::Error>(goals)
-        })
-        .await;
-
-    result.unwrap_or_default()
 }
 
 #[cfg(test)]

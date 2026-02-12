@@ -296,63 +296,61 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] Added pending task context");
     }
 
-    // Add team context if available
-    let mut final_context = result.context.clone();
+    // Route ALL context through a unified budget with priority scoring.
+    // This replaces the previous ad-hoc concatenation that had no cap on
+    // team/proactive/task context.
+    use crate::context::BudgetEntry;
+
+    let mut budget_entries: Vec<BudgetEntry> = Vec::new();
+
+    // Reactive context (already priority-sorted internally by ContextInjectionManager)
+    if !result.context.is_empty() {
+        budget_entries.push(BudgetEntry::new(0.75, result.context.clone(), "reactive"));
+        eprintln!("[mira] {}", result.summary());
+    }
+
+    // Team context -- high priority since conflicts are blocking issues
     if let Some(ref tc) = team_context {
-        if final_context.is_empty() {
-            final_context = tc.clone();
-        } else {
-            final_context = format!("{}\n\n{}", final_context, tc);
-        }
+        budget_entries.push(BudgetEntry::new(0.95, tc.clone(), "team"));
         eprintln!("[mira] Added team context");
     }
 
-    // Combine reactive context with proactive predictions
-    let has_proactive = if let Some(proactive_str) = proactive_context {
-        if !proactive_str.is_empty() {
-            if final_context.is_empty() {
-                final_context = proactive_str;
-            } else {
-                final_context = format!("{}\n\n{}", final_context, proactive_str);
-            }
+    // Proactive predictions
+    let has_proactive = match proactive_context {
+        Some(ref pc) if !pc.is_empty() => {
+            budget_entries.push(BudgetEntry::new(0.5, pc.clone(), "proactive"));
             eprintln!("[mira] Added proactive context suggestions");
             true
-        } else {
-            false
         }
-    } else {
-        false
+        _ => false,
     };
 
-    if !final_context.is_empty() || task_context.is_some() {
+    // Pending native tasks
+    if let Some(ref tc) = task_context {
+        budget_entries.push(BudgetEntry::new(0.65, tc.clone(), "tasks"));
+    }
+
+    // Apply unified budget (2x the per-injector budget to accommodate all sources)
+    let hook_budget = crate::context::BudgetManager::with_limit(
+        manager.config().max_chars.saturating_mul(2).max(3000),
+    );
+    let final_context = hook_budget.apply_budget_prioritized(budget_entries);
+
+    if !final_context.is_empty() {
         let mut output = serde_json::json!({});
 
-        // Combine reactive/proactive context and task context into a single
-        // additionalContext block. Using additionalContext (not systemMessage)
-        // so Claude treats user-stored memories as user-provided, not
-        // system-authoritative.
-        let mut additional_parts: Vec<String> = Vec::new();
+        output["metadata"] = serde_json::json!({
+            "sources": result.sources,
+            "from_cache": result.from_cache,
+            "has_proactive": has_proactive
+        });
 
-        if !final_context.is_empty() {
-            eprintln!("[mira] {}", result.summary());
-            additional_parts.push(final_context);
-            output["metadata"] = serde_json::json!({
-                "sources": result.sources,
-                "from_cache": result.from_cache,
-                "has_proactive": has_proactive
-            });
-        }
-
-        if let Some(tc) = task_context {
-            additional_parts.push(tc);
-        }
-
-        if !additional_parts.is_empty() {
-            output["hookSpecificOutput"] = serde_json::json!({
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": additional_parts.join("\n\n")
-            });
-        }
+        // Using additionalContext (not systemMessage) so Claude treats
+        // user-stored memories as user-provided, not system-authoritative.
+        output["hookSpecificOutput"] = serde_json::json!({
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": final_context
+        });
 
         write_hook_output(&output);
     } else {

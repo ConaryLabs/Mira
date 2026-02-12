@@ -112,6 +112,39 @@ pub fn get_session_modified_files_sync(
     }
 }
 
+/// Fetch active goals for a project and format them for context injection.
+/// Uses `get_active_goals_sync` and returns lines in the format:
+///   `"- {title} [{status}] ({progress}%)"`
+/// Shared across session, subagent, and stop hooks to avoid duplication.
+pub async fn format_active_goals(
+    pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
+    project_id: i64,
+    limit: usize,
+) -> Vec<String> {
+    let pool_clone = pool.clone();
+    pool_clone
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(format_active_goals_sync(conn, project_id, limit))
+        })
+        .await
+        .unwrap_or_default()
+}
+
+/// Synchronous version of goal formatting, for use inside `interact` closures.
+pub fn format_active_goals_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    limit: usize,
+) -> Vec<String> {
+    match crate::db::get_active_goals_sync(conn, Some(project_id), limit) {
+        Ok(goals) => goals
+            .iter()
+            .map(|g| format!("- {} [{}] ({}%)", g.title, g.status, g.progress_percent))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Timer guard for hook performance monitoring
 /// Logs execution time to stderr on drop
 pub struct HookTimer {
