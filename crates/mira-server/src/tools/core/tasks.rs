@@ -9,8 +9,13 @@ use crate::mcp::requests::SessionAction;
 use crate::mcp::responses::{
     Json, TaskSummary, TasksData, TasksListData, TasksOutput, TasksStatusData,
 };
+use crate::mcp::{CachedTaskResult};
 use crate::utils::truncate;
 use rmcp::task_manager::ToolCallTaskResult;
+use std::time::{Duration, Instant};
+
+/// How long completed task results are retained in the cache.
+const CACHE_RETENTION: Duration = Duration::from_secs(5 * 60);
 
 pub async fn handle_tasks(
     server: &MiraServer,
@@ -47,27 +52,61 @@ async fn handle_list(server: &MiraServer) -> Result<Json<TasksOutput>, String> {
     proc.check_timeouts();
 
     // Drain channel and collect completed results (this empties the internal buffer)
-    let completed = proc.collect_completed_results();
+    let freshly_completed = proc.collect_completed_results();
 
     let running_ids = proc.list_running();
+    drop(proc); // Release processor lock before acquiring cache lock
+
     let mut summaries: Vec<TaskSummary> = Vec::new();
 
-    for id in &running_ids {
-        if let Some(desc) = proc.task_descriptor(id) {
-            summaries.push(TaskSummary {
-                task_id: id.clone(),
-                tool_name: desc.name.clone(),
-                status: "working".to_string(),
-            });
+    // Re-acquire processor for descriptors (cheap lock, no contention with cache)
+    {
+        let proc = server.processor.lock().await;
+        for id in &running_ids {
+            if let Some(desc) = proc.task_descriptor(id) {
+                summaries.push(TaskSummary {
+                    task_id: id.clone(),
+                    tool_name: desc.name.clone(),
+                    status: "working".to_string(),
+                });
+            }
         }
     }
 
-    for result in &completed {
-        summaries.push(TaskSummary {
+    // Cache freshly completed results and build summaries
+    let mut cache = server.completed_cache.lock().await;
+    let now = Instant::now();
+
+    // Evict entries older than retention window
+    cache.retain(|entry| now.duration_since(entry.completed_at) < CACHE_RETENTION);
+
+    for result in &freshly_completed {
+        let status = result_status(&result.result).to_string();
+        let result_text = extract_result_text(result);
+
+        let cached = CachedTaskResult {
             task_id: result.descriptor.operation_id.clone(),
             tool_name: result.descriptor.name.clone(),
-            status: result_status(&result.result).to_string(),
-        });
+            status: status.clone(),
+            result_text,
+            completed_at: now,
+        };
+
+        // Only add if not already cached (avoid duplicates on repeated list calls)
+        if !cache.iter().any(|c| c.task_id == cached.task_id) {
+            cache.push(cached);
+        }
+    }
+
+    // Include all cached entries in the summary (skip any that are still running)
+    for entry in cache.iter() {
+        if !summaries.iter().any(|s| s.task_id == entry.task_id) {
+            summaries.push(TaskSummary {
+                task_id: entry.task_id.clone(),
+                tool_name: entry.tool_name.clone(),
+                status: entry.status.clone(),
+            });
+        }
     }
 
     let total = summaries.len();
@@ -96,10 +135,10 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
     let mut proc = server.processor.lock().await;
 
     // Drain channel first — moves finished tasks from running to completed
-    let completed = proc.collect_completed_results();
+    let freshly_completed = proc.collect_completed_results();
 
-    // Check completed results first (task may have just finished)
-    let position = completed
+    // Check freshly completed results first (task may have just finished)
+    let position = freshly_completed
         .iter()
         .position(|r| r.descriptor.operation_id == task_id);
 
@@ -118,65 +157,129 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
             }));
         }
     }
+    drop(proc); // Release processor lock
 
-    match position {
-        Some(idx) => {
-            // Found — extract from vec (we can't put the rest back easily,
-            // but completed results are consumed on get, which is the expected behavior)
-            let Some(task_result) = completed.into_iter().nth(idx) else {
-                return Err(format!("Task '{}' not found", task_id));
-            };
+    // Cache any freshly completed results we got
+    let mut cache = server.completed_cache.lock().await;
+    let now = Instant::now();
+    cache.retain(|entry| now.duration_since(entry.completed_at) < CACHE_RETENTION);
 
-            let (status, result_text, result_structured) = match task_result.result {
-                Ok(boxed) => {
-                    if let Some(tcr) = boxed.as_any().downcast_ref::<ToolCallTaskResult>() {
-                        match &tcr.result {
-                            Ok(call_result) => {
-                                let text = call_result
-                                    .content
-                                    .first()
-                                    .and_then(|c| c.as_text())
-                                    .map(|t| t.text.to_string());
-                                let structured = call_result.structured_content.clone();
-                                ("completed".to_string(), text, structured)
-                            }
-                            Err(e) => ("failed".to_string(), Some(e.message.to_string()), None),
-                        }
-                    } else {
-                        (
-                            "completed".to_string(),
-                            Some("(result type unknown)".to_string()),
-                            None,
-                        )
-                    }
-                }
-                Err(e) => {
-                    let status = if e.to_string().contains("cancelled") {
-                        "cancelled"
-                    } else {
-                        "failed"
-                    };
-                    (status.to_string(), Some(e.to_string()), None)
-                }
-            };
-
-            let message = match &result_text {
-                Some(t) => format!("Task {}: {} — {}", task_id, status, truncate(t, 100)),
-                None => format!("Task {}: {}", task_id, status),
-            };
-
-            Ok(Json(TasksOutput {
-                action: "get".to_string(),
-                message,
-                data: Some(TasksData::Status(TasksStatusData {
-                    task_id: task_id.to_string(),
-                    status,
-                    result_text,
-                    result_structured,
-                })),
-            }))
+    for result in &freshly_completed {
+        let cached = CachedTaskResult {
+            task_id: result.descriptor.operation_id.clone(),
+            tool_name: result.descriptor.name.clone(),
+            status: result_status(&result.result).to_string(),
+            result_text: extract_result_text(result),
+            completed_at: now,
+        };
+        if !cache.iter().any(|c| c.task_id == cached.task_id) {
+            cache.push(cached);
         }
-        None => Err(format!("Task '{}' not found", task_id)),
+    }
+
+    // Try to find the requested task in freshly completed results
+    if let Some(idx) = position {
+        let Some(task_result) = freshly_completed.into_iter().nth(idx) else {
+            return Err(format!("Task '{}' not found", task_id));
+        };
+
+        let (status, result_text, result_structured) = extract_full_result(&task_result);
+
+        let message = match &result_text {
+            Some(t) => format!("Task {}: {} — {}", task_id, status, truncate(t, 100)),
+            None => format!("Task {}: {}", task_id, status),
+        };
+
+        return Ok(Json(TasksOutput {
+            action: "get".to_string(),
+            message,
+            data: Some(TasksData::Status(TasksStatusData {
+                task_id: task_id.to_string(),
+                status,
+                result_text,
+                result_structured,
+            })),
+        }));
+    }
+
+    // Fallback: check the cache for previously completed results
+    if let Some(entry) = cache.iter().find(|c| c.task_id == task_id) {
+        let message = match &entry.result_text {
+            Some(t) => format!("Task {}: {} — {}", task_id, entry.status, truncate(t, 100)),
+            None => format!("Task {}: {}", task_id, entry.status),
+        };
+
+        return Ok(Json(TasksOutput {
+            action: "get".to_string(),
+            message,
+            data: Some(TasksData::Status(TasksStatusData {
+                task_id: task_id.to_string(),
+                status: entry.status.clone(),
+                result_text: entry.result_text.clone(),
+                result_structured: None, // Structured content not retained in cache
+            })),
+        }));
+    }
+
+    Err(format!("Task '{}' not found", task_id))
+}
+
+/// Extract just the text portion of a completed result (for caching).
+fn extract_result_text(result: &rmcp::task_manager::TaskResult) -> Option<String> {
+    match &result.result {
+        Ok(boxed) => {
+            if let Some(tcr) = boxed.as_any().downcast_ref::<ToolCallTaskResult>() {
+                match &tcr.result {
+                    Ok(call_result) => call_result
+                        .content
+                        .first()
+                        .and_then(|c| c.as_text())
+                        .map(|t| t.text.to_string()),
+                    Err(e) => Some(e.message.to_string()),
+                }
+            } else {
+                Some("(result type unknown)".to_string())
+            }
+        }
+        Err(e) => Some(e.to_string()),
+    }
+}
+
+/// Extract status, text, and structured content from a completed result.
+fn extract_full_result(
+    result: &rmcp::task_manager::TaskResult,
+) -> (String, Option<String>, Option<serde_json::Value>) {
+    match &result.result {
+        Ok(boxed) => {
+            if let Some(tcr) = boxed.as_any().downcast_ref::<ToolCallTaskResult>() {
+                match &tcr.result {
+                    Ok(call_result) => {
+                        let text = call_result
+                            .content
+                            .first()
+                            .and_then(|c| c.as_text())
+                            .map(|t| t.text.to_string());
+                        let structured = call_result.structured_content.clone();
+                        ("completed".to_string(), text, structured)
+                    }
+                    Err(e) => ("failed".to_string(), Some(e.message.to_string()), None),
+                }
+            } else {
+                (
+                    "completed".to_string(),
+                    Some("(result type unknown)".to_string()),
+                    None,
+                )
+            }
+        }
+        Err(e) => {
+            let status = if e.to_string().contains("cancelled") {
+                "cancelled"
+            } else {
+                "failed"
+            };
+            (status.to_string(), Some(e.to_string()), None)
+        }
     }
 }
 

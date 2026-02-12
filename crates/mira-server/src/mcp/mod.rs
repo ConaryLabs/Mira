@@ -12,6 +12,7 @@ mod tasks;
 
 use crate::tools::core as tools;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 use crate::background::watcher::WatcherHandle;
@@ -26,6 +27,16 @@ use rmcp::{
     handler::server::router::tool::ToolRouter, service::RoleServer,
     task_manager::OperationProcessor,
 };
+
+/// A completed task result cached for polling after `collect_completed_results()` drains it.
+#[derive(Clone)]
+pub struct CachedTaskResult {
+    pub task_id: String,
+    pub tool_name: String,
+    pub status: String,
+    pub result_text: Option<String>,
+    pub completed_at: Instant,
+}
 
 /// MCP Server state.
 ///
@@ -57,6 +68,8 @@ pub struct MiraServer {
     pub peer: Arc<RwLock<Option<rmcp::service::Peer<RoleServer>>>>,
     /// Task processor for async long-running operations (SEP-1686)
     pub processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
+    /// Cache of recently completed task results for polling (5-minute retention)
+    pub completed_cache: Arc<tokio::sync::Mutex<Vec<CachedTaskResult>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -92,6 +105,7 @@ impl MiraServer {
             team_membership: Arc::new(RwLock::new(None)),
             peer,
             processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
+            completed_cache: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             tool_router: Self::create_tool_router(),
         }
     }

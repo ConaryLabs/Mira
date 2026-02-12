@@ -21,9 +21,17 @@ pub async fn handle_team<C: ToolContext + ?Sized>(
 
 /// Get team status: members, files, conflicts.
 async fn team_status<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, String> {
-    let membership = ctx.get_team_membership().ok_or_else(|| {
-        "Not in a team. Team tools require an active Agent Teams session.".to_string()
-    })?;
+    let membership = match ctx.get_team_membership() {
+        Some(m) => m,
+        None => {
+            return Ok(Json(ToolOutput {
+                action: "status".to_string(),
+                message: "Not in a team. Team tools require an active Agent Teams session."
+                    .to_string(),
+                data: None,
+            }));
+        }
+    };
 
     let pool = ctx.pool().clone();
     let tid = membership.team_id;
@@ -115,9 +123,17 @@ async fn team_review<C: ToolContext + ?Sized>(
     ctx: &C,
     teammate: Option<String>,
 ) -> Result<Json<TeamOutput>, String> {
-    let membership = ctx.get_team_membership().ok_or_else(|| {
-        "Not in a team. Team tools require an active Agent Teams session.".to_string()
-    })?;
+    let membership = match ctx.get_team_membership() {
+        Some(m) => m,
+        None => {
+            return Ok(Json(ToolOutput {
+                action: "review".to_string(),
+                message: "Not in a team. Team tools require an active Agent Teams session."
+                    .to_string(),
+                data: None,
+            }));
+        }
+    };
 
     let pool = ctx.pool().clone();
     let tid = membership.team_id;
@@ -166,9 +182,17 @@ async fn team_review<C: ToolContext + ?Sized>(
 
 /// Distill key findings/decisions from team work into team-scoped memories.
 async fn team_distill<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, String> {
-    let membership = ctx.get_team_membership().ok_or_else(|| {
-        "Not in a team. Team tools require an active Agent Teams session.".to_string()
-    })?;
+    let membership = match ctx.get_team_membership() {
+        Some(m) => m,
+        None => {
+            return Ok(Json(ToolOutput {
+                action: "distill".to_string(),
+                message: "Not in a team. Team tools require an active Agent Teams session."
+                    .to_string(),
+                data: None,
+            }));
+        }
+    };
 
     let pool = ctx.pool().clone();
     let tid = membership.team_id;
