@@ -101,7 +101,7 @@ pub async fn run_cleanup(dry_run: bool, yes: bool, category: Option<String>) -> 
 
     if dry_run {
         println!("\nDry run -- no changes made.");
-        println!("Run `mira cleanup --yes` to execute.");
+        println!("Run `mira cleanup --execute` to apply, or `mira cleanup --execute --yes` to skip confirmation.");
         return Ok(());
     }
 

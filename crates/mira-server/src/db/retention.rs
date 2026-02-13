@@ -229,10 +229,10 @@ pub fn cleanup_orphans(conn: &Connection) -> Result<usize, String> {
         conn,
         "DELETE FROM tool_history WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)",
     );
-    // session_task_iterations without parent task
+    // session_task_iterations without parent session
     total += try_execute(
         conn,
-        "DELETE FROM session_task_iterations WHERE task_id NOT IN (SELECT id FROM session_tasks)",
+        "DELETE FROM session_task_iterations WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)",
     );
     // orphaned memory_entities (no links remaining)
     total += try_execute(

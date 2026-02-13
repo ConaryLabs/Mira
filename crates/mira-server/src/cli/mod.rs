@@ -97,11 +97,11 @@ pub enum Commands {
         yes: bool,
     },
 
-    /// Run data cleanup and retention
+    /// Run data cleanup and retention (dry-run by default)
     Cleanup {
-        /// Preview what would be deleted without actually deleting
+        /// Actually execute the cleanup (default is dry-run preview)
         #[arg(long)]
-        dry_run: bool,
+        execute: bool,
 
         /// Skip confirmation prompt
         #[arg(long, short)]

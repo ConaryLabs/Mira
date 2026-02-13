@@ -112,11 +112,11 @@ async fn main() -> Result<()> {
             cli::setup::run(check, yes).await?;
         }
         Some(Commands::Cleanup {
-            dry_run,
+            execute,
             yes,
             category,
         }) => {
-            cli::run_cleanup(dry_run, yes, category).await?;
+            cli::run_cleanup(!execute, yes, category).await?;
         }
         Some(Commands::StatusLine) => {
             cli::statusline::run()?;
