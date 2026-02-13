@@ -3266,3 +3266,139 @@ async fn test_dismiss_insight_requires_project() {
         err
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Hook CLI Smoke Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Smoke test: `mira hook session-start` should not panic.
+/// This catches regressions like the Handle::block_on panic inside #[tokio::main].
+#[test]
+fn hook_session_start_no_panic() {
+    let binary = env!("CARGO_BIN_EXE_mira");
+    let output = std::process::Command::new(binary)
+        .args(["hook", "session-start"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin
+                    .write_all(br#"{"session_id":"test-smoke","cwd":"/tmp","source":"startup"}"#);
+            }
+            child.wait_with_output()
+        })
+        .expect("Failed to run mira binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "Hook should not panic. stderr: {}",
+        stderr
+    );
+    assert!(
+        output.status.success(),
+        "Hook should exit 0. stderr: {}",
+        stderr
+    );
+}
+
+/// Smoke test: `mira hook pre-tool` should not panic on supported tools.
+#[test]
+fn hook_pre_tool_no_panic() {
+    let binary = env!("CARGO_BIN_EXE_mira");
+    let output = std::process::Command::new(binary)
+        .args(["hook", "pre-tool"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(
+                    br#"{"tool_name":"Grep","tool_input":{"pattern":"test","path":"/tmp"}}"#,
+                );
+            }
+            child.wait_with_output()
+        })
+        .expect("Failed to run mira binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "Hook should not panic. stderr: {}",
+        stderr
+    );
+    assert!(
+        output.status.success(),
+        "Hook should exit 0. stderr: {}",
+        stderr
+    );
+}
+
+/// Smoke test: `mira hook user-prompt` should not panic.
+#[test]
+fn hook_user_prompt_no_panic() {
+    let binary = env!("CARGO_BIN_EXE_mira");
+    let output = std::process::Command::new(binary)
+        .args(["hook", "user-prompt"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(br#"{"session_id":"test-smoke","prompt":"hello world"}"#);
+            }
+            child.wait_with_output()
+        })
+        .expect("Failed to run mira binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "Hook should not panic. stderr: {}",
+        stderr
+    );
+    assert!(
+        output.status.success(),
+        "Hook should exit 0. stderr: {}",
+        stderr
+    );
+}
+
+/// Smoke test: `mira hook stop` should not panic.
+#[test]
+fn hook_stop_no_panic() {
+    let binary = env!("CARGO_BIN_EXE_mira");
+    let output = std::process::Command::new(binary)
+        .args(["hook", "stop"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(br#"{"session_id":"test-smoke"}"#);
+            }
+            child.wait_with_output()
+        })
+        .expect("Failed to run mira binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "Hook should not panic. stderr: {}",
+        stderr
+    );
+    assert!(
+        output.status.success(),
+        "Hook should exit 0. stderr: {}",
+        stderr
+    );
+}

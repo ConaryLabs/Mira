@@ -65,15 +65,25 @@ fn try_acquire_lock() -> Option<LockGuard> {
 }
 
 /// Check if a process with the given PID is still alive.
-/// Uses `kill -0` on Unix which works on both Linux and macOS.
+/// On Unix, uses `kill -0` which works on both Linux and macOS.
+/// On non-Unix platforms, returns false (assumes stale), which is the safe
+/// default -- it just means parallel hooks can fire without serialization.
 fn is_process_alive(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(unix)]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
 }
 
 /// RAII guard that removes the lock file on drop.

@@ -61,34 +61,38 @@ async fn main() -> Result<()> {
             // treats any non-zero exit as a "hook error".  Catch all errors
             // AND panics, log them to stderr, and emit `{}` on stdout so the
             // hook is silently ignored rather than flagged as broken.
+            //
+            // We use tokio::task::spawn to run the async hook work on a
+            // separate task. This avoids the "Cannot start a runtime from
+            // within a runtime" panic that Handle::block_on causes inside
+            // #[tokio::main], and JoinError captures any panics for us.
             use std::io::Write;
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    match action {
-                        HookAction::Permission => mira::hooks::permission::run().await,
-                        HookAction::SessionStart => mira::hooks::session::run().await,
-                        HookAction::PreCompact => mira::hooks::precompact::run().await,
-                        HookAction::PreTool => mira::hooks::pre_tool::run().await,
-                        HookAction::UserPrompt => mira::hooks::user_prompt::run().await,
-                        HookAction::PostTool => mira::hooks::post_tool::run().await,
-                        HookAction::Stop => mira::hooks::stop::run().await,
-                        HookAction::SessionEnd => mira::hooks::stop::run_session_end().await,
-                        HookAction::SubagentStart => mira::hooks::subagent::run_start().await,
-                        HookAction::SubagentStop => mira::hooks::subagent::run_stop().await,
-                        HookAction::PostToolFailure => mira::hooks::post_tool_failure::run().await,
-                        HookAction::TaskCompleted => mira::hooks::task_completed::run().await,
-                        HookAction::TeammateIdle => mira::hooks::teammate_idle::run().await,
-                    }
-                })
-            }));
+            let result = tokio::task::spawn(async move {
+                match action {
+                    HookAction::Permission => mira::hooks::permission::run().await,
+                    HookAction::SessionStart => mira::hooks::session::run().await,
+                    HookAction::PreCompact => mira::hooks::precompact::run().await,
+                    HookAction::PreTool => mira::hooks::pre_tool::run().await,
+                    HookAction::UserPrompt => mira::hooks::user_prompt::run().await,
+                    HookAction::PostTool => mira::hooks::post_tool::run().await,
+                    HookAction::Stop => mira::hooks::stop::run().await,
+                    HookAction::SessionEnd => mira::hooks::stop::run_session_end().await,
+                    HookAction::SubagentStart => mira::hooks::subagent::run_start().await,
+                    HookAction::SubagentStop => mira::hooks::subagent::run_stop().await,
+                    HookAction::PostToolFailure => mira::hooks::post_tool_failure::run().await,
+                    HookAction::TaskCompleted => mira::hooks::task_completed::run().await,
+                    HookAction::TeammateIdle => mira::hooks::teammate_idle::run().await,
+                }
+            })
+            .await;
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     eprintln!("[mira] Hook error (non-fatal): {e:#}");
                     let _ = writeln!(std::io::stdout(), "{{}}");
                 }
-                Err(_panic) => {
-                    eprintln!("[mira] Hook panic (non-fatal)");
+                Err(join_err) => {
+                    eprintln!("[mira] Hook panic (non-fatal): {join_err}");
                     let _ = writeln!(std::io::stdout(), "{{}}");
                 }
             }

@@ -39,7 +39,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Grep|Glob|Read|Task",
+        "matcher": "Grep|Glob|Read",
         "hooks": [
           {
             "type": "command",
