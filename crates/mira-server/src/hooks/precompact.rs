@@ -22,7 +22,7 @@ const MAX_CONTENT_LEN: usize = 500;
 
 /// A parsed message from the JSONL transcript
 #[derive(Debug)]
-struct TranscriptMessage {
+pub(crate) struct TranscriptMessage {
     role: String,
     text_content: String,
 }
@@ -174,7 +174,7 @@ async fn save_pre_compaction_state(
 /// Extracts text content from `assistant` and `user` role messages,
 /// skipping `tool_use` and `tool_result` content blocks. Reuses the
 /// proven pattern from `subagent.rs`.
-fn parse_transcript_messages(transcript: &str) -> Vec<TranscriptMessage> {
+pub(crate) fn parse_transcript_messages(transcript: &str) -> Vec<TranscriptMessage> {
     let mut messages = Vec::new();
     for line in transcript.lines() {
         let line = line.trim();
@@ -227,7 +227,7 @@ fn parse_transcript_messages(transcript: &str) -> Vec<TranscriptMessage> {
 ///
 /// Scans paragraphs for decision keywords, pending tasks, and issues.
 /// Captures the last assistant message's opening paragraph as active work.
-fn extract_compaction_context(messages: &[TranscriptMessage]) -> CompactionContext {
+pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> CompactionContext {
     let mut ctx = CompactionContext::default();
 
     for msg in messages {

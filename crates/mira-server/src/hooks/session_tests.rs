@@ -378,7 +378,140 @@ async fn test_save_session_snapshot_empty_session() {
 }
 
 // =============================================================================
-// Test 10: Project isolation - sessions scoped to their project
+// Test 10: End-to-end compaction context chain
+//   PreCompact parses JSONL → extracts context → writes session_snapshots
+//   Stop hook overwrites snapshot → preserves compaction_context
+//   Resume reads snapshot → build_compaction_summary formats it
+// =============================================================================
+
+#[tokio::test]
+async fn test_compaction_context_end_to_end() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+
+    // ── Step 1: Simulate PreCompact ──────────────────────────────────────
+    // Build a realistic JSONL transcript
+    let transcript = [
+        r#"{"role":"user","content":"Let's refactor the database layer."}"#,
+        r#"{"role":"assistant","content":"I'll start by reviewing the current code.\n\nWe decided to use connection pooling for all database access.\n\nTODO: add migration support for schema changes.\n\nerror: the current test suite fails on concurrent access."}"#,
+        r#"{"role":"user","content":"Good analysis. What's next?"}"#,
+        r#"{"role":"assistant","content":"Working on the connection pool implementation now.\n\nI will use deadpool-sqlite as the pooling library."}"#,
+        // Include a tool_use block that should be filtered out
+        r#"{"role":"assistant","content":[{"type":"text","text":"Let me read the file."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/src/db.rs"}}]}"#,
+        // Include a system message that should be skipped
+        r#"{"role":"system","content":"You are a helpful decided to assistant with error: handling."}"#,
+    ]
+    .join("\n");
+
+    // Parse and extract (the functions under test)
+    let messages = super::precompact::parse_transcript_messages(&transcript);
+    let ctx = super::precompact::extract_compaction_context(&messages);
+
+    // Verify extraction produced meaningful results
+    assert!(!ctx.decisions.is_empty(), "should have extracted decisions");
+    assert!(
+        !ctx.pending_tasks.is_empty(),
+        "should have extracted pending tasks"
+    );
+    assert!(!ctx.issues.is_empty(), "should have extracted issues");
+    assert!(
+        !ctx.active_work.is_empty(),
+        "should have captured active work"
+    );
+
+    // Verify system message content was NOT extracted
+    let all_text: String = ctx
+        .decisions
+        .iter()
+        .chain(&ctx.pending_tasks)
+        .chain(&ctx.issues)
+        .chain(&ctx.active_work)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        !all_text.contains("helpful decided to assistant"),
+        "system role content should have been filtered out"
+    );
+
+    // Write to session_snapshots (simulating precompact's pool.interact)
+    let ctx_json = serde_json::to_value(&ctx).unwrap();
+    db(&pool, move |conn| {
+        seed_session(conn, "e2e-sess", project_id, "active");
+        // Seed tool history so the Stop snapshot has data
+        seed_tool_history(conn, "e2e-sess", "Edit", r#"{"file_path":"/src/db.rs"}"#, "ok");
+        seed_tool_history(conn, "e2e-sess", "Read", r#"{"file_path":"/src/lib.rs"}"#, "ok");
+
+        let snapshot = serde_json::json!({ "compaction_context": ctx_json });
+        let snapshot_str = serde_json::to_string(&snapshot)?;
+        conn.execute(
+            "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+             VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params!["e2e-sess", snapshot_str],
+        )?;
+        Ok(())
+    })
+    .await;
+
+    // ── Step 2: Simulate Stop hook ───────────────────────────────────────
+    // save_session_snapshot overwrites the snapshot but should preserve compaction_context
+    db(&pool, |conn| {
+        super::stop::save_session_snapshot(conn, "e2e-sess")
+    })
+    .await;
+
+    // ── Step 3: Simulate Resume ──────────────────────────────────────────
+    // Read snapshot back (as build_resume_context does)
+    let snapshot_str = db(&pool, |conn| {
+        Ok::<_, anyhow::Error>(super::session::get_session_snapshot_sync(conn, "e2e-sess"))
+    })
+    .await;
+
+    assert!(snapshot_str.is_some(), "snapshot should exist after stop");
+    let snap: serde_json::Value = serde_json::from_str(&snapshot_str.unwrap()).unwrap();
+
+    // Verify Stop hook's own data is present
+    assert!(snap.get("tool_count").is_some(), "missing tool_count");
+    assert!(
+        snap.get("files_modified").is_some(),
+        "missing files_modified"
+    );
+
+    // Verify compaction_context survived the Stop hook overwrite
+    assert!(
+        snap.get("compaction_context").is_some(),
+        "compaction_context was lost during stop hook snapshot"
+    );
+
+    // Build the compaction summary (as build_resume_context does)
+    let summary = super::session::build_compaction_summary(&snap);
+    assert!(summary.is_some(), "compaction summary should be present");
+    let summary_text = summary.unwrap();
+
+    // Verify the summary contains content from the original transcript
+    assert!(
+        summary_text.contains("Pre-compaction context:"),
+        "got: {}",
+        summary_text
+    );
+    assert!(
+        summary_text.contains("Decisions:"),
+        "got: {}",
+        summary_text
+    );
+    assert!(
+        summary_text.contains("Pending:"),
+        "got: {}",
+        summary_text
+    );
+    assert!(
+        summary_text.contains("Issues:"),
+        "got: {}",
+        summary_text
+    );
+}
+
+// =============================================================================
+// Test 11: Project isolation - sessions scoped to their project
 // =============================================================================
 
 #[tokio::test]
