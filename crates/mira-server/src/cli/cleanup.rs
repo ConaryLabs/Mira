@@ -17,7 +17,7 @@ fn table_category(table: &str) -> &'static str {
         | "tool_history" => "sessions",
         "llm_usage" | "embeddings_usage" => "analytics",
         "chat_messages" | "chat_summaries" => "chat",
-        "behavior_patterns" | "system_observations" => "behavior",
+        "behavior_patterns" | "system_observations" | "error_patterns" => "behavior",
         _ => "other",
     }
 }

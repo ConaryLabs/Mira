@@ -110,8 +110,12 @@ pub fn resolve_error_pattern_sync(
     )
 }
 
-/// Look up ALL unresolved error patterns for a tool in a project.
-/// Used by post_tool.rs to find patterns to resolve when a tool succeeds.
+/// Look up the most recent unresolved error pattern for a tool in a project.
+///
+/// Only returns a pattern if it has `occurrence_count >= 3`, ensuring we don't
+/// auto-resolve one-off errors. Returns at most one pattern (the most recently
+/// updated) to avoid incorrectly resolving unrelated fingerprints when a tool
+/// has multiple distinct failure modes.
 pub fn get_unresolved_patterns_for_tool_sync(
     conn: &Connection,
     project_id: i64,
@@ -123,7 +127,10 @@ pub fn get_unresolved_patterns_for_tool_sync(
          WHERE project_id = ?1
            AND tool_name = ?2
            AND last_seen_session_id = ?3
-           AND resolved_at IS NULL",
+           AND resolved_at IS NULL
+           AND occurrence_count >= 3
+         ORDER BY updated_at DESC
+         LIMIT 1",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -378,12 +385,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_unresolved_patterns_for_tool() {
+    fn test_get_unresolved_patterns_requires_3_occurrences() {
         let conn = setup_test_db();
         let (fp1, tmpl1) = error_fingerprint("Bash", "error: alpha");
-        let (fp2, tmpl2) = error_fingerprint("Bash", "error: beta");
 
-        // Store two patterns in session s1
+        // Store pattern once — should NOT be eligible for auto-resolution
         store_error_pattern_sync(
             &conn,
             StoreErrorPatternParams {
@@ -397,29 +403,80 @@ mod tests {
         )
         .unwrap();
 
+        let unresolved = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
+        assert_eq!(unresolved.len(), 0, "1 occurrence should not be eligible");
+
+        // Bump to 3 occurrences via UPSERT
         store_error_pattern_sync(
             &conn,
             StoreErrorPatternParams {
                 project_id: 1,
                 tool_name: "Bash",
-                error_fingerprint: &fp2,
-                error_template: &tmpl2,
-                raw_error_sample: "error: beta",
+                error_fingerprint: &fp1,
+                error_template: &tmpl1,
+                raw_error_sample: "error: alpha",
+                session_id: "s1",
+            },
+        )
+        .unwrap();
+        store_error_pattern_sync(
+            &conn,
+            StoreErrorPatternParams {
+                project_id: 1,
+                tool_name: "Bash",
+                error_fingerprint: &fp1,
+                error_template: &tmpl1,
+                raw_error_sample: "error: alpha",
                 session_id: "s1",
             },
         )
         .unwrap();
 
-        // Both should be unresolved
         let unresolved = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
-        assert_eq!(unresolved.len(), 2);
+        assert_eq!(unresolved.len(), 1, "3 occurrences should be eligible");
+    }
 
-        // Resolve one
-        resolve_error_pattern_sync(&conn, 1, "Bash", &fp1, "s1", "Fixed alpha").unwrap();
+    #[test]
+    fn test_get_unresolved_patterns_returns_at_most_one() {
+        let conn = setup_test_db();
+        let (fp1, tmpl1) = error_fingerprint("Bash", "error: alpha");
+        let (fp2, tmpl2) = error_fingerprint("Bash", "error: beta");
 
-        // Only one should remain
+        // Store two patterns, each with 3+ occurrences
+        for _ in 0..3 {
+            store_error_pattern_sync(
+                &conn,
+                StoreErrorPatternParams {
+                    project_id: 1,
+                    tool_name: "Bash",
+                    error_fingerprint: &fp1,
+                    error_template: &tmpl1,
+                    raw_error_sample: "error: alpha",
+                    session_id: "s1",
+                },
+            )
+            .unwrap();
+            store_error_pattern_sync(
+                &conn,
+                StoreErrorPatternParams {
+                    project_id: 1,
+                    tool_name: "Bash",
+                    error_fingerprint: &fp2,
+                    error_template: &tmpl2,
+                    raw_error_sample: "error: beta",
+                    session_id: "s1",
+                },
+            )
+            .unwrap();
+        }
+
+        // Should return at most 1 (most recently updated) to avoid
+        // resolving unrelated patterns on a single success
         let unresolved = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
-        assert_eq!(unresolved.len(), 1);
-        assert_eq!(unresolved[0].1, fp2);
+        assert_eq!(
+            unresolved.len(),
+            1,
+            "should return at most 1 pattern to avoid resolving unrelated errors"
+        );
     }
 }
