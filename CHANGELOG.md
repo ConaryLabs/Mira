@@ -80,6 +80,23 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-02-13
+
+### Added
+- **Cross-session error pattern learning** -- Tool failures are fingerprinted (normalized error text hashed for O(1) lookup) and stored in `error_patterns` table. When the same error recurs in a future session, the `[Mira/fix]` hook injects the previously successful fix as context.
+- **Data retention and cleanup system** -- Configurable retention policy via `[retention]` in config.toml with per-table age limits. `mira cleanup` CLI command with dry-run preview, category filtering, and orphan cleanup. Batched deletes to avoid holding SQLite write locks.
+- **Structured compaction context** -- PreCompact hook extracts decisions, TODOs, and errors from the conversation transcript before Claude Code summarizes it, preserving structured context across compaction boundaries.
+
+### Fixed
+- **Error pattern auto-resolution correctness** -- Original implementation resolved ALL unresolved error patterns for a tool on any success, even when failures had different root causes. Now uses per-fingerprint validation: stores `error_fingerprint` in behavior log events, requires 3+ session failures of the SAME fingerprint, selects the most recently failing pattern by `sequence_position` (monotonic), scopes queries by `project_id`, and resolves at most one pattern per success.
+- **CLI cleanup category filtering** -- `error_patterns` table was missing from `table_category()` mapping, causing `--category behavior` to miss it and potentially hit the "nothing to clean up" early-return path.
+- **Orphan cleanup SQL** -- Fixed broken orphan cleanup queries and made CLI cleanup default to dry-run.
+- **Hook dispatch panic** -- Fixed panic in hook dispatch, PreToolUse config mismatch, and cross-platform PID lock issues.
+
+### Changed
+- **Task completion logging** -- Uses `task_description` for richer completion logging and milestone matching.
+- **Deeper Claude Code integration** -- New hooks (TaskCompleted, TeammateIdle, SubagentStart/Stop), protocol fixes, and plugin hardening.
+
 ## [0.7.5] - 2026-02-12
 
 ### Fixed

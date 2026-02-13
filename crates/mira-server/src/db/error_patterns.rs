@@ -520,9 +520,11 @@ mod tests {
     }
 
     /// Simulates the full resolution path from post_tool.rs:
+    ///
     /// - Two fingerprints, both with occurrence_count >= 3 (globally eligible)
     /// - Only fp1 has 3+ behavior log entries with matching fingerprint in this session
     /// - fp2 has 3+ global occurrences but only 1 in this session
+    ///
     /// Expected: only fp1 gets resolved
     #[test]
     fn test_per_fingerprint_session_resolution_filters_low_session_count() {
@@ -616,15 +618,15 @@ mod tests {
                 )
                 .ok();
 
-            if let Some((count, max_seq)) = row {
-                if count >= 3 {
-                    let dominated = match &best {
-                        None => true,
-                        Some((_, _, best_seq)) => max_seq > *best_seq,
-                    };
-                    if dominated {
-                        best = Some((fingerprint.clone(), count, max_seq));
-                    }
+            if let Some((count, max_seq)) = row
+                && count >= 3
+            {
+                let dominated = match &best {
+                    None => true,
+                    Some((_, _, best_seq)) => max_seq > *best_seq,
+                };
+                if dominated {
+                    best = Some((fingerprint.clone(), count, max_seq));
                 }
             }
         }
@@ -744,15 +746,15 @@ mod tests {
                 )
                 .ok();
 
-            if let Some((count, max_seq)) = row {
-                if count >= 3 {
-                    let dominated = match &best {
-                        None => true,
-                        Some((_, _, best_seq)) => max_seq > *best_seq,
-                    };
-                    if dominated {
-                        best = Some((fingerprint.clone(), count, max_seq));
-                    }
+            if let Some((count, max_seq)) = row
+                && count >= 3
+            {
+                let dominated = match &best {
+                    None => true,
+                    Some((_, _, best_seq)) => max_seq > *best_seq,
+                };
+                if dominated {
+                    best = Some((fingerprint.clone(), count, max_seq));
                 }
             }
         }

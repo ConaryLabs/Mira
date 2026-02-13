@@ -109,15 +109,15 @@ pub async fn run() -> Result<()> {
                     )
                     .ok();
 
-                if let Some((count, max_seq)) = row {
-                    if count >= 3 {
-                        let dominated = match &best {
-                            None => true,
-                            Some((_, _, best_seq)) => max_seq > *best_seq,
-                        };
-                        if dominated {
-                            best = Some((fingerprint.clone(), count, max_seq));
-                        }
+                if let Some((count, max_seq)) = row
+                    && count >= 3
+                {
+                    let dominated = match &best {
+                        None => true,
+                        Some((_, _, best_seq)) => max_seq > *best_seq,
+                    };
+                    if dominated {
+                        best = Some((fingerprint.clone(), count, max_seq));
                     }
                 }
             }
