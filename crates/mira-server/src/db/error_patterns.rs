@@ -534,6 +534,7 @@ mod tests {
                 project_id INTEGER,
                 event_type TEXT NOT NULL,
                 event_data TEXT,
+                sequence_position INTEGER,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )",
         )
@@ -570,22 +571,25 @@ mod tests {
             .unwrap();
         }
 
-        // Simulate behavior log: fp1 has 3 session failures, fp2 has only 1
-        for _ in 0..3 {
+        // Simulate behavior log: fp1 has 3 session failures (seq 1-3), fp2 has only 1 (seq 4)
+        for seq in 1..=3 {
             conn.execute(
-                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
-                 VALUES ('s1', 1, 'tool_failure', ?)",
-                params![serde_json::json!({
-                    "tool_name": "Bash",
-                    "error_fingerprint": fp1,
-                })
-                .to_string()],
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+                 VALUES ('s1', 1, 'tool_failure', ?, ?)",
+                params![
+                    serde_json::json!({
+                        "tool_name": "Bash",
+                        "error_fingerprint": fp1,
+                    })
+                    .to_string(),
+                    seq,
+                ],
             )
             .unwrap();
         }
         conn.execute(
-            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
-             VALUES ('s1', 1, 'tool_failure', ?)",
+            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+             VALUES ('s1', 1, 'tool_failure', ?, 4)",
             params![serde_json::json!({
                 "tool_name": "Bash",
                 "error_fingerprint": fp2,
@@ -598,29 +602,36 @@ mod tests {
         let candidates = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
         assert_eq!(candidates.len(), 2);
 
-        // Simulate post_tool.rs resolution logic: pick best candidate by session count
-        let mut best: Option<(String, i64)> = None;
+        // Simulate post_tool.rs resolution logic: pick by highest sequence_position
+        let mut best: Option<(String, i64, i64)> = None;
         for (_id, fingerprint) in &candidates {
-            let session_fp_count: i64 = conn
+            let row: Option<(i64, i64)> = conn
                 .query_row(
-                    "SELECT COUNT(*) FROM session_behavior_log
+                    "SELECT COUNT(*), COALESCE(MAX(sequence_position), 0)
+                     FROM session_behavior_log
                      WHERE session_id = 's1' AND event_type = 'tool_failure'
                        AND json_extract(event_data, '$.error_fingerprint') = ?",
                     params![fingerprint],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .unwrap();
+                .ok();
 
-            if session_fp_count >= 3
-                && best.as_ref().is_none_or(|(_, c)| session_fp_count > *c)
-            {
-                best = Some((fingerprint.clone(), session_fp_count));
+            if let Some((count, max_seq)) = row {
+                if count >= 3 {
+                    let dominated = match &best {
+                        None => true,
+                        Some((_, _, best_seq)) => max_seq > *best_seq,
+                    };
+                    if dominated {
+                        best = Some((fingerprint.clone(), count, max_seq));
+                    }
+                }
             }
         }
 
         // Resolve only the best match
         assert!(best.is_some(), "should find an eligible candidate");
-        let (best_fp, _) = best.unwrap();
+        let (best_fp, _, _) = best.unwrap();
         resolve_error_pattern_sync(&conn, 1, "Bash", &best_fp, "s1", "fixed").unwrap();
 
         // fp1 should be resolved (3 session failures), fp2 should NOT (1 session failure)
@@ -635,7 +646,7 @@ mod tests {
     }
 
     /// When two fingerprints BOTH have 3+ session failures, the most recently
-    /// failing one should be resolved (closest to the success = most likely fixed).
+    /// failing one (by sequence_position) should be resolved.
     #[test]
     fn test_per_fingerprint_resolution_picks_most_recent() {
         let conn = setup_test_db();
@@ -646,6 +657,7 @@ mod tests {
                 project_id INTEGER,
                 event_type TEXT NOT NULL,
                 event_data TEXT,
+                sequence_position INTEGER,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )",
         )
@@ -682,34 +694,34 @@ mod tests {
             .unwrap();
         }
 
-        // fp1: 5 failures earlier in session, fp2: 3 failures later in session
-        // fp2's last failure is more recent, so it should be selected
-        for i in 0..5 {
+        // fp1: 5 failures at seq positions 1-5, fp2: 3 failures at seq positions 6-8
+        // fp2's last failure has highest sequence_position, so it should be selected
+        for seq in 1..=5 {
             conn.execute(
-                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, created_at)
-                 VALUES ('s1', 1, 'tool_failure', ?, datetime('now', ? || ' seconds'))",
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+                 VALUES ('s1', 1, 'tool_failure', ?, ?)",
                 params![
                     serde_json::json!({
                         "tool_name": "Bash",
                         "error_fingerprint": fp1,
                     })
                     .to_string(),
-                    format!("-{}", 100 - i), // earlier timestamps
+                    seq,
                 ],
             )
             .unwrap();
         }
-        for i in 0..3 {
+        for seq in 6..=8 {
             conn.execute(
-                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, created_at)
-                 VALUES ('s1', 1, 'tool_failure', ?, datetime('now', ? || ' seconds'))",
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+                 VALUES ('s1', 1, 'tool_failure', ?, ?)",
                 params![
                     serde_json::json!({
                         "tool_name": "Bash",
                         "error_fingerprint": fp2,
                     })
                     .to_string(),
-                    format!("-{}", 10 - i), // later timestamps (closer to now)
+                    seq,
                 ],
             )
             .unwrap();
@@ -718,12 +730,13 @@ mod tests {
         let candidates = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
         assert_eq!(candidates.len(), 2);
 
-        // Pick best by most recent failure (same logic as post_tool.rs)
-        let mut best: Option<(String, i64, String)> = None;
+        // Pick best by highest sequence_position (same logic as post_tool.rs)
+        let mut best: Option<(String, i64, i64)> = None;
         for (_id, fingerprint) in &candidates {
-            let row: Option<(i64, String)> = conn
+            let row: Option<(i64, i64)> = conn
                 .query_row(
-                    "SELECT COUNT(*), MAX(created_at) FROM session_behavior_log
+                    "SELECT COUNT(*), COALESCE(MAX(sequence_position), 0)
+                     FROM session_behavior_log
                      WHERE session_id = 's1' AND event_type = 'tool_failure'
                        AND json_extract(event_data, '$.error_fingerprint') = ?",
                     params![fingerprint],
@@ -731,28 +744,29 @@ mod tests {
                 )
                 .ok();
 
-            if let Some((count, latest_ts)) = row {
+            if let Some((count, max_seq)) = row {
                 if count >= 3 {
                     let dominated = match &best {
                         None => true,
-                        Some((_, _, best_ts)) => latest_ts > *best_ts,
+                        Some((_, _, best_seq)) => max_seq > *best_seq,
                     };
                     if dominated {
-                        best = Some((fingerprint.clone(), count, latest_ts));
+                        best = Some((fingerprint.clone(), count, max_seq));
                     }
                 }
             }
         }
 
-        let (best_fp, _, _) = best.unwrap();
+        let (best_fp, _, best_seq) = best.unwrap();
         assert_eq!(
             best_fp, fp2,
-            "fp2 should win — its last failure is more recent"
+            "fp2 should win — its last failure has highest sequence_position"
         );
+        assert_eq!(best_seq, 8);
 
         resolve_error_pattern_sync(&conn, 1, "Bash", &best_fp, "s1", "fixed").unwrap();
 
-        // fp2 resolved (most recent failures), fp1 NOT (older failures, higher count)
+        // fp2 resolved (most recent by sequence), fp1 NOT (older, higher count)
         assert!(
             lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp1).is_none(),
             "fp1 should NOT be resolved despite higher count"

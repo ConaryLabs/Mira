@@ -94,11 +94,13 @@ pub async fn run() -> Result<()> {
             // For each candidate, get its session failure count and most recent
             // failure timestamp. The fingerprint that failed most recently is the
             // one most likely fixed by this success. Only resolve ONE per success.
-            let mut best: Option<(String, i64, String)> = None; // (fingerprint, count, latest_ts)
+            // (fingerprint, count, max_sequence_position)
+            let mut best: Option<(String, i64, i64)> = None;
             for (_id, fingerprint) in &candidates {
-                let row: Option<(i64, String)> = conn
+                let row: Option<(i64, i64)> = conn
                     .query_row(
-                        "SELECT COUNT(*), MAX(created_at) FROM session_behavior_log
+                        "SELECT COUNT(*), COALESCE(MAX(sequence_position), 0)
+                         FROM session_behavior_log
                          WHERE session_id = ? AND event_type = 'tool_failure'
                            AND json_extract(event_data, '$.error_fingerprint') = ?",
                         rusqlite::params![&session_id, fingerprint],
@@ -106,14 +108,14 @@ pub async fn run() -> Result<()> {
                     )
                     .ok();
 
-                if let Some((count, latest_ts)) = row {
+                if let Some((count, max_seq)) = row {
                     if count >= 3 {
                         let dominated = match &best {
                             None => true,
-                            Some((_, _, best_ts)) => latest_ts > *best_ts,
+                            Some((_, _, best_seq)) => max_seq > *best_seq,
                         };
                         if dominated {
-                            best = Some((fingerprint.clone(), count, latest_ts));
+                            best = Some((fingerprint.clone(), count, max_seq));
                         }
                     }
                 }
