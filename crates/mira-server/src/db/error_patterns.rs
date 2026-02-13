@@ -129,7 +129,7 @@ pub fn get_unresolved_patterns_for_tool_sync(
            AND last_seen_session_id = ?3
            AND resolved_at IS NULL
            AND occurrence_count >= 3
-         ORDER BY updated_at DESC
+         ORDER BY updated_at DESC, id DESC
          LIMIT 1",
     ) {
         Ok(s) => s,

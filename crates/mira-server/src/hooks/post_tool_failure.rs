@@ -86,16 +86,23 @@ pub async fn run() -> Result<()> {
     // Log the failure event (redact sensitive data before truncation)
     let redacted_error = crate::utils::redact_sensitive(&failure_input.error);
     let error_summary = crate::utils::truncate(&redacted_error, 300);
+
+    // Compute fingerprint once — used in both behavior log and error pattern storage
+    let (fingerprint, template) =
+        crate::db::error_fingerprint(&failure_input.tool_name, &error_summary);
+
     {
         let session_id = failure_input.session_id.clone();
         let tool_name = failure_input.tool_name.clone();
         let error_summary_clone = error_summary.clone();
+        let fingerprint_clone = fingerprint.clone();
         pool.try_interact("tool failure logging", move |conn| {
             let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
             let data = serde_json::json!({
                 "tool_name": tool_name,
                 "error": error_summary_clone,
                 "behavior_type": "tool_failure",
+                "error_fingerprint": fingerprint_clone,
             });
             if let Err(e) = tracker.log_event(conn, EventType::ToolFailure, data) {
                 tracing::debug!("Failed to log tool failure: {e}");
@@ -110,15 +117,16 @@ pub async fn run() -> Result<()> {
         let tool_name = failure_input.tool_name.clone();
         let error_text = error_summary.clone();
         let session_id = failure_input.session_id.clone();
+        let fp = fingerprint.clone();
+        let tmpl = template.clone();
         pool.try_interact("error pattern storage", move |conn| {
-            let (fingerprint, template) = crate::db::error_fingerprint(&tool_name, &error_text);
             crate::db::store_error_pattern_sync(
                 conn,
                 crate::db::StoreErrorPatternParams {
                     project_id,
                     tool_name: &tool_name,
-                    error_fingerprint: &fingerprint,
-                    error_template: &template,
+                    error_fingerprint: &fp,
+                    error_template: &tmpl,
                     raw_error_sample: &error_text,
                     session_id: &session_id,
                 },

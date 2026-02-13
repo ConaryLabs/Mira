@@ -79,28 +79,32 @@ pub async fn run() -> Result<()> {
         return Ok(());
     };
 
-    // Resolve error patterns if this tool had recent failures in this session
+    // Resolve error patterns if this tool had recent failures in this session.
+    // Only resolves a pattern when THAT SPECIFIC fingerprint had 3+ failures
+    // in this session (not just any failure of the same tool).
     {
         let session_id = post_input.session_id.clone();
         let tool_name = post_input.tool_name.clone();
         pool.try_interact("error pattern resolution", move |conn| {
-            // Check if this tool had 3+ failures in this session
-            let failure_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM session_behavior_log
-                     WHERE session_id = ? AND event_type = 'tool_failure'
-                       AND json_extract(event_data, '$.tool_name') = ?",
-                    rusqlite::params![&session_id, &tool_name],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
+            // Get the candidate pattern (at most one, most recently updated,
+            // with global occurrence_count >= 3)
+            let patterns = crate::db::get_unresolved_patterns_for_tool_sync(
+                conn, project_id, &tool_name, &session_id,
+            );
 
-            if failure_count >= 3 {
-                // Get unresolved patterns for this tool in this session
-                let patterns = crate::db::get_unresolved_patterns_for_tool_sync(
-                    conn, project_id, &tool_name, &session_id,
-                );
-                for (_id, fingerprint) in &patterns {
+            for (_id, fingerprint) in &patterns {
+                // Verify this specific fingerprint had 3+ failures in THIS session
+                let session_fp_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM session_behavior_log
+                         WHERE session_id = ? AND event_type = 'tool_failure'
+                           AND json_extract(event_data, '$.error_fingerprint') = ?",
+                        rusqlite::params![&session_id, fingerprint],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+
+                if session_fp_count >= 3 {
                     let _ = crate::db::resolve_error_pattern_sync(
                         conn,
                         project_id,
@@ -108,17 +112,14 @@ pub async fn run() -> Result<()> {
                         fingerprint,
                         &session_id,
                         &format!(
-                            "Tool '{}' succeeded after {} failures",
-                            tool_name, failure_count
+                            "Tool '{}' succeeded after {} session failures of this pattern",
+                            tool_name, session_fp_count
                         ),
                     );
-                }
-                if !patterns.is_empty() {
                     eprintln!(
-                        "[mira] Resolved {} error pattern(s) for tool '{}' (succeeded after {} failures)",
-                        patterns.len(),
+                        "[mira] Resolved error pattern for tool '{}' (succeeded after {} session failures)",
                         tool_name,
-                        failure_count
+                        session_fp_count
                     );
                 }
             }
