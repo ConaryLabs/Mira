@@ -279,3 +279,97 @@ pub fn count_retention_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// Set up a minimal in-memory DB with just the tables cleanup_orphans touches.
+    fn setup_orphan_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at TEXT);
+            CREATE TABLE memory_facts (id INTEGER PRIMARY KEY);
+            CREATE TABLE vec_memory (fact_id INTEGER);
+            CREATE TABLE session_snapshots (id INTEGER PRIMARY KEY, session_id TEXT);
+            CREATE TABLE tool_history (id INTEGER PRIMARY KEY, session_id TEXT, created_at TEXT);
+            CREATE TABLE session_task_iterations (
+                id INTEGER PRIMARY KEY, project_id INTEGER, session_id TEXT,
+                iteration INTEGER, tasks_completed INTEGER, tasks_remaining INTEGER,
+                summary TEXT, created_at TEXT
+            );
+            CREATE TABLE memory_entities (id INTEGER PRIMARY KEY);
+            CREATE TABLE memory_entity_links (entity_id INTEGER);
+            ",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_cleanup_orphans_session_task_iterations() {
+        let conn = setup_orphan_test_db();
+
+        // Insert a valid session
+        conn.execute("INSERT INTO sessions (id) VALUES ('s1')", [])
+            .unwrap();
+
+        // Insert iteration linked to valid session — should survive
+        conn.execute(
+            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, 's1', 1)",
+            [],
+        )
+        .unwrap();
+
+        // Insert iteration linked to non-existent session — should be cleaned
+        conn.execute(
+            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, 'gone', 2)",
+            [],
+        )
+        .unwrap();
+
+        // Insert iteration with NULL session_id — should survive (NULL is allowed)
+        conn.execute(
+            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, NULL, 3)",
+            [],
+        )
+        .unwrap();
+
+        let cleaned = cleanup_orphans(&conn).unwrap();
+        assert_eq!(cleaned, 1, "should clean exactly the orphaned iteration");
+
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_task_iterations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 2, "valid + NULL session rows should remain");
+    }
+
+    #[test]
+    fn test_cleanup_orphans_no_false_positives() {
+        let conn = setup_orphan_test_db();
+
+        // Insert a session and linked rows across multiple tables
+        conn.execute("INSERT INTO sessions (id) VALUES ('s1')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO session_snapshots (session_id) VALUES ('s1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tool_history (session_id, created_at) VALUES ('s1', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, 's1', 1)",
+            [],
+        )
+        .unwrap();
+
+        let cleaned = cleanup_orphans(&conn).unwrap();
+        assert_eq!(cleaned, 0, "nothing should be cleaned when all rows have valid parents");
+    }
+}
