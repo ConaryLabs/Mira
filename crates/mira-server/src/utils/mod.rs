@@ -82,6 +82,48 @@ pub fn sanitize_project_path(path: &str) -> String {
     path.replace(['/', '\\'], "-")
 }
 
+/// Redact sensitive data (API keys, credentials, connection strings) from text.
+///
+/// Applied to error messages before storage to prevent credential leakage
+/// to the database or external embedding APIs.
+#[allow(clippy::expect_used)] // Regex literals are compile-time known valid
+pub fn redact_sensitive(text: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        vec![
+            // API keys (OpenAI, Anthropic, etc.)
+            Regex::new(r"(?i)(sk-[a-zA-Z0-9]{20,})").expect("valid regex"),
+            Regex::new(r"(?i)(api[_-]?key\s*[=:]\s*)\S+").expect("valid regex"),
+            // Bearer tokens
+            Regex::new(r"(?i)(bearer\s+)\S+").expect("valid regex"),
+            // Connection strings with credentials
+            Regex::new(r"(?i)((?:postgres|mysql|mongodb|redis)://)[^\s]+@").expect("valid regex"),
+            // Environment variable assignments with values
+            Regex::new(r"(?i)([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=\s*)\S+").expect("valid regex"),
+            // Generic long hex/base64 tokens (40+ chars)
+            Regex::new(r"\b[A-Za-z0-9+/]{40,}={0,2}\b").expect("valid regex"),
+        ]
+    });
+
+    let mut result = text.to_string();
+    for (i, pattern) in patterns.iter().enumerate() {
+        let replacement = match i {
+            0 => "sk-<REDACTED>",
+            1 => "${1}<REDACTED>",
+            2 => "${1}<REDACTED>",
+            3 => "${1}<REDACTED>@",
+            4 => "${1}<REDACTED>",
+            5 => "<REDACTED_TOKEN>",
+            _ => "<REDACTED>",
+        };
+        result = pattern.replace_all(&result, replacement).into_owned();
+    }
+    result
+}
+
 /// Format a `since_days` filter into a human-readable period string.
 ///
 /// e.g. `Some(30)` -> `"last 30 days"`, `None` -> `"all time"`
@@ -254,5 +296,41 @@ mod tests {
     #[test]
     fn test_format_period_none() {
         assert_eq!(format_period(None), "all time");
+    }
+
+    #[test]
+    fn test_redact_openai_key() {
+        let input = "Error: OPENAI_API_KEY=sk-abc123def456ghi789jkl012mno345 not valid";
+        let result = redact_sensitive(input);
+        assert!(!result.contains("sk-abc123"));
+        assert!(result.contains("<REDACTED>"));
+    }
+
+    #[test]
+    fn test_redact_bearer_token() {
+        let input = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.long.token";
+        let result = redact_sensitive(input);
+        assert!(!result.contains("eyJhbGci"));
+    }
+
+    #[test]
+    fn test_redact_connection_string() {
+        let input = "Failed to connect: postgres://admin:supersecret@localhost:5432/mydb";
+        let result = redact_sensitive(input);
+        assert!(!result.contains("supersecret"));
+    }
+
+    #[test]
+    fn test_redact_preserves_normal_text() {
+        let input = "Error: file not found at /home/user/project/src/main.rs";
+        let result = redact_sensitive(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_redact_env_var_assignment() {
+        let input = "ANTHROPIC_API_KEY=sk-ant-api03-longsecretvalue123 is invalid";
+        let result = redact_sensitive(input);
+        assert!(!result.contains("longsecretvalue"));
     }
 }

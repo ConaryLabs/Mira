@@ -11,6 +11,7 @@ pub mod diff_outcomes;
 pub mod documentation;
 mod embeddings;
 pub mod entities;
+pub mod error_patterns;
 mod index;
 mod insights;
 mod memory;
@@ -82,6 +83,11 @@ pub use diff_analysis::{
 };
 pub use documentation::{DocGap, DocInventory, DocTask, get_inventory_for_stale_check};
 pub use embeddings::{PendingEmbedding, get_pending_embeddings_sync};
+pub use error_patterns::{
+    ResolvedErrorPattern, StoreErrorPatternParams, error_fingerprint,
+    get_unresolved_patterns_for_tool_sync, lookup_resolved_pattern_sync,
+    resolve_error_pattern_sync, store_error_pattern_sync,
+};
 pub use index::{
     CompactStats,
     ImportInsert,

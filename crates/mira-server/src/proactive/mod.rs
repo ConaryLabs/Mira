@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 pub enum EventType {
     FileAccess,
     ToolUse,
+    ToolFailure,
     Query,
     ContextSwitch,
     GoalUpdate,
@@ -186,6 +187,7 @@ mod tests {
     fn test_event_type_as_str() {
         assert_eq!(EventType::FileAccess.as_str(), "file_access");
         assert_eq!(EventType::ToolUse.as_str(), "tool_use");
+        assert_eq!(EventType::ToolFailure.as_str(), "tool_failure");
         assert_eq!(EventType::Query.as_str(), "query");
         assert_eq!(EventType::ContextSwitch.as_str(), "context_switch");
         assert_eq!(EventType::GoalUpdate.as_str(), "goal_update");
@@ -196,6 +198,7 @@ mod tests {
     fn test_event_type_from_str() {
         assert_eq!("file_access".parse(), Ok(EventType::FileAccess));
         assert_eq!("tool_use".parse(), Ok(EventType::ToolUse));
+        assert_eq!("tool_failure".parse(), Ok(EventType::ToolFailure));
         assert_eq!("query".parse(), Ok(EventType::Query));
         assert_eq!("context_switch".parse(), Ok(EventType::ContextSwitch));
         assert_eq!("goal_update".parse(), Ok(EventType::GoalUpdate));
@@ -209,6 +212,7 @@ mod tests {
         let events = [
             EventType::FileAccess,
             EventType::ToolUse,
+            EventType::ToolFailure,
             EventType::Query,
             EventType::ContextSwitch,
             EventType::GoalUpdate,

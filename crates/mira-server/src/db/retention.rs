@@ -124,6 +124,13 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             days: config.sessions_days,
             extra_filter: "AND status = 'completed'",
         },
+        // ── Error patterns ──
+        RetentionRule {
+            table: "error_patterns",
+            time_column: "updated_at",
+            days: config.behavior_days,
+            extra_filter: "",
+        },
         // ── Behavior patterns ──
         RetentionRule {
             table: "behavior_patterns",
@@ -234,6 +241,11 @@ pub fn cleanup_orphans(conn: &Connection) -> Result<usize, String> {
         conn,
         "DELETE FROM session_task_iterations WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)",
     );
+    // error_patterns without parent project
+    total += try_execute(
+        conn,
+        "DELETE FROM error_patterns WHERE project_id NOT IN (SELECT id FROM projects)",
+    );
     // orphaned memory_entities (no links remaining)
     total += try_execute(
         conn,
@@ -341,7 +353,9 @@ mod tests {
         assert_eq!(cleaned, 1, "should clean exactly the orphaned iteration");
 
         let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM session_task_iterations", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM session_task_iterations", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(remaining, 2, "valid + NULL session rows should remain");
     }
@@ -370,6 +384,9 @@ mod tests {
         .unwrap();
 
         let cleaned = cleanup_orphans(&conn).unwrap();
-        assert_eq!(cleaned, 0, "nothing should be cleaned when all rows have valid parents");
+        assert_eq!(
+            cleaned, 0,
+            "nothing should be cleaned when all rows have valid parents"
+        );
     }
 }

@@ -226,6 +226,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "memory_facts_suspicious",
             func: memory::migrate_memory_facts_suspicious,
         },
+        Migration {
+            version: 39,
+            name: "error_patterns_table",
+            func: intelligence::migrate_error_patterns_table,
+        },
     ]
 }
 

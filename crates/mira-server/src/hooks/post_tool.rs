@@ -63,46 +63,7 @@ pub async fn run() -> Result<()> {
         post_input.file_path.as_deref().unwrap_or("none")
     );
 
-    // Handle Bash commands: detect file-modifying commands and log them
-    if post_input.tool_name == "Bash" {
-        if let Some(ref command) = post_input.command
-            && is_file_modifying_command(command)
-        {
-            let db_path = get_db_path();
-            if let Ok(pool) = DatabasePool::open(&db_path).await {
-                let pool = Arc::new(pool);
-                if let Some(project_id) = resolve_project_id(&pool).await {
-                    let session_id = post_input.session_id.clone();
-                    let cmd = crate::utils::truncate(command, 500);
-                    pool.try_interact("bash file modify logging", move |conn| {
-                        let mut tracker =
-                            BehaviorTracker::for_session(conn, session_id, project_id);
-                        let data = serde_json::json!({
-                            "behavior_type": "bash_file_modify",
-                            "command": cmd,
-                        });
-                        if let Err(e) =
-                            tracker.log_event(conn, crate::proactive::EventType::ToolUse, data)
-                        {
-                            tracing::debug!("Failed to log bash file modify: {e}");
-                        }
-                        Ok(())
-                    })
-                    .await;
-                }
-            }
-        }
-        write_hook_output(&serde_json::json!({}));
-        return Ok(());
-    }
-
-    // Only process Write/Edit operations with file paths
-    let Some(file_path) = post_input.file_path else {
-        write_hook_output(&serde_json::json!({}));
-        return Ok(());
-    };
-
-    // Open database
+    // Open database (shared across all branches)
     let db_path = get_db_path();
     let pool = match DatabasePool::open(&db_path).await {
         Ok(p) => Arc::new(p),
@@ -114,6 +75,85 @@ pub async fn run() -> Result<()> {
 
     // Get current project
     let Some(project_id) = resolve_project_id(&pool).await else {
+        write_hook_output(&serde_json::json!({}));
+        return Ok(());
+    };
+
+    // Resolve error patterns if this tool had recent failures in this session
+    {
+        let session_id = post_input.session_id.clone();
+        let tool_name = post_input.tool_name.clone();
+        pool.try_interact("error pattern resolution", move |conn| {
+            // Check if this tool had 3+ failures in this session
+            let failure_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM session_behavior_log
+                     WHERE session_id = ? AND event_type = 'tool_failure'
+                       AND json_extract(event_data, '$.tool_name') = ?",
+                    rusqlite::params![&session_id, &tool_name],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            if failure_count >= 3 {
+                // Get unresolved patterns for this tool in this session
+                let patterns = crate::db::get_unresolved_patterns_for_tool_sync(
+                    conn, project_id, &tool_name, &session_id,
+                );
+                for (_id, fingerprint) in &patterns {
+                    let _ = crate::db::resolve_error_pattern_sync(
+                        conn,
+                        project_id,
+                        &tool_name,
+                        fingerprint,
+                        &session_id,
+                        &format!(
+                            "Tool '{}' succeeded after {} failures",
+                            tool_name, failure_count
+                        ),
+                    );
+                }
+                if !patterns.is_empty() {
+                    eprintln!(
+                        "[mira] Resolved {} error pattern(s) for tool '{}' (succeeded after {} failures)",
+                        patterns.len(),
+                        tool_name,
+                        failure_count
+                    );
+                }
+            }
+            Ok(())
+        })
+        .await;
+    }
+
+    // Handle Bash commands: detect file-modifying commands and log them
+    if post_input.tool_name == "Bash" {
+        if let Some(ref command) = post_input.command
+            && is_file_modifying_command(command)
+        {
+            let session_id = post_input.session_id.clone();
+            let cmd = crate::utils::truncate(command, 500);
+            pool.try_interact("bash file modify logging", move |conn| {
+                let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
+                let data = serde_json::json!({
+                    "behavior_type": "bash_file_modify",
+                    "command": cmd,
+                });
+                if let Err(e) = tracker.log_event(conn, crate::proactive::EventType::ToolUse, data)
+                {
+                    tracing::debug!("Failed to log bash file modify: {e}");
+                }
+                Ok(())
+            })
+            .await;
+        }
+        write_hook_output(&serde_json::json!({}));
+        return Ok(());
+    }
+
+    // Only process Write/Edit operations with file paths
+    let Some(file_path) = post_input.file_path else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };

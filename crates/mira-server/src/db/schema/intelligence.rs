@@ -185,6 +185,38 @@ fn migrate_pondering_pattern_types(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate to add error_patterns table for cross-session error learning
+pub fn migrate_error_patterns_table(conn: &Connection) -> Result<()> {
+    create_table_if_missing(
+        conn,
+        "error_patterns",
+        r#"
+        CREATE TABLE IF NOT EXISTS error_patterns (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            tool_name TEXT NOT NULL,
+            error_fingerprint TEXT NOT NULL,
+            error_template TEXT NOT NULL,
+            raw_error_sample TEXT,
+            fix_description TEXT,
+            fix_session_id TEXT,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen_session_id TEXT,
+            last_seen_session_id TEXT,
+            resolved_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, tool_name, error_fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_error_patterns_lookup
+            ON error_patterns(project_id, tool_name, error_fingerprint);
+        CREATE INDEX IF NOT EXISTS idx_error_patterns_unresolved
+            ON error_patterns(project_id, resolved_at) WHERE resolved_at IS NULL;
+    "#,
+    )?;
+    Ok(())
+}
+
 /// Migrate to add cross-project intelligence tables for pattern sharing
 pub fn migrate_cross_project_intelligence_tables(conn: &Connection) -> Result<()> {
     // Cross-project patterns - anonymized patterns that can be shared

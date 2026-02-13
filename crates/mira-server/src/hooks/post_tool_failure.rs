@@ -83,8 +83,9 @@ pub async fn run() -> Result<()> {
         return Ok(());
     };
 
-    // Log the failure event
-    let error_summary = crate::utils::truncate(&failure_input.error, 300);
+    // Log the failure event (redact sensitive data before truncation)
+    let redacted_error = crate::utils::redact_sensitive(&failure_input.error);
+    let error_summary = crate::utils::truncate(&redacted_error, 300);
     {
         let session_id = failure_input.session_id.clone();
         let tool_name = failure_input.tool_name.clone();
@@ -96,9 +97,32 @@ pub async fn run() -> Result<()> {
                 "error": error_summary_clone,
                 "behavior_type": "tool_failure",
             });
-            if let Err(e) = tracker.log_event(conn, EventType::ToolUse, data) {
+            if let Err(e) = tracker.log_event(conn, EventType::ToolFailure, data) {
                 tracing::debug!("Failed to log tool failure: {e}");
             }
+            Ok(())
+        })
+        .await;
+    }
+
+    // Store/update error pattern for cross-session learning
+    {
+        let tool_name = failure_input.tool_name.clone();
+        let error_text = error_summary.clone();
+        let session_id = failure_input.session_id.clone();
+        pool.try_interact("error pattern storage", move |conn| {
+            let (fingerprint, template) = crate::db::error_fingerprint(&tool_name, &error_text);
+            crate::db::store_error_pattern_sync(
+                conn,
+                crate::db::StoreErrorPatternParams {
+                    project_id,
+                    tool_name: &tool_name,
+                    error_fingerprint: &fingerprint,
+                    error_template: &template,
+                    raw_error_sample: &error_text,
+                    session_id: &session_id,
+                },
+            )?;
             Ok(())
         })
         .await;
@@ -113,8 +137,7 @@ pub async fn run() -> Result<()> {
                 SELECT COUNT(*)
                 FROM session_behavior_log
                 WHERE session_id = ?
-                  AND event_type = 'tool_use'
-                  AND json_extract(event_data, '$.behavior_type') = 'tool_failure'
+                  AND event_type = 'tool_failure'
                   AND json_extract(event_data, '$.tool_name') = ?
             "#;
             let count = conn
@@ -134,8 +157,44 @@ pub async fn run() -> Result<()> {
         failure_input.tool_name, failure_count,
     );
 
-    // If 3+ failures, try to recall relevant memories
+    // If 3+ failures, look up known fixes first, then fall back to memory recall
     if failure_count >= 3 {
+        // Check for resolved error patterns (cross-session fix knowledge)
+        let fix_context = {
+            let tool_name = failure_input.tool_name.clone();
+            let error_text = error_summary.clone();
+            pool.interact(move |conn| {
+                let (fingerprint, _) = crate::db::error_fingerprint(&tool_name, &error_text);
+                Ok::<_, anyhow::Error>(crate::db::lookup_resolved_pattern_sync(
+                    conn,
+                    project_id,
+                    &tool_name,
+                    &fingerprint,
+                ))
+            })
+            .await
+            .ok()
+            .flatten()
+        };
+
+        if let Some(pattern) = fix_context {
+            let context = format!(
+                "[Mira/fix] Tool '{}' failed ({}x). A similar error was resolved before:\n  Fix: {}",
+                failure_input.tool_name,
+                failure_count,
+                crate::utils::truncate(&pattern.fix_description, 300),
+            );
+            let output = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUseFailure",
+                    "additionalContext": context,
+                }
+            });
+            write_hook_output(&output);
+            return Ok(());
+        }
+
+        // Fall back to memory recall if no resolved pattern found
         let memories =
             crate::hooks::recall::recall_memories(&pool, project_id, &error_summary).await;
 
