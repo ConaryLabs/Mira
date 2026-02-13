@@ -124,7 +124,7 @@ pub fn update_goal_progress_from_milestones_sync(
 ) -> rusqlite::Result<i32> {
     let progress = calculate_goal_progress_sync(conn, goal_id)?;
     conn.execute(
-        "UPDATE goals SET progress_percent = ? WHERE id = ?",
+        "UPDATE goals SET progress_percent = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         params![progress, goal_id],
     )?;
     Ok(progress)

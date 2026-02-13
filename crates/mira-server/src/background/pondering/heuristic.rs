@@ -1,7 +1,7 @@
 // background/pondering/heuristic.rs
 // Data-driven heuristic insight generation (no LLM needed)
 
-use super::types::{PonderingInsight, ProjectInsightData};
+use super::types::{PonderingInsight, ProjectInsightData, TrendDirection};
 
 /// Generate insights from project data without LLM.
 /// Produces specific, actionable insights based on real project signals.
@@ -104,6 +104,76 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
             description: pattern.description.clone(),
             confidence: 0.5,
             evidence: vec![format!("count: {}", pattern.count)],
+        });
+    }
+
+    // 6. Recurring errors — unresolved errors with 3+ occurrences
+    for error in &data.recurring_errors {
+        let confidence = if error.occurrence_count >= 10 {
+            0.9
+        } else if error.occurrence_count >= 5 {
+            0.75
+        } else {
+            0.6
+        };
+        insights.push(PonderingInsight {
+            pattern_type: "insight_recurring_error".to_string(),
+            description: format!(
+                "Error in '{}' has occurred {} times without resolution: {}",
+                error.tool_name, error.occurrence_count, error.error_template,
+            ),
+            confidence,
+            evidence: vec![
+                format!("occurrences: {}", error.occurrence_count),
+                format!("tool: {}", error.tool_name),
+            ],
+        });
+    }
+
+    // 7. Churn hotspots — files touched in many sessions
+    for hotspot in &data.churn_hotspots {
+        let confidence = if hotspot.sessions_touched >= 10 {
+            0.8
+        } else {
+            0.6
+        };
+        insights.push(PonderingInsight {
+            pattern_type: "insight_churn_hotspot".to_string(),
+            description: format!(
+                "'{}' touched in {} sessions over {} days \u{2014} consider refactoring or stabilizing",
+                hotspot.file_path, hotspot.sessions_touched, hotspot.period_days,
+            ),
+            confidence,
+            evidence: vec![
+                format!("sessions: {}", hotspot.sessions_touched),
+                format!("period_days: {}", hotspot.period_days),
+            ],
+        });
+    }
+
+    // 8. Health degradation — codebase health getting worse
+    if let Some(ref trend) = data.health_trend
+        && let TrendDirection::Degrading = trend.direction
+        && let Some(prev) = trend.previous_score
+    {
+        let delta_pct = ((trend.current_score - prev) / prev) * 100.0;
+        let confidence = if delta_pct > 25.0 { 0.85 } else { 0.7 };
+        insights.push(PonderingInsight {
+            pattern_type: "insight_health_degrading".to_string(),
+            description: format!(
+                "Codebase health degraded: avg debt score {:.1} \u{2192} {:.1} ({:+.0}% change, {} modules)",
+                prev,
+                trend.current_score,
+                delta_pct,
+                trend.current_tier_dist,
+            ),
+            confidence,
+            evidence: vec![
+                format!("previous_score: {:.1}", prev),
+                format!("current_score: {:.1}", trend.current_score),
+                format!("week_avg: {:.1}", trend.week_avg_score.unwrap_or(0.0)),
+                format!("snapshots: {}", trend.snapshot_count),
+            ],
         });
     }
 
@@ -270,6 +340,90 @@ mod tests {
     }
 
     #[test]
+    fn test_recurring_error_high_count() {
+        let data = ProjectInsightData {
+            recurring_errors: vec![RecurringError {
+                tool_name: "code_search".to_string(),
+                error_template: "connection refused".to_string(),
+                occurrence_count: 12,
+                first_seen_session_id: None,
+                last_seen_session_id: None,
+            }],
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert_eq!(insights.len(), 1);
+        assert_eq!(insights[0].pattern_type, "insight_recurring_error");
+        assert_eq!(insights[0].confidence, 0.9);
+        assert!(insights[0].description.contains("code_search"));
+        assert!(insights[0].description.contains("12 times"));
+    }
+
+    #[test]
+    fn test_recurring_error_medium_count() {
+        let data = ProjectInsightData {
+            recurring_errors: vec![RecurringError {
+                tool_name: "memory".to_string(),
+                error_template: "table not found".to_string(),
+                occurrence_count: 5,
+                first_seen_session_id: None,
+                last_seen_session_id: None,
+            }],
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert_eq!(insights[0].confidence, 0.75);
+    }
+
+    #[test]
+    fn test_recurring_error_low_count() {
+        let data = ProjectInsightData {
+            recurring_errors: vec![RecurringError {
+                tool_name: "index".to_string(),
+                error_template: "timeout".to_string(),
+                occurrence_count: 3,
+                first_seen_session_id: None,
+                last_seen_session_id: None,
+            }],
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert_eq!(insights[0].confidence, 0.6);
+    }
+
+    #[test]
+    fn test_churn_hotspot_high() {
+        let data = ProjectInsightData {
+            churn_hotspots: vec![ChurnHotspot {
+                file_path: "src/db/pool.rs".to_string(),
+                sessions_touched: 15,
+                period_days: 14,
+            }],
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert_eq!(insights.len(), 1);
+        assert_eq!(insights[0].pattern_type, "insight_churn_hotspot");
+        assert_eq!(insights[0].confidence, 0.8);
+        assert!(insights[0].description.contains("pool.rs"));
+        assert!(insights[0].description.contains("15 sessions"));
+    }
+
+    #[test]
+    fn test_churn_hotspot_moderate() {
+        let data = ProjectInsightData {
+            churn_hotspots: vec![ChurnHotspot {
+                file_path: "src/main.rs".to_string(),
+                sessions_touched: 6,
+                period_days: 20,
+            }],
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert_eq!(insights[0].confidence, 0.6);
+    }
+
+    #[test]
     fn test_empty_data_produces_no_insights() {
         let data = ProjectInsightData::default();
         let insights = generate_insights_heuristic(&data);
@@ -302,8 +456,79 @@ mod tests {
                 sessions_involved: 4,
             }],
             session_patterns: vec![],
+            recurring_errors: vec![RecurringError {
+                tool_name: "code".to_string(),
+                error_template: "index missing".to_string(),
+                occurrence_count: 7,
+                first_seen_session_id: None,
+                last_seen_session_id: None,
+            }],
+            churn_hotspots: vec![ChurnHotspot {
+                file_path: "src/config.rs".to_string(),
+                sessions_touched: 8,
+                period_days: 10,
+            }],
+            health_trend: None,
         };
         let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights.len(), 3); // stale goal + fragile module + untested
+        assert_eq!(insights.len(), 5); // stale goal + fragile module + untested + recurring error + churn
+    }
+
+    #[test]
+    fn test_health_degrading() {
+        use super::super::types::{HealthTrend, TrendDirection};
+        let data = ProjectInsightData {
+            health_trend: Some(HealthTrend {
+                current_score: 55.0,
+                previous_score: Some(42.0),
+                week_avg_score: Some(48.0),
+                current_tier_dist: "{\"C\":5,\"B\":3}".to_string(),
+                snapshot_count: 4,
+                direction: TrendDirection::Degrading,
+            }),
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert_eq!(insights.len(), 1);
+        assert_eq!(insights[0].pattern_type, "insight_health_degrading");
+        assert_eq!(insights[0].confidence, 0.85); // >25% change
+        assert!(insights[0].description.contains("42.0"));
+        assert!(insights[0].description.contains("55.0"));
+    }
+
+    #[test]
+    fn test_health_stable_no_insight() {
+        use super::super::types::{HealthTrend, TrendDirection};
+        let data = ProjectInsightData {
+            health_trend: Some(HealthTrend {
+                current_score: 43.0,
+                previous_score: Some(42.0),
+                week_avg_score: Some(42.5),
+                current_tier_dist: "{\"B\":8}".to_string(),
+                snapshot_count: 3,
+                direction: TrendDirection::Stable,
+            }),
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert!(insights.is_empty());
+    }
+
+    #[test]
+    fn test_health_improving_no_insight() {
+        use super::super::types::{HealthTrend, TrendDirection};
+        let data = ProjectInsightData {
+            health_trend: Some(HealthTrend {
+                current_score: 30.0,
+                previous_score: Some(42.0),
+                week_avg_score: Some(35.0),
+                current_tier_dist: "{\"A\":5,\"B\":3}".to_string(),
+                snapshot_count: 5,
+                direction: TrendDirection::Improving,
+            }),
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert!(insights.is_empty());
     }
 }

@@ -18,6 +18,7 @@ use crate::db::{
 };
 use crate::llm::LlmClient;
 use crate::utils::ResultExt;
+use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -432,6 +433,12 @@ pub async fn process_health_module_analysis(
                     scored
                 );
             }
+            // Capture health snapshot after scoring succeeds
+            if scored > 0
+                && let Err(e) = capture_health_snapshot(main_pool, project_id).await
+            {
+                tracing::warn!("Code health: snapshot capture failed: {}", e);
+            }
         }
         Err(e) => {
             tracing::warn!("Code health: tech debt scoring failed: {}", e);
@@ -566,6 +573,10 @@ pub async fn scan_project_health_full(
     }
     if let Err(e) = scoring::compute_tech_debt_scores(main_pool, code_pool, project_id).await {
         tracing::warn!("Code health: tech debt scoring failed: {}", e);
+    }
+    // Capture health snapshot after scoring
+    if let Err(e) = capture_health_snapshot(main_pool, project_id).await {
+        tracing::warn!("Code health: snapshot capture failed: {}", e);
     }
     if let Err(e) = scan_conventions_sharded(main_pool, code_pool, project_id).await {
         tracing::warn!("Code health: convention extraction failed: {}", e);
@@ -769,6 +780,113 @@ async fn scan_unused_functions_sharded(
         .await?;
 
     Ok(count)
+}
+
+/// Capture a health snapshot after scoring completes.
+/// Rate-limited: at most one snapshot per 6 hours per project.
+async fn capture_health_snapshot(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<(), String> {
+    pool.run(move |conn| {
+        // Rate limit: skip if latest snapshot is < 6 hours old
+        let too_recent: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM health_snapshots
+                 WHERE project_id = ?1
+                   AND snapshot_at > datetime('now', '-6 hours'))",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if too_recent {
+            tracing::debug!("Code health: skipping snapshot — too recent for project {}", project_id);
+            return Ok::<(), String>(());
+        }
+
+        // Aggregate tech debt scores
+        let (module_count, avg_score, max_score): (i64, f64, f64) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(AVG(overall_score), 0.0), COALESCE(MAX(overall_score), 0.0)
+                 FROM tech_debt_scores WHERE project_id = ?1",
+                params![project_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap_or((0, 0.0, 0.0));
+
+        if module_count == 0 {
+            return Ok(()); // Nothing to snapshot
+        }
+
+        // Tier distribution as JSON
+        let tier_dist = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT tier, COUNT(*) FROM tech_debt_scores
+                     WHERE project_id = ?1 GROUP BY tier ORDER BY tier",
+                )
+                .map_err(|e| format!("prepare tier dist: {}", e))?;
+            let tiers: Vec<(String, i64)> = stmt
+                .query_map(params![project_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|e| format!("query tier dist: {}", e))?
+                .filter_map(|r| r.ok())
+                .collect();
+            serde_json::to_string(&tiers.into_iter().collect::<std::collections::HashMap<_, _>>())
+                .unwrap_or_else(|_| "{}".to_string())
+        };
+
+        // Count findings by category from system_observations
+        let count_findings = |category: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM system_observations
+                 WHERE project_id = ?1 AND observation_type = 'health' AND category = ?2",
+                params![project_id, category],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+        };
+
+        let warning_count = count_findings("complexity");
+        let todo_count = count_findings("todo") + count_findings("unimplemented");
+        let unwrap_count = count_findings("unwrap");
+        let error_handling_count = count_findings("error_handling") + count_findings("error_quality");
+        let total_finding_count = warning_count + todo_count + unwrap_count + error_handling_count
+            + count_findings("unused");
+
+        conn.execute(
+            "INSERT INTO health_snapshots
+             (project_id, module_count, avg_debt_score, max_debt_score, tier_distribution,
+              warning_count, todo_count, unwrap_count, error_handling_count, total_finding_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                project_id,
+                module_count,
+                avg_score,
+                max_score,
+                tier_dist,
+                warning_count,
+                todo_count,
+                unwrap_count,
+                error_handling_count,
+                total_finding_count,
+            ],
+        )
+        .map_err(|e| format!("insert health snapshot: {}", e))?;
+
+        tracing::info!(
+            "Code health: captured snapshot for project {} (avg={:.1}, max={:.1}, {} modules)",
+            project_id,
+            avg_score,
+            max_score,
+            module_count
+        );
+
+        Ok(())
+    })
+    .await
 }
 
 /// Clear old health issues before refresh

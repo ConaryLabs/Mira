@@ -72,13 +72,11 @@ enum BackgroundTask {
     HealthLlmComplexity,
     HealthLlmErrorQuality,
     HealthModuleAnalysis,
-    ProactiveItems,
     EntityBackfills,
     TeamMonitor,
     DocumentationTasks,
     PonderingInsights,
     InsightCleanup,
-    ProactiveCleanup,
     DiffOutcomes,
     DataRetention,
 }
@@ -94,13 +92,11 @@ impl std::fmt::Display for BackgroundTask {
             Self::HealthLlmComplexity => write!(f, "health: LLM complexity"),
             Self::HealthLlmErrorQuality => write!(f, "health: LLM error quality"),
             Self::HealthModuleAnalysis => write!(f, "health: module analysis"),
-            Self::ProactiveItems => write!(f, "proactive items"),
             Self::EntityBackfills => write!(f, "entity backfills"),
             Self::TeamMonitor => write!(f, "team monitor"),
             Self::DocumentationTasks => write!(f, "documentation tasks"),
             Self::PonderingInsights => write!(f, "pondering insights"),
             Self::InsightCleanup => write!(f, "insight cleanup"),
-            Self::ProactiveCleanup => write!(f, "proactive cleanup"),
             Self::DiffOutcomes => write!(f, "diff outcomes"),
             Self::DataRetention => write!(f, "data retention"),
         }
@@ -172,11 +168,6 @@ fn task_schedule() -> Vec<ScheduledTask> {
             cycle_interval: Some(HEALTH_LLM_CYCLE_INTERVAL),
         },
         ScheduledTask {
-            task: BackgroundTask::ProactiveItems,
-            priority: TaskPriority::Normal,
-            cycle_interval: None,
-        },
-        ScheduledTask {
             task: BackgroundTask::EntityBackfills,
             priority: TaskPriority::Normal,
             cycle_interval: None,
@@ -199,11 +190,6 @@ fn task_schedule() -> Vec<ScheduledTask> {
         },
         ScheduledTask {
             task: BackgroundTask::InsightCleanup,
-            priority: TaskPriority::Low,
-            cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
-        },
-        ScheduledTask {
-            task: BackgroundTask::ProactiveCleanup,
             priority: TaskPriority::Low,
             cycle_interval: Some(PONDERING_CYCLE_INTERVAL),
         },
@@ -391,7 +377,6 @@ impl SlowLaneWorker {
         // Clone pools and other needed data upfront to avoid borrow issues with &mut self
         let pool = self.pool.clone();
         let code_pool = self.code_pool.clone();
-        let cycle_count = self.cycle_count;
 
         match task {
             BackgroundTask::StaleSessions => {
@@ -452,13 +437,6 @@ impl SlowLaneWorker {
                 self.run_task(&name, pondering::cleanup_stale_insights(&pool))
                     .await
             }
-            BackgroundTask::ProactiveCleanup => {
-                self.run_task(
-                    &name,
-                    crate::proactive::background::cleanup_expired_suggestions(&pool),
-                )
-                .await
-            }
             BackgroundTask::DiffOutcomes => {
                 self.run_task(
                     &name,
@@ -469,13 +447,6 @@ impl SlowLaneWorker {
             BackgroundTask::TeamMonitor => {
                 self.run_task(&name, team_monitor::process_team_monitor(&pool))
                     .await
-            }
-            BackgroundTask::ProactiveItems => {
-                self.run_task(
-                    &name,
-                    crate::proactive::background::process_proactive(&pool, client, cycle_count),
-                )
-                .await
             }
             BackgroundTask::EntityBackfills => {
                 self.run_task(&name, entity_extraction::process_entity_backfill(&pool))
@@ -729,13 +700,11 @@ mod tests {
         assert!(names.contains(&"health: LLM complexity".to_string()));
         assert!(names.contains(&"health: LLM error quality".to_string()));
         assert!(names.contains(&"health: module analysis".to_string()));
-        assert!(names.contains(&"proactive items".to_string()));
         assert!(names.contains(&"entity backfills".to_string()));
         assert!(names.contains(&"team monitor".to_string()));
         assert!(names.contains(&"documentation tasks".to_string()));
         assert!(names.contains(&"pondering insights".to_string()));
         assert!(names.contains(&"insight cleanup".to_string()));
-        assert!(names.contains(&"proactive cleanup".to_string()));
         assert!(names.contains(&"diff outcomes".to_string()));
         assert!(names.contains(&"data retention".to_string()));
     }

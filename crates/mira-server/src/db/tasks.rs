@@ -313,31 +313,31 @@ pub fn update_goal_sync(
     let tx = conn.unchecked_transaction()?;
     if let Some(title) = title {
         tx.execute(
-            "UPDATE goals SET title = ? WHERE id = ?",
+            "UPDATE goals SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             params![title, id],
         )?;
     }
     if let Some(description) = description {
         tx.execute(
-            "UPDATE goals SET description = ? WHERE id = ?",
+            "UPDATE goals SET description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             params![description, id],
         )?;
     }
     if let Some(status) = status {
         tx.execute(
-            "UPDATE goals SET status = ? WHERE id = ?",
+            "UPDATE goals SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             params![status, id],
         )?;
     }
     if let Some(priority) = priority {
         tx.execute(
-            "UPDATE goals SET priority = ? WHERE id = ?",
+            "UPDATE goals SET priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             params![priority, id],
         )?;
     }
     if let Some(progress) = progress {
         tx.execute(
-            "UPDATE goals SET progress_percent = ? WHERE id = ?",
+            "UPDATE goals SET progress_percent = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             params![progress, id],
         )?;
     }

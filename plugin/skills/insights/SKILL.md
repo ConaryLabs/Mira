@@ -12,8 +12,7 @@ description: This skill should be used when the user asks "what did you learn", 
 ## Instructions
 
 Present the insights above grouped by source:
-- **Pondering**: Background analysis of your work patterns
-- **Proactive**: Suggestions based on current context
+- **Pondering**: Background analysis of your work patterns (stale goals, fragile code, revert clusters, untested hotspots)
 - **Documentation Gaps**: Missing docs that should be written
 
 For each insight show:
@@ -29,5 +28,5 @@ If no insights exist, suggest actions that generate them:
 ## Optional Filters
 
 If user passes arguments, use `mcp__mira__session` tool with filters:
-- `--source pondering|proactive|doc_gap` → `insight_source` parameter
+- `--source pondering|doc_gap` → `insight_source` parameter
 - `--min-confidence 0.7` → `min_confidence` parameter

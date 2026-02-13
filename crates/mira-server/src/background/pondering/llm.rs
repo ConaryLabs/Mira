@@ -154,6 +154,64 @@ fn build_prompt(
         sections.push(format!("## Recent Session Patterns\n{}", items.join("\n")));
     }
 
+    // Recurring errors section
+    if !data.recurring_errors.is_empty() {
+        let items: Vec<String> = data
+            .recurring_errors
+            .iter()
+            .map(|e| {
+                format!(
+                    "- {} in '{}': {} occurrences, unresolved",
+                    truncate(&e.error_template, 80),
+                    e.tool_name,
+                    e.occurrence_count,
+                )
+            })
+            .collect();
+        sections.push(format!(
+            "## Recurring Unresolved Errors\n{}",
+            items.join("\n")
+        ));
+    }
+
+    // Churn hotspots section
+    if !data.churn_hotspots.is_empty() {
+        let items: Vec<String> = data
+            .churn_hotspots
+            .iter()
+            .map(|h| {
+                format!(
+                    "- {}: touched in {} sessions over {} days",
+                    h.file_path, h.sessions_touched, h.period_days,
+                )
+            })
+            .collect();
+        sections.push(format!(
+            "## High-Churn Files (last 30 days)\n{}",
+            items.join("\n")
+        ));
+    }
+
+    // Health trend section
+    if let Some(ref trend) = data.health_trend {
+        let dir = match trend.direction {
+            super::types::TrendDirection::Improving => "improving",
+            super::types::TrendDirection::Stable => "stable",
+            super::types::TrendDirection::Degrading => "degrading",
+        };
+        let mut trend_info = format!(
+            "- Current avg debt score: {:.1}, direction: {}, tier distribution: {}",
+            trend.current_score, dir, trend.current_tier_dist
+        );
+        if let Some(prev) = trend.previous_score {
+            trend_info.push_str(&format!(", previous: {:.1}", prev));
+        }
+        if let Some(avg) = trend.week_avg_score {
+            trend_info.push_str(&format!(", 7-day avg: {:.1}", avg));
+        }
+        sections.push(format!("## Codebase Health Trend\n{}", trend_info));
+    }
+
     // Secondary context: recent tool usage
     if !tool_history.is_empty() {
         let tool_summary: Vec<String> = tool_history
@@ -210,15 +268,16 @@ fn build_prompt(
 {data_block}
 
 ## Task
-Identify 1-3 SPECIFIC, ACTIONABLE insights that are NOT already covered above. Each MUST:
+Identify 1-3 SPECIFIC, ACTIONABLE insights about TEMPORAL/CROSS-SESSION patterns. Each MUST:
 1. Reference specific files, modules, or goals by name
-2. Explain WHY it's a problem
-3. Suggest a concrete next step
+2. Span multiple sessions or days — single-session observations are NOT insights
+3. Explain WHY it's a problem and suggest a concrete next step
 
-BAD: "The developer uses context tools frequently"
-BAD: "Consider adding more tests"
+BAD: "The developer uses context tools frequently" (single-session observation)
+BAD: "Consider adding more tests" (vague, not temporal)
 GOOD: "Goal 94 (deadpool migration) has been in_progress 23 days with 0/3 milestones — check if task 578 is blocking"
 GOOD: "Module 'src/db' had 3 reverts in 24h after pool changes — consider adding integration tests before the next pool refactor"
+GOOD: "'permission denied' error in 'Bash' has recurred 12 times across sessions — likely a persistent environment issue"
 
 If nothing notable, return []. Don't force insights.
 
@@ -226,7 +285,7 @@ JSON format:
 ```json
 [
   {{
-    "pattern_type": "insight_stale_goal|insight_fragile_code|insight_revert_cluster|insight_untested|insight_session|insight_workflow",
+    "pattern_type": "insight_stale_goal|insight_fragile_code|insight_revert_cluster|insight_untested|insight_session|insight_recurring_error|insight_churn_hotspot|insight_health_degrading",
     "description": "Brief, specific description referencing actual project entities",
     "confidence": 0.0-1.0,
     "evidence": ["specific observation 1", "specific observation 2"]
@@ -291,6 +350,9 @@ mod tests {
             revert_clusters: vec![],
             untested_hotspots: vec![],
             session_patterns: vec![],
+            recurring_errors: vec![],
+            churn_hotspots: vec![],
+            health_trend: None,
         };
         let prompt = build_prompt("mira", &data, &[], &[], &[]);
         assert!(prompt.contains("deadpool migration"));
@@ -333,6 +395,6 @@ mod tests {
         assert!(prompt.contains("Existing Insights (DO NOT REPEAT)"));
         assert!(prompt.contains("Error handling quality issues"));
         assert!(prompt.contains("Heavy context switching"));
-        assert!(prompt.contains("NOT already covered above"));
+        assert!(prompt.contains("TEMPORAL/CROSS-SESSION"));
     }
 }

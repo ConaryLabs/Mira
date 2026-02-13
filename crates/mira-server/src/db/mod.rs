@@ -107,6 +107,7 @@ pub use index::{
     insert_symbol_sync,
     queue_pending_embedding_sync,
 };
+pub(crate) use insights::compute_age_days;
 pub use insights::{dismiss_insight_sync, get_unified_insights_sync};
 pub use memory::{
     MemoryScopeInfo,

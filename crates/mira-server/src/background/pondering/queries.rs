@@ -2,8 +2,8 @@
 // Database queries for pondering data gathering
 
 use super::types::{
-    FragileModule, MemoryEntry, ProjectInsightData, RevertCluster, SessionPattern, StaleGoal,
-    ToolUsageEntry, UntestedFile,
+    ChurnHotspot, FragileModule, HealthTrend, MemoryEntry, ProjectInsightData, RecurringError,
+    RevertCluster, SessionPattern, StaleGoal, ToolUsageEntry, TrendDirection, UntestedFile,
 };
 use crate::db::pool::DatabasePool;
 use crate::utils::truncate;
@@ -111,7 +111,6 @@ pub(super) async fn get_recent_memories(
 // ── New project-aware queries ──────────────────────────────────────────
 
 /// Goals with `status = 'in_progress'` that haven't been updated recently.
-/// Uses `created_at` since the goals table has no `updated_at` column.
 pub(super) async fn get_stale_goals(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -125,7 +124,7 @@ pub(super) async fn get_stale_goals(
                     g.title,
                     g.status,
                     g.progress_percent,
-                    CAST(julianday('now') - julianday(g.created_at) AS INTEGER) AS days_since_update,
+                    CAST(julianday('now') - julianday(COALESCE(g.updated_at, g.created_at)) AS INTEGER) AS days_since_update,
                     COALESCE(m_total.cnt, 0) AS milestones_total,
                     COALESCE(m_done.cnt, 0) AS milestones_completed
                 FROM goals g
@@ -142,7 +141,7 @@ pub(super) async fn get_stale_goals(
                 ) m_done ON m_done.goal_id = g.id
                 WHERE g.project_id = ?
                   AND g.status = 'in_progress'
-                  AND g.created_at < datetime('now', '-14 days')
+                  AND COALESCE(g.updated_at, g.created_at) < datetime('now', '-14 days')
                 ORDER BY days_since_update DESC
             "#,
             )
@@ -521,18 +520,187 @@ pub(super) async fn get_session_patterns(
     .await
 }
 
+/// Errors that recur across multiple sessions without resolution (3+ occurrences).
+pub(super) async fn get_recurring_errors(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<Vec<RecurringError>, String> {
+    pool.run(move |conn| {
+        let mut stmt = conn
+            .prepare(
+                r#"SELECT tool_name, error_template, occurrence_count,
+                          first_seen_session_id, last_seen_session_id
+                   FROM error_patterns
+                   WHERE project_id = ?
+                     AND resolved_at IS NULL
+                     AND occurrence_count >= 3
+                   ORDER BY occurrence_count DESC
+                   LIMIT 10"#,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to prepare recurring errors: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![project_id], |row| {
+                Ok(RecurringError {
+                    tool_name: row.get(0)?,
+                    error_template: row.get(1)?,
+                    occurrence_count: row.get(2)?,
+                    first_seen_session_id: row.get(3)?,
+                    last_seen_session_id: row.get(4)?,
+                })
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to query recurring errors: {}", e))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow::anyhow!("Failed to collect recurring errors: {}", e))
+    })
+    .await
+}
+
+/// Files modified frequently across many sessions (5+ sessions in the last 30 days).
+pub(super) async fn get_churn_hotspots(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<Vec<ChurnHotspot>, String> {
+    pool.run(move |conn| {
+        let mut stmt = conn
+            .prepare(
+                r#"SELECT
+                        json_extract(event_data, '$.file_path') AS file_path,
+                        COUNT(DISTINCT session_id) AS sessions_touched,
+                        CAST(julianday('now') - julianday(MIN(timestamp)) AS INTEGER) AS period_days
+                   FROM session_behavior_log
+                   WHERE project_id = ?
+                     AND event_type = 'file_access'
+                     AND timestamp > datetime('now', '-30 days')
+                     AND json_extract(event_data, '$.file_path') IS NOT NULL
+                   GROUP BY file_path
+                   HAVING sessions_touched >= 5
+                   ORDER BY sessions_touched DESC
+                   LIMIT 10"#,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to prepare churn hotspots: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![project_id], |row| {
+                Ok(ChurnHotspot {
+                    file_path: row.get(0)?,
+                    sessions_touched: row.get(1)?,
+                    period_days: row.get(2)?,
+                })
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to query churn hotspots: {}", e))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow::anyhow!("Failed to collect churn hotspots: {}", e))
+    })
+    .await
+}
+
+/// Get health trend from recent snapshots for a project.
+pub(super) async fn get_health_trend(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+) -> Result<Option<HealthTrend>, String> {
+    pool.run(move |conn| {
+        // Get 2 most recent snapshots
+        let mut stmt = conn
+            .prepare(
+                "SELECT avg_debt_score, tier_distribution
+                 FROM health_snapshots
+                 WHERE project_id = ?1
+                 ORDER BY snapshot_at DESC
+                 LIMIT 2",
+            )
+            .map_err(|e| anyhow::anyhow!("prepare health trend: {}", e))?;
+
+        let snapshots: Vec<(f64, String)> = stmt
+            .query_map(params![project_id], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| anyhow::anyhow!("query health trend: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if snapshots.is_empty() {
+            return Ok::<_, anyhow::Error>(None);
+        }
+
+        let current_score = snapshots[0].0;
+        let current_tier_dist = snapshots[0].1.clone();
+        let previous_score = snapshots.get(1).map(|s| s.0);
+
+        // 7-day average
+        let week_avg: Option<f64> = conn
+            .query_row(
+                "SELECT AVG(avg_debt_score) FROM health_snapshots
+                 WHERE project_id = ?1
+                   AND snapshot_at > datetime('now', '-7 days')",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        // Snapshot count
+        let snapshot_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM health_snapshots WHERE project_id = ?1",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Determine direction: >10% change threshold
+        let direction = match previous_score {
+            Some(prev) if prev > 0.0 => {
+                let delta_pct = ((current_score - prev) / prev) * 100.0;
+                if delta_pct > 10.0 {
+                    TrendDirection::Degrading // higher score = worse
+                } else if delta_pct < -10.0 {
+                    TrendDirection::Improving // lower score = better
+                } else {
+                    TrendDirection::Stable
+                }
+            }
+            _ => TrendDirection::Stable,
+        };
+
+        Ok(Some(HealthTrend {
+            current_score,
+            previous_score,
+            week_avg_score: week_avg,
+            current_tier_dist,
+            snapshot_count,
+            direction,
+        }))
+    })
+    .await
+}
+
 /// Gather all project insight data in one call.
 pub(super) async fn get_project_insight_data(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<ProjectInsightData, String> {
     // Run all queries concurrently
-    let (stale_goals, fragile_modules, revert_clusters, untested_hotspots, session_patterns) = tokio::join!(
+    let (
+        stale_goals,
+        fragile_modules,
+        revert_clusters,
+        untested_hotspots,
+        session_patterns,
+        recurring_errors,
+        churn_hotspots,
+        health_trend,
+    ) = tokio::join!(
         get_stale_goals(pool, project_id),
         get_fragile_modules(pool, project_id),
         get_recent_revert_clusters(pool, project_id),
         get_untested_hotspots(pool, project_id),
         get_session_patterns(pool, project_id),
+        get_recurring_errors(pool, project_id),
+        get_churn_hotspots(pool, project_id),
+        get_health_trend(pool, project_id),
     );
 
     Ok(ProjectInsightData {
@@ -541,6 +709,9 @@ pub(super) async fn get_project_insight_data(
         revert_clusters: revert_clusters.unwrap_or_default(),
         untested_hotspots: untested_hotspots.unwrap_or_default(),
         session_patterns: session_patterns.unwrap_or_default(),
+        recurring_errors: recurring_errors.unwrap_or_default(),
+        churn_hotspots: churn_hotspots.unwrap_or_default(),
+        health_trend: health_trend.unwrap_or(None),
     })
 }
 

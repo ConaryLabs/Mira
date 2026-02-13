@@ -104,6 +104,7 @@ pub fn get_pending_interventions_sync(
            WHERE bp.project_id = ?
              AND bp.confidence >= ?
              AND bp.last_triggered_at > datetime('now', '-7 days')
+             AND (bp.dismissed IS NULL OR bp.dismissed = 0)
              AND NOT EXISTS (
                  SELECT 1 FROM proactive_interventions pi
                  WHERE pi.trigger_pattern_id = bp.id

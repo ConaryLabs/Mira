@@ -8,8 +8,7 @@ use crate::fuzzy::FuzzyCache;
 use crate::hooks::{
     get_code_db_path, get_db_path, read_hook_input, resolve_project, write_hook_output,
 };
-use crate::proactive::background::get_pre_generated_suggestions;
-use crate::proactive::{behavior::BehaviorTracker, predictor};
+use crate::proactive::behavior::BehaviorTracker;
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -32,14 +31,13 @@ async fn log_behavior(pool: &Arc<DatabasePool>, project_id: i64, session_id: &st
     .await;
 }
 
-/// Get proactive context predictions (hybrid: pre-generated + on-the-fly + pondering insights)
+/// Get proactive context from pondering-based insights
 async fn get_proactive_context(
     pool: &Arc<DatabasePool>,
     project_id: i64,
-    project_path: Option<&str>,
+    _project_path: Option<&str>,
     session_id: Option<&str>,
 ) -> Option<String> {
-    let project_path_owned = project_path.map(|s| s.to_string());
     let session_id_owned = session_id.map(|s| s.to_string());
     pool.interact(move |conn| {
         let config =
@@ -49,100 +47,23 @@ async fn get_proactive_context(
             return Ok::<Option<String>, anyhow::Error>(None);
         }
 
-        let recent_files =
-            crate::proactive::behavior::get_recent_file_sequence(conn, project_id, 3)
-                .unwrap_or_default();
-        let current_file = recent_files.first().cloned();
-
-        // 1. Try pre-generated LLM suggestions (fast O(1) lookup)
-        if let Some(ref file) = current_file
-            && let Ok(pre_gen) = get_pre_generated_suggestions(conn, project_id, file)
-            && !pre_gen.is_empty()
-        {
-            let context_lines: Vec<String> = pre_gen
-                .iter()
-                .take(2)
-                .map(|(text, conf)| {
-                    let conf_label = if *conf >= 0.9 {
-                        "high confidence"
-                    } else if *conf >= 0.7 {
-                        "medium confidence"
-                    } else {
-                        "suggested"
-                    };
-                    format!("[Mira/proactive] {} ({})", text, conf_label)
-                })
-                .collect();
-
-            if !context_lines.is_empty() {
-                return Ok(Some(context_lines.join("\n")));
-            }
-        }
-
-        // 2. Fallback: On-the-fly pattern matching
-        let current_context = predictor::CurrentContext {
-            current_file,
-            last_tool: None,
-            recent_queries: vec![],
-            session_stage: None,
-        };
-
-        let mut predictions =
-            predictor::generate_context_predictions(conn, project_id, &current_context, &config)
-                .unwrap_or_default();
-
-        // Filter out stale file predictions
-        if let Some(ref base) = project_path_owned {
-            predictions.retain(|p| match p.prediction_type {
-                predictor::PredictionType::NextFile | predictor::PredictionType::RelatedFiles => {
-                    let base_path = Path::new(base);
-                    let joined = base_path.join(&p.content);
-                    // Canonicalize to resolve .. segments; reject paths escaping project root
-                    let ok = joined
-                        .canonicalize()
-                        .map(|canon| {
-                            canon.starts_with(
-                                base_path
-                                    .canonicalize()
-                                    .unwrap_or_else(|_| base_path.to_path_buf()),
-                            )
-                        })
-                        .unwrap_or(false);
-                    if !ok {
-                        tracing::debug!("Dropping invalid/stale file prediction: {}", p.content);
-                    }
-                    ok
-                }
-                _ => true,
-            });
-        }
+        // Pondering-based insights (behavior_patterns + documentation interventions)
+        let pending = crate::proactive::interventions::get_pending_interventions_sync(
+            conn, project_id, &config,
+        )
+        .unwrap_or_default();
 
         let mut context_lines: Vec<String> = Vec::new();
+        for intervention in pending.iter().take(2) {
+            context_lines.push(format!("[Mira/insight] {}", intervention.format()));
 
-        // On-the-fly prediction context (file/tool patterns)
-        if !predictions.is_empty() {
-            let suggestions = predictor::predictions_to_interventions(&predictions, &config);
-            context_lines.extend(suggestions.iter().take(2).map(|s| s.to_context_string()));
-        }
-
-        // 3. Pondering-based insights (behavior_patterns + documentation interventions)
-        let remaining_slots = 2usize.saturating_sub(context_lines.len());
-        if remaining_slots > 0
-            && let Ok(pending) = crate::proactive::interventions::get_pending_interventions_sync(
-                conn, project_id, &config,
-            )
-        {
-            for intervention in pending.iter().take(remaining_slots) {
-                context_lines.push(format!("[Mira/insight] {}", intervention.format()));
-
-                // Record that we showed this intervention (for cooldown/dedup/feedback)
-                let _ = crate::proactive::interventions::record_intervention_sync(
-                    conn,
-                    project_id,
-                    session_id_owned.as_deref(),
-                    intervention,
-                );
-            }
+            // Record that we showed this intervention (for cooldown/dedup/feedback)
+            let _ = crate::proactive::interventions::record_intervention_sync(
+                conn,
+                project_id,
+                session_id_owned.as_deref(),
+                intervention,
+            );
         }
 
         if context_lines.is_empty() {

@@ -41,7 +41,7 @@ All data persistence goes through this module. Built on rusqlite with the sqlite
 | `diff_analysis` | Git diff semantic analysis caching |
 | `diff_outcomes` | Diff outcome tracking |
 | `entities` | Entity storage and retrieval |
-| `insights` | Insight storage from pondering/proactive analysis |
+| `insights` | Insight storage from pondering analysis and documentation gaps |
 | `tech_debt` | Per-module tech debt scores |
 | `dependencies` | Module dependency tracking |
 | `retention` | Data retention and cleanup policies |

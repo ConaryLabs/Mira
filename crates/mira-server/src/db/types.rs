@@ -100,6 +100,12 @@ pub struct UnifiedInsight {
     pub evidence: Option<String>,
     /// Row ID from behavior_patterns (pondering) for marking as shown
     pub row_id: Option<i64>,
+    /// Trend direction for health insights: "improved", "degraded", or "stable"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trend: Option<String>,
+    /// Human-readable change summary, e.g. "B → C" or "42.3 → 58.1"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_summary: Option<String>,
 }
 
 /// Project briefing (What's New since last session)

@@ -72,4 +72,10 @@ pub struct InsightItem {
     pub confidence: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
+    /// Trend direction when applicable (health insights)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trend: Option<String>,
+    /// Change summary when applicable (health insights)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_summary: Option<String>,
 }

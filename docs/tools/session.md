@@ -78,11 +78,11 @@ List recent LLM usage records grouped by role.
 
 ### insights
 
-Query unified insights digest combining pondering analysis, proactive suggestions, and documentation gaps.
+Query unified insights digest combining pondering analysis and documentation gap detection.
 
 **Parameters:**
 - `action` (string, required) - `"insights"`
-- `insight_source` (string, optional) - Filter by source: `pondering`, `proactive`, `doc_gap`
+- `insight_source` (string, optional) - Filter by source: `pondering`, `doc_gap`
 - `min_confidence` (float, optional) - Minimum confidence threshold 0.0-1.0 (default: 0.5)
 - `since_days` (integer, optional) - Look back period in days (default: 30)
 - `limit` (integer, optional) - Max results (default: 20)
@@ -127,6 +127,26 @@ Cancel a running background task.
 - `task_id` (string, required) - Task ID to cancel
 
 **Returns:** Confirmation or "not found" message.
+
+### storage_status
+
+Show database storage size and data retention policy.
+
+**Parameters:**
+- `action` (string, required) - `"storage_status"`
+
+**Returns:** Database file sizes, row counts per table, and configured retention periods.
+
+### cleanup
+
+Run data cleanup to remove old records based on retention policy.
+
+**Parameters:**
+- `action` (string, required) - `"cleanup"`
+- `category` (string, optional) - Category to clean: `sessions`, `analytics`, `chat`, `behavior`, `all` (default: `all`)
+- `dry_run` (boolean, optional) - Preview what would be cleaned without deleting (default: `true`)
+
+**Returns:** Summary of rows that would be (or were) deleted per table.
 
 ## Examples
 

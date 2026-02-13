@@ -145,6 +145,13 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             days: config.observations_days,
             extra_filter: "",
         },
+        // ── Health snapshots (same cadence as observations) ──
+        RetentionRule {
+            table: "health_snapshots",
+            time_column: "snapshot_at",
+            days: config.observations_days,
+            extra_filter: "",
+        },
         // ── Short-lived operational data (hardcoded 7 days) ──
         RetentionRule {
             table: "background_batches",

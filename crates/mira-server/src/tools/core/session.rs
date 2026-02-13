@@ -4,7 +4,7 @@
 use crate::config::file::{MiraConfig, RetentionConfig};
 use crate::db::retention::{cleanup_orphans, count_retention_candidates, run_data_retention_sync};
 use crate::db::{
-    build_session_recap_sync, create_session_ext_sync, dismiss_insight_sync,
+    build_session_recap_sync, compute_age_days, create_session_ext_sync, dismiss_insight_sync,
     get_recent_sessions_sync, get_session_history_sync, get_unified_insights_sync,
 };
 use crate::hooks::session::{read_claude_session_id, read_source_info};
@@ -140,7 +140,13 @@ async fn query_insights<C: ToolContext>(
             } else {
                 "[INFO]"
             };
-            output.push_str(&format!("{} {}\n", prefix, insight.description,));
+            let age = format_age(&insight.timestamp);
+            output.push_str(&format!("{} {}{}\n", prefix, insight.description, age));
+            if let Some(ref trend) = insight.trend
+                && let Some(ref summary) = insight.change_summary
+            {
+                output.push_str(&format!("    Trend: {} ({})\n", trend, summary));
+            }
             if let Some(ref evidence) = insight.evidence {
                 output.push_str(&format!("    {}\n", evidence));
             }
@@ -153,6 +159,8 @@ async fn query_insights<C: ToolContext>(
                 priority_score: insight.priority_score,
                 confidence: insight.confidence,
                 evidence: insight.evidence.clone(),
+                trend: insight.trend.clone(),
+                change_summary: insight.change_summary.clone(),
             }
         })
         .collect();
@@ -493,6 +501,21 @@ pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, String
 
 /// Helper: count rows in a table, returning 0 if the table doesn't exist.
 fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
+    const ALLOWED_TABLES: &[&str] = &[
+        "memory_facts",
+        "sessions",
+        "tool_history",
+        "chat_messages",
+        "llm_usage",
+        "embeddings_usage",
+        "behavior_patterns",
+        "goals",
+        "system_observations",
+        "health_snapshots",
+    ];
+    if !ALLOWED_TABLES.contains(&table) {
+        return 0;
+    }
     let sql = format!("SELECT COUNT(*) FROM {table}");
     conn.query_row(&sql, [], |row| row.get::<_, usize>(0))
         .unwrap_or(0)
@@ -792,5 +815,21 @@ async fn cleanup<C: ToolContext>(
             message: report,
             data: None,
         }))
+    }
+}
+
+/// Format an insight timestamp as a human-readable age suffix.
+fn format_age(timestamp: &str) -> String {
+    let age_days = compute_age_days(timestamp);
+    if age_days < 1.0 {
+        " (today)".to_string()
+    } else if age_days < 2.0 {
+        " (yesterday)".to_string()
+    } else if age_days < 7.0 {
+        format!(" ({} days ago)", age_days as i64)
+    } else if age_days < 14.0 {
+        " (last week)".to_string()
+    } else {
+        format!(" ({} weeks ago)", (age_days / 7.0) as i64)
     }
 }

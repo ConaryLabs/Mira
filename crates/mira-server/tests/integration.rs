@@ -3118,7 +3118,7 @@ async fn test_dismiss_insight_success() {
 
     // Insert an insight for this project
     let row_id =
-        insert_behavior_pattern(&ctx, project.id, "insight_friction", "test_dismiss_1").await;
+        insert_behavior_pattern(&ctx, project.id, "insight_fragile_code", "test_dismiss_1").await;
 
     // Dismiss it
     let req = SessionRequest {
@@ -3160,8 +3160,13 @@ async fn test_dismiss_insight_cross_project_blocked() {
     .await
     .expect("session_start failed");
     let project_a = ctx.get_project().await.expect("project A should be set");
-    let row_id =
-        insert_behavior_pattern(&ctx, project_a.id, "insight_friction", "cross_project_1").await;
+    let row_id = insert_behavior_pattern(
+        &ctx,
+        project_a.id,
+        "insight_fragile_code",
+        "cross_project_1",
+    )
+    .await;
 
     // Switch to project B
     session_start(

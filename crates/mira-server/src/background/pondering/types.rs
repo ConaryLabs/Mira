@@ -36,6 +36,9 @@ pub(crate) struct ProjectInsightData {
     pub revert_clusters: Vec<RevertCluster>,
     pub untested_hotspots: Vec<UntestedFile>,
     pub session_patterns: Vec<SessionPattern>,
+    pub recurring_errors: Vec<RecurringError>,
+    pub churn_hotspots: Vec<ChurnHotspot>,
+    pub health_trend: Option<HealthTrend>,
 }
 
 impl ProjectInsightData {
@@ -46,6 +49,9 @@ impl ProjectInsightData {
             || !self.revert_clusters.is_empty()
             || !self.untested_hotspots.is_empty()
             || !self.session_patterns.is_empty()
+            || !self.recurring_errors.is_empty()
+            || !self.churn_hotspots.is_empty()
+            || self.health_trend.is_some()
     }
 }
 
@@ -93,4 +99,43 @@ pub(crate) struct UntestedFile {
 pub(crate) struct SessionPattern {
     pub description: String,
     pub count: i64,
+}
+
+/// An error that recurs across multiple sessions without resolution.
+#[derive(Debug)]
+pub(crate) struct RecurringError {
+    pub tool_name: String,
+    pub error_template: String,
+    pub occurrence_count: i64,
+    #[allow(dead_code)] // Stored for future cross-session linking
+    pub first_seen_session_id: Option<String>,
+    #[allow(dead_code)] // Stored for future cross-session linking
+    pub last_seen_session_id: Option<String>,
+}
+
+/// A file modified frequently across many sessions (high churn).
+#[derive(Debug)]
+pub(crate) struct ChurnHotspot {
+    pub file_path: String,
+    pub sessions_touched: i64,
+    pub period_days: i64,
+}
+
+/// Direction of health trend change
+#[derive(Debug)]
+pub(crate) enum TrendDirection {
+    Improving,
+    Stable,
+    Degrading,
+}
+
+/// Health trend data from comparing recent snapshots
+#[derive(Debug)]
+pub(crate) struct HealthTrend {
+    pub current_score: f64,
+    pub previous_score: Option<f64>,
+    pub week_avg_score: Option<f64>,
+    pub current_tier_dist: String, // JSON
+    pub snapshot_count: i64,
+    pub direction: TrendDirection,
 }

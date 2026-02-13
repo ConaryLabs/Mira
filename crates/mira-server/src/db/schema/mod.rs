@@ -231,6 +231,16 @@ fn migration_registry() -> Vec<Migration> {
             name: "error_patterns_table",
             func: intelligence::migrate_error_patterns_table,
         },
+        Migration {
+            version: 40,
+            name: "goals_updated_at",
+            func: migrate_goals_updated_at,
+        },
+        Migration {
+            version: 41,
+            name: "health_snapshots_table",
+            func: migrate_health_snapshots_table,
+        },
     ]
 }
 
@@ -451,6 +461,43 @@ fn drop_dead_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Add health_snapshots table for codebase evolution tracking
+fn migrate_health_snapshots_table(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::create_table_if_missing;
+    create_table_if_missing(
+        conn,
+        "health_snapshots",
+        r#"
+        CREATE TABLE IF NOT EXISTS health_snapshots (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            snapshot_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            module_count INTEGER NOT NULL,
+            avg_debt_score REAL NOT NULL,
+            max_debt_score REAL NOT NULL,
+            tier_distribution TEXT NOT NULL,
+            warning_count INTEGER DEFAULT 0,
+            todo_count INTEGER DEFAULT 0,
+            unwrap_count INTEGER DEFAULT 0,
+            error_handling_count INTEGER DEFAULT 0,
+            total_finding_count INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_health_snap_project_time ON health_snapshots(project_id, snapshot_at);
+    "#,
+    )
+}
+
+/// Add updated_at column to goals table for accurate stale-goal detection
+fn migrate_goals_updated_at(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::add_column_if_missing;
+    add_column_if_missing(
+        conn,
+        "goals",
+        "updated_at",
+        "TEXT DEFAULT CURRENT_TIMESTAMP",
+    )
+}
+
 /// Database schema SQL
 pub const SCHEMA: &str = r#"
 -- =======================================
@@ -534,7 +581,8 @@ CREATE TABLE IF NOT EXISTS goals (
     status TEXT DEFAULT 'planning',
     priority TEXT DEFAULT 'medium',
     progress_percent INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_goals_project_status_created ON goals(project_id, status, created_at DESC, id DESC);
 
