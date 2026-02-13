@@ -101,9 +101,10 @@ pub async fn run() -> Result<()> {
                     .query_row(
                         "SELECT COUNT(*), COALESCE(MAX(sequence_position), 0)
                          FROM session_behavior_log
-                         WHERE session_id = ? AND event_type = 'tool_failure'
+                         WHERE session_id = ? AND project_id = ?
+                           AND event_type = 'tool_failure'
                            AND json_extract(event_data, '$.error_fingerprint') = ?",
-                        rusqlite::params![&session_id, fingerprint],
+                        rusqlite::params![&session_id, project_id, fingerprint],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .ok();
