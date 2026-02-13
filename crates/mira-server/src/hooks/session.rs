@@ -590,6 +590,11 @@ pub(crate) async fn build_resume_context(
                 // Insert at the beginning for prominence
                 context_parts.insert(0, format!("**You were working on:** {}", working_on));
             }
+
+            // Surface pre-compaction context if available
+            if let Some(compaction_summary) = build_compaction_summary(&snap) {
+                context_parts.push(compaction_summary);
+            }
         }
     }
 
@@ -709,6 +714,68 @@ pub(crate) fn build_working_on_summary(snapshot: &serde_json::Value) -> Option<S
     }
 
     Some(parts.join(", "))
+}
+
+/// Build a summary of pre-compaction context from the snapshot's `compaction_context` field.
+///
+/// Returns a formatted string with decisions, pending tasks, issues, and active work,
+/// or None if no compaction context is present or all categories are empty.
+pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<String> {
+    let cc = snapshot.get("compaction_context")?;
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(decisions) = cc.get("decisions").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = decisions
+            .iter()
+            .filter_map(|d| d.as_str())
+            .take(3)
+            .collect();
+        if !items.is_empty() {
+            parts.push(format!("Decisions: {}", items.join("; ")));
+        }
+    }
+
+    if let Some(pending) = cc.get("pending_tasks").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = pending
+            .iter()
+            .filter_map(|d| d.as_str())
+            .take(3)
+            .collect();
+        if !items.is_empty() {
+            parts.push(format!("Pending: {}", items.join("; ")));
+        }
+    }
+
+    if let Some(issues) = cc.get("issues").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = issues
+            .iter()
+            .filter_map(|d| d.as_str())
+            .take(3)
+            .collect();
+        if !items.is_empty() {
+            parts.push(format!("Issues: {}", items.join("; ")));
+        }
+    }
+
+    if let Some(active) = cc.get("active_work").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = active
+            .iter()
+            .filter_map(|d| d.as_str())
+            .take(1)
+            .collect();
+        if !items.is_empty() {
+            parts.push(format!("Active work: {}", items[0]));
+        }
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "**Pre-compaction context:**\n{}",
+        parts.join("\n")
+    ))
 }
 
 /// Infer a human-readable activity description from the most-used tools
@@ -1139,5 +1206,92 @@ mod tests {
     #[test]
     fn test_infer_activity_unknown() {
         assert_eq!(infer_activity_from_tools(&["SomeTool"]), "");
+    }
+
+    // ============================================================================
+    // build_compaction_summary tests
+    // ============================================================================
+
+    #[test]
+    fn test_compaction_summary_all_categories() {
+        let snapshot = serde_json::json!({
+            "tool_count": 10,
+            "compaction_context": {
+                "decisions": ["chose builder pattern for Config"],
+                "pending_tasks": ["add validation for user input"],
+                "issues": ["connection refused when connecting to database"],
+                "active_work": ["working on database migration"]
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(summary.contains("Pre-compaction context:"), "got: {}", summary);
+        assert!(summary.contains("Decisions:"), "got: {}", summary);
+        assert!(summary.contains("builder pattern"), "got: {}", summary);
+        assert!(summary.contains("Pending:"), "got: {}", summary);
+        assert!(summary.contains("Issues:"), "got: {}", summary);
+        assert!(summary.contains("Active work:"), "got: {}", summary);
+    }
+
+    #[test]
+    fn test_compaction_summary_partial_categories() {
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "decisions": ["chose SQLite"],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": []
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(summary.contains("Decisions:"), "got: {}", summary);
+        assert!(!summary.contains("Pending:"), "got: {}", summary);
+        assert!(!summary.contains("Issues:"), "got: {}", summary);
+    }
+
+    #[test]
+    fn test_compaction_summary_none_when_absent() {
+        let snapshot = serde_json::json!({
+            "tool_count": 5,
+            "top_tools": [],
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compaction_summary_none_when_all_empty() {
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "decisions": [],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": []
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compaction_summary_limits_items() {
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "decisions": ["d1", "d2", "d3", "d4", "d5"],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": []
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        // take(3) limits to 3 decisions shown
+        assert!(summary.contains("d1"), "got: {}", summary);
+        assert!(summary.contains("d3"), "got: {}", summary);
+        assert!(!summary.contains("d4"), "got: {}", summary);
     }
 }

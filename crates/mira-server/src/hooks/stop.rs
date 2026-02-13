@@ -491,12 +491,28 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
     // Get files modified (Write/Edit/NotebookEdit/MultiEdit tool calls)
     let files_modified = super::get_session_modified_files_sync(conn, session_id);
 
-    let snapshot = serde_json::json!({
+    // Check if a compaction_context was stored by PreCompact hook
+    let existing_compaction: Option<serde_json::Value> = conn
+        .query_row(
+            "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+            [session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
+        .and_then(|snap| snap.get("compaction_context").cloned());
+
+    let mut snapshot = serde_json::json!({
         "tool_count": tool_count,
         "top_tools": top_tools_json,
         "top_tool_names": top_tools,
         "files_modified": files_modified,
     });
+
+    // Preserve compaction_context from PreCompact hook
+    if let Some(compaction) = existing_compaction {
+        snapshot["compaction_context"] = compaction;
+    }
 
     let snapshot_str = serde_json::to_string(&snapshot)?;
 
@@ -716,5 +732,90 @@ mod tests {
         for g in &goals {
             assert!(!g.contains("Project 2"));
         }
+    }
+
+    // ── save_session_snapshot preserves compaction_context ────────────────
+
+    #[test]
+    fn snapshot_preserves_compaction_context() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/compact-test");
+        seed_session(&conn, "compact-sess", pid, "active");
+        seed_tool_history(&conn, "compact-sess", "Read", r#"{"file_path":"/tmp/f.rs"}"#, "ok");
+
+        // Simulate PreCompact having stored a compaction_context
+        let precompact_snapshot = serde_json::json!({
+            "compaction_context": {
+                "decisions": ["chose builder pattern"],
+                "active_work": ["working on migration"],
+                "issues": [],
+                "pending_tasks": ["add validation"]
+            }
+        });
+        conn.execute(
+            "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+             VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params!["compact-sess", serde_json::to_string(&precompact_snapshot).unwrap()],
+        )
+        .unwrap();
+
+        // Now run save_session_snapshot (simulating the Stop hook)
+        save_session_snapshot(&conn, "compact-sess").unwrap();
+
+        // Verify compaction_context is preserved
+        let snapshot_str: String = conn
+            .query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                ["compact-sess"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+
+        // Should have both tool data and compaction_context
+        assert!(snapshot.get("tool_count").is_some(), "missing tool_count");
+        assert!(
+            snapshot.get("compaction_context").is_some(),
+            "compaction_context was lost during stop hook snapshot"
+        );
+        let cc = snapshot.get("compaction_context").unwrap();
+        assert!(
+            cc.get("decisions")
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false),
+            "decisions were lost"
+        );
+    }
+
+    #[test]
+    fn snapshot_without_precompact_has_no_compaction_context() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/no-compact-test");
+        seed_session(&conn, "no-compact-sess", pid, "active");
+        seed_tool_history(
+            &conn,
+            "no-compact-sess",
+            "Read",
+            r#"{"file_path":"/tmp/f.rs"}"#,
+            "ok",
+        );
+
+        save_session_snapshot(&conn, "no-compact-sess").unwrap();
+
+        let snapshot_str: String = conn
+            .query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                ["no-compact-sess"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+
+        assert!(snapshot.get("tool_count").is_some());
+        assert!(
+            snapshot.get("compaction_context").is_none(),
+            "compaction_context should not exist when PreCompact didn't run"
+        );
     }
 }
