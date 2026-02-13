@@ -460,10 +460,30 @@ async fn test_compaction_context_end_to_end() {
     );
 
     // Gap fix 1: Use extract_and_save_context for the DB write instead of manual INSERT.
-    // This tests the actual read/merge/upsert behavior (parse → extract → upsert snapshot).
+    // First call exercises the INSERT path (no prior snapshot).
     super::precompact::extract_and_save_context(&pool, "e2e-sess", &transcript)
         .await
-        .expect("extract_and_save_context should succeed");
+        .expect("extract_and_save_context (insert) should succeed");
+
+    // Second call exercises the UPDATE/merge path (snapshot already exists).
+    let transcript2 = r#"{"role":"assistant","content":"We decided to switch from mutex to rwlock for better read concurrency."}"#;
+    super::precompact::extract_and_save_context(&pool, "e2e-sess", transcript2)
+        .await
+        .expect("extract_and_save_context (merge) should succeed");
+
+    // Verify the merge overwrote compaction_context (second transcript's content wins)
+    let merged_snap = db(&pool, |conn| {
+        Ok::<_, anyhow::Error>(super::session::get_session_snapshot_sync(conn, "e2e-sess"))
+    })
+    .await;
+    let merged: serde_json::Value =
+        serde_json::from_str(&merged_snap.unwrap()).unwrap();
+    let cc = merged.get("compaction_context").unwrap();
+    let decisions = cc.get("decisions").and_then(|d| d.as_array()).unwrap();
+    assert!(
+        decisions.iter().any(|d| d.as_str().unwrap().contains("rwlock")),
+        "merged snapshot should contain second transcript's decision"
+    );
 
     // ── Step 2: Simulate Stop hook ───────────────────────────────────────
     // save_session_snapshot overwrites the snapshot but should preserve compaction_context
@@ -500,7 +520,7 @@ async fn test_compaction_context_end_to_end() {
     assert!(summary.is_some(), "compaction summary should be present");
     let summary_text = summary.unwrap();
 
-    // Verify the summary contains content from the original transcript
+    // Verify the summary reflects the merged (second) compaction context
     assert!(
         summary_text.contains("Pre-compaction context:"),
         "got: {}",
@@ -511,14 +531,10 @@ async fn test_compaction_context_end_to_end() {
         "got: {}",
         summary_text
     );
+    // The second transcript's decision should appear in the final summary
     assert!(
-        summary_text.contains("Pending:"),
-        "got: {}",
-        summary_text
-    );
-    assert!(
-        summary_text.contains("Issues:"),
-        "got: {}",
+        summary_text.contains("rwlock"),
+        "summary should contain merged transcript's decision, got: {}",
         summary_text
     );
 }
