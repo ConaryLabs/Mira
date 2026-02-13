@@ -388,21 +388,33 @@ async fn test_save_session_snapshot_empty_session() {
 async fn test_compaction_context_end_to_end() {
     let (pool, project_id) = setup_test_pool_with_project().await;
 
-    // ── Step 1: Simulate PreCompact ──────────────────────────────────────
-    // Build a realistic JSONL transcript
+    // ── Step 1: Use extract_and_save_context (the actual DB function) ────
+    // Build a realistic JSONL transcript. The tool_use message comes before
+    // the final substantive assistant message so active_work captures real work,
+    // not a trivial "Let me read" line.
     let transcript = [
         r#"{"role":"user","content":"Let's refactor the database layer."}"#,
         r#"{"role":"assistant","content":"I'll start by reviewing the current code.\n\nWe decided to use connection pooling for all database access.\n\nTODO: add migration support for schema changes.\n\nerror: the current test suite fails on concurrent access."}"#,
         r#"{"role":"user","content":"Good analysis. What's next?"}"#,
-        r#"{"role":"assistant","content":"Working on the connection pool implementation now.\n\nI will use deadpool-sqlite as the pooling library."}"#,
-        // Include a tool_use block that should be filtered out
-        r#"{"role":"assistant","content":[{"type":"text","text":"Let me read the file."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/src/db.rs"}}]}"#,
-        // Include a system message that should be skipped
+        // tool_use block: text portion is extracted, tool_use input is NOT
+        r#"{"role":"assistant","content":[{"type":"text","text":"Let me read the file."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/src/secret_tool_payload.rs"}}]}"#,
+        // system message should be entirely skipped
         r#"{"role":"system","content":"You are a helpful decided to assistant with error: handling."}"#,
+        // Final assistant message: substantive content that should become active_work
+        r#"{"role":"assistant","content":"Working on the connection pool implementation now.\n\nI will use deadpool-sqlite as the pooling library."}"#,
     ]
     .join("\n");
 
-    // Parse and extract (the functions under test)
+    // Seed session and tool history first
+    db(&pool, move |conn| {
+        seed_session(conn, "e2e-sess", project_id, "active");
+        seed_tool_history(conn, "e2e-sess", "Edit", r#"{"file_path":"/src/db.rs"}"#, "ok");
+        seed_tool_history(conn, "e2e-sess", "Read", r#"{"file_path":"/src/lib.rs"}"#, "ok");
+        Ok(())
+    })
+    .await;
+
+    // Verify parse + extract individually for content assertions
     let messages = super::precompact::parse_transcript_messages(&transcript);
     let ctx = super::precompact::extract_compaction_context(&messages);
 
@@ -418,7 +430,13 @@ async fn test_compaction_context_end_to_end() {
         "should have captured active work"
     );
 
-    // Verify system message content was NOT extracted
+    // Gap fix 3: Assert active_work captured substantive content, not a trivial line
+    assert!(
+        ctx.active_work[0].contains("connection pool"),
+        "active_work should contain substantive last-assistant content, got: {}",
+        ctx.active_work[0]
+    );
+
     let all_text: String = ctx
         .decisions
         .iter()
@@ -428,29 +446,24 @@ async fn test_compaction_context_end_to_end() {
         .cloned()
         .collect::<Vec<_>>()
         .join(" ");
+
+    // Verify system message content was NOT extracted
     assert!(
         !all_text.contains("helpful decided to assistant"),
         "system role content should have been filtered out"
     );
 
-    // Write to session_snapshots (simulating precompact's pool.interact)
-    let ctx_json = serde_json::to_value(&ctx).unwrap();
-    db(&pool, move |conn| {
-        seed_session(conn, "e2e-sess", project_id, "active");
-        // Seed tool history so the Stop snapshot has data
-        seed_tool_history(conn, "e2e-sess", "Edit", r#"{"file_path":"/src/db.rs"}"#, "ok");
-        seed_tool_history(conn, "e2e-sess", "Read", r#"{"file_path":"/src/lib.rs"}"#, "ok");
+    // Gap fix 2: Assert tool_use payloads were excluded from extracted context
+    assert!(
+        !all_text.contains("secret_tool_payload"),
+        "tool_use input data should not appear in extracted context"
+    );
 
-        let snapshot = serde_json::json!({ "compaction_context": ctx_json });
-        let snapshot_str = serde_json::to_string(&snapshot)?;
-        conn.execute(
-            "INSERT INTO session_snapshots (session_id, snapshot, created_at)
-             VALUES (?1, ?2, datetime('now'))",
-            rusqlite::params!["e2e-sess", snapshot_str],
-        )?;
-        Ok(())
-    })
-    .await;
+    // Gap fix 1: Use extract_and_save_context for the DB write instead of manual INSERT.
+    // This tests the actual read/merge/upsert behavior (parse → extract → upsert snapshot).
+    super::precompact::extract_and_save_context(&pool, "e2e-sess", &transcript)
+        .await
+        .expect("extract_and_save_context should succeed");
 
     // ── Step 2: Simulate Stop hook ───────────────────────────────────────
     // save_session_snapshot overwrites the snapshot but should preserve compaction_context

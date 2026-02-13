@@ -288,7 +288,7 @@ pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> Comp
 /// UPSERTs a `compaction_context` field into the session snapshot.
 /// If a snapshot already exists (from a prior compaction), it merges;
 /// if not, it creates a partial snapshot.
-async fn extract_and_save_context(
+pub(crate) async fn extract_and_save_context(
     pool: &Arc<DatabasePool>,
     session_id: &str,
     transcript: &str,
