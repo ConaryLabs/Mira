@@ -110,12 +110,11 @@ pub fn resolve_error_pattern_sync(
     )
 }
 
-/// Look up the most recent unresolved error pattern for a tool in a project.
+/// Look up unresolved error patterns for a tool in a project.
 ///
-/// Only returns a pattern if it has `occurrence_count >= 3`, ensuring we don't
-/// auto-resolve one-off errors. Returns at most one pattern (the most recently
-/// updated) to avoid incorrectly resolving unrelated fingerprints when a tool
-/// has multiple distinct failure modes.
+/// Only returns patterns with `occurrence_count >= 3`, ensuring we don't
+/// auto-resolve one-off errors. Callers (post_tool.rs) further validate
+/// each candidate by checking per-session fingerprint counts before resolving.
 pub fn get_unresolved_patterns_for_tool_sync(
     conn: &Connection,
     project_id: i64,
@@ -128,9 +127,7 @@ pub fn get_unresolved_patterns_for_tool_sync(
            AND tool_name = ?2
            AND last_seen_session_id = ?3
            AND resolved_at IS NULL
-           AND occurrence_count >= 3
-         ORDER BY updated_at DESC, id DESC
-         LIMIT 1",
+           AND occurrence_count >= 3",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -437,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_unresolved_patterns_returns_at_most_one() {
+    fn test_get_unresolved_patterns_returns_all_eligible() {
         let conn = setup_test_db();
         let (fp1, tmpl1) = error_fingerprint("Bash", "error: alpha");
         let (fp2, tmpl2) = error_fingerprint("Bash", "error: beta");
@@ -470,13 +467,162 @@ mod tests {
             .unwrap();
         }
 
-        // Should return at most 1 (most recently updated) to avoid
-        // resolving unrelated patterns on a single success
+        // Should return all eligible candidates — callers do per-session
+        // fingerprint validation to decide which ones to actually resolve
         let unresolved = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
         assert_eq!(
             unresolved.len(),
-            1,
-            "should return at most 1 pattern to avoid resolving unrelated errors"
+            2,
+            "should return all patterns with occurrence_count >= 3"
+        );
+    }
+
+    #[test]
+    fn test_get_unresolved_patterns_filters_low_count() {
+        let conn = setup_test_db();
+        let (fp1, tmpl1) = error_fingerprint("Bash", "error: alpha");
+        let (fp2, tmpl2) = error_fingerprint("Bash", "error: beta");
+
+        // fp1: 3 occurrences (eligible)
+        for _ in 0..3 {
+            store_error_pattern_sync(
+                &conn,
+                StoreErrorPatternParams {
+                    project_id: 1,
+                    tool_name: "Bash",
+                    error_fingerprint: &fp1,
+                    error_template: &tmpl1,
+                    raw_error_sample: "error: alpha",
+                    session_id: "s1",
+                },
+            )
+            .unwrap();
+        }
+
+        // fp2: 1 occurrence (not eligible)
+        store_error_pattern_sync(
+            &conn,
+            StoreErrorPatternParams {
+                project_id: 1,
+                tool_name: "Bash",
+                error_fingerprint: &fp2,
+                error_template: &tmpl2,
+                raw_error_sample: "error: beta",
+                session_id: "s1",
+            },
+        )
+        .unwrap();
+
+        let unresolved = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
+        assert_eq!(unresolved.len(), 1, "only fp1 should be eligible");
+        assert_eq!(unresolved[0].1, fp1);
+    }
+
+    /// Simulates the full resolution path from post_tool.rs:
+    /// - Two fingerprints, both with occurrence_count >= 3 (globally eligible)
+    /// - Only fp1 has 3+ behavior log entries with matching fingerprint in this session
+    /// - fp2 has 3+ global occurrences but only 1 in this session
+    /// Expected: only fp1 gets resolved
+    #[test]
+    fn test_per_fingerprint_session_resolution() {
+        let conn = setup_test_db();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_behavior_log (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                project_id INTEGER,
+                event_type TEXT NOT NULL,
+                event_data TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .unwrap();
+
+        let (fp1, tmpl1) = error_fingerprint("Bash", "error: alpha");
+        let (fp2, tmpl2) = error_fingerprint("Bash", "error: beta");
+
+        // Both patterns have 3+ global occurrences
+        for _ in 0..3 {
+            store_error_pattern_sync(
+                &conn,
+                StoreErrorPatternParams {
+                    project_id: 1,
+                    tool_name: "Bash",
+                    error_fingerprint: &fp1,
+                    error_template: &tmpl1,
+                    raw_error_sample: "error: alpha",
+                    session_id: "s1",
+                },
+            )
+            .unwrap();
+            store_error_pattern_sync(
+                &conn,
+                StoreErrorPatternParams {
+                    project_id: 1,
+                    tool_name: "Bash",
+                    error_fingerprint: &fp2,
+                    error_template: &tmpl2,
+                    raw_error_sample: "error: beta",
+                    session_id: "s1",
+                },
+            )
+            .unwrap();
+        }
+
+        // Simulate behavior log: fp1 has 3 session failures, fp2 has only 1
+        for _ in 0..3 {
+            conn.execute(
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
+                 VALUES ('s1', 1, 'tool_failure', ?)",
+                params![serde_json::json!({
+                    "tool_name": "Bash",
+                    "error_fingerprint": fp1,
+                })
+                .to_string()],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
+             VALUES ('s1', 1, 'tool_failure', ?)",
+            params![serde_json::json!({
+                "tool_name": "Bash",
+                "error_fingerprint": fp2,
+            })
+            .to_string()],
+        )
+        .unwrap();
+
+        // Both are returned as candidates (occurrence_count >= 3)
+        let candidates = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
+        assert_eq!(candidates.len(), 2);
+
+        // Simulate post_tool.rs resolution logic: check per-fingerprint session count
+        for (_id, fingerprint) in &candidates {
+            let session_fp_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM session_behavior_log
+                     WHERE session_id = 's1' AND event_type = 'tool_failure'
+                       AND json_extract(event_data, '$.error_fingerprint') = ?",
+                    params![fingerprint],
+                    |row| row.get(0),
+                )
+                .unwrap();
+
+            if session_fp_count >= 3 {
+                resolve_error_pattern_sync(&conn, 1, "Bash", fingerprint, "s1", "fixed")
+                    .unwrap();
+            }
+        }
+
+        // fp1 should be resolved, fp2 should NOT
+        assert!(
+            lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp1).is_some(),
+            "fp1 had 3 session failures and should be resolved"
+        );
+        assert!(
+            lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp2).is_none(),
+            "fp2 had only 1 session failure and should NOT be resolved"
         );
     }
 }
