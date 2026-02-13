@@ -91,30 +91,35 @@ pub async fn run() -> Result<()> {
                 conn, project_id, &tool_name, &session_id,
             );
 
-            // Find the candidate with the most session failures — it's the
-            // most likely match for the success that just occurred. Only
-            // resolve ONE pattern per success to avoid marking unrelated
-            // fingerprints as fixed.
-            let mut best: Option<(String, i64)> = None;
+            // For each candidate, get its session failure count and most recent
+            // failure timestamp. The fingerprint that failed most recently is the
+            // one most likely fixed by this success. Only resolve ONE per success.
+            let mut best: Option<(String, i64, String)> = None; // (fingerprint, count, latest_ts)
             for (_id, fingerprint) in &candidates {
-                let session_fp_count: i64 = conn
+                let row: Option<(i64, String)> = conn
                     .query_row(
-                        "SELECT COUNT(*) FROM session_behavior_log
+                        "SELECT COUNT(*), MAX(created_at) FROM session_behavior_log
                          WHERE session_id = ? AND event_type = 'tool_failure'
                            AND json_extract(event_data, '$.error_fingerprint') = ?",
                         rusqlite::params![&session_id, fingerprint],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?)),
                     )
-                    .unwrap_or(0);
+                    .ok();
 
-                if session_fp_count >= 3 {
-                    if best.as_ref().is_none_or(|(_, best_count)| session_fp_count > *best_count) {
-                        best = Some((fingerprint.clone(), session_fp_count));
+                if let Some((count, latest_ts)) = row {
+                    if count >= 3 {
+                        let dominated = match &best {
+                            None => true,
+                            Some((_, _, best_ts)) => latest_ts > *best_ts,
+                        };
+                        if dominated {
+                            best = Some((fingerprint.clone(), count, latest_ts));
+                        }
                     }
                 }
             }
 
-            if let Some((fingerprint, session_fp_count)) = best {
+            if let Some((fingerprint, session_fp_count, _)) = best {
                 let _ = crate::db::resolve_error_pattern_sync(
                     conn,
                     project_id,

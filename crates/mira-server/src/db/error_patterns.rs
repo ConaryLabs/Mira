@@ -127,7 +127,8 @@ pub fn get_unresolved_patterns_for_tool_sync(
            AND tool_name = ?2
            AND last_seen_session_id = ?3
            AND resolved_at IS NULL
-           AND occurrence_count >= 3",
+           AND occurrence_count >= 3
+         ORDER BY updated_at DESC, id DESC",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -633,10 +634,10 @@ mod tests {
         );
     }
 
-    /// When two fingerprints BOTH have 3+ session failures, only the one with
-    /// the highest count should be resolved (one success = one resolution).
+    /// When two fingerprints BOTH have 3+ session failures, the most recently
+    /// failing one should be resolved (closest to the success = most likely fixed).
     #[test]
-    fn test_per_fingerprint_resolution_picks_highest_session_count() {
+    fn test_per_fingerprint_resolution_picks_most_recent() {
         let conn = setup_test_db();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS session_behavior_log (
@@ -681,28 +682,35 @@ mod tests {
             .unwrap();
         }
 
-        // fp1: 5 session failures, fp2: 3 session failures
-        for _ in 0..5 {
+        // fp1: 5 failures earlier in session, fp2: 3 failures later in session
+        // fp2's last failure is more recent, so it should be selected
+        for i in 0..5 {
             conn.execute(
-                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
-                 VALUES ('s1', 1, 'tool_failure', ?)",
-                params![serde_json::json!({
-                    "tool_name": "Bash",
-                    "error_fingerprint": fp1,
-                })
-                .to_string()],
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, created_at)
+                 VALUES ('s1', 1, 'tool_failure', ?, datetime('now', ? || ' seconds'))",
+                params![
+                    serde_json::json!({
+                        "tool_name": "Bash",
+                        "error_fingerprint": fp1,
+                    })
+                    .to_string(),
+                    format!("-{}", 100 - i), // earlier timestamps
+                ],
             )
             .unwrap();
         }
-        for _ in 0..3 {
+        for i in 0..3 {
             conn.execute(
-                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
-                 VALUES ('s1', 1, 'tool_failure', ?)",
-                params![serde_json::json!({
-                    "tool_name": "Bash",
-                    "error_fingerprint": fp2,
-                })
-                .to_string()],
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, created_at)
+                 VALUES ('s1', 1, 'tool_failure', ?, datetime('now', ? || ' seconds'))",
+                params![
+                    serde_json::json!({
+                        "tool_name": "Bash",
+                        "error_fingerprint": fp2,
+                    })
+                    .to_string(),
+                    format!("-{}", 10 - i), // later timestamps (closer to now)
+                ],
             )
             .unwrap();
         }
@@ -710,34 +718,48 @@ mod tests {
         let candidates = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
         assert_eq!(candidates.len(), 2);
 
-        // Pick best by session count (same logic as post_tool.rs)
-        let mut best: Option<(String, i64)> = None;
+        // Pick best by most recent failure (same logic as post_tool.rs)
+        let mut best: Option<(String, i64, String)> = None;
         for (_id, fingerprint) in &candidates {
-            let session_fp_count: i64 = conn
+            let row: Option<(i64, String)> = conn
                 .query_row(
-                    "SELECT COUNT(*) FROM session_behavior_log
+                    "SELECT COUNT(*), MAX(created_at) FROM session_behavior_log
                      WHERE session_id = 's1' AND event_type = 'tool_failure'
                        AND json_extract(event_data, '$.error_fingerprint') = ?",
                     params![fingerprint],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .unwrap();
+                .ok();
 
-            if session_fp_count >= 3
-                && best.as_ref().is_none_or(|(_, c)| session_fp_count > *c)
-            {
-                best = Some((fingerprint.clone(), session_fp_count));
+            if let Some((count, latest_ts)) = row {
+                if count >= 3 {
+                    let dominated = match &best {
+                        None => true,
+                        Some((_, _, best_ts)) => latest_ts > *best_ts,
+                    };
+                    if dominated {
+                        best = Some((fingerprint.clone(), count, latest_ts));
+                    }
+                }
             }
         }
 
-        let (best_fp, best_count) = best.unwrap();
-        assert_eq!(best_fp, fp1, "fp1 should win with higher session count");
-        assert_eq!(best_count, 5);
+        let (best_fp, _, _) = best.unwrap();
+        assert_eq!(
+            best_fp, fp2,
+            "fp2 should win — its last failure is more recent"
+        );
 
         resolve_error_pattern_sync(&conn, 1, "Bash", &best_fp, "s1", "fixed").unwrap();
 
-        // Only fp1 resolved, fp2 still unresolved despite being eligible
-        assert!(lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp1).is_some());
-        assert!(lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp2).is_none());
+        // fp2 resolved (most recent failures), fp1 NOT (older failures, higher count)
+        assert!(
+            lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp1).is_none(),
+            "fp1 should NOT be resolved despite higher count"
+        );
+        assert!(
+            lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp2).is_some(),
+            "fp2 should be resolved as most recently failing"
+        );
     }
 }
