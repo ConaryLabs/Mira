@@ -86,14 +86,17 @@ pub async fn run() -> Result<()> {
         let session_id = post_input.session_id.clone();
         let tool_name = post_input.tool_name.clone();
         pool.try_interact("error pattern resolution", move |conn| {
-            // Get the candidate pattern (at most one, most recently updated,
-            // with global occurrence_count >= 3)
-            let patterns = crate::db::get_unresolved_patterns_for_tool_sync(
+            // Get all candidate patterns (global occurrence_count >= 3)
+            let candidates = crate::db::get_unresolved_patterns_for_tool_sync(
                 conn, project_id, &tool_name, &session_id,
             );
 
-            for (_id, fingerprint) in &patterns {
-                // Verify this specific fingerprint had 3+ failures in THIS session
+            // Find the candidate with the most session failures — it's the
+            // most likely match for the success that just occurred. Only
+            // resolve ONE pattern per success to avoid marking unrelated
+            // fingerprints as fixed.
+            let mut best: Option<(String, i64)> = None;
+            for (_id, fingerprint) in &candidates {
                 let session_fp_count: i64 = conn
                     .query_row(
                         "SELECT COUNT(*) FROM session_behavior_log
@@ -105,23 +108,29 @@ pub async fn run() -> Result<()> {
                     .unwrap_or(0);
 
                 if session_fp_count >= 3 {
-                    let _ = crate::db::resolve_error_pattern_sync(
-                        conn,
-                        project_id,
-                        &tool_name,
-                        fingerprint,
-                        &session_id,
-                        &format!(
-                            "Tool '{}' succeeded after {} session failures of this pattern",
-                            tool_name, session_fp_count
-                        ),
-                    );
-                    eprintln!(
-                        "[mira] Resolved error pattern for tool '{}' (succeeded after {} session failures)",
-                        tool_name,
-                        session_fp_count
-                    );
+                    if best.as_ref().is_none_or(|(_, best_count)| session_fp_count > *best_count) {
+                        best = Some((fingerprint.clone(), session_fp_count));
+                    }
                 }
+            }
+
+            if let Some((fingerprint, session_fp_count)) = best {
+                let _ = crate::db::resolve_error_pattern_sync(
+                    conn,
+                    project_id,
+                    &tool_name,
+                    &fingerprint,
+                    &session_id,
+                    &format!(
+                        "Tool '{}' succeeded after {} session failures of this pattern",
+                        tool_name, session_fp_count
+                    ),
+                );
+                eprintln!(
+                    "[mira] Resolved error pattern for tool '{}' (succeeded after {} session failures)",
+                    tool_name,
+                    session_fp_count
+                );
             }
             Ok(())
         })

@@ -524,7 +524,7 @@ mod tests {
     /// - fp2 has 3+ global occurrences but only 1 in this session
     /// Expected: only fp1 gets resolved
     #[test]
-    fn test_per_fingerprint_session_resolution() {
+    fn test_per_fingerprint_session_resolution_filters_low_session_count() {
         let conn = setup_test_db();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS session_behavior_log (
@@ -597,7 +597,8 @@ mod tests {
         let candidates = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
         assert_eq!(candidates.len(), 2);
 
-        // Simulate post_tool.rs resolution logic: check per-fingerprint session count
+        // Simulate post_tool.rs resolution logic: pick best candidate by session count
+        let mut best: Option<(String, i64)> = None;
         for (_id, fingerprint) in &candidates {
             let session_fp_count: i64 = conn
                 .query_row(
@@ -609,13 +610,19 @@ mod tests {
                 )
                 .unwrap();
 
-            if session_fp_count >= 3 {
-                resolve_error_pattern_sync(&conn, 1, "Bash", fingerprint, "s1", "fixed")
-                    .unwrap();
+            if session_fp_count >= 3
+                && best.as_ref().is_none_or(|(_, c)| session_fp_count > *c)
+            {
+                best = Some((fingerprint.clone(), session_fp_count));
             }
         }
 
-        // fp1 should be resolved, fp2 should NOT
+        // Resolve only the best match
+        assert!(best.is_some(), "should find an eligible candidate");
+        let (best_fp, _) = best.unwrap();
+        resolve_error_pattern_sync(&conn, 1, "Bash", &best_fp, "s1", "fixed").unwrap();
+
+        // fp1 should be resolved (3 session failures), fp2 should NOT (1 session failure)
         assert!(
             lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp1).is_some(),
             "fp1 had 3 session failures and should be resolved"
@@ -624,5 +631,113 @@ mod tests {
             lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp2).is_none(),
             "fp2 had only 1 session failure and should NOT be resolved"
         );
+    }
+
+    /// When two fingerprints BOTH have 3+ session failures, only the one with
+    /// the highest count should be resolved (one success = one resolution).
+    #[test]
+    fn test_per_fingerprint_resolution_picks_highest_session_count() {
+        let conn = setup_test_db();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_behavior_log (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                project_id INTEGER,
+                event_type TEXT NOT NULL,
+                event_data TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .unwrap();
+
+        let (fp1, tmpl1) = error_fingerprint("Bash", "error: alpha");
+        let (fp2, tmpl2) = error_fingerprint("Bash", "error: beta");
+
+        // Both patterns have 3+ global occurrences
+        for _ in 0..5 {
+            store_error_pattern_sync(
+                &conn,
+                StoreErrorPatternParams {
+                    project_id: 1,
+                    tool_name: "Bash",
+                    error_fingerprint: &fp1,
+                    error_template: &tmpl1,
+                    raw_error_sample: "error: alpha",
+                    session_id: "s1",
+                },
+            )
+            .unwrap();
+            store_error_pattern_sync(
+                &conn,
+                StoreErrorPatternParams {
+                    project_id: 1,
+                    tool_name: "Bash",
+                    error_fingerprint: &fp2,
+                    error_template: &tmpl2,
+                    raw_error_sample: "error: beta",
+                    session_id: "s1",
+                },
+            )
+            .unwrap();
+        }
+
+        // fp1: 5 session failures, fp2: 3 session failures
+        for _ in 0..5 {
+            conn.execute(
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
+                 VALUES ('s1', 1, 'tool_failure', ?)",
+                params![serde_json::json!({
+                    "tool_name": "Bash",
+                    "error_fingerprint": fp1,
+                })
+                .to_string()],
+            )
+            .unwrap();
+        }
+        for _ in 0..3 {
+            conn.execute(
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data)
+                 VALUES ('s1', 1, 'tool_failure', ?)",
+                params![serde_json::json!({
+                    "tool_name": "Bash",
+                    "error_fingerprint": fp2,
+                })
+                .to_string()],
+            )
+            .unwrap();
+        }
+
+        let candidates = get_unresolved_patterns_for_tool_sync(&conn, 1, "Bash", "s1");
+        assert_eq!(candidates.len(), 2);
+
+        // Pick best by session count (same logic as post_tool.rs)
+        let mut best: Option<(String, i64)> = None;
+        for (_id, fingerprint) in &candidates {
+            let session_fp_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM session_behavior_log
+                     WHERE session_id = 's1' AND event_type = 'tool_failure'
+                       AND json_extract(event_data, '$.error_fingerprint') = ?",
+                    params![fingerprint],
+                    |row| row.get(0),
+                )
+                .unwrap();
+
+            if session_fp_count >= 3
+                && best.as_ref().is_none_or(|(_, c)| session_fp_count > *c)
+            {
+                best = Some((fingerprint.clone(), session_fp_count));
+            }
+        }
+
+        let (best_fp, best_count) = best.unwrap();
+        assert_eq!(best_fp, fp1, "fp1 should win with higher session count");
+        assert_eq!(best_count, 5);
+
+        resolve_error_pattern_sync(&conn, 1, "Bash", &best_fp, "s1", "fixed").unwrap();
+
+        // Only fp1 resolved, fp2 still unresolved despite being eligible
+        assert!(lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp1).is_some());
+        assert!(lookup_resolved_pattern_sync(&conn, 1, "Bash", &fp2).is_none());
     }
 }
