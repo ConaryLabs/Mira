@@ -259,12 +259,16 @@ pub enum SessionAction {
     TasksGet,
     /// Cancel a running task
     TasksCancel,
+    /// Show database storage status and retention policy
+    StorageStatus,
+    /// Run data cleanup (dry_run by default)
+    Cleanup,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview)"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]
@@ -287,6 +291,14 @@ pub struct SessionRequest {
     pub min_confidence: Option<f64>,
     #[schemars(description = "Insight row ID to dismiss (for dismiss_insight action)")]
     pub insight_id: Option<i64>,
+    #[schemars(
+        description = "Preview what would be cleaned without deleting (default: true, for cleanup action)"
+    )]
+    pub dry_run: Option<bool>,
+    #[schemars(
+        description = "Category to clean: sessions, analytics, chat, behavior, all (default: all, for cleanup action)"
+    )]
+    pub category: Option<String>,
 }
 
 // Documentation request types

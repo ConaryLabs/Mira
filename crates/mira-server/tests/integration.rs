@@ -512,6 +512,8 @@ async fn test_session_history_current() {
         insight_source: None,
         min_confidence: None,
         insight_id: None,
+        dry_run: None,
+        category: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(
@@ -547,6 +549,8 @@ async fn test_session_history_current() {
         insight_source: None,
         min_confidence: None,
         insight_id: None,
+        dry_run: None,
+        category: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(
@@ -587,6 +591,8 @@ async fn test_session_history_list_sessions() {
         insight_source: None,
         min_confidence: None,
         insight_id: None,
+        dry_run: None,
+        category: None,
     };
     let result = handle_session(&ctx, req).await;
     // Should succeed even if no sessions in database (maybe there is one now)
@@ -3125,6 +3131,8 @@ async fn test_dismiss_insight_success() {
         insight_source: None,
         min_confidence: None,
         insight_id: Some(row_id),
+        dry_run: None,
+        category: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(result.is_ok(), "dismiss_insight failed: {:?}", result.err());
@@ -3176,6 +3184,8 @@ async fn test_dismiss_insight_cross_project_blocked() {
         insight_source: None,
         min_confidence: None,
         insight_id: Some(row_id),
+        dry_run: None,
+        category: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(
@@ -3225,6 +3235,8 @@ async fn test_dismiss_insight_non_insight_pattern_blocked() {
         insight_source: None,
         min_confidence: None,
         insight_id: Some(row_id),
+        dry_run: None,
+        category: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(result.is_ok());
@@ -3256,6 +3268,8 @@ async fn test_dismiss_insight_requires_project() {
         insight_source: None,
         min_confidence: None,
         insight_id: Some(999),
+        dry_run: None,
+        category: None,
     };
     let result = handle_session(&ctx, req).await;
     assert!(result.is_err(), "Should fail without active project");

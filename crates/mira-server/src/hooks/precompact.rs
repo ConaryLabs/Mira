@@ -197,10 +197,10 @@ pub(crate) fn parse_transcript_messages(transcript: &str) -> Vec<TranscriptMessa
                 serde_json::Value::Array(blocks) => {
                     for block in blocks {
                         // Skip tool_use and tool_result content blocks
-                        if let Some(block_type) = block.get("type").and_then(|t| t.as_str()) {
-                            if block_type == "tool_use" || block_type == "tool_result" {
-                                continue;
-                            }
+                        if let Some(block_type) = block.get("type").and_then(|t| t.as_str())
+                            && (block_type == "tool_use" || block_type == "tool_result")
+                        {
+                            continue;
                         }
                         if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                             if !text_content.is_empty() {
@@ -268,16 +268,15 @@ pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> Comp
     }
 
     // Capture active work from the last assistant message's first substantial paragraph
-    if let Some(last_assistant) = messages.iter().rev().find(|m| m.role == "assistant") {
-        if let Some(first_para) = last_assistant
+    if let Some(last_assistant) = messages.iter().rev().find(|m| m.role == "assistant")
+        && let Some(first_para) = last_assistant
             .text_content
             .split("\n\n")
             .next()
             .map(|s| s.trim())
             .filter(|s| s.len() >= MIN_CONTENT_LEN && s.len() <= MAX_CONTENT_LEN)
-        {
-            ctx.active_work.push(first_para.to_string());
-        }
+    {
+        ctx.active_work.push(first_para.to_string());
     }
 
     ctx
@@ -397,8 +396,7 @@ mod tests {
 
     #[test]
     fn skips_malformed_jsonl_lines() {
-        let transcript =
-            "not json at all\n{\"role\":\"assistant\",\"content\":\"valid line\"}";
+        let transcript = "not json at all\n{\"role\":\"assistant\",\"content\":\"valid line\"}";
         let messages = parse_transcript_messages(transcript);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, "assistant");

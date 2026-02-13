@@ -736,33 +736,21 @@ pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<S
     }
 
     if let Some(pending) = cc.get("pending_tasks").and_then(|v| v.as_array()) {
-        let items: Vec<&str> = pending
-            .iter()
-            .filter_map(|d| d.as_str())
-            .take(3)
-            .collect();
+        let items: Vec<&str> = pending.iter().filter_map(|d| d.as_str()).take(3).collect();
         if !items.is_empty() {
             parts.push(format!("Pending: {}", items.join("; ")));
         }
     }
 
     if let Some(issues) = cc.get("issues").and_then(|v| v.as_array()) {
-        let items: Vec<&str> = issues
-            .iter()
-            .filter_map(|d| d.as_str())
-            .take(3)
-            .collect();
+        let items: Vec<&str> = issues.iter().filter_map(|d| d.as_str()).take(3).collect();
         if !items.is_empty() {
             parts.push(format!("Issues: {}", items.join("; ")));
         }
     }
 
     if let Some(active) = cc.get("active_work").and_then(|v| v.as_array()) {
-        let items: Vec<&str> = active
-            .iter()
-            .filter_map(|d| d.as_str())
-            .take(1)
-            .collect();
+        let items: Vec<&str> = active.iter().filter_map(|d| d.as_str()).take(1).collect();
         if !items.is_empty() {
             parts.push(format!("Active work: {}", items[0]));
         }
@@ -772,10 +760,7 @@ pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<S
         return None;
     }
 
-    Some(format!(
-        "**Pre-compaction context:**\n{}",
-        parts.join("\n")
-    ))
+    Some(format!("**Pre-compaction context:**\n{}", parts.join("\n")))
 }
 
 /// Infer a human-readable activity description from the most-used tools
@@ -1226,7 +1211,11 @@ mod tests {
         let result = build_compaction_summary(&snapshot);
         assert!(result.is_some());
         let summary = result.unwrap();
-        assert!(summary.contains("Pre-compaction context:"), "got: {}", summary);
+        assert!(
+            summary.contains("Pre-compaction context:"),
+            "got: {}",
+            summary
+        );
         assert!(summary.contains("Decisions:"), "got: {}", summary);
         assert!(summary.contains("builder pattern"), "got: {}", summary);
         assert!(summary.contains("Pending:"), "got: {}", summary);

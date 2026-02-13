@@ -54,14 +54,20 @@ pub fn memory_key_exists_sync(conn: &Connection, project_id: i64, key: &str) -> 
     .unwrap_or(false)
 }
 
-/// Delete a memory by key
+/// Delete a memory by key (cleans up vec_memory orphans first)
 pub fn delete_memory_by_key_sync(
     conn: &Connection,
     project_id: i64,
     key: &str,
 ) -> rusqlite::Result<usize> {
+    // First delete orphaned vec_memory entries for facts matching this key
     conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ? AND key = ?",
+        "DELETE FROM vec_memory WHERE fact_id IN (SELECT id FROM memory_facts WHERE project_id = ?1 AND key = ?2)",
+        params![project_id, key],
+    )?;
+    // Then delete the facts themselves
+    conn.execute(
+        "DELETE FROM memory_facts WHERE project_id = ?1 AND key = ?2",
         params![project_id, key],
     )
 }

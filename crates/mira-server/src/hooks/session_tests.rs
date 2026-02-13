@@ -408,8 +408,20 @@ async fn test_compaction_context_end_to_end() {
     // Seed session and tool history first
     db(&pool, move |conn| {
         seed_session(conn, "e2e-sess", project_id, "active");
-        seed_tool_history(conn, "e2e-sess", "Edit", r#"{"file_path":"/src/db.rs"}"#, "ok");
-        seed_tool_history(conn, "e2e-sess", "Read", r#"{"file_path":"/src/lib.rs"}"#, "ok");
+        seed_tool_history(
+            conn,
+            "e2e-sess",
+            "Edit",
+            r#"{"file_path":"/src/db.rs"}"#,
+            "ok",
+        );
+        seed_tool_history(
+            conn,
+            "e2e-sess",
+            "Read",
+            r#"{"file_path":"/src/lib.rs"}"#,
+            "ok",
+        );
         Ok(())
     })
     .await;
@@ -476,12 +488,13 @@ async fn test_compaction_context_end_to_end() {
         Ok::<_, anyhow::Error>(super::session::get_session_snapshot_sync(conn, "e2e-sess"))
     })
     .await;
-    let merged: serde_json::Value =
-        serde_json::from_str(&merged_snap.unwrap()).unwrap();
+    let merged: serde_json::Value = serde_json::from_str(&merged_snap.unwrap()).unwrap();
     let cc = merged.get("compaction_context").unwrap();
     let decisions = cc.get("decisions").and_then(|d| d.as_array()).unwrap();
     assert!(
-        decisions.iter().any(|d| d.as_str().unwrap().contains("rwlock")),
+        decisions
+            .iter()
+            .any(|d| d.as_str().unwrap().contains("rwlock")),
         "merged snapshot should contain second transcript's decision"
     );
 
@@ -526,11 +539,7 @@ async fn test_compaction_context_end_to_end() {
         "got: {}",
         summary_text
     );
-    assert!(
-        summary_text.contains("Decisions:"),
-        "got: {}",
-        summary_text
-    );
+    assert!(summary_text.contains("Decisions:"), "got: {}", summary_text);
     // The second transcript's decision should appear in the final summary
     assert!(
         summary_text.contains("rwlock"),

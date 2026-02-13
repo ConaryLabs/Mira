@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
         Some(Commands::DebugSession { .. }) => Level::DEBUG,
         Some(Commands::Config { .. }) => Level::WARN,
         Some(Commands::Setup { .. }) => Level::WARN,
+        Some(Commands::Cleanup { .. }) => Level::INFO,
         Some(Commands::StatusLine) => Level::WARN,
     };
 
@@ -109,6 +110,13 @@ async fn main() -> Result<()> {
         },
         Some(Commands::Setup { check, yes }) => {
             cli::setup::run(check, yes).await?;
+        }
+        Some(Commands::Cleanup {
+            dry_run,
+            yes,
+            category,
+        }) => {
+            cli::run_cleanup(dry_run, yes, category).await?;
         }
         Some(Commands::StatusLine) => {
             cli::statusline::run()?;

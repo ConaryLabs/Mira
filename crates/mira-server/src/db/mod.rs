@@ -154,7 +154,7 @@ pub use project::{
     set_server_state_sync, update_project_briefing_sync, update_project_name_sync,
     upsert_session_sync, upsert_session_with_branch_sync,
 };
-pub use retention::run_data_retention_sync;
+pub use retention::{cleanup_orphans, count_retention_candidates, run_data_retention_sync};
 pub use search::{
     ChunkSearchResult, CrossRefResult, FtsSearchResult, SemanticCodeResult, SymbolSearchResult,
     chunk_like_search_sync, find_callees_sync, find_callers_sync, fts_search_sync,

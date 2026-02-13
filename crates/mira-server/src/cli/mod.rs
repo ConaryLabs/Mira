@@ -4,6 +4,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+pub mod cleanup;
 pub mod clients;
 pub mod config;
 pub mod debug;
@@ -14,6 +15,7 @@ pub mod statusline;
 pub mod tool;
 
 // Re-export command handlers
+pub use cleanup::run_cleanup;
 pub use debug::*;
 pub use index::run_index;
 pub use serve::run_mcp_server;
@@ -93,6 +95,21 @@ pub enum Commands {
         /// Non-interactive mode: auto-detect Ollama, skip API key prompts, use defaults
         #[arg(long, alias = "non-interactive")]
         yes: bool,
+    },
+
+    /// Run data cleanup and retention
+    Cleanup {
+        /// Preview what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+
+        /// Filter by category: sessions, analytics, chat, behavior, or all (default)
+        #[arg(long)]
+        category: Option<String>,
     },
 
     /// Output status line for Claude Code (reads stdin, prints stats to stdout)

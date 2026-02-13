@@ -103,7 +103,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session management, analytics, and background task tracking. Actions: current_session, list_sessions, get_history (session history), recap (preferences + context + goals), usage_summary/usage_stats/usage_list (LLM analytics), insights (pondering/proactive/doc_gap digest), dismiss_insight (remove resolved insight), tasks_list/tasks_get/tasks_cancel (async background operations).",
+        description = "Session management, analytics, and background task tracking. Actions: current_session, list_sessions, get_history (session history), recap (preferences + context + goals), usage_summary/usage_stats/usage_list (LLM analytics), insights (pondering/proactive/doc_gap digest), dismiss_insight (remove resolved insight), tasks_list/tasks_get/tasks_cancel (async background operations), storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
             .expect("SessionOutput schema")
     )]

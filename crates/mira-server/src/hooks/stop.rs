@@ -741,7 +741,13 @@ mod tests {
         let conn = setup_test_connection();
         let pid = seed_project(&conn, "/tmp/compact-test");
         seed_session(&conn, "compact-sess", pid, "active");
-        seed_tool_history(&conn, "compact-sess", "Read", r#"{"file_path":"/tmp/f.rs"}"#, "ok");
+        seed_tool_history(
+            &conn,
+            "compact-sess",
+            "Read",
+            r#"{"file_path":"/tmp/f.rs"}"#,
+            "ok",
+        );
 
         // Simulate PreCompact having stored a compaction_context
         let precompact_snapshot = serde_json::json!({
@@ -755,7 +761,10 @@ mod tests {
         conn.execute(
             "INSERT INTO session_snapshots (session_id, snapshot, created_at)
              VALUES (?1, ?2, datetime('now'))",
-            rusqlite::params!["compact-sess", serde_json::to_string(&precompact_snapshot).unwrap()],
+            rusqlite::params![
+                "compact-sess",
+                serde_json::to_string(&precompact_snapshot).unwrap()
+            ],
         )
         .unwrap();
 

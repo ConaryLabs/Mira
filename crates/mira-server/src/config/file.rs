@@ -11,6 +11,80 @@ use tracing::{debug, warn};
 pub struct MiraConfig {
     #[serde(default)]
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
+}
+
+/// Data retention configuration section
+#[derive(Debug, Deserialize)]
+pub struct RetentionConfig {
+    /// Master switch -- no auto-cleanup unless explicitly enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Days to keep tool_history, chat_messages, chat_summaries, etc.
+    #[serde(default = "RetentionConfig::default_tool_history_days")]
+    pub tool_history_days: u32,
+    /// Days to keep chat data
+    #[serde(default = "RetentionConfig::default_chat_days")]
+    pub chat_days: u32,
+    /// Days to keep session data
+    #[serde(default = "RetentionConfig::default_sessions_days")]
+    pub sessions_days: u32,
+    /// Days to keep analytics (llm_usage, embeddings_usage)
+    #[serde(default = "RetentionConfig::default_analytics_days")]
+    pub analytics_days: u32,
+    /// Days to keep behavior patterns
+    #[serde(default = "RetentionConfig::default_behavior_days")]
+    pub behavior_days: u32,
+    /// Days to keep system observations
+    #[serde(default = "RetentionConfig::default_observations_days")]
+    pub observations_days: u32,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tool_history_days: 30,
+            chat_days: 30,
+            sessions_days: 90,
+            analytics_days: 180,
+            behavior_days: 365,
+            observations_days: 90,
+        }
+    }
+}
+
+impl RetentionConfig {
+    fn default_tool_history_days() -> u32 {
+        30
+    }
+    fn default_chat_days() -> u32 {
+        30
+    }
+    fn default_sessions_days() -> u32 {
+        90
+    }
+    fn default_analytics_days() -> u32 {
+        180
+    }
+    fn default_behavior_days() -> u32 {
+        365
+    }
+    fn default_observations_days() -> u32 {
+        90
+    }
+
+    /// Check if retention is enabled (config field OR env var override)
+    pub fn is_enabled(&self) -> bool {
+        if std::env::var("MIRA_RETENTION_ENABLED")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        self.enabled
+    }
 }
 
 /// LLM configuration section
@@ -193,5 +267,113 @@ background_provider = 123
 "#;
         let result: Result<MiraConfig, _> = toml::from_str(toml);
         assert!(result.is_err(), "Wrong type should fail to parse");
+    }
+
+    // ═══════════════════════════════════════
+    // RetentionConfig tests
+    // ═══════════════════════════════════════
+
+    #[test]
+    fn test_retention_defaults() {
+        let config: MiraConfig = toml::from_str("").unwrap();
+        assert!(!config.retention.enabled);
+        assert_eq!(config.retention.tool_history_days, 30);
+        assert_eq!(config.retention.chat_days, 30);
+        assert_eq!(config.retention.sessions_days, 90);
+        assert_eq!(config.retention.analytics_days, 180);
+        assert_eq!(config.retention.behavior_days, 365);
+        assert_eq!(config.retention.observations_days, 90);
+    }
+
+    #[test]
+    fn test_retention_from_toml() {
+        let toml = r#"
+[retention]
+enabled = true
+tool_history_days = 14
+chat_days = 7
+sessions_days = 60
+analytics_days = 90
+behavior_days = 180
+observations_days = 45
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert!(config.retention.enabled);
+        assert_eq!(config.retention.tool_history_days, 14);
+        assert_eq!(config.retention.chat_days, 7);
+        assert_eq!(config.retention.sessions_days, 60);
+        assert_eq!(config.retention.analytics_days, 90);
+        assert_eq!(config.retention.behavior_days, 180);
+        assert_eq!(config.retention.observations_days, 45);
+    }
+
+    #[test]
+    fn test_retention_partial_config_uses_defaults() {
+        let toml = r#"
+[retention]
+enabled = true
+tool_history_days = 14
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert!(config.retention.enabled);
+        assert_eq!(config.retention.tool_history_days, 14);
+        // All others should be defaults
+        assert_eq!(config.retention.chat_days, 30);
+        assert_eq!(config.retention.sessions_days, 90);
+        assert_eq!(config.retention.analytics_days, 180);
+        assert_eq!(config.retention.behavior_days, 365);
+        assert_eq!(config.retention.observations_days, 90);
+    }
+
+    #[test]
+    fn test_retention_unknown_keys_ignored() {
+        let toml = r#"
+[retention]
+enabled = true
+unknown_retention_key = 42
+"#;
+        let config: MiraConfig = toml::from_str(toml).unwrap();
+        assert!(config.retention.enabled);
+    }
+
+    #[test]
+    fn test_retention_is_enabled_config_false() {
+        let config = RetentionConfig::default();
+        assert!(!config.is_enabled());
+    }
+
+    #[test]
+    fn test_retention_is_enabled_config_true() {
+        let config = RetentionConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(config.is_enabled());
+    }
+
+    #[test]
+    fn test_retention_env_override() {
+        // SAFETY: test-only, single-threaded test runner for this module
+        unsafe {
+            std::env::set_var("MIRA_RETENTION_ENABLED", "true");
+        }
+        let config = RetentionConfig::default();
+        assert!(config.is_enabled());
+        unsafe {
+            std::env::remove_var("MIRA_RETENTION_ENABLED");
+        }
+    }
+
+    #[test]
+    fn test_retention_env_override_numeric() {
+        // SAFETY: test-only, single-threaded test runner for this module
+        unsafe {
+            std::env::set_var("MIRA_RETENTION_ENABLED", "1");
+        }
+        let config = RetentionConfig::default();
+        assert!(config.is_enabled());
+        unsafe {
+            std::env::remove_var("MIRA_RETENTION_ENABLED");
+        }
     }
 }

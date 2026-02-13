@@ -495,14 +495,27 @@ impl SlowLaneWorker {
             }
             BackgroundTask::DataRetention => {
                 self.run_task(&name, async move {
-                    let retention_count = pool
-                        .run(crate::db::retention::run_data_retention_sync)
-                        .await?;
-                    // Also clean up expired system observations (TTL-based)
+                    let config = crate::config::MiraConfig::load().retention;
+
+                    // Retention rules only run if explicitly enabled
+                    let retention_count = if config.is_enabled() {
+                        pool.run(move |conn| {
+                            crate::db::retention::run_data_retention_sync(conn, &config)
+                        })
+                        .await?
+                    } else {
+                        0
+                    };
+
+                    // Orphan cleanup always runs (data integrity, not policy)
+                    let orphan_count = pool.run(crate::db::retention::cleanup_orphans).await?;
+
+                    // TTL-based observation cleanup always runs
                     let obs_count = pool
                         .run(crate::db::cleanup_expired_observations_sync)
                         .await?;
-                    Ok(retention_count + obs_count)
+
+                    Ok(retention_count + orphan_count + obs_count)
                 })
                 .await
             }
