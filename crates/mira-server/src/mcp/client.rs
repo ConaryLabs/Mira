@@ -1,4 +1,4 @@
-// crates/mira-server/src/mcp_client.rs
+// crates/mira-server/src/mcp/client.rs
 // MCP Client Manager - connects to external MCP servers
 
 use crate::tools::core::McpToolInfo;
@@ -10,10 +10,11 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use rmcp::{RoleClient, serve_client};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -39,11 +40,24 @@ struct CodexTomlRoot {
 /// precedence over `url` when both are present.
 #[derive(Deserialize)]
 struct ServerEntry {
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    required: bool,
+    startup_timeout_sec: Option<u64>,
+    startup_timeout_ms: Option<u64>,
+    tool_timeout_sec: Option<u64>,
+    #[serde(default)]
+    enabled_tools: Vec<String>,
+    #[serde(default)]
+    disabled_tools: Vec<String>,
     command: Option<String>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
     env: HashMap<String, String>,
+    #[serde(default)]
+    env_vars: Vec<String>,
     cwd: Option<String>,
     url: Option<String>,
     bearer_token_env_var: Option<String>,
@@ -53,25 +67,58 @@ struct ServerEntry {
     env_http_headers: HashMap<String, String>,
 }
 
+const fn default_true() -> bool {
+    true
+}
+
+const DEFAULT_STARTUP_TIMEOUT_SECS: u64 = 10;
+const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 60;
+
+fn vec_to_nonempty_set(values: Vec<String>) -> Option<HashSet<String>> {
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.into_iter().collect())
+    }
+}
+
+fn vec_to_set(values: Vec<String>) -> HashSet<String> {
+    values.into_iter().collect()
+}
+
 impl ServerEntry {
-    fn into_transport(self) -> Option<McpTransport> {
-        if let Some(command) = self.command {
-            Some(McpTransport::Stdio {
+    fn into_config(self, name: String) -> Option<McpServerConfig> {
+        let transport = if let Some(command) = self.command {
+            McpTransport::Stdio {
                 command,
                 args: self.args,
                 env: self.env,
+                env_vars: self.env_vars,
                 cwd: self.cwd,
-            })
+            }
         } else if let Some(url) = self.url {
-            Some(McpTransport::Http {
+            McpTransport::Http {
                 url,
                 bearer_token_env_var: self.bearer_token_env_var,
                 http_headers: self.http_headers,
                 env_http_headers: self.env_http_headers,
-            })
+            }
         } else {
-            None
-        }
+            return None;
+        };
+
+        Some(McpServerConfig {
+            name,
+            transport,
+            required: self.required,
+            startup_timeout: self
+                .startup_timeout_ms
+                .map(Duration::from_millis)
+                .or_else(|| self.startup_timeout_sec.map(Duration::from_secs)),
+            tool_timeout: self.tool_timeout_sec.map(Duration::from_secs),
+            enabled_tools: vec_to_nonempty_set(self.enabled_tools),
+            disabled_tools: vec_to_set(self.disabled_tools),
+        })
     }
 }
 
@@ -80,6 +127,11 @@ impl ServerEntry {
 pub struct McpServerConfig {
     pub name: String,
     pub transport: McpTransport,
+    required: bool,
+    startup_timeout: Option<Duration>,
+    tool_timeout: Option<Duration>,
+    enabled_tools: Option<HashSet<String>>,
+    disabled_tools: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +140,7 @@ pub enum McpTransport {
         command: String,
         args: Vec<String>,
         env: HashMap<String, String>,
+        env_vars: Vec<String>,
         cwd: Option<String>,
     },
     Http {
@@ -96,6 +149,27 @@ pub enum McpTransport {
         http_headers: HashMap<String, String>,
         env_http_headers: HashMap<String, String>,
     },
+}
+
+impl McpServerConfig {
+    fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        if let Some(enabled) = &self.enabled_tools
+            && !enabled.contains(tool_name)
+        {
+            return false;
+        }
+
+        !self.disabled_tools.contains(tool_name)
+    }
+
+    fn startup_timeout(&self) -> Duration {
+        self.startup_timeout
+            .unwrap_or_else(|| Duration::from_secs(DEFAULT_STARTUP_TIMEOUT_SECS))
+    }
+
+    fn tool_timeout(&self, fallback: Duration) -> Duration {
+        self.tool_timeout.unwrap_or(fallback)
+    }
 }
 
 /// A connected MCP server with its peer handle
@@ -166,7 +240,7 @@ impl McpClientManager {
             configs,
             clients: Arc::new(RwLock::new(HashMap::new())),
             connecting: tokio::sync::Mutex::new(HashMap::new()),
-            mcp_tool_timeout: std::time::Duration::from_secs(60),
+            mcp_tool_timeout: Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS),
         }
     }
 
@@ -207,9 +281,14 @@ impl McpClientManager {
             if name == "mira" || seen.contains(&name) {
                 continue;
             }
-            if let Some(transport) = entry.into_transport() {
+            if !entry.enabled {
                 seen.insert(name.clone());
-                configs.push(McpServerConfig { name, transport });
+                debug!(server = %name, "Skipping disabled MCP server from config");
+                continue;
+            }
+            if let Some(config) = entry.into_config(name.clone()) {
+                seen.insert(name.clone());
+                configs.push(config);
             }
         }
     }
@@ -315,94 +394,130 @@ impl McpClientManager {
                 website_url: None,
             },
         };
-        let service = match &config.transport {
-            McpTransport::Stdio {
-                command,
-                args,
-                env,
-                cwd,
-            } => {
-                // Security: log the full command being spawned so users can audit config behavior
-                let env_keys: Vec<&str> = env.keys().map(|k| k.as_str()).collect();
-                warn!(
-                    server = %server_name,
-                    command = %command,
-                    args = ?args,
-                    env_vars = ?env_keys,
-                    cwd = ?cwd,
-                    "Spawning MCP server child process from MCP config files"
-                );
 
-                // Build the command
-                let mut cmd = Command::new(command);
-                cmd.args(args);
-                if let Some(cwd) = cwd {
-                    cmd.current_dir(cwd);
-                }
-                for (key, value) in env {
-                    cmd.env(key, value);
-                }
-                cmd.stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null()); // Suppress server stderr
-
-                // Spawn the child process transport
-                let transport = TokioChildProcess::new(cmd)
-                    .map_err(|e| format!("Failed to spawn MCP server '{}': {}", server_name, e))?;
-
-                serve_client(client_info, transport).await.map_err(|e| {
-                    format!(
-                        "Failed to initialize MCP client for '{}': {}",
-                        server_name, e
-                    )
-                })?
-            }
-            McpTransport::Http {
-                url,
-                bearer_token_env_var,
-                http_headers,
-                env_http_headers,
-            } => {
-                info!(
-                    server = %server_name,
-                    url = %url,
-                    "Connecting to MCP HTTP server"
-                );
-
-                // Warn about unsupported custom headers — rmcp's transport config
-                // only supports bearer auth, not arbitrary headers.
-                if !http_headers.is_empty() || !env_http_headers.is_empty() {
+        let startup_timeout = config.startup_timeout();
+        let (service, peer, mut tools) = tokio::time::timeout(startup_timeout, async {
+            let service = match &config.transport {
+                McpTransport::Stdio {
+                    command,
+                    args,
+                    env,
+                    env_vars,
+                    cwd,
+                } => {
+                    // Security: log the full command being spawned so users can audit config behavior
+                    let env_keys: Vec<&str> = env.keys().map(|k| k.as_str()).collect();
                     warn!(
                         server = %server_name,
-                        "http_headers and env_http_headers are not supported for MCP HTTP transport; \
-                         only bearer_token_env_var is used for authentication"
+                        command = %command,
+                        args = ?args,
+                        env_vars = ?env_keys,
+                        cwd = ?cwd,
+                        required = config.required,
+                        "Spawning MCP server child process from MCP config files"
                     );
+
+                    // Build the command
+                    let mut cmd = Command::new(command);
+                    cmd.args(args);
+                    if let Some(cwd) = cwd {
+                        cmd.current_dir(cwd);
+                    }
+                    for (key, value) in env {
+                        cmd.env(key, value);
+                    }
+                    for env_var in env_vars {
+                        if env.contains_key(env_var) {
+                            continue;
+                        }
+                        if let Ok(value) = std::env::var(env_var) {
+                            cmd.env(env_var, value);
+                        }
+                    }
+                    cmd.stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::null()); // Suppress server stderr
+
+                    // Spawn the child process transport
+                    let transport = TokioChildProcess::new(cmd).map_err(|e| {
+                        format!("Failed to spawn MCP server '{}': {}", server_name, e)
+                    })?;
+
+                    serve_client(client_info, transport).await.map_err(|e| {
+                        format!(
+                            "Failed to initialize MCP client for '{}': {}",
+                            server_name, e
+                        )
+                    })?
                 }
+                McpTransport::Http {
+                    url,
+                    bearer_token_env_var,
+                    http_headers,
+                    env_http_headers,
+                } => {
+                    info!(
+                        server = %server_name,
+                        url = %url,
+                        required = config.required,
+                        "Connecting to MCP HTTP server"
+                    );
 
-                let auth_token = Self::resolve_bearer_token(server_name, bearer_token_env_var);
+                    // Warn about unsupported custom headers — rmcp's transport config
+                    // only supports bearer auth, not arbitrary headers.
+                    if !http_headers.is_empty() || !env_http_headers.is_empty() {
+                        warn!(
+                            server = %server_name,
+                            "http_headers and env_http_headers are not supported for MCP HTTP transport; \
+                             only bearer_token_env_var is used for authentication"
+                        );
+                    }
 
-                let mut config = StreamableHttpClientTransportConfig::with_uri(url.as_str());
-                if let Some(token) = auth_token {
-                    config = config.auth_header(token);
+                    let auth_token =
+                        Self::resolve_bearer_token(server_name, bearer_token_env_var);
+
+                    let mut config = StreamableHttpClientTransportConfig::with_uri(url.as_str());
+                    if let Some(token) = auth_token {
+                        config = config.auth_header(token);
+                    }
+
+                    let transport = StreamableHttpClientTransport::from_config(config);
+                    serve_client(client_info, transport).await.map_err(|e| {
+                        format!(
+                            "Failed to initialize MCP HTTP client for '{}': {}",
+                            server_name, e
+                        )
+                    })?
                 }
+            };
 
-                let transport = StreamableHttpClientTransport::from_config(config);
-                serve_client(client_info, transport).await.map_err(|e| {
-                    format!(
-                        "Failed to initialize MCP HTTP client for '{}': {}",
-                        server_name, e
-                    )
-                })?
-            }
-        };
+            let peer = service.peer().clone();
+            let tools = peer
+                .list_all_tools()
+                .await
+                .map_err(|e| format!("Failed to list tools from '{}': {}", server_name, e))?;
+            Ok::<_, String>((service, peer, tools))
+        })
+        .await
+        .map_err(|_| {
+            format!(
+                "MCP server '{}' startup timed out after {}s",
+                server_name,
+                startup_timeout.as_secs()
+            )
+        })??;
 
-        let peer = service.peer().clone();
-
-        // List tools from this server
-        let tools = peer
-            .list_all_tools()
-            .await
-            .map_err(|e| format!("Failed to list tools from '{}': {}", server_name, e))?;
+        let original_tool_count = tools.len();
+        tools.retain(|tool| config.is_tool_allowed(tool.name.as_ref()));
+        let filtered_tool_count = original_tool_count.saturating_sub(tools.len());
+        if filtered_tool_count > 0 {
+            info!(
+                server = %server_name,
+                kept = tools.len(),
+                filtered = filtered_tool_count,
+                "Filtered MCP tools via enabled_tools/disabled_tools rules"
+            );
+        }
 
         info!(
             server = %server_name,
@@ -476,12 +591,36 @@ impl McpClientManager {
         tool_name: &str,
         args: Value,
     ) -> Result<String, String> {
+        let config = self
+            .configs
+            .iter()
+            .find(|c| c.name == server_name)
+            .ok_or_else(|| format!("MCP server '{}' not configured", server_name))?;
+
+        if !config.is_tool_allowed(tool_name) {
+            return Err(format!(
+                "MCP tool '{}::{}' is disabled by configuration",
+                server_name, tool_name
+            ));
+        }
+
         self.ensure_connected(server_name).await?;
 
         let clients = self.clients.read().await;
         let server = clients
             .get(server_name)
             .ok_or_else(|| format!("Server '{}' not connected", server_name))?;
+
+        if !server
+            .tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == tool_name)
+        {
+            return Err(format!(
+                "MCP tool '{}::{}' is not available",
+                server_name, tool_name
+            ));
+        }
 
         debug!(server = server_name, tool = tool_name, "Calling MCP tool");
 
@@ -492,9 +631,10 @@ impl McpClientManager {
         };
 
         let tool_name_owned: std::borrow::Cow<'static, str> = tool_name.to_string().into();
+        let timeout = config.tool_timeout(self.mcp_tool_timeout);
 
         let result: CallToolResult = tokio::time::timeout(
-            self.mcp_tool_timeout,
+            timeout,
             server.peer.call_tool(CallToolRequestParams {
                 meta: None,
                 name: tool_name_owned,
@@ -503,12 +643,7 @@ impl McpClientManager {
             }),
         )
         .await
-        .map_err(|_| {
-            format!(
-                "MCP tool call timed out after {}s",
-                self.mcp_tool_timeout.as_secs()
-            )
-        })?
+        .map_err(|_| format!("MCP tool call timed out after {}s", timeout.as_secs()))?
         .map_err(|e| format!("MCP tool call failed: {}", e))?;
 
         // Extract text content from the result
@@ -563,6 +698,24 @@ mod tests {
     ) {
         let root: McpJsonRoot = serde_json::from_str(json).unwrap();
         McpClientManager::add_servers(root.mcp_servers, configs, seen);
+    }
+
+    fn default_test_config() -> McpServerConfig {
+        McpServerConfig {
+            name: "test".to_string(),
+            transport: McpTransport::Stdio {
+                command: "cmd".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+                env_vars: vec![],
+                cwd: None,
+            },
+            required: false,
+            startup_timeout: None,
+            tool_timeout: None,
+            enabled_tools: None,
+            disabled_tools: HashSet::new(),
+        }
     }
 
     #[test]
@@ -648,6 +801,28 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_mcp_servers_enabled_false_blocks_lower_precedence() {
+        let project_json = r#"{
+            "mcpServers": {
+                "context7": {"command": "project", "enabled": false}
+            }
+        }"#;
+        let global_json = r#"{
+            "mcpServers": {
+                "context7": {"command": "global"}
+            }
+        }"#;
+
+        let mut configs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        parse_json(project_json, &mut configs, &mut seen);
+        parse_json(global_json, &mut configs, &mut seen);
+
+        assert!(configs.is_empty());
+        assert!(seen.contains("context7"));
+    }
+
+    #[test]
     fn test_parse_http_server() {
         let json = r#"{
             "mcpServers": {
@@ -683,6 +858,13 @@ mod tests {
             [mcp_servers.myserver]
             command = "my-mcp"
             args = ["--port", "8080"]
+            required = true
+            startup_timeout_sec = 20
+            startup_timeout_ms = 2500
+            tool_timeout_sec = 45
+            enabled_tools = ["open", "screenshot"]
+            disabled_tools = ["screenshot"]
+            env_vars = ["TOKEN"]
         "#;
 
         let root: CodexTomlRoot = toml::from_str(toml_str).unwrap();
@@ -693,12 +875,43 @@ mod tests {
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].name, "myserver");
         match &configs[0].transport {
-            McpTransport::Stdio { command, args, .. } => {
+            McpTransport::Stdio {
+                command,
+                args,
+                env_vars,
+                ..
+            } => {
                 assert_eq!(command, "my-mcp");
                 assert_eq!(args, &["--port", "8080"]);
+                assert_eq!(env_vars, &["TOKEN"]);
             }
             McpTransport::Http { .. } => panic!("Expected stdio transport"),
         }
+        assert!(configs[0].required);
+        assert_eq!(
+            configs[0].startup_timeout,
+            Some(Duration::from_millis(2500))
+        );
+        assert_eq!(configs[0].tool_timeout, Some(Duration::from_secs(45)));
+        assert!(configs[0].is_tool_allowed("open"));
+        assert!(!configs[0].is_tool_allowed("screenshot"));
+        assert!(!configs[0].is_tool_allowed("anything-else"));
+    }
+
+    #[test]
+    fn test_tool_filters_default_allow() {
+        let mut config = default_test_config();
+        config.disabled_tools = HashSet::from(["forbidden".to_string()]);
+
+        assert!(config.is_tool_allowed("allowed"));
+        assert!(!config.is_tool_allowed("forbidden"));
+    }
+
+    #[test]
+    fn test_tool_timeout_falls_back_to_manager_default() {
+        let config = default_test_config();
+        let manager_fallback = Duration::from_secs(99);
+        assert_eq!(config.tool_timeout(manager_fallback), manager_fallback);
     }
 
     // ========================================================================
@@ -754,15 +967,7 @@ mod tests {
         assert!(!manager.has_servers());
 
         let manager = McpClientManager {
-            configs: vec![McpServerConfig {
-                name: "test".to_string(),
-                transport: McpTransport::Stdio {
-                    command: "cmd".to_string(),
-                    args: vec![],
-                    env: HashMap::new(),
-                    cwd: None,
-                },
-            }],
+            configs: vec![default_test_config()],
             clients: Arc::new(RwLock::new(HashMap::new())),
             connecting: tokio::sync::Mutex::new(HashMap::new()),
             mcp_tool_timeout: std::time::Duration::from_secs(60),

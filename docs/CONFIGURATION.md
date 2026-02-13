@@ -51,6 +51,7 @@ Project `.env` files are NOT loaded for security reasons (a malicious repo could
 | `~/.mira/.env` | Global environment variables |
 | `~/.mira/config.toml` | LLM provider configuration |
 | `.mcp.json` | MCP server configuration (project) |
+| `.codex/config.toml` | Codex CLI configuration (project) |
 | `~/.claude/mcp.json` | MCP server configuration (global) |
 | `~/.claude/settings.json` | Claude Code settings including hooks |
 
@@ -114,18 +115,25 @@ If you use the Codex CLI, you can configure Mira in `~/.codex/config.toml` (glob
 `.codex/config.toml` (project). Example:
 
 ```toml
-[mcp_servers.mira]
-command = "/path/to/mira"
-args = ["serve"]
+#:schema https://developers.openai.com/codex/config-schema.json
+project_doc_fallback_filenames = ["CLAUDE.md"]
 
-[mcp_servers.mira.env]
-MIRA_PROJECT_PATH = "/path/to/project"
+[mcp_servers.mira]
+command = "mira"
+args = ["serve"]
+required = true
+startup_timeout_sec = 20
+tool_timeout_sec = 90
 ```
 
+This is additive to Claude setup: `.mcp.json` and `~/.claude/settings.json` hooks continue to work unchanged.
+
 Notes:
-- `MIRA_PROJECT_PATH` lets Mira auto-initialize the project when Claude hooks are not present.
+- `project_doc_fallback_filenames = ["CLAUDE.md"]` lets Codex reuse existing project instructions without duplicating `AGENTS.md`.
+- `MIRA_PROJECT_PATH` (optional env var) lets Mira auto-initialize the project when Claude hooks are not present.
 - Mira reads `mcp_servers.*` from Codex config to discover external MCP servers.
 - STDIO servers (`command`/`args`) and streamable HTTP servers (`url`) are supported.
+- Codex MCP fields supported by Mira's external MCP client: `enabled`, `required`, `startup_timeout_sec`, `startup_timeout_ms`, `tool_timeout_sec`, `enabled_tools`, `disabled_tools`, and `env_vars`.
 - HTTP servers support `bearer_token_env_var` for authentication. `http_headers` and `env_http_headers` are parsed but not currently passed to the transport (rmcp's streamable HTTP config only supports bearer auth). OAuth flows are not handled.
 
 ---

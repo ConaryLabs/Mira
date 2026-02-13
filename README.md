@@ -105,6 +105,20 @@ Then add to your project's `.mcp.json`:
 }
 ```
 
+If you use Codex CLI, add Mira to `.codex/config.toml`:
+
+```toml
+#:schema https://developers.openai.com/codex/config-schema.json
+project_doc_fallback_filenames = ["CLAUDE.md"]
+
+[mcp_servers.mira]
+command = "mira"
+args = ["serve"]
+required = true
+startup_timeout_sec = 20
+tool_timeout_sec = 90
+```
+
 ### Build from Source
 
 ```bash

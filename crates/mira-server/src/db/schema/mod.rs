@@ -490,12 +490,14 @@ fn migrate_health_snapshots_table(conn: &Connection) -> Result<()> {
 /// Add updated_at column to goals table for accurate stale-goal detection
 fn migrate_goals_updated_at(conn: &Connection) -> Result<()> {
     use crate::db::migration_helpers::add_column_if_missing;
-    add_column_if_missing(
-        conn,
-        "goals",
-        "updated_at",
-        "TEXT DEFAULT CURRENT_TIMESTAMP",
-    )
+    // SQLite doesn't allow CURRENT_TIMESTAMP as ALTER TABLE ADD COLUMN default
+    // (non-constant). Use NULL default, then backfill existing rows.
+    add_column_if_missing(conn, "goals", "updated_at", "TEXT")?;
+    conn.execute(
+        "UPDATE goals SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL",
+        [],
+    )?;
+    Ok(())
 }
 
 /// Database schema SQL

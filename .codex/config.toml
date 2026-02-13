@@ -1,0 +1,11 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Let Codex reuse existing project instructions without duplicating AGENTS.md.
+project_doc_fallback_filenames = ["CLAUDE.md"]
+
+[mcp_servers.mira]
+command = "mira"
+args = ["serve"]
+required = true
+startup_timeout_sec = 20
+tool_timeout_sec = 90
