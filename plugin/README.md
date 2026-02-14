@@ -76,6 +76,7 @@ claude --plugin-dir /path/to/Mira/plugin
 | `/mira:full-cycle` | End-to-end review, implementation, and QA |
 | `/mira:qa-hardening` | Production readiness review |
 | `/mira:refactor` | Safe code restructuring with validation |
+| `/mira:status` | Quick health check: index, storage, goals |
 
 ## MCP Tools
 
