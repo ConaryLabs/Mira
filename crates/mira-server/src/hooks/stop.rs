@@ -368,84 +368,26 @@ async fn snapshot_tasks(
     }
 }
 
-/// Build a session summary from tool history
+/// Build a session summary from tool history or behavior log, whichever is richer.
 fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
-    // Get session stats
-    let (tool_count, top_tools) = match crate::db::get_session_stats_sync(conn, session_id) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("Session stats query failed for {}: {}", session_id, e);
-            return None;
-        }
+    // Get stats from both sources and pick the richer one
+    let (tool_count, top_tools) = crate::db::get_session_stats_sync(conn, session_id)
+        .unwrap_or((0, Vec::new()));
+    let (behavior_count, behavior_tools) =
+        super::get_behavior_tool_stats_sync(conn, session_id);
+
+    let use_behavior = behavior_count as usize > tool_count;
+
+    let (count, tool_names, files_modified) = if use_behavior {
+        let names: Vec<String> = behavior_tools.iter().map(|(n, _)| n.clone()).collect();
+        let files = super::get_behavior_modified_files_sync(conn, session_id);
+        (behavior_count as usize, names, files)
+    } else if tool_count > 0 {
+        let files = super::get_session_modified_files_sync(conn, session_id);
+        (tool_count, top_tools, files)
+    } else {
+        return None;
     };
-
-    if tool_count == 0 {
-        // Fallback: check behavior log for native Claude Code tool usage
-        let (behavior_count, behavior_tools) =
-            super::get_behavior_tool_stats_sync(conn, session_id);
-        if behavior_count == 0 {
-            return None;
-        }
-
-        // Build summary from behavior log data
-        let files_modified = super::get_behavior_modified_files_sync(conn, session_id);
-        let duration: Option<String> = {
-            let sql = r#"
-                SELECT
-                    CAST((julianday(last_activity) - julianday(started_at)) * 24 * 60 AS INTEGER)
-                FROM sessions
-                WHERE id = ?
-            "#;
-            conn.query_row(sql, [session_id], |row| row.get::<_, i64>(0))
-                .ok()
-                .map(|mins| {
-                    if mins >= 60 {
-                        format!("{}h {}m", mins / 60, mins % 60)
-                    } else {
-                        format!("{}m", mins)
-                    }
-                })
-        };
-
-        let tool_names: Vec<&str> = behavior_tools.iter().map(|(n, _)| n.as_str()).collect();
-        let mut parts: Vec<String> = Vec::new();
-        if !tool_names.is_empty() {
-            parts.push(format!(
-                "{} tool calls ({})",
-                behavior_count,
-                tool_names.join(", ")
-            ));
-        } else {
-            parts.push(format!("{} tool calls", behavior_count));
-        }
-        if !files_modified.is_empty() {
-            let file_names: Vec<&str> = files_modified
-                .iter()
-                .map(|p| {
-                    std::path::Path::new(p.as_str())
-                        .file_name()
-                        .and_then(|f| f.to_str())
-                        .unwrap_or(p)
-                })
-                .collect();
-            if file_names.len() <= 3 {
-                parts.push(format!("Modified: {}", file_names.join(", ")));
-            } else {
-                parts.push(format!(
-                    "Modified: {} (+{} more)",
-                    file_names[..3].join(", "),
-                    file_names.len().saturating_sub(3)
-                ));
-            }
-        }
-        if let Some(dur) = duration {
-            parts.push(format!("Duration: {}", dur));
-        }
-        return Some(parts.join(". "));
-    }
-
-    // Get files modified (Write/Edit tool calls)
-    let files_modified = super::get_session_modified_files_sync(conn, session_id);
 
     // Get session duration
     let duration: Option<String> = {
@@ -469,18 +411,16 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
     // Build summary
     let mut parts: Vec<String> = Vec::new();
 
-    // Tools used
-    if !top_tools.is_empty() {
+    if !tool_names.is_empty() {
         parts.push(format!(
             "{} tool calls ({})",
-            tool_count,
-            top_tools.join(", ")
+            count,
+            tool_names.join(", ")
         ));
     } else {
-        parts.push(format!("{} tool calls", tool_count));
+        parts.push(format!("{} tool calls", count));
     }
 
-    // Files modified
     if !files_modified.is_empty() {
         let file_names: Vec<&str> = files_modified
             .iter()
@@ -502,7 +442,6 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
         }
     }
 
-    // Duration
     if let Some(dur) = duration {
         parts.push(format!("Duration: {}", dur));
     }
@@ -1141,6 +1080,97 @@ mod tests {
         assert!(
             snapshot.get("compaction_context").is_some(),
             "compaction_context should be preserved in behavior log fallback"
+        );
+    }
+
+    // ── regression tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn behavior_tool_stats_counts_all_tools_not_just_top_5() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/many-tools-proj");
+        seed_session(&conn, "many-tools-sess", pid, "active");
+
+        // Seed 7 distinct tools (> 5 limit that was previously applied)
+        for (i, tool) in ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "NotebookEdit"]
+            .iter()
+            .enumerate()
+        {
+            seed_behavior_tool_use(&conn, "many-tools-sess", pid, tool, i as i64 + 1);
+        }
+        // Add extra calls to some tools so total > 7
+        seed_behavior_tool_use(&conn, "many-tools-sess", pid, "Read", 8);
+        seed_behavior_tool_use(&conn, "many-tools-sess", pid, "Edit", 9);
+
+        let (total, top_tools): (i64, Vec<(String, i64)>) =
+            crate::hooks::get_behavior_tool_stats_sync(&conn, "many-tools-sess");
+
+        assert_eq!(total, 9, "total should count ALL 9 events across 7 tools");
+        assert_eq!(top_tools.len(), 5, "should only return top 5 tools");
+        // Top tools should have actual counts
+        for (name, count) in &top_tools {
+            assert!(*count > 0, "tool {name} should have count > 0");
+        }
+    }
+
+    #[test]
+    fn build_summary_prefers_richer_behavior_log_over_sparse_tool_history() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/mixed-proj");
+        seed_session(&conn, "mixed-sess", pid, "active");
+
+        // Sparse tool_history: 1 entry
+        seed_tool_history(&conn, "mixed-sess", "Read", r#"{"file_path":"f.rs"}"#, "ok");
+
+        // Rich behavior log: 5 entries
+        for i in 0..5 {
+            seed_behavior_tool_use(&conn, "mixed-sess", pid, "Edit", i + 1);
+        }
+        seed_behavior_file_access(&conn, "mixed-sess", pid, "Edit", "/tmp/mixed-proj/main.rs", 6);
+
+        let summary = build_session_summary(&conn, "mixed-sess");
+        assert!(summary.is_some(), "should produce a summary");
+        let s = summary.unwrap();
+        assert!(
+            s.contains("5 tool calls"),
+            "should use behavior_log count (5), not tool_history (1), got: {s}"
+        );
+    }
+
+    #[test]
+    fn snapshot_behavior_log_has_real_counts() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/snap-counts-proj");
+        seed_session(&conn, "snap-counts-sess", pid, "active");
+
+        // No tool_history — behavior log with known counts
+        seed_behavior_tool_use(&conn, "snap-counts-sess", pid, "Edit", 1);
+        seed_behavior_tool_use(&conn, "snap-counts-sess", pid, "Edit", 2);
+        seed_behavior_tool_use(&conn, "snap-counts-sess", pid, "Edit", 3);
+        seed_behavior_tool_use(&conn, "snap-counts-sess", pid, "Read", 4);
+
+        save_session_snapshot(&conn, "snap-counts-sess").unwrap();
+
+        let snapshot_str: String = conn
+            .query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                ["snap-counts-sess"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+
+        let top_tools = snapshot["top_tools"].as_array().unwrap();
+        // Edit should have count 3, Read should have count 1
+        let edit_entry = top_tools.iter().find(|t| t["name"] == "Edit").unwrap();
+        assert_eq!(
+            edit_entry["count"], 3,
+            "Edit count should be 3, not 0, got: {edit_entry}"
+        );
+        let read_entry = top_tools.iter().find(|t| t["name"] == "Read").unwrap();
+        assert_eq!(
+            read_entry["count"], 1,
+            "Read count should be 1, not 0, got: {read_entry}"
         );
     }
 }
