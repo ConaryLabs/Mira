@@ -311,15 +311,18 @@ async fn action_list<C: ToolContext>(
     limit: i64,
 ) -> Result<Json<GoalOutput>, String> {
     let limit_usize = limit.max(0) as usize;
-    // Get total count before applying limit (for accurate reporting)
-    let total_count = if !include_finished {
+    let incl = include_finished;
+    // Get true total count before applying limit
+    let total_count = {
         let pid = project_id;
         ctx.pool()
-            .run(move |conn| crate::db::count_active_goals_sync(conn, pid))
+            .run(move |conn| crate::db::count_goals_sync(conn, pid, incl))
             .await
+            .map_err(|e| {
+                tracing::warn!("Failed to count goals: {}", e);
+                e
+            })
             .unwrap_or(0)
-    } else {
-        0 // will be set from items.len() below
     };
     let goals = if include_finished {
         let mut all = ctx
@@ -344,7 +347,7 @@ async fn action_list<C: ToolContext>(
             message: "No goals found.".into(),
             data: Some(GoalData::List(GoalListData {
                 goals: vec![],
-                total: 0,
+                total: total_count,
             })),
         }));
     }
@@ -417,7 +420,7 @@ async fn action_list<C: ToolContext>(
             }
         })
         .collect();
-    let total = if total_count > 0 { total_count } else { items.len() };
+    let total = if total_count > 0 { total_count } else { items.len() }; // fallback only if count query failed
     Ok(Json(GoalOutput {
         action: "list".into(),
         message: response,
