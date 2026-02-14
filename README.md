@@ -203,6 +203,7 @@ All data stored locally in `~/.mira/`. No cloud storage, no external databases. 
 | `/mira:full-cycle` | End-to-end review, implementation, and QA |
 | `/mira:qa-hardening` | Production readiness review |
 | `/mira:refactor` | Safe code restructuring with validation |
+| `/mira:status` | Quick health check: index, storage, goals |
 
 ## Troubleshooting
 

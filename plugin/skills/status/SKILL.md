@@ -15,15 +15,14 @@ description: This skill should be used when the user asks "mira status", "show s
 
 ## Active Goals
 
-!`mira tool goal '{"action":"list"}'`
+!`mira tool goal '{"action":"list","limit":100}'`
 
 ## Instructions
 
 Present a concise status dashboard:
 
 - **Index**: Symbol count, embedded chunk count
-- **Embeddings**: Whether OpenAI embeddings are active (infer from chunk count > 0)
 - **Storage**: Database sizes, memory count, session count
-- **Goals**: Active goal count with summary of in-progress items
+- **Goals**: Total active goal count with summary of in-progress items
 
 Keep it brief — this is a quick health check, not a deep dive.
