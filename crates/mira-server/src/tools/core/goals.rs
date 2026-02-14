@@ -342,9 +342,14 @@ async fn action_list<C: ToolContext>(
     };
 
     if goals.is_empty() {
+        let message = if total_count > 0 {
+            format!("{} goals (showing 0):\n", total_count)
+        } else {
+            "No goals found.".into()
+        };
         return Ok(Json(GoalOutput {
             action: "list".into(),
-            message: "No goals found.".into(),
+            message,
             data: Some(GoalData::List(GoalListData {
                 goals: vec![],
                 total: total_count,
