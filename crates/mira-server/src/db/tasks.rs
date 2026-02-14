@@ -86,6 +86,26 @@ pub fn get_task_by_id_sync(conn: &Connection, id: i64) -> Result<Option<Task>> {
 /// Get active goals (sync version for pool.interact)
 ///
 /// Uses UNION ALL instead of OR for index-friendly project scoping.
+/// Count active (non-completed, non-abandoned) goals.
+pub fn count_active_goals_sync(
+    conn: &Connection,
+    project_id: Option<i64>,
+) -> Result<usize> {
+    let count: i64 = match project_id {
+        Some(pid) => conn.query_row(
+            "SELECT COUNT(*) FROM goals WHERE (project_id = ?1 OR project_id IS NULL) AND status NOT IN ('completed', 'abandoned')",
+            params![pid],
+            |r| r.get(0),
+        )?,
+        None => conn.query_row(
+            "SELECT COUNT(*) FROM goals WHERE project_id IS NULL AND status NOT IN ('completed', 'abandoned')",
+            [],
+            |r| r.get(0),
+        )?,
+    };
+    Ok(count as usize)
+}
+
 pub fn get_active_goals_sync(
     conn: &Connection,
     project_id: Option<i64>,

@@ -177,7 +177,8 @@ pub use session::{
     touch_session_sync, update_session_summary_sync,
 };
 pub use tasks::{
-    create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync, get_active_goals_sync,
+    count_active_goals_sync, create_goal_sync, create_task_sync, delete_goal_sync,
+    delete_task_sync, get_active_goals_sync,
     get_goal_by_id_sync, get_goals_sync, get_pending_tasks_sync, get_task_by_id_sync,
     get_tasks_sync, parse_goal_row, parse_task_row, update_goal_sync, update_task_sync,
 };

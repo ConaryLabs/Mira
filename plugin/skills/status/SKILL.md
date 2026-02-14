@@ -15,7 +15,7 @@ description: This skill should be used when the user asks "mira status", "show s
 
 ## Active Goals
 
-!`mira tool goal '{"action":"list","limit":100}'`
+!`mira tool goal '{"action":"list"}'`
 
 ## Instructions
 

@@ -311,6 +311,16 @@ async fn action_list<C: ToolContext>(
     limit: i64,
 ) -> Result<Json<GoalOutput>, String> {
     let limit_usize = limit.max(0) as usize;
+    // Get total count before applying limit (for accurate reporting)
+    let total_count = if !include_finished {
+        let pid = project_id;
+        ctx.pool()
+            .run(move |conn| crate::db::count_active_goals_sync(conn, pid))
+            .await
+            .unwrap_or(0)
+    } else {
+        0 // will be set from items.len() below
+    };
     let goals = if include_finished {
         let mut all = ctx
             .pool()
@@ -368,7 +378,12 @@ async fn action_list<C: ToolContext>(
             .await?
     };
 
-    let mut response = format!("{} goals:\n", goals.len());
+    let display_total = if total_count > 0 && total_count > goals.len() {
+        format!("{} goals (showing {}):\n", total_count, goals.len())
+    } else {
+        format!("{} goals:\n", goals.len())
+    };
+    let mut response = display_total;
     let items: Vec<GoalSummary> = goals
         .into_iter()
         .map(|goal| {
@@ -402,7 +417,7 @@ async fn action_list<C: ToolContext>(
             }
         })
         .collect();
-    let total = items.len();
+    let total = if total_count > 0 { total_count } else { items.len() };
     Ok(Json(GoalOutput {
         action: "list".into(),
         message: response,
