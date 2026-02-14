@@ -158,6 +158,116 @@ async fn test_cross_project_preferences_excludes_archived() {
 }
 
 #[tokio::test]
+async fn test_cross_project_preferences_excludes_suspicious_in_current_project() {
+    let pool = setup_test_pool().await;
+    let pid1 = db!(pool, |conn| {
+        get_or_create_project_sync(conn, "/project-a", Some("ProjectA")).map_err(Into::into)
+    })
+    .0;
+    let pid2 = db!(pool, |conn| {
+        get_or_create_project_sync(conn, "/project-b", Some("ProjectB")).map_err(Into::into)
+    })
+    .0;
+
+    // Store same preference in both projects
+    let id1 = db!(pool, |conn| {
+        store_memory_helper(
+            conn,
+            Some(pid1),
+            Some("pref-sus-a"),
+            "Use suspicious pattern",
+            "preference",
+            Some("preference"),
+            0.8,
+        )
+    });
+    db!(pool, |conn| {
+        store_memory_helper(
+            conn,
+            Some(pid2),
+            Some("pref-sus-b"),
+            "Use suspicious pattern",
+            "preference",
+            Some("preference"),
+            0.8,
+        )
+    });
+
+    // Mark the current-project memory as suspicious
+    db!(pool, |conn| {
+        conn.execute(
+            "UPDATE memory_facts SET suspicious = 1 WHERE id = ?",
+            [id1],
+        )
+        .map_err(Into::into)
+    });
+
+    // Suspicious current-project memory should not qualify the preference
+    let prefs = db!(pool, |conn| {
+        get_cross_project_preferences_sync(conn, pid1, 5).map_err(Into::into)
+    });
+    assert!(
+        prefs.is_empty(),
+        "Suspicious current-project memory should not qualify preference"
+    );
+}
+
+#[tokio::test]
+async fn test_cross_project_preferences_excludes_archived_in_current_project() {
+    let pool = setup_test_pool().await;
+    let pid1 = db!(pool, |conn| {
+        get_or_create_project_sync(conn, "/project-a", Some("ProjectA")).map_err(Into::into)
+    })
+    .0;
+    let pid2 = db!(pool, |conn| {
+        get_or_create_project_sync(conn, "/project-b", Some("ProjectB")).map_err(Into::into)
+    })
+    .0;
+
+    // Store same preference in both projects
+    let id1 = db!(pool, |conn| {
+        store_memory_helper(
+            conn,
+            Some(pid1),
+            Some("pref-arch-cur-a"),
+            "Use archived pattern",
+            "preference",
+            Some("preference"),
+            0.8,
+        )
+    });
+    db!(pool, |conn| {
+        store_memory_helper(
+            conn,
+            Some(pid2),
+            Some("pref-arch-cur-b"),
+            "Use archived pattern",
+            "preference",
+            Some("preference"),
+            0.8,
+        )
+    });
+
+    // Archive the CURRENT project's memory (not the other project's)
+    db!(pool, |conn| {
+        conn.execute(
+            "UPDATE memory_facts SET status = 'archived' WHERE id = ?",
+            [id1],
+        )
+        .map_err(Into::into)
+    });
+
+    // Archived current-project memory should not qualify the preference
+    let prefs = db!(pool, |conn| {
+        get_cross_project_preferences_sync(conn, pid1, 5).map_err(Into::into)
+    });
+    assert!(
+        prefs.is_empty(),
+        "Archived current-project memory should not qualify preference"
+    );
+}
+
+#[tokio::test]
 async fn test_cross_project_preferences_three_projects() {
     let pool = setup_test_pool().await;
     let pid1 = db!(pool, |conn| {

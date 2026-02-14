@@ -311,19 +311,24 @@ mod tests {
     }
 
     #[test]
-    fn test_format_cross_project_context_multibyte_utf8() {
-        // Ensure non-ASCII content doesn't panic during truncation
+    fn test_format_cross_project_context_multibyte_utf8_truncation() {
+        // Content > 200 bytes with multibyte chars forces truncation through
+        // truncate_at_boundary. This must not panic on char boundaries.
+        let long_unicode = "日本語".repeat(30); // 30 * 9 bytes = 270 bytes, exceeds 200
+        assert!(long_unicode.len() > 200, "test content must exceed 200 bytes");
         let memories = vec![CrossProjectMemory {
             fact_id: 3,
-            content: "日本語のテスト content with unicode: café résumé naïve".to_string(),
+            content: long_unicode,
             fact_type: "context".to_string(),
             category: None,
             project_name: "Unicode".to_string(),
             project_id: 44,
             distance: 0.2,
         }];
+        // Should not panic and should produce valid output
         let result = format_cross_project_context(&memories);
         assert!(result.contains("From Unicode"));
+        // Truncated content should be valid UTF-8 (implicit — String wouldn't compile otherwise)
     }
 
     #[test]
