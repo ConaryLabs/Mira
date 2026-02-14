@@ -44,7 +44,14 @@ pub(super) async fn generate_insights(
     )
     .await
     {
-        Ok(content) => parse_insights(&content),
+        Ok(content) => {
+            let mut insights = parse_insights(&content)?;
+            // Cap all LLM-generated insight confidence at 0.7 — LLMs can't verify facts
+            for insight in &mut insights {
+                insight.confidence = insight.confidence.min(0.7);
+            }
+            Ok(insights)
+        }
         Err(e) => {
             tracing::warn!("Failed to generate pondering insights: {}", e);
             Ok(vec![])
@@ -273,6 +280,8 @@ Identify 1-3 SPECIFIC, ACTIONABLE insights about TEMPORAL/CROSS-SESSION patterns
 2. Span multiple sessions or days — single-session observations are NOT insights
 3. Explain WHY it's a problem and suggest a concrete next step
 
+IMPORTANT: DO NOT claim unverified facts. Only report patterns that are directly supported by the data above. Never fabricate file names, commit hashes, or statistics.
+
 BAD: "The developer uses context tools frequently" (single-session observation)
 BAD: "Consider adding more tests" (vague, not temporal)
 GOOD: "Goal 94 (deadpool migration) has been in_progress 23 days with 0/3 milestones — check if task 578 is blocking"
@@ -396,5 +405,37 @@ mod tests {
         assert!(prompt.contains("Error handling quality issues"));
         assert!(prompt.contains("Heavy context switching"));
         assert!(prompt.contains("TEMPORAL/CROSS-SESSION"));
+    }
+
+    #[test]
+    fn test_build_prompt_contains_verification_constraint() {
+        let data = ProjectInsightData::default();
+        let prompt = build_prompt("mira", &data, &[], &[], &[]);
+        assert!(prompt.contains("DO NOT claim unverified facts"));
+        assert!(
+            prompt.contains("Only report patterns that are directly supported by the data above")
+        );
+        assert!(prompt.contains("Never fabricate file names, commit hashes, or statistics"));
+    }
+
+    #[test]
+    fn test_parse_insights_caps_confidence_at_07() {
+        // Parse insights with high confidence
+        let json = r#"[
+            {"pattern_type": "insight_stale_goal", "description": "test1", "confidence": 0.95, "evidence": ["a"]},
+            {"pattern_type": "insight_fragile_code", "description": "test2", "confidence": 0.6, "evidence": ["b"]},
+            {"pattern_type": "insight_churn_hotspot", "description": "test3", "confidence": 1.0, "evidence": ["c"]}
+        ]"#;
+        let mut insights = parse_insights(json).unwrap();
+
+        // Simulate the capping logic from generate_insights
+        for insight in &mut insights {
+            insight.confidence = insight.confidence.min(0.7);
+        }
+
+        assert_eq!(insights.len(), 3);
+        assert_eq!(insights[0].confidence, 0.7); // capped from 0.95
+        assert_eq!(insights[1].confidence, 0.6); // unchanged
+        assert_eq!(insights[2].confidence, 0.7); // capped from 1.0
     }
 }

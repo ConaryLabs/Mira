@@ -69,6 +69,34 @@ fn extract_primary_entity(description: &str) -> Option<String> {
     None
 }
 
+/// Extract goal ID from description (e.g., "Goal 94 ..." -> 94).
+/// Matches patterns like "Goal 94", "goal 94", "Goal #94".
+fn extract_goal_id(description: &str) -> Option<u64> {
+    let lower = description.to_lowercase();
+    // Find "goal" as a whole word (not "subgoal", "supergoal", etc.)
+    let mut search_from = 0;
+    loop {
+        let pos = lower[search_from..].find("goal")?;
+        let abs_pos = search_from + pos;
+        // Check word boundary before "goal"
+        let before_ok = abs_pos == 0
+            || !lower[..abs_pos]
+                .chars()
+                .next_back()
+                .unwrap()
+                .is_alphanumeric();
+        if before_ok {
+            let after = lower[abs_pos + 4..].trim_start();
+            let after = after.strip_prefix('#').map(|s| s.trim_start()).unwrap_or(after);
+            let num_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !num_str.is_empty() {
+                return num_str.parse().ok();
+            }
+        }
+        search_from = abs_pos + 4;
+    }
+}
+
 /// Extract the first quoted text from a description (for goal titles, etc.).
 fn extract_quoted_text(description: &str) -> Option<&str> {
     // Try double quotes first (unambiguous), then smart quotes, then single quotes
@@ -158,11 +186,14 @@ fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
     {
         return hash_key(&format!("{}:{}", pattern_type, entity));
     }
-    // For stale goal insights, key on the goal title
-    if pattern_type == "insight_stale_goal"
-        && let Some(title) = extract_quoted_text(description)
-    {
-        return hash_key(&format!("{}:{}", pattern_type, title.to_lowercase()));
+    // For stale goal insights, key on the goal ID (stable) or quoted title
+    if pattern_type == "insight_stale_goal" {
+        if let Some(goal_id) = extract_goal_id(description) {
+            return hash_key(&format!("{}:goal_{}", pattern_type, goal_id));
+        }
+        if let Some(title) = extract_quoted_text(description) {
+            return hash_key(&format!("{}:{}", pattern_type, title.to_lowercase()));
+        }
     }
     // Default: current behavior (normalized description hash)
     hash_key(&normalize_for_dedup(description))
@@ -170,6 +201,43 @@ fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
 
 /// Maximum number of insights to keep per pattern_type per project.
 const MAX_INSIGHTS_PER_TYPE: i64 = 10;
+
+/// Compute text similarity using character bigram Jaccard index.
+/// Returns 0.0 if both strings are empty, otherwise |intersection| / |union|.
+fn text_similarity(a: &str, b: &str) -> f64 {
+    // Normalize: lowercase and extract character bigrams
+    let bigrams_a: std::collections::HashSet<_> = a
+        .to_lowercase()
+        .chars()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|w| !(w[0].is_whitespace() && w[1].is_whitespace()))
+        .map(|w| (w[0], w[1]))
+        .collect();
+
+    let bigrams_b: std::collections::HashSet<_> = b
+        .to_lowercase()
+        .chars()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|w| !(w[0].is_whitespace() && w[1].is_whitespace()))
+        .map(|w| (w[0], w[1]))
+        .collect();
+
+    // Handle empty strings
+    if bigrams_a.is_empty() && bigrams_b.is_empty() {
+        return 0.0;
+    }
+    if bigrams_a.is_empty() || bigrams_b.is_empty() {
+        return 0.0;
+    }
+
+    // Jaccard index: |intersection| / |union|
+    let intersection = bigrams_a.intersection(&bigrams_b).count();
+    let union = bigrams_a.union(&bigrams_b).count();
+
+    intersection as f64 / union as f64
+}
 
 /// Store insights as behavior patterns, then enforce per-type cap.
 pub(super) async fn store_insights(
@@ -212,6 +280,50 @@ pub(super) async fn store_insights(
                 .unwrap_or(false);
             if dismissed {
                 continue;
+            }
+
+            // Text similarity dedup — only for non-entity-aware pattern types.
+            // Entity-aware types (fragile_code, untested, revert_cluster, stale_goal)
+            // already have identity-preserving keys via compute_pattern_key(), so
+            // same-entity recurrence is handled by the upsert and different entities
+            // must not be suppressed (e.g., src/auth/login.rs vs src/auth/logout.rs
+            // would exceed 0.8 bigram Jaccard despite being distinct entities).
+            let is_entity_aware = matches!(
+                insight.pattern_type.as_str(),
+                "insight_fragile_code"
+                    | "insight_untested"
+                    | "insight_revert_cluster"
+                    | "insight_stale_goal"
+            );
+
+            if !is_entity_aware {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT json_extract(pattern_data, '$.description') \
+                         FROM behavior_patterns \
+                         WHERE project_id = ? AND pattern_type = ? AND pattern_key != ? AND dismissed = 0",
+                    )
+                    .map_err(|e| anyhow::anyhow!("Failed to prepare similarity check: {}", e))?;
+
+                let existing_descriptions: Vec<String> = stmt
+                    .query_map(
+                        params![project_id, insight.pattern_type, pattern_key],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to query existing descriptions: {}", e)
+                    })?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                let is_duplicate = existing_descriptions.iter().any(|existing_desc| {
+                    text_similarity(&insight.description, existing_desc) > 0.8
+                });
+
+                if is_duplicate {
+                    tracing::debug!("Skipping near-duplicate insight: {}", insight.description);
+                    continue;
+                }
             }
 
             let pattern_data = serde_json::json!({
@@ -571,5 +683,341 @@ mod tests {
         let key2 = compute_pattern_key("insight_session", "8 sessions lasted under 5 minutes");
         // Numbers are normalized to #, so these should match
         assert_eq!(key1, key2);
+    }
+
+    // ── Text similarity tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_text_similarity_identical() {
+        let text = "File src/db/pool.rs modified 8 times";
+        assert_eq!(text_similarity(text, text), 1.0);
+    }
+
+    #[test]
+    fn test_text_similarity_completely_different() {
+        let a = "File src/db/pool.rs has issues";
+        let b = "Goal Quick Wins needs attention";
+        let sim = text_similarity(a, b);
+        assert!(sim < 0.3, "Expected similarity < 0.3, got {}", sim);
+    }
+
+    #[test]
+    fn test_text_similarity_near_duplicate() {
+        // Very similar descriptions with minor wording differences
+        let a = "File src/db/pool.rs modified 8 times and shows high churn";
+        let b = "File src/db/pool.rs modified 12 times and shows high churn";
+        let sim = text_similarity(a, b);
+        assert!(sim > 0.8, "Expected similarity > 0.8, got {}", sim);
+    }
+
+    #[test]
+    fn test_text_similarity_different_entities() {
+        let a = "File src/db/pool.rs has issues";
+        let b = "File src/auth/login.rs has issues";
+        let sim = text_similarity(a, b);
+        assert!(sim < 0.8, "Expected similarity < 0.8, got {}", sim);
+    }
+
+    #[test]
+    fn test_text_similarity_empty_strings() {
+        assert_eq!(text_similarity("", ""), 0.0);
+        assert_eq!(text_similarity("nonempty", ""), 0.0);
+        assert_eq!(text_similarity("", "nonempty"), 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_store_insights_skips_near_duplicates() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/dedup-test", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Store the first insight (workflow type, no entity-based dedup)
+        let insights1 = vec![PonderingInsight {
+            pattern_type: "insight_workflow".to_string(),
+            description: "Multiple sessions show rapid task switching pattern with 8 context changes per hour".to_string(),
+            confidence: 0.8,
+            evidence: vec!["test".to_string()],
+        }];
+
+        let stored = store_insights(&pool, project_id, &insights1).await.unwrap();
+        assert_eq!(stored, 1, "First insight should be stored");
+
+        // Try to store a near-duplicate (same pattern, minor wording change)
+        let insights2 = vec![PonderingInsight {
+            pattern_type: "insight_workflow".to_string(),
+            description: "Multiple sessions show rapid task switching pattern with 12 context changes per hour".to_string(),
+            confidence: 0.9,
+            evidence: vec!["test2".to_string()],
+        }];
+
+        let stored = store_insights(&pool, project_id, &insights2).await.unwrap();
+        assert_eq!(stored, 0, "Near-duplicate insight should be skipped");
+
+        // Store a completely different insight (should succeed)
+        let insights3 = vec![PonderingInsight {
+            pattern_type: "insight_workflow".to_string(),
+            description: "Sessions typically last under 5 minutes indicating quick fixes"
+                .to_string(),
+            confidence: 0.85,
+            evidence: vec!["test3".to_string()],
+        }];
+
+        let stored = store_insights(&pool, project_id, &insights3).await.unwrap();
+        assert_eq!(stored, 1, "Different insight should be stored");
+    }
+
+    /// Codex finding 1: recurring insights about the SAME entity must still
+    /// reach the upsert path to refresh occurrence_count and last_triggered_at.
+    #[tokio::test]
+    async fn test_recurring_insight_updates_occurrence_count() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/recurring-test", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Store initial insight about a specific file (entity-aware key)
+        let insights1 = vec![PonderingInsight {
+            pattern_type: "insight_fragile_code".to_string(),
+            description: "src/db/pool.rs has 40% failure rate — 4 reverted, 2 follow-up fixes out of 15 changes".to_string(),
+            confidence: 0.6,
+            evidence: vec!["test".to_string()],
+        }];
+
+        let stored = store_insights(&pool, project_id, &insights1).await.unwrap();
+        assert_eq!(stored, 1, "First insight should be stored");
+
+        // Store updated version of the SAME entity (same pattern_key via entity extraction)
+        let insights2 = vec![PonderingInsight {
+            pattern_type: "insight_fragile_code".to_string(),
+            description: "src/db/pool.rs has 50% failure rate — 6 reverted, 4 follow-up fixes out of 20 changes".to_string(),
+            confidence: 0.7,
+            evidence: vec!["updated".to_string()],
+        }];
+
+        let stored = store_insights(&pool, project_id, &insights2).await.unwrap();
+        assert_eq!(
+            stored, 1,
+            "Recurring insight must reach upsert to update occurrence_count"
+        );
+
+        // Verify occurrence_count was incremented
+        let count: i64 = pool
+            .run(move |conn| {
+                conn.query_row(
+                    "SELECT occurrence_count FROM behavior_patterns \
+                     WHERE project_id = ? AND pattern_type = 'insight_fragile_code'",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 2, "occurrence_count should be 2 after upsert");
+    }
+
+    /// Codex finding 2: insights about DIFFERENT entities with similar template
+    /// wording should both be stored.
+    #[tokio::test]
+    async fn test_different_entities_similar_template_both_stored() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/entity-dedup-test", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Store insight about file A
+        let insights1 = vec![PonderingInsight {
+            pattern_type: "insight_fragile_code".to_string(),
+            description: "src/db/pool.rs has 40% failure rate — 4 reverted out of 10 changes"
+                .to_string(),
+            confidence: 0.6,
+            evidence: vec!["test".to_string()],
+        }];
+        let stored = store_insights(&pool, project_id, &insights1).await.unwrap();
+        assert_eq!(stored, 1);
+
+        // Store insight about file B with similar template
+        let insights2 = vec![PonderingInsight {
+            pattern_type: "insight_fragile_code".to_string(),
+            description: "src/auth/login.rs has 40% failure rate — 4 reverted out of 10 changes"
+                .to_string(),
+            confidence: 0.6,
+            evidence: vec!["test".to_string()],
+        }];
+        let stored = store_insights(&pool, project_id, &insights2).await.unwrap();
+        assert_eq!(
+            stored, 1,
+            "Different entity should be stored even with similar template"
+        );
+
+        // Verify both exist
+        let count: i64 = pool
+            .run(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM behavior_patterns \
+                     WHERE project_id = ? AND pattern_type = 'insight_fragile_code'",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 2, "Both entity-distinct insights should exist");
+    }
+
+    /// Codex finding 2 (refined): very similar filenames like login.rs vs logout.rs
+    /// would exceed 0.8 bigram Jaccard. Entity-aware types must skip similarity check.
+    #[tokio::test]
+    async fn test_similar_filenames_not_suppressed() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/similar-names", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Verify these descriptions actually exceed 0.8 similarity
+        let sim = text_similarity(
+            "src/auth/login.rs has 40% failure rate — 4 reverted out of 10 changes",
+            "src/auth/logout.rs has 40% failure rate — 4 reverted out of 10 changes",
+        );
+        assert!(
+            sim > 0.8,
+            "Precondition: similarity should be > 0.8, got {}",
+            sim
+        );
+
+        let insights1 = vec![PonderingInsight {
+            pattern_type: "insight_fragile_code".to_string(),
+            description: "src/auth/login.rs has 40% failure rate — 4 reverted out of 10 changes"
+                .to_string(),
+            confidence: 0.6,
+            evidence: vec!["test".to_string()],
+        }];
+        let stored = store_insights(&pool, project_id, &insights1).await.unwrap();
+        assert_eq!(stored, 1);
+
+        let insights2 = vec![PonderingInsight {
+            pattern_type: "insight_fragile_code".to_string(),
+            description: "src/auth/logout.rs has 40% failure rate — 4 reverted out of 10 changes"
+                .to_string(),
+            confidence: 0.6,
+            evidence: vec!["test".to_string()],
+        }];
+        let stored = store_insights(&pool, project_id, &insights2).await.unwrap();
+        assert_eq!(
+            stored, 1,
+            "Entity-aware type must not use text similarity — login.rs vs logout.rs are distinct"
+        );
+    }
+
+    #[test]
+    fn test_extract_goal_id() {
+        assert_eq!(extract_goal_id("Goal 94 (deadpool migration) has been in_progress"), Some(94));
+        assert_eq!(extract_goal_id("goal 42 is stale"), Some(42));
+        assert_eq!(extract_goal_id("Goal #123 needs attention"), Some(123));
+        assert_eq!(extract_goal_id("no goal here"), None);
+        assert_eq!(extract_goal_id("Goal without number"), None);
+        // Unicode case-fold: İ (U+0130) lowercases to 2 chars, must not drift offsets
+        assert_eq!(extract_goal_id("İGoal 94 stale"), Some(94));
+        // Word boundary: "subgoal" and "supergoal" should not match
+        assert_eq!(extract_goal_id("subgoal 94 still blocked"), None);
+        assert_eq!(extract_goal_id("supergoal #12 and Goal 94 stale"), Some(94));
+        // Space after # should still work
+        assert_eq!(extract_goal_id("Goal # 94 stale"), Some(94));
+    }
+
+    #[tokio::test]
+    async fn test_stale_goal_unquoted_dedup() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/goal-dedup", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Two rephrasings of the same stale goal, neither using quotes
+        let insights1 = vec![PonderingInsight {
+            pattern_type: "insight_stale_goal".to_string(),
+            description: "Goal 94 (deadpool migration) has been in_progress 23 days with 0/3 milestones".to_string(),
+            confidence: 0.6,
+            evidence: vec!["stale".to_string()],
+        }];
+        let stored = store_insights(&pool, project_id, &insights1).await.unwrap();
+        assert_eq!(stored, 1);
+
+        // Same goal, different phrasing, still unquoted
+        let insights2 = vec![PonderingInsight {
+            pattern_type: "insight_stale_goal".to_string(),
+            description: "Goal 94 has made no progress in 23 days — consider breaking it down".to_string(),
+            confidence: 0.65,
+            evidence: vec!["stale".to_string()],
+        }];
+        let stored = store_insights(&pool, project_id, &insights2).await.unwrap();
+        assert_eq!(
+            stored, 1,
+            "Same goal ID should upsert, not create a duplicate"
+        );
+
+        // Different goal should still be stored separately
+        let insights3 = vec![PonderingInsight {
+            pattern_type: "insight_stale_goal".to_string(),
+            description: "Goal 95 (auth refactor) has been blocked for 14 days".to_string(),
+            confidence: 0.6,
+            evidence: vec!["stale".to_string()],
+        }];
+        let stored = store_insights(&pool, project_id, &insights3).await.unwrap();
+        assert_eq!(
+            stored, 1,
+            "Different goal ID should be stored as a new insight"
+        );
     }
 }

@@ -410,7 +410,7 @@ pub(super) async fn get_untested_hotspots(
             }
         }
 
-        // Filter: 5+ modifications, multiple sessions, actual code file, no corresponding test
+        // Filter: 5+ modifications, multiple sessions, actual code file, no corresponding test, no inline tests
         let mut results: Vec<UntestedFile> = file_stats
             .into_iter()
             .filter(|(path, (count, sessions))| {
@@ -418,6 +418,7 @@ pub(super) async fn get_untested_hotspots(
                     && sessions.len() >= 2
                     && !is_non_code_file(path)
                     && !has_corresponding_test(&test_files_modified, path)
+                    && !has_inline_rust_tests(path)
             })
             .map(|(file_path, (count, sessions))| UntestedFile {
                 file_path,
@@ -808,6 +809,7 @@ fn is_test_file(path: &str) -> bool {
         || path.contains("/spec/")
         || path.contains("/specs/")
         || path.contains("_test.")
+        || path.contains("_tests.")
         || path.contains(".test.")
         || path.contains("_spec.")
         || path.contains(".spec.")
@@ -815,6 +817,24 @@ fn is_test_file(path: &str) -> bool {
         || path.starts_with("test/")
         || path.starts_with("tests/")
         || path.starts_with("spec/")
+}
+
+/// Check if a Rust file has inline tests (e.g., `#[cfg(test)]` or `mod tests`).
+/// Only checks `.rs` files. Returns false on any error.
+fn has_inline_rust_tests(path: &str) -> bool {
+    // Only check Rust files
+    if !path.ends_with(".rs") {
+        return false;
+    }
+
+    // Read file from disk with graceful error handling
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            // Check for common Rust test markers
+            contents.contains("#[cfg(test)]") || contents.contains("mod tests")
+        }
+        Err(_) => false, // File read failed, treat as no inline tests
+    }
 }
 
 /// Check if a source file has a corresponding test file in the modified set.
@@ -833,6 +853,7 @@ fn has_corresponding_test(
 
     let test_variants = [
         format!("{}_test.rs", stem),
+        format!("{}_tests.rs", stem),
         format!("{}.test.ts", stem),
         format!("{}.test.js", stem),
         format!("test_{}.py", stem),
