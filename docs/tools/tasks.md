@@ -1,39 +1,27 @@
 # tasks (Background Task Management)
 
-> **Note:** Task management is CLI-only. Use `mira tool session '{"action":"tasks_list"}'` etc.
-> These actions are **not** available via the MCP tool surface.
+Long-running MCP tools like `index(action="project")` and `code(action="diff")` auto-enqueue background tasks and return a `task_id`.
 
-Manage async long-running operations. Long-running tools like `index(action="project")` and `code(action="diff")` can enqueue background tasks. Use these actions to monitor their progress.
+## Polling (MCP clients)
 
-## Usage (CLI only)
+Task state is **in-memory** on the running MCP server. MCP clients poll using the native protocol methods:
 
-```bash
-mira tool session '{"action":"tasks_list"}'
-```
+- **`tasks/get_info`** — check task status (working / completed / failed / cancelled)
+- **`tasks/get_result`** — retrieve the finished result
 
-## Actions
+These operate on the same server process that created the task, so state is always consistent.
 
-### `tasks_list` — Show all tasks
+## CLI fallback
 
-Lists running and recently completed tasks with status.
+The `session` tool's `tasks_list`, `tasks_get`, and `tasks_cancel` actions are available via CLI:
 
 ```bash
 mira tool session '{"action":"tasks_list"}'
-```
-
-### `tasks_get` — Get task status
-
-```bash
 mira tool session '{"action":"tasks_get","task_id":"abc123"}'
-```
-
-Returns: Task status, progress, and result (if completed).
-
-### `tasks_cancel` — Cancel a running task
-
-```bash
 mira tool session '{"action":"tasks_cancel","task_id":"abc123"}'
 ```
+
+> **Caveat:** `mira tool` spawns a fresh server process, so it **cannot** see tasks created by the MCP server. CLI task actions are only useful for tasks created within the same CLI invocation.
 
 ## Parameters
 
@@ -41,10 +29,6 @@ mira tool session '{"action":"tasks_cancel","task_id":"abc123"}'
 |-----------|------|----------|-------------|
 | action | String | Yes | `tasks_list`, `tasks_get`, or `tasks_cancel` |
 | task_id | String | For get/cancel | Task ID to query or cancel |
-
-## Important
-
-Task state is **in-memory** on the running MCP server process. The `mira tool` CLI spawns a separate server, so it cannot see tasks from the MCP server. Task polling is only reliable within the same server process.
 
 ## See Also
 

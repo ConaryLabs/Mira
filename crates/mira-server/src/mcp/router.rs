@@ -269,13 +269,14 @@ impl MiraServer {
         Ok(CallToolResult {
             content: vec![Content::text(format!(
                 "Task {} started (running {} asynchronously). \
-                 Result will be available when complete.",
+                 Poll with MCP tasks/get_info or tasks/get_result using this task_id.",
                 enqueued.task_id, enqueued.tool_name
             ))],
             structured_content: Some(serde_json::json!({
                 "task_id": enqueued.task_id,
                 "status": "working",
                 "message": format!("Running {} asynchronously", enqueued.tool_name),
+                "poll": "Use MCP get_task_info / get_task_result with this task_id",
                 "created_at": enqueued.created_at,
             })),
             is_error: Some(false),
