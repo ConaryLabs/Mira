@@ -1,6 +1,6 @@
 [package]
 name = "mira-server"
-version = "0.7.6"
+version = "0.8.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
