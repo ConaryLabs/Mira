@@ -5,7 +5,12 @@
 // and vec_memory live in one database. Cross-project queries simply search
 // with project_id != current_project_id.
 
+use crate::utils::truncate_at_boundary;
 use rusqlite::Connection;
+
+/// Distance threshold for "You solved this" labeling.
+/// Only memories within this threshold get the strong attribution.
+const SOLVED_DISTANCE_THRESHOLD: f32 = 0.25;
 
 /// A memory from another project with attribution.
 #[derive(Debug, Clone)]
@@ -164,6 +169,9 @@ pub fn get_cross_project_preferences_sync(
               WHERE f2.content = f.content
                 AND f2.project_id = ?1
                 AND f2.fact_type = 'preference'
+                AND f2.status != 'archived'
+                AND f2.scope = 'project'
+                AND COALESCE(f2.suspicious, 0) = 0
           )
         GROUP BY f.content
         HAVING COUNT(DISTINCT f.project_id) >= 2
@@ -189,8 +197,9 @@ pub fn get_cross_project_preferences_sync(
 
 /// Format cross-project memories for display in session recap or hook context.
 ///
-/// Uses "You solved this in Project X" format for tight matches (decisions/patterns),
-/// and generic "From Project X" format for looser matches.
+/// Uses "You solved this in Project X" format ONLY for tight matches
+/// (distance < 0.25 AND decision/pattern type). All other matches use
+/// the generic "From Project X" format to avoid overstating confidence.
 pub fn format_cross_project_context(memories: &[CrossProjectMemory]) -> String {
     if memories.is_empty() {
         return String::new();
@@ -199,8 +208,10 @@ pub fn format_cross_project_context(memories: &[CrossProjectMemory]) -> String {
     let lines: Vec<String> = memories
         .iter()
         .map(|m| {
-            let truncated = truncate_content(&m.content, 200);
-            if m.fact_type == "decision" || m.fact_type == "pattern" {
+            let truncated = truncate_at_boundary(&m.content, 200);
+            let is_solved = m.distance < SOLVED_DISTANCE_THRESHOLD
+                && (m.fact_type == "decision" || m.fact_type == "pattern");
+            if is_solved {
                 format!(
                     "[Mira/cross-project] You solved this in {}: \"{}\"",
                     m.project_name, truncated
@@ -226,7 +237,7 @@ pub fn format_cross_project_preferences(prefs: &[CrossProjectPreference]) -> Str
     let lines: Vec<String> = prefs
         .iter()
         .map(|p| {
-            let truncated = truncate_content(&p.content, 200);
+            let truncated = truncate_at_boundary(&p.content, 200);
             format!(
                 "• {} (used in {} projects: {})",
                 truncated, p.project_count, p.projects
@@ -235,17 +246,6 @@ pub fn format_cross_project_preferences(prefs: &[CrossProjectPreference]) -> Str
         .collect();
 
     format!("Cross-project patterns:\n{}", lines.join("\n"))
-}
-
-/// Truncate content at a word boundary.
-fn truncate_content(s: &str, max_len: usize) -> &str {
-    if s.len() <= max_len {
-        return s;
-    }
-    match s[..max_len].rfind(' ') {
-        Some(pos) => &s[..pos],
-        None => &s[..max_len],
-    }
 }
 
 #[cfg(test)]
@@ -258,7 +258,8 @@ mod tests {
     }
 
     #[test]
-    fn test_format_cross_project_context_decision() {
+    fn test_format_cross_project_context_tight_decision() {
+        // Tight match (distance < 0.25) + decision → "You solved this"
         let memories = vec![CrossProjectMemory {
             fact_id: 1,
             content: "Use builder pattern for config".to_string(),
@@ -274,6 +275,26 @@ mod tests {
     }
 
     #[test]
+    fn test_format_cross_project_context_loose_decision_no_solved_label() {
+        // Loose match (distance 0.3) + decision → generic "From" format, NOT "You solved this"
+        let memories = vec![CrossProjectMemory {
+            fact_id: 1,
+            content: "Use builder pattern for config".to_string(),
+            fact_type: "decision".to_string(),
+            category: Some("patterns".to_string()),
+            project_name: "ProjectAlpha".to_string(),
+            project_id: 42,
+            distance: 0.3,
+        }];
+        let result = format_cross_project_context(&memories);
+        assert!(
+            !result.contains("You solved this"),
+            "Loose match should not use 'You solved this' label"
+        );
+        assert!(result.contains("From ProjectAlpha"));
+    }
+
+    #[test]
     fn test_format_cross_project_context_general() {
         let memories = vec![CrossProjectMemory {
             fact_id: 2,
@@ -282,11 +303,27 @@ mod tests {
             category: None,
             project_name: "ProjectBeta".to_string(),
             project_id: 43,
-            distance: 0.3,
+            distance: 0.1,
         }];
         let result = format_cross_project_context(&memories);
         assert!(result.contains("From ProjectBeta"));
         assert!(result.contains("SQLite with connection pooling"));
+    }
+
+    #[test]
+    fn test_format_cross_project_context_multibyte_utf8() {
+        // Ensure non-ASCII content doesn't panic during truncation
+        let memories = vec![CrossProjectMemory {
+            fact_id: 3,
+            content: "日本語のテスト content with unicode: café résumé naïve".to_string(),
+            fact_type: "context".to_string(),
+            category: None,
+            project_name: "Unicode".to_string(),
+            project_id: 44,
+            distance: 0.2,
+        }];
+        let result = format_cross_project_context(&memories);
+        assert!(result.contains("From Unicode"));
     }
 
     #[test]
@@ -307,23 +344,5 @@ mod tests {
         assert!(result.contains("Use debug builds during development"));
         assert!(result.contains("2 projects"));
         assert!(result.contains("Mira,ProjectAlpha"));
-    }
-
-    #[test]
-    fn test_truncate_content_short() {
-        assert_eq!(truncate_content("hello world", 20), "hello world");
-    }
-
-    #[test]
-    fn test_truncate_content_long() {
-        assert_eq!(
-            truncate_content("hello world foo bar baz", 15),
-            "hello world"
-        );
-    }
-
-    #[test]
-    fn test_truncate_content_no_space() {
-        assert_eq!(truncate_content("nospaces", 4), "nosp");
     }
 }
