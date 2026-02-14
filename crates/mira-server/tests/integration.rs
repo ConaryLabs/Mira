@@ -688,6 +688,79 @@ async fn test_goal_create_and_list() {
 }
 
 #[tokio::test]
+async fn test_goal_list_limit_zero_shows_total() {
+    let ctx = TestContext::new().await;
+
+    let project_path = "/tmp/test_goal_limit0".to_string();
+    session_start(
+        &ctx,
+        project_path.clone(),
+        Some("Limit Zero Test".to_string()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
+
+    // Create a goal so total > 0
+    goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::Create,
+            goal_id: None,
+            title: Some("Test goal".to_string()),
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
+    )
+    .await
+    .expect("goal create failed");
+
+    // List with limit=0: should report total but show no items
+    let result = goal(
+        &ctx,
+        GoalRequest {
+            action: GoalAction::List,
+            goal_id: None,
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: Some(false),
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: Some(0),
+            goals: None,
+        },
+    )
+    .await;
+    assert!(result.is_ok(), "goal list failed: {:?}", result.err());
+    let output = result.unwrap();
+    let msg = msg!(output);
+    // Should NOT say "No goals found" since goals exist
+    assert!(
+        !msg.contains("No goals found"),
+        "limit=0 should not say 'No goals found' when goals exist: {}",
+        msg
+    );
+    // Should report the real total
+    assert!(
+        msg.contains("(showing 0)"),
+        "limit=0 should show '(showing 0)': {}",
+        msg
+    );
+}
+
+#[tokio::test]
 async fn test_get_session_recap() {
     let ctx = TestContext::new().await;
 
