@@ -169,7 +169,10 @@ async fn query_insights<C: ToolContext>(
 
     // Handle empty state
     if insights.is_empty() {
-        let has_filters = insight_source.is_some() || min_confidence.is_some();
+        let has_filters = insight_source.is_some()
+            || min_confidence.is_some()
+            || since_days.is_some()
+            || limit.is_some();
         let empty_msg = if has_filters {
             "No insights match the current filters.".to_string()
         } else if snapshot_summary.is_some() {

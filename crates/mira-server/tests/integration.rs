@@ -3390,6 +3390,190 @@ fn hook_user_prompt_no_panic() {
     );
 }
 
+// =========================================================================
+// Insights Empty-State Message Tests
+// =========================================================================
+
+#[tokio::test]
+async fn test_insights_empty_no_data_shows_setup_instructions() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
+    let ctx = TestContext::new().await;
+
+    session_start(&ctx, "/tmp/test_insights_empty".into(), Some("Insights Empty".into()), None)
+        .await
+        .expect("session_start failed");
+
+    // No insights, no health snapshots → should show setup instructions
+    let req = SessionRequest {
+        action: SessionAction::Insights,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+        insight_id: None,
+        dry_run: None,
+        category: None,
+    };
+    let result = handle_session(&ctx, req).await;
+    assert!(result.is_ok());
+    let output = result.unwrap();
+    assert!(
+        msg!(output).contains("index(action="),
+        "Empty state with no data should show setup instructions, got: {}",
+        msg!(output)
+    );
+}
+
+#[tokio::test]
+async fn test_insights_empty_with_snapshot_shows_healthy() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
+    let ctx = TestContext::new().await;
+
+    session_start(&ctx, "/tmp/test_insights_healthy".into(), Some("Insights Healthy".into()), None)
+        .await
+        .expect("session_start failed");
+    let project = ctx.get_project().await.expect("project should be set");
+
+    // Insert a health snapshot but no insights → genuinely healthy
+    ctx.pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score, tier_distribution, module_count, snapshot_at)
+                 VALUES (?1, 15.0, 30.0, '{\"A\":5}', 5, datetime('now'))",
+                rusqlite::params![project.id],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok::<(), String>(())
+        })
+        .await
+        .expect("insert snapshot");
+
+    // No filters → should say "healthy"
+    let req = SessionRequest {
+        action: SessionAction::Insights,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+        insight_id: None,
+        dry_run: None,
+        category: None,
+    };
+    let result = handle_session(&ctx, req).await;
+    assert!(result.is_ok());
+    let output = result.unwrap();
+    assert!(
+        msg!(output).contains("healthy"),
+        "Unfiltered empty state with snapshot should say healthy, got: {}",
+        msg!(output)
+    );
+}
+
+#[tokio::test]
+async fn test_insights_empty_with_filters_shows_filter_message() {
+    use mira::mcp::requests::{SessionAction, SessionRequest};
+    let ctx = TestContext::new().await;
+
+    session_start(&ctx, "/tmp/test_insights_filter".into(), Some("Insights Filter".into()), None)
+        .await
+        .expect("session_start failed");
+    let project = ctx.get_project().await.expect("project should be set");
+
+    // Insert a health snapshot so the "no data" branch isn't hit
+    ctx.pool()
+        .run(move |conn| {
+            conn.execute(
+                "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score, tier_distribution, module_count, snapshot_at)
+                 VALUES (?1, 15.0, 30.0, '{\"A\":5}', 5, datetime('now'))",
+                rusqlite::params![project.id],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok::<(), String>(())
+        })
+        .await
+        .expect("insert snapshot");
+
+    // With insight_source filter → should NOT say "healthy"
+    let req = SessionRequest {
+        action: SessionAction::Insights,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: None,
+        insight_source: Some("pondering".into()),
+        min_confidence: None,
+        insight_id: None,
+        dry_run: None,
+        category: None,
+    };
+    let result = handle_session(&ctx, req).await;
+    assert!(result.is_ok());
+    let output = result.unwrap();
+    assert!(
+        msg!(output).contains("filters"),
+        "Filtered empty state should mention filters, got: {}",
+        msg!(output)
+    );
+    assert!(
+        !msg!(output).contains("healthy"),
+        "Filtered empty state should NOT say healthy, got: {}",
+        msg!(output)
+    );
+
+    // With since_days filter → same behavior
+    let req2 = SessionRequest {
+        action: SessionAction::Insights,
+        session_id: None,
+        task_id: None,
+        limit: None,
+        group_by: None,
+        since_days: Some(1),
+        insight_source: None,
+        min_confidence: None,
+        insight_id: None,
+        dry_run: None,
+        category: None,
+    };
+    let result2 = handle_session(&ctx, req2).await;
+    assert!(result2.is_ok());
+    let output2 = result2.unwrap();
+    assert!(
+        msg!(output2).contains("filters"),
+        "since_days filter should show filter message, got: {}",
+        msg!(output2)
+    );
+
+    // With limit filter → same behavior
+    let req3 = SessionRequest {
+        action: SessionAction::Insights,
+        session_id: None,
+        task_id: None,
+        limit: Some(0),
+        group_by: None,
+        since_days: None,
+        insight_source: None,
+        min_confidence: None,
+        insight_id: None,
+        dry_run: None,
+        category: None,
+    };
+    let result3 = handle_session(&ctx, req3).await;
+    assert!(result3.is_ok());
+    let output3 = result3.unwrap();
+    assert!(
+        msg!(output3).contains("filters"),
+        "limit=0 filter should show filter message, got: {}",
+        msg!(output3)
+    );
+}
+
 /// Smoke test: `mira hook stop` should not panic.
 #[test]
 fn hook_stop_no_panic() {
