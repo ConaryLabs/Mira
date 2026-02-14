@@ -370,13 +370,30 @@ async fn snapshot_tasks(
 
 /// Build a session summary from tool history or behavior log, whichever is richer.
 fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
-    // Get stats from both sources and pick the richer one
-    let (tool_count, top_tools) = crate::db::get_session_stats_sync(conn, session_id)
-        .unwrap_or((0, Vec::new()));
+    // Get stats from both sources and pick the richer one.
+    // Compare total event counts (including file_access for behavior) to match
+    // the background worker's line-count comparison in session_summaries.rs.
+    let (tool_count, top_tools) = match crate::db::get_session_stats_sync(conn, session_id) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("Session stats query failed for {}: {}", session_id, e);
+            (0, Vec::new())
+        }
+    };
     let (behavior_count, behavior_tools) =
         super::get_behavior_tool_stats_sync(conn, session_id);
 
-    let use_behavior = behavior_count as usize > tool_count;
+    // Count all behavior events (tool_use + file_access) for fair comparison,
+    // since behavior summaries include both event types.
+    let behavior_total: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM session_behavior_log WHERE session_id = ? AND event_type IN ('tool_use', 'file_access')",
+            [session_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let use_behavior = behavior_total as usize > tool_count;
 
     let (count, tool_names, files_modified) = if use_behavior {
         let names: Vec<String> = behavior_tools.iter().map(|(n, _)| n.clone()).collect();
@@ -1134,6 +1151,36 @@ mod tests {
         assert!(
             s.contains("5 tool calls"),
             "should use behavior_log count (5), not tool_history (1), got: {s}"
+        );
+    }
+
+    #[test]
+    fn build_summary_file_access_events_tip_source_selection() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/file-access-proj");
+        seed_session(&conn, "file-access-sess", pid, "active");
+
+        // tool_history: 3 entries
+        seed_tool_history(&conn, "file-access-sess", "Read", r#"{"file_path":"a.rs"}"#, "ok");
+        seed_tool_history(&conn, "file-access-sess", "Read", r#"{"file_path":"b.rs"}"#, "ok");
+        seed_tool_history(&conn, "file-access-sess", "Grep", r#"{"pattern":"foo"}"#, "ok");
+
+        // behavior log: 2 tool_use + 3 file_access = 5 total events
+        // tool_use alone (2) would NOT beat tool_history (3), but total events (5) do
+        seed_behavior_tool_use(&conn, "file-access-sess", pid, "Edit", 1);
+        seed_behavior_tool_use(&conn, "file-access-sess", pid, "Edit", 2);
+        seed_behavior_file_access(&conn, "file-access-sess", pid, "Edit", "/tmp/file-access-proj/a.rs", 3);
+        seed_behavior_file_access(&conn, "file-access-sess", pid, "Edit", "/tmp/file-access-proj/b.rs", 4);
+        seed_behavior_file_access(&conn, "file-access-sess", pid, "Write", "/tmp/file-access-proj/c.rs", 5);
+
+        let summary = build_session_summary(&conn, "file-access-sess");
+        assert!(summary.is_some(), "should produce a summary");
+        let s = summary.unwrap();
+        // Should pick behavior_log (5 total events > 3 tool_history) and report
+        // the behavior tool_use count (2), not tool_history count (3)
+        assert!(
+            s.contains("2 tool calls"),
+            "should use behavior_log (2 tool calls from 5 total events), not tool_history (3), got: {s}"
         );
     }
 
