@@ -3,6 +3,9 @@
 
 Code intelligence: semantic search, call graph tracing, and static analysis.
 
+> **MCP actions:** `search`, `symbols`, `callers`, `callees`, `diff`
+> Actions marked (CLI-only) below are available via `mira tool code '<json>'`.
+
 ## Actions
 
 ### search
@@ -51,7 +54,7 @@ Find all functions called by a given function.
 
 **Returns:** List of called functions with file paths.
 
-### dependencies
+### dependencies (CLI-only)
 
 Analyze module dependency graph and detect circular dependencies.
 
@@ -60,7 +63,7 @@ Analyze module dependency graph and detect circular dependencies.
 
 **Returns:** Dependency edges with call/import counts and circular dependency warnings. Auto-queues a health scan if no data exists.
 
-### patterns
+### patterns (CLI-only)
 
 Detect architectural patterns (repository, builder, factory, etc.) across modules.
 
@@ -69,7 +72,7 @@ Detect architectural patterns (repository, builder, factory, etc.) across module
 
 **Returns:** Per-module pattern detections with confidence scores and evidence. Auto-queues a health scan if no data exists.
 
-### tech_debt
+### tech_debt (CLI-only)
 
 Compute per-module tech debt scores with tier rankings (A-F).
 

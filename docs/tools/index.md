@@ -3,6 +3,9 @@
 
 Index codebase for semantic search and analysis. Builds embeddings, symbol tables, and module summaries.
 
+> **MCP actions:** `project`, `file`, `status`
+> Actions marked (CLI-only) below are available via `mira tool index '<json>'`.
+
 ## Actions
 
 ### project
@@ -35,7 +38,7 @@ Show index statistics.
 
 **Returns:** Symbol count and embedded chunk count.
 
-### compact
+### compact (CLI-only)
 
 Compact vec_code storage and VACUUM the database to reclaim space from deleted embeddings.
 
@@ -44,7 +47,7 @@ Compact vec_code storage and VACUUM the database to reclaim space from deleted e
 
 **Returns:** Rows preserved and estimated storage savings in MB.
 
-### summarize
+### summarize (CLI-only)
 
 Generate LLM-powered summaries for modules that lack descriptions. Falls back to heuristic analysis when no LLM is configured. Also triggered automatically after `project` indexing.
 
@@ -53,7 +56,7 @@ Generate LLM-powered summaries for modules that lack descriptions. Falls back to
 
 **Returns:** Number of modules summarized and their summaries.
 
-### health
+### health (CLI-only)
 
 Run a full code health scan: dependency graphs, architectural pattern detection, tech debt scoring, and convention checking.
 

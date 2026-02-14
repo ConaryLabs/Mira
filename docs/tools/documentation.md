@@ -1,6 +1,8 @@
 <!-- docs/tools/documentation.md -->
 # Documentation
 
+> **This entire tool is CLI-only.** All actions are available via `mira tool documentation '<json>'` but are not exposed as MCP tools.
+
 Manage documentation gap detection and writing tasks. Tracks what needs documenting, provides writing guidelines, and manages the task lifecycle.
 
 ## Actions

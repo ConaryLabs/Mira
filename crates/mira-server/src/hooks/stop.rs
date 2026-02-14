@@ -380,8 +380,7 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
             (0, Vec::new())
         }
     };
-    let (behavior_count, behavior_tools) =
-        super::get_behavior_tool_stats_sync(conn, session_id);
+    let (behavior_count, behavior_tools) = super::get_behavior_tool_stats_sync(conn, session_id);
 
     // Count all behavior events (tool_use + file_access) for fair comparison,
     // since behavior summaries include both event types.
@@ -433,11 +432,7 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
     let mut parts: Vec<String> = Vec::new();
 
     if !tool_names.is_empty() {
-        parts.push(format!(
-            "{} tool calls ({})",
-            count,
-            tool_names.join(", ")
-        ));
+        parts.push(format!("{} tool calls ({})", count, tool_names.join(", ")));
     } else {
         parts.push(format!("{} tool calls", count));
     }
@@ -1113,9 +1108,17 @@ mod tests {
         seed_session(&conn, "many-tools-sess", pid, "active");
 
         // Seed 7 distinct tools (> 5 limit that was previously applied)
-        for (i, tool) in ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "NotebookEdit"]
-            .iter()
-            .enumerate()
+        for (i, tool) in [
+            "Read",
+            "Edit",
+            "Write",
+            "Bash",
+            "Glob",
+            "Grep",
+            "NotebookEdit",
+        ]
+        .iter()
+        .enumerate()
         {
             seed_behavior_tool_use(&conn, "many-tools-sess", pid, tool, i as i64 + 1);
         }
@@ -1147,7 +1150,14 @@ mod tests {
         for i in 0..5 {
             seed_behavior_tool_use(&conn, "mixed-sess", pid, "Edit", i + 1);
         }
-        seed_behavior_file_access(&conn, "mixed-sess", pid, "Edit", "/tmp/mixed-proj/main.rs", 6);
+        seed_behavior_file_access(
+            &conn,
+            "mixed-sess",
+            pid,
+            "Edit",
+            "/tmp/mixed-proj/main.rs",
+            6,
+        );
 
         let summary = build_session_summary(&conn, "mixed-sess");
         assert!(summary.is_some(), "should produce a summary");
@@ -1165,17 +1175,56 @@ mod tests {
         seed_session(&conn, "file-access-sess", pid, "active");
 
         // tool_history: 3 entries
-        seed_tool_history(&conn, "file-access-sess", "Read", r#"{"file_path":"a.rs"}"#, "ok");
-        seed_tool_history(&conn, "file-access-sess", "Read", r#"{"file_path":"b.rs"}"#, "ok");
-        seed_tool_history(&conn, "file-access-sess", "Grep", r#"{"pattern":"foo"}"#, "ok");
+        seed_tool_history(
+            &conn,
+            "file-access-sess",
+            "Read",
+            r#"{"file_path":"a.rs"}"#,
+            "ok",
+        );
+        seed_tool_history(
+            &conn,
+            "file-access-sess",
+            "Read",
+            r#"{"file_path":"b.rs"}"#,
+            "ok",
+        );
+        seed_tool_history(
+            &conn,
+            "file-access-sess",
+            "Grep",
+            r#"{"pattern":"foo"}"#,
+            "ok",
+        );
 
         // behavior log: 2 tool_use + 3 file_access = 5 total events
         // tool_use alone (2) would NOT beat tool_history (3), but total events (5) do
         seed_behavior_tool_use(&conn, "file-access-sess", pid, "Edit", 1);
         seed_behavior_tool_use(&conn, "file-access-sess", pid, "Edit", 2);
-        seed_behavior_file_access(&conn, "file-access-sess", pid, "Edit", "/tmp/file-access-proj/a.rs", 3);
-        seed_behavior_file_access(&conn, "file-access-sess", pid, "Edit", "/tmp/file-access-proj/b.rs", 4);
-        seed_behavior_file_access(&conn, "file-access-sess", pid, "Write", "/tmp/file-access-proj/c.rs", 5);
+        seed_behavior_file_access(
+            &conn,
+            "file-access-sess",
+            pid,
+            "Edit",
+            "/tmp/file-access-proj/a.rs",
+            3,
+        );
+        seed_behavior_file_access(
+            &conn,
+            "file-access-sess",
+            pid,
+            "Edit",
+            "/tmp/file-access-proj/b.rs",
+            4,
+        );
+        seed_behavior_file_access(
+            &conn,
+            "file-access-sess",
+            pid,
+            "Write",
+            "/tmp/file-access-proj/c.rs",
+            5,
+        );
 
         let summary = build_session_summary(&conn, "file-access-sess");
         assert!(summary.is_some(), "should produce a summary");

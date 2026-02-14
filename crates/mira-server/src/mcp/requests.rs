@@ -565,7 +565,9 @@ impl From<McpIndexAction> for IndexAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpIndexRequest {
-    #[schemars(description = "Action: project (full reindex), file (single file), status (index stats)")]
+    #[schemars(
+        description = "Action: project (full reindex), file (single file), status (index stats)"
+    )]
     pub action: McpIndexAction,
     #[schemars(description = "Project root path (defaults to active project if omitted)")]
     pub path: Option<String>,
@@ -601,9 +603,13 @@ impl From<McpSessionAction> for SessionAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpSessionRequest {
-    #[schemars(description = "Action: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight), current_session (show current)")]
+    #[schemars(
+        description = "Action: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight), current_session (show current)"
+    )]
     pub action: McpSessionAction,
-    #[schemars(description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)")]
+    #[schemars(
+        description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)"
+    )]
     pub insight_source: Option<String>,
     #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.5)")]
     pub min_confidence: Option<f64>,
@@ -615,6 +621,9 @@ pub struct McpSessionRequest {
     pub since_days: Option<u32>,
 }
 
+// Fields intentionally set to None belong to actions removed from MCP
+// (list_sessions, get_history, usage_*, tasks_*, storage_status, cleanup).
+// If adding a new MCP action that needs these fields, add them to McpSessionRequest too.
 impl From<McpSessionRequest> for SessionRequest {
     fn from(r: McpSessionRequest) -> Self {
         Self {
@@ -630,5 +639,291 @@ impl From<McpSessionRequest> for SessionRequest {
             dry_run: None,
             category: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── McpSessionAction deserialization ──────────────────────────────
+
+    #[test]
+    fn session_action_current_session() {
+        let a: McpSessionAction = serde_json::from_value(json!("current_session")).unwrap();
+        assert!(matches!(a, McpSessionAction::CurrentSession));
+    }
+
+    #[test]
+    fn session_action_dismiss_insight() {
+        let a: McpSessionAction = serde_json::from_value(json!("dismiss_insight")).unwrap();
+        assert!(matches!(a, McpSessionAction::DismissInsight));
+    }
+
+    #[test]
+    fn session_action_recap() {
+        let a: McpSessionAction = serde_json::from_value(json!("recap")).unwrap();
+        assert!(matches!(a, McpSessionAction::Recap));
+    }
+
+    #[test]
+    fn session_action_insights() {
+        let a: McpSessionAction = serde_json::from_value(json!("insights")).unwrap();
+        assert!(matches!(a, McpSessionAction::Insights));
+    }
+
+    // ── McpProjectAction deserialization ──────────────────────────────
+
+    #[test]
+    fn project_action_start() {
+        let a: McpProjectAction = serde_json::from_value(json!("start")).unwrap();
+        assert!(matches!(a, McpProjectAction::Start));
+    }
+
+    #[test]
+    fn project_action_get() {
+        let a: McpProjectAction = serde_json::from_value(json!("get")).unwrap();
+        assert!(matches!(a, McpProjectAction::Get));
+    }
+
+    // ── McpMemoryAction deserialization ───────────────────────────────
+
+    #[test]
+    fn memory_action_remember() {
+        let a: McpMemoryAction = serde_json::from_value(json!("remember")).unwrap();
+        assert!(matches!(a, McpMemoryAction::Remember));
+    }
+
+    #[test]
+    fn memory_action_recall() {
+        let a: McpMemoryAction = serde_json::from_value(json!("recall")).unwrap();
+        assert!(matches!(a, McpMemoryAction::Recall));
+    }
+
+    // ── McpCodeAction deserialization ─────────────────────────────────
+
+    #[test]
+    fn code_action_search() {
+        let a: McpCodeAction = serde_json::from_value(json!("search")).unwrap();
+        assert!(matches!(a, McpCodeAction::Search));
+    }
+
+    #[test]
+    fn code_action_diff() {
+        let a: McpCodeAction = serde_json::from_value(json!("diff")).unwrap();
+        assert!(matches!(a, McpCodeAction::Diff));
+    }
+
+    // ── McpIndexAction deserialization ────────────────────────────────
+
+    #[test]
+    fn index_action_project() {
+        let a: McpIndexAction = serde_json::from_value(json!("project")).unwrap();
+        assert!(matches!(a, McpIndexAction::Project));
+    }
+
+    #[test]
+    fn index_action_status() {
+        let a: McpIndexAction = serde_json::from_value(json!("status")).unwrap();
+        assert!(matches!(a, McpIndexAction::Status));
+    }
+
+    // ── Removed actions are rejected ─────────────────────────────────
+
+    #[test]
+    fn project_action_rejects_set() {
+        let result = serde_json::from_value::<McpProjectAction>(json!("set"));
+        assert!(result.is_err(), "McpProjectAction should reject 'set'");
+    }
+
+    #[test]
+    fn memory_action_rejects_export_claude_local() {
+        let result = serde_json::from_value::<McpMemoryAction>(json!("export_claude_local"));
+        assert!(
+            result.is_err(),
+            "McpMemoryAction should reject 'export_claude_local'"
+        );
+    }
+
+    #[test]
+    fn code_action_rejects_dependencies() {
+        let result = serde_json::from_value::<McpCodeAction>(json!("dependencies"));
+        assert!(
+            result.is_err(),
+            "McpCodeAction should reject 'dependencies'"
+        );
+    }
+
+    #[test]
+    fn code_action_rejects_patterns() {
+        let result = serde_json::from_value::<McpCodeAction>(json!("patterns"));
+        assert!(result.is_err(), "McpCodeAction should reject 'patterns'");
+    }
+
+    #[test]
+    fn code_action_rejects_tech_debt() {
+        let result = serde_json::from_value::<McpCodeAction>(json!("tech_debt"));
+        assert!(result.is_err(), "McpCodeAction should reject 'tech_debt'");
+    }
+
+    #[test]
+    fn index_action_rejects_compact() {
+        let result = serde_json::from_value::<McpIndexAction>(json!("compact"));
+        assert!(result.is_err(), "McpIndexAction should reject 'compact'");
+    }
+
+    #[test]
+    fn index_action_rejects_summarize() {
+        let result = serde_json::from_value::<McpIndexAction>(json!("summarize"));
+        assert!(result.is_err(), "McpIndexAction should reject 'summarize'");
+    }
+
+    #[test]
+    fn index_action_rejects_health() {
+        let result = serde_json::from_value::<McpIndexAction>(json!("health"));
+        assert!(result.is_err(), "McpIndexAction should reject 'health'");
+    }
+
+    #[test]
+    fn session_action_rejects_list_sessions() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("list_sessions"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'list_sessions'"
+        );
+    }
+
+    #[test]
+    fn session_action_rejects_get_history() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("get_history"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'get_history'"
+        );
+    }
+
+    #[test]
+    fn session_action_rejects_tasks_list() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("tasks_list"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'tasks_list'"
+        );
+    }
+
+    #[test]
+    fn session_action_rejects_usage_summary() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("usage_summary"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'usage_summary'"
+        );
+    }
+
+    #[test]
+    fn session_action_rejects_storage_status() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("storage_status"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'storage_status'"
+        );
+    }
+
+    #[test]
+    fn session_action_rejects_cleanup() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("cleanup"));
+        assert!(result.is_err(), "McpSessionAction should reject 'cleanup'");
+    }
+
+    // ── From<McpSessionRequest> for SessionRequest ───────────────────
+
+    #[test]
+    fn session_request_conversion() {
+        let mcp = McpSessionRequest {
+            action: McpSessionAction::Insights,
+            insight_source: Some("pondering".into()),
+            min_confidence: Some(0.7),
+            insight_id: Some(42),
+            limit: Some(10),
+            since_days: Some(7),
+        };
+
+        let full: SessionRequest = mcp.into();
+
+        // Fields that pass through
+        assert!(matches!(full.action, SessionAction::Insights));
+        assert_eq!(full.insight_source.as_deref(), Some("pondering"));
+        assert_eq!(full.min_confidence, Some(0.7));
+        assert_eq!(full.insight_id, Some(42));
+        assert_eq!(full.limit, Some(10));
+        assert_eq!(full.since_days, Some(7));
+
+        // Fields intentionally None (belong to removed MCP actions)
+        assert!(full.session_id.is_none());
+        assert!(full.task_id.is_none());
+        assert!(full.group_by.is_none());
+        assert!(full.dry_run.is_none());
+        assert!(full.category.is_none());
+    }
+
+    // ── From<McpMemoryRequest> for MemoryRequest ─────────────────────
+
+    #[test]
+    fn memory_request_conversion() {
+        let mcp = McpMemoryRequest {
+            action: McpMemoryAction::Remember,
+            content: Some("test content".into()),
+            query: Some("test query".into()),
+            id: Some(99),
+            key: Some("test-key".into()),
+            fact_type: Some("decision".into()),
+            category: Some("patterns".into()),
+            confidence: Some(0.95),
+            scope: Some("project".into()),
+            limit: Some(25),
+        };
+
+        let full: MemoryRequest = mcp.into();
+
+        assert!(matches!(full.action, MemoryAction::Remember));
+        assert_eq!(full.content.as_deref(), Some("test content"));
+        assert_eq!(full.query.as_deref(), Some("test query"));
+        assert_eq!(full.id, Some(99));
+        assert_eq!(full.key.as_deref(), Some("test-key"));
+        assert_eq!(full.fact_type.as_deref(), Some("decision"));
+        assert_eq!(full.category.as_deref(), Some("patterns"));
+        assert_eq!(full.confidence, Some(0.95));
+        assert_eq!(full.scope.as_deref(), Some("project"));
+        assert_eq!(full.limit, Some(25));
+    }
+
+    // ── From<McpCodeRequest> for CodeRequest ─────────────────────────
+
+    #[test]
+    fn code_request_conversion() {
+        let mcp = McpCodeRequest {
+            action: McpCodeAction::Search,
+            query: Some("authentication".into()),
+            file_path: Some("src/auth.rs".into()),
+            function_name: Some("login".into()),
+            symbol_type: Some("function".into()),
+            limit: Some(50),
+            from_ref: Some("HEAD~3".into()),
+            to_ref: Some("HEAD".into()),
+            include_impact: Some(true),
+        };
+
+        let full: CodeRequest = mcp.into();
+
+        assert!(matches!(full.action, CodeAction::Search));
+        assert_eq!(full.query.as_deref(), Some("authentication"));
+        assert_eq!(full.file_path.as_deref(), Some("src/auth.rs"));
+        assert_eq!(full.function_name.as_deref(), Some("login"));
+        assert_eq!(full.symbol_type.as_deref(), Some("function"));
+        assert_eq!(full.limit, Some(50));
+        assert_eq!(full.from_ref.as_deref(), Some("HEAD~3"));
+        assert_eq!(full.to_ref.as_deref(), Some("HEAD"));
+        assert_eq!(full.include_impact, Some(true));
     }
 }

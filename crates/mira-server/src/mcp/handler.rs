@@ -405,12 +405,13 @@ mod tests {
 
     #[test]
     fn extract_action_ttl_with_extra_args() {
+        // "project" is task-eligible; extra args shouldn't affect TTL extraction
         let req = make_request(
             "index",
-            Some(serde_json::json!({"action": "health", "path": "/some/path"})),
+            Some(serde_json::json!({"action": "project", "path": "/some/path"})),
         );
         let (action, ttl) = extract_action_ttl(&req);
-        assert_eq!(action, Some("health".to_string()));
+        assert_eq!(action, Some("project".to_string()));
         assert_eq!(ttl, Some(600));
     }
 }

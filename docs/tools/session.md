@@ -3,6 +3,9 @@
 
 Session management, analytics, and background task tracking.
 
+> **MCP actions:** `current_session`, `recap`, `insights`, `dismiss_insight`
+> All other actions below are **CLI-only** — use `mira tool session '<json>'`.
+
 ## Actions
 
 ### current_session
@@ -14,7 +17,7 @@ Show the current session ID.
 
 **Returns:** Current session ID or "No active session".
 
-### list_sessions
+### list_sessions (CLI-only)
 
 List recent sessions for the active project.
 
@@ -24,7 +27,7 @@ List recent sessions for the active project.
 
 **Returns:** Session list with IDs, timestamps, status, summaries, and source info (startup vs resume).
 
-### get_history
+### get_history (CLI-only)
 
 View tool call history for a session.
 
@@ -44,7 +47,7 @@ Get a formatted session recap with preferences, recent context, active goals, pe
 
 **Returns:** Formatted text combining preferences, recent memories, and session notes.
 
-### usage_summary
+### usage_summary (CLI-only)
 
 Get aggregate LLM usage totals (requests, tokens, cost, average duration).
 
@@ -54,7 +57,7 @@ Get aggregate LLM usage totals (requests, tokens, cost, average duration).
 
 **Returns:** Formatted summary with total requests, tokens, estimated cost, and average duration.
 
-### usage_stats
+### usage_stats (CLI-only)
 
 Get LLM usage statistics grouped by a dimension.
 
@@ -65,7 +68,7 @@ Get LLM usage statistics grouped by a dimension.
 
 **Returns:** Table of usage per group with requests, tokens, and cost.
 
-### usage_list
+### usage_list (CLI-only)
 
 List recent LLM usage records grouped by role.
 
@@ -99,7 +102,7 @@ Remove a resolved insight so it no longer appears in future queries.
 
 **Returns:** Confirmation or "not found" message.
 
-### tasks_list
+### tasks_list (CLI-only)
 
 List all running and recently completed background tasks.
 
@@ -108,7 +111,7 @@ List all running and recently completed background tasks.
 
 **Returns:** Task summaries with IDs, tool names, and status (working/completed/failed/cancelled). Completed results are cached for 5 minutes.
 
-### tasks_get
+### tasks_get (CLI-only)
 
 Get the status and result of a specific background task.
 
@@ -118,7 +121,7 @@ Get the status and result of a specific background task.
 
 **Returns:** Task status, result text, and structured content (if completed).
 
-### tasks_cancel
+### tasks_cancel (CLI-only)
 
 Cancel a running background task.
 
@@ -128,7 +131,7 @@ Cancel a running background task.
 
 **Returns:** Confirmation or "not found" message.
 
-### storage_status
+### storage_status (CLI-only)
 
 Show database storage size and data retention policy.
 
@@ -137,7 +140,7 @@ Show database storage size and data retention policy.
 
 **Returns:** Database file sizes, row counts per table, and configured retention periods.
 
-### cleanup
+### cleanup (CLI-only)
 
 Run data cleanup to remove old records based on retention policy.
 

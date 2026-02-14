@@ -3,6 +3,9 @@
 
 Persistent cross-session knowledge base. Store and retrieve decisions, preferences, patterns, and context across sessions.
 
+> **MCP actions:** `remember`, `recall`, `forget`, `archive`
+> Actions marked (CLI-only) below are available via `mira tool memory '<json>'`.
+
 ## Actions
 
 ### remember
@@ -57,7 +60,7 @@ Exclude a memory from auto-export to CLAUDE.local.md while keeping it in the dat
 
 **Returns:** Confirmation message.
 
-### export_claude_local
+### export_claude_local (CLI-only)
 
 Export active project memories to CLAUDE.local.md in the project root. Organizes by fact type (Preferences, Decisions, General).
 

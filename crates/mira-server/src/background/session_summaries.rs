@@ -177,9 +177,7 @@ async fn generate_session_summary(
     };
 
     match client {
-        Some(client) => {
-            generate_session_summary_llm(pool, client, summary_text, project_id).await
-        }
+        Some(client) => generate_session_summary_llm(pool, client, summary_text, project_id).await,
         None => generate_session_summary_fallback(summary_text),
     }
 }

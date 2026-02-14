@@ -267,7 +267,7 @@ impl MiraServer {
         );
 
         let poll_hint = format!(
-            "session(action=\"tasks_get\", task_id=\"{}\")",
+            "mira tool session '{{\"action\":\"tasks_get\",\"task_id\":\"{}\"}}'",
             enqueued.task_id
         );
         Ok(CallToolResult {

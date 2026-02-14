@@ -3,6 +3,9 @@
 
 Manage project context and workspace initialization.
 
+> **MCP actions:** `start`, `get`
+> Actions marked (CLI-only) below are available via `mira tool project '<json>'`.
+
 ## Actions
 
 ### start
@@ -17,7 +20,7 @@ Initialize a session with full project context. Detects project type, imports CL
 
 **Returns:** Project ID, name, type, codebase map, recent sessions, preferences, health alerts, pending documentation count, and database path.
 
-### set
+### set (CLI-only)
 
 Change the active project without full session initialization.
 

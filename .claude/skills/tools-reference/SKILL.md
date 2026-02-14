@@ -3,15 +3,16 @@ name: tools-reference
 description: Reference for all Mira MCP tool signatures, parameters, and workflows.
 ---
 
+<!-- .claude/skills/tools-reference/SKILL.md -->
+
 # Mira Consolidated Tools Reference
 
-Mira uses 9 action-based tools. Reference for tool signatures and workflows.
+Mira exposes 6 MCP tools to Claude Code. Additional actions are available via the `mira tool` CLI.
 
 ## `project` — Project/Session Management
 
 ```
 project(action="start", project_path="...", name="...")  # Initialize session
-project(action="set", project_path="...", name="...")    # Change active project
 project(action="get")                                     # Show current project
 ```
 
@@ -31,29 +32,18 @@ code(action="search", query="authentication middleware", limit=10)
 code(action="symbols", file_path="src/main.rs", symbol_type="function")
 code(action="callers", function_name="handle_login", limit=20)
 code(action="callees", function_name="process_request", limit=20)
-code(action="dependencies")                 # Module dependency graph
-code(action="patterns")                     # Architectural pattern detection
-code(action="tech_debt")                    # Per-module tech debt scores
 code(action="diff")                         # Auto-detects staged/working/last commit
 code(action="diff", from_ref="main", to_ref="feature/x")
 code(action="diff", from_ref="v1.0", to_ref="v1.1", include_impact=true)
 ```
 
-## `session` — Session Management & Analytics
+## `session` — Session Management & Insights
 
 ```
 session(action="current_session")                          # Show current session
-session(action="list_sessions", limit=5)                   # List recent sessions
-session(action="get_history", session_id="...")             # Get session history
 session(action="recap")                                    # Quick overview: goals, sessions, insights
-session(action="usage_summary", since_days=7)              # LLM usage summary
-session(action="usage_stats", group_by="provider_model")   # LLM usage by dimension
-session(action="usage_list", limit=50)                     # Recent LLM usage records
 session(action="insights", insight_source="pondering", min_confidence=0.5)
 session(action="dismiss_insight", insight_id=42)           # Remove resolved insight
-session(action="tasks_list")                               # Show running/completed tasks
-session(action="tasks_get", task_id="abc123")              # Get task status
-session(action="tasks_cancel", task_id="abc123")           # Cancel task
 ```
 
 ## `goal` — Cross-Session Goal Tracking
@@ -71,44 +61,39 @@ goal(action="delete_milestone", milestone_id=1)
 goal(action="progress", goal_id=1)
 ```
 
-## `documentation` — Documentation Management
-
-```
-documentation(action="list", status="pending", priority="high")
-documentation(action="get", task_id=123)    # Get task details + writing guidelines
-documentation(action="complete", task_id=123)
-documentation(action="skip", task_id=123, reason="...")
-documentation(action="inventory")           # Show all existing docs
-documentation(action="scan")               # Trigger documentation scan
-```
-
-**Workflow:** list → get → (write docs) → complete
-
-## `index` — Code Indexing & Health
+## `index` — Code Indexing
 
 ```
 index(action="project")                     # Full project index (auto-enqueues as background task)
 index(action="project", skip_embed=true)    # Fast re-index without embeddings
 index(action="file", path="src/main.rs")
 index(action="status")                      # Show index statistics
-index(action="compact")                     # VACUUM vec tables
-index(action="summarize")                   # Generate module summaries
-index(action="health")                      # Full code health scan (background task)
 ```
 
-## `team` — Team Intelligence
+## CLI-Only Actions
 
-```
-team(action="status")                       # Team overview: members, files, conflicts
-team(action="review", teammate="agent-1")   # Review a teammate's modified files
-team(action="distill")                      # Extract key findings into team-scoped memories
-```
+The following actions are available via `mira tool <name> '<json>'` but not exposed as MCP tools:
 
-## `recipe` — Team Recipes
-
-```
-recipe(action="list")                              # List available recipes
-recipe(action="get", name="expert-review")         # Get full recipe details
-recipe(action="get", name="full-cycle")
-```
-
+| Tool | Action | Purpose |
+|------|--------|---------|
+| `project` | `set` | Change active project without full init |
+| `memory` | `export_claude_local` | Export memories to CLAUDE.local.md |
+| `code` | `dependencies` | Module dependency graph |
+| `code` | `patterns` | Architectural pattern detection |
+| `code` | `tech_debt` | Per-module tech debt scores |
+| `index` | `compact` | VACUUM vec tables |
+| `index` | `summarize` | Generate module summaries |
+| `index` | `health` | Full code health scan |
+| `session` | `list_sessions` | List recent sessions |
+| `session` | `get_history` | View session tool history |
+| `session` | `usage_summary` | LLM usage totals |
+| `session` | `usage_stats` | LLM usage by dimension |
+| `session` | `usage_list` | Recent LLM usage records |
+| `session` | `tasks_list` | List background tasks |
+| `session` | `tasks_get` | Get background task status |
+| `session` | `tasks_cancel` | Cancel a background task |
+| `session` | `storage_status` | Database size and retention |
+| `session` | `cleanup` | Run data cleanup |
+| `documentation` | *(all actions)* | Documentation gap management |
+| `team` | *(all actions)* | Agent Teams intelligence |
+| `recipe` | *(all actions)* | Reusable team blueprints |

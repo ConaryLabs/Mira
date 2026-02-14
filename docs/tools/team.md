@@ -1,6 +1,8 @@
 <!-- docs/tools/team.md -->
 # Team
 
+> **This entire tool is CLI-only.** All actions are available via `mira tool team '<json>'` but are not exposed as MCP tools.
+
 Team intelligence for Claude Code Agent Teams. Provides visibility into team activity, file conflicts, and knowledge distillation.
 
 Requires an active Agent Teams session. Returns an informational message (not an error) when no team is active.

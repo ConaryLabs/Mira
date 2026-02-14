@@ -79,19 +79,18 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 9 action-based tools:
+The plugin bundles the Mira MCP server with 6 MCP tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
-| `memory` | remember, recall, forget, archive, export_claude_local | Persistent semantic memory |
-| `code` | search, symbols, callers, callees, dependencies, patterns, tech_debt, diff | Code intelligence + semantic diff analysis |
-| `project` | start, set, get | Project/session management |
-| `session` | current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel | Session history, analytics, and async task management |
+| `memory` | remember, recall, forget, archive | Persistent semantic memory |
+| `code` | search, symbols, callers, callees, diff | Code intelligence + semantic diff analysis |
+| `project` | start, get | Project/session management |
+| `session` | current_session, recap, insights, dismiss_insight | Session context and insights |
 | `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
-| `documentation` | list, get, complete, skip, inventory, scan | Documentation management |
-| `index` | project, file, status, compact, summarize, health | Code indexing and health |
-| `team` | status, review, distill | Agent team intelligence |
-| `recipe` | list, get | Reusable team blueprints for Agent Teams |
+| `index` | project, file, status | Code indexing |
+
+Additional actions (documentation, team, recipe, and advanced session/code/index actions) are available via `mira tool <name> '<json>'` CLI.
 
 All tools return structured JSON via MCP outputSchema.
 

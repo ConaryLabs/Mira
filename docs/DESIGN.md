@@ -355,7 +355,7 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira exposes 9 action-based MCP tools (consolidated from ~20 standalone tools in v0.4.x).
+Mira exposes 6 MCP tools (consolidated from ~20 standalone tools in v0.4.x, then trimmed from 9 to 6 by moving infrequent actions to CLI-only).
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
 The server implements MCP Elicitation (interactive setup) and MCP Tasks (async long-running operations).
 
@@ -486,7 +486,7 @@ The following were previously planned and are now complete:
 - ✓ MCP Elicitation for interactive API key setup
 - ✓ MCP Tasks for async long-running operations
 - ✓ Structured JSON responses via outputSchema
-- ✓ Tool consolidation from ~20 to 9 action-based tools (project, memory, code, goal, index, session, documentation, team, recipe)
+- ✓ Tool consolidation from ~20 to 9 action-based tools, then further trimmed to 6 MCP tools (project, memory, code, goal, index, session) with documentation, team, and recipe moved to CLI-only
 - ✓ Change Intelligence (outcome tracking, pattern mining, predictive risk)
 - ✓ Entity layer for memory recall boost
 - ✓ Dependency graphs, architectural pattern detection, tech debt scoring
