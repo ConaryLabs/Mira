@@ -191,6 +191,15 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
         recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
     }
 
+    // Cross-project preferences (patterns used across multiple projects)
+    if let Some(pid) = project_id {
+        if let Ok(prefs) = super::cross_project::get_cross_project_preferences_sync(conn, pid, 3)
+            && !prefs.is_empty()
+        {
+            recap_parts.push(super::cross_project::format_cross_project_preferences(&prefs));
+        }
+    }
+
     // Insights digest (pondering + proactive + doc gaps)
     if let Some(pid) = project_id
         && let Ok(insights) = super::insights::get_unified_insights_sync(conn, pid, None, 0.5, 7, 5)

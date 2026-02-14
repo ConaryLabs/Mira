@@ -5,6 +5,7 @@ mod background;
 mod cartographer;
 mod chat;
 mod config;
+pub mod cross_project;
 pub mod dependencies;
 mod diff_analysis;
 pub mod diff_outcomes;
@@ -31,6 +32,8 @@ pub mod team;
 #[cfg(test)]
 #[macro_use]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod cross_project_tests;
 #[cfg(test)]
 mod insights_tests;
 #[cfg(test)]
@@ -77,6 +80,11 @@ pub use cartographer::{
     count_cached_modules_sync, count_symbols_in_path_sync, get_cached_modules_sync,
     get_external_deps_sync, get_module_dependencies_sync, get_module_exports_sync,
     get_modules_needing_summaries_sync, update_module_purposes_sync, upsert_module_sync,
+};
+pub use cross_project::{
+    CrossProjectMemory, CrossProjectPreference, find_solved_in_other_project_sync,
+    format_cross_project_context, format_cross_project_preferences,
+    get_cross_project_preferences_sync, recall_cross_project_sync,
 };
 pub use chat::get_last_chat_time_sync;
 pub use diff_analysis::{

@@ -20,9 +20,9 @@ mod working_context;
 
 pub use analytics::{InjectionAnalytics, InjectionEvent, extract_key_terms};
 pub use budget::{
-    BudgetEntry, BudgetManager, PRIORITY_CONVENTION, PRIORITY_FILE_AWARE, PRIORITY_GOALS,
-    PRIORITY_MEMORY, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_SEMANTIC, PRIORITY_TASKS,
-    PRIORITY_TEAM,
+    BudgetEntry, BudgetManager, PRIORITY_CONVENTION, PRIORITY_CROSS_PROJECT, PRIORITY_FILE_AWARE,
+    PRIORITY_GOALS, PRIORITY_MEMORY, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_SEMANTIC,
+    PRIORITY_TASKS, PRIORITY_TEAM,
 };
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;

@@ -153,6 +153,7 @@ pub async fn run() -> Result<()> {
     };
     let env_config = EnvConfig::load();
     let embeddings = get_embeddings(Some(pool.clone()));
+    let embeddings_for_cross_project = embeddings.clone();
     let fuzzy = if env_config.fuzzy_fallback {
         Some(Arc::new(FuzzyCache::new()))
     } else {
@@ -211,6 +212,18 @@ pub async fn run() -> Result<()> {
         None
     };
 
+    // Cross-project knowledge: search memories from other projects
+    let cross_project_context: Option<String> = if let Some(project_id) = project_id {
+        if crate::context::is_simple_command(user_message) {
+            None
+        } else {
+            get_cross_project_context(&pool, &embeddings_for_cross_project, project_id, user_message)
+                .await
+        }
+    } else {
+        None
+    };
+
     // Get pending native tasks
     let task_context = get_task_context();
     if task_context.is_some() {
@@ -221,7 +234,8 @@ pub async fn run() -> Result<()> {
     // This replaces the previous ad-hoc concatenation that had no cap on
     // team/proactive/task context.
     use crate::context::{
-        BudgetEntry, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_TASKS, PRIORITY_TEAM,
+        BudgetEntry, PRIORITY_CROSS_PROJECT, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_TASKS,
+        PRIORITY_TEAM,
     };
 
     let mut budget_entries: Vec<BudgetEntry> = Vec::new();
@@ -255,6 +269,16 @@ pub async fn run() -> Result<()> {
         }
         _ => false,
     };
+
+    // Cross-project knowledge
+    if let Some(ref cpc) = cross_project_context {
+        budget_entries.push(BudgetEntry::new(
+            PRIORITY_CROSS_PROJECT,
+            cpc.clone(),
+            "cross-project",
+        ));
+        eprintln!("[mira] Added cross-project context");
+    }
 
     // Pending native tasks
     if let Some(ref tc) = task_context {
@@ -470,6 +494,63 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
     } else {
         Some(parts.join("\n"))
     }
+}
+
+/// Get cross-project knowledge: search memories from other projects.
+///
+/// First tries tight "you solved this" matching (decisions/patterns, distance < 0.25),
+/// then falls back to general cross-project recall (distance < 0.35).
+/// Returns formatted context string or None if no relevant matches.
+async fn get_cross_project_context(
+    pool: &Arc<DatabasePool>,
+    embeddings: &Option<Arc<EmbeddingClient>>,
+    project_id: i64,
+    message: &str,
+) -> Option<String> {
+    let embeddings = embeddings.as_ref()?;
+    let query_embedding = embeddings.embed(message).await.ok()?;
+    let embedding_bytes = crate::search::embedding_to_bytes(&query_embedding);
+
+    let pool_clone = pool.clone();
+    pool_clone
+        .interact(move |conn| {
+            // First: tight match for "You solved this in Project X"
+            let solved = crate::db::find_solved_in_other_project_sync(
+                conn,
+                &embedding_bytes,
+                project_id,
+                0.25,
+                2,
+            )
+            .unwrap_or_default();
+
+            if !solved.is_empty() {
+                return Ok::<Option<String>, anyhow::Error>(Some(
+                    crate::db::format_cross_project_context(&solved),
+                ));
+            }
+
+            // Fallback: general cross-project recall with looser threshold
+            let results = crate::db::recall_cross_project_sync(
+                conn,
+                &embedding_bytes,
+                project_id,
+                5,
+            )
+            .unwrap_or_default();
+
+            // Filter to only reasonably relevant results
+            let relevant: Vec<_> = results.into_iter().filter(|r| r.distance < 0.35).collect();
+
+            if relevant.is_empty() {
+                return Ok(None);
+            }
+
+            Ok(Some(crate::db::format_cross_project_context(&relevant)))
+        })
+        .await
+        .ok()
+        .flatten()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

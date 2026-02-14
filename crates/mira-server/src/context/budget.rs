@@ -20,6 +20,8 @@ pub const PRIORITY_SEMANTIC: f32 = 0.7;
 pub const PRIORITY_TASKS: f32 = 0.65;
 /// Priority for active goals
 pub const PRIORITY_GOALS: f32 = 0.6;
+/// Priority for cross-project knowledge ("You solved this in Project X")
+pub const PRIORITY_CROSS_PROJECT: f32 = 0.55;
 /// Priority for proactive predictions
 pub const PRIORITY_PROACTIVE: f32 = 0.5;
 /// Priority for file-aware context
