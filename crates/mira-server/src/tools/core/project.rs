@@ -218,7 +218,7 @@ fn format_recent_sessions(sessions: &[SessionInfo]) -> String {
             out.push_str(&format!("  [{}] {} - (no activity)\n", short_id, timestamp));
         }
     }
-    out.push_str("  Use session(action=\"get_history\", session_id=\"...\") to view details\n");
+    out.push_str("  Use session(action=\"recap\") for current session context\n");
     out
 }
 
@@ -278,7 +278,7 @@ fn format_session_insights(
 
     if pending_doc_count > 0 {
         out.push_str(&format!(
-            "\nDocumentation: {} items need docs\n  Use `documentation(action=\"list\")` to see them\n",
+            "\nDocumentation: {} items need docs\n  CLI: `mira tool documentation '{{\"action\":\"list\"}}'`\n",
             pending_doc_count
         ));
     }

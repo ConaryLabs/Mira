@@ -178,9 +178,9 @@ async fn query_insights<C: ToolContext>(
         } else if snapshot_summary.is_some() {
             "No active insights. Codebase is looking healthy.".to_string()
         } else {
-            "No insights found.\n\nTo generate health data:\n  \
+            "No insights found.\n\nTo generate insights:\n  \
              1. Index your project: index(action=\"project\")\n  \
-             2. Run health scan: index(action=\"health\")\n  \
+             2. CLI health scan: `mira tool index '{\"action\":\"health\"}'`\n  \
              3. Then check insights again"
                 .to_string()
         };

@@ -266,20 +266,16 @@ impl MiraServer {
             "Auto-enqueued async task (client used call_tool)"
         );
 
-        let poll_hint = format!(
-            "mira tool session '{{\"action\":\"tasks_get\",\"task_id\":\"{}\"}}'",
-            enqueued.task_id
-        );
         Ok(CallToolResult {
             content: vec![Content::text(format!(
-                "Task {} started. Check status with: {}",
-                enqueued.task_id, poll_hint
+                "Task {} started (running {} asynchronously). \
+                 Result will be available when complete.",
+                enqueued.task_id, enqueued.tool_name
             ))],
             structured_content: Some(serde_json::json!({
                 "task_id": enqueued.task_id,
                 "status": "working",
                 "message": format!("Running {} asynchronously", enqueued.tool_name),
-                "poll_with": poll_hint,
                 "created_at": enqueued.created_at,
             })),
             is_error: Some(false),
