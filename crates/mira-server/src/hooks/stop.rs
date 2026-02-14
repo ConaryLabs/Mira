@@ -385,15 +385,19 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
 
     // Count all behavior events (tool_use + file_access) for fair comparison,
     // since behavior summaries include both event types.
-    let behavior_total: i64 = conn
+    // Cap both at 50 to match the LIMIT 50 in get_session_tool_summary_sync
+    // and get_session_behavior_summary_sync, aligning with the background
+    // worker's line-count comparison.
+    let behavior_total: usize = conn
         .query_row(
             "SELECT COUNT(*) FROM session_behavior_log WHERE session_id = ? AND event_type IN ('tool_use', 'file_access')",
             [session_id],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0),
         )
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(50) as usize;
 
-    let use_behavior = behavior_total as usize > tool_count;
+    let use_behavior = behavior_total > tool_count.min(50);
 
     let (count, tool_names, files_modified) = if use_behavior {
         let names: Vec<String> = behavior_tools.iter().map(|(n, _)| n.clone()).collect();
