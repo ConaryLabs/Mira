@@ -129,10 +129,10 @@ mod tests {
     use mira::mcp::MiraServer;
     use std::sync::Arc;
 
-    /// Verifies CLI dispatcher supports all MCP tools.
-    /// This test catches drift between the two implementations.
+    /// Verifies CLI dispatcher is a superset of MCP tools.
+    /// MCP exposes a slim surface; CLI supports all tools including MCP-removed ones.
     #[tokio::test]
-    async fn cli_tools_match_mcp_tools() {
+    async fn cli_tools_superset_of_mcp_tools() {
         // Create a minimal server to get tool list
         let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
         let code_pool = Arc::new(DatabasePool::open_code_db_in_memory().await.unwrap());
@@ -144,16 +144,10 @@ mod tests {
         let cli_tools: std::collections::HashSet<&str> =
             list_cli_tool_names().into_iter().collect();
 
-        // Check for tools in MCP but missing from CLI
+        // Every MCP tool must have a CLI counterpart
         let missing_from_cli: Vec<_> = mcp_tools
             .iter()
             .filter(|t| !cli_tools.contains(t.as_str()))
-            .collect();
-
-        // Check for tools in CLI but missing from MCP (shouldn't happen but good to check)
-        let missing_from_mcp: Vec<_> = cli_tools
-            .iter()
-            .filter(|t| !mcp_tools.contains::<str>(t))
             .collect();
 
         assert!(
@@ -162,10 +156,7 @@ mod tests {
             missing_from_cli
         );
 
-        assert!(
-            missing_from_mcp.is_empty(),
-            "CLI has tools not in MCP (should not happen): {:?}",
-            missing_from_mcp
-        );
+        // CLI may have extra tools not in MCP (e.g. documentation, team, recipe)
+        // — that's expected after tool surface consolidation
     }
 }

@@ -362,3 +362,273 @@ pub struct RecipeRequest {
     #[schemars(description = "Recipe name (required for get action)")]
     pub name: Option<String>,
 }
+
+// ============================================================================
+// Slim MCP types — reduced schema surface exposed to Claude Code.
+// Full types above are still used by CLI (`mira tool`) and handlers.
+// ============================================================================
+
+// ── Project (3 → 2 actions: removes Set) ─────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpProjectAction {
+    /// Initialize session with project context
+    Start,
+    /// Show current project
+    Get,
+}
+
+impl From<McpProjectAction> for ProjectAction {
+    fn from(a: McpProjectAction) -> Self {
+        match a {
+            McpProjectAction::Start => ProjectAction::Start,
+            McpProjectAction::Get => ProjectAction::Get,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct McpProjectRequest {
+    #[schemars(description = "Action: start (initialize session), get (show current)")]
+    pub action: McpProjectAction,
+    #[schemars(description = "Project root path (required for start)")]
+    pub project_path: Option<String>,
+    #[schemars(description = "Project name")]
+    pub name: Option<String>,
+    #[schemars(description = "Optional session ID (for start action)")]
+    pub session_id: Option<String>,
+}
+
+// ── Memory (5 → 4 actions: removes ExportClaudeLocal) ────────────────────
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpMemoryAction {
+    /// Store a fact for future recall
+    Remember,
+    /// Search memories using semantic similarity
+    Recall,
+    /// Delete a memory by ID
+    Forget,
+    /// Archive a memory (exclude from auto-export, keep for history)
+    Archive,
+}
+
+impl From<McpMemoryAction> for MemoryAction {
+    fn from(a: McpMemoryAction) -> Self {
+        match a {
+            McpMemoryAction::Remember => MemoryAction::Remember,
+            McpMemoryAction::Recall => MemoryAction::Recall,
+            McpMemoryAction::Forget => MemoryAction::Forget,
+            McpMemoryAction::Archive => MemoryAction::Archive,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct McpMemoryRequest {
+    #[schemars(description = "Action: remember, recall, forget, archive")]
+    pub action: McpMemoryAction,
+    #[schemars(description = "Content to remember (required for remember)")]
+    pub content: Option<String>,
+    #[schemars(description = "Search query (required for recall)")]
+    pub query: Option<String>,
+    #[schemars(description = "Memory ID (required for forget/archive)")]
+    pub id: Option<i64>,
+    #[schemars(description = "Key for upsert")]
+    pub key: Option<String>,
+    #[schemars(description = "Type: preference/decision/context/general")]
+    pub fact_type: Option<String>,
+    #[schemars(description = "Category")]
+    pub category: Option<String>,
+    #[schemars(description = "Confidence score (0.0-1.0)")]
+    pub confidence: Option<f64>,
+    #[schemars(
+        description = "Visibility scope: personal (only creator), project (default, anyone with project access), team (team members only)"
+    )]
+    pub scope: Option<String>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+impl From<McpMemoryRequest> for MemoryRequest {
+    fn from(r: McpMemoryRequest) -> Self {
+        Self {
+            action: r.action.into(),
+            content: r.content,
+            query: r.query,
+            id: r.id,
+            key: r.key,
+            fact_type: r.fact_type,
+            category: r.category,
+            confidence: r.confidence,
+            scope: r.scope,
+            limit: r.limit,
+        }
+    }
+}
+
+// ── Code (8 → 5 actions: removes Dependencies, Patterns, TechDebt) ──────
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpCodeAction {
+    /// Search code by meaning
+    Search,
+    /// Get symbols from a file
+    Symbols,
+    /// Find all functions that call a given function
+    Callers,
+    /// Find all functions called by a given function
+    Callees,
+    /// Analyze git diff semantically (change types, impact, risks)
+    Diff,
+}
+
+impl From<McpCodeAction> for CodeAction {
+    fn from(a: McpCodeAction) -> Self {
+        match a {
+            McpCodeAction::Search => CodeAction::Search,
+            McpCodeAction::Symbols => CodeAction::Symbols,
+            McpCodeAction::Callers => CodeAction::Callers,
+            McpCodeAction::Callees => CodeAction::Callees,
+            McpCodeAction::Diff => CodeAction::Diff,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct McpCodeRequest {
+    #[schemars(description = "Action: search, symbols, callers, callees, diff")]
+    pub action: McpCodeAction,
+    #[schemars(description = "Search query (required for search)")]
+    pub query: Option<String>,
+    #[schemars(description = "File path (required for symbols)")]
+    pub file_path: Option<String>,
+    #[schemars(description = "Function name (required for callers/callees)")]
+    pub function_name: Option<String>,
+    #[schemars(description = "Symbol type filter")]
+    pub symbol_type: Option<String>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+    #[schemars(
+        description = "Starting git ref for diff (commit, branch, tag). Default: HEAD~1 or staged/working changes"
+    )]
+    pub from_ref: Option<String>,
+    #[schemars(description = "Ending git ref for diff. Default: HEAD")]
+    pub to_ref: Option<String>,
+    #[schemars(
+        description = "Include impact analysis in diff (find affected callers). Default: true"
+    )]
+    pub include_impact: Option<bool>,
+}
+
+impl From<McpCodeRequest> for CodeRequest {
+    fn from(r: McpCodeRequest) -> Self {
+        Self {
+            action: r.action.into(),
+            query: r.query,
+            file_path: r.file_path,
+            function_name: r.function_name,
+            symbol_type: r.symbol_type,
+            limit: r.limit,
+            from_ref: r.from_ref,
+            to_ref: r.to_ref,
+            include_impact: r.include_impact,
+        }
+    }
+}
+
+// ── Index (6 → 3 actions: removes Compact, Summarize, Health) ────────────
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpIndexAction {
+    /// Index entire project
+    Project,
+    /// Index a single file
+    File,
+    /// Show index status
+    Status,
+}
+
+impl From<McpIndexAction> for IndexAction {
+    fn from(a: McpIndexAction) -> Self {
+        match a {
+            McpIndexAction::Project => IndexAction::Project,
+            McpIndexAction::File => IndexAction::File,
+            McpIndexAction::Status => IndexAction::Status,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct McpIndexRequest {
+    #[schemars(description = "Action: project (full reindex), file (single file), status (index stats)")]
+    pub action: McpIndexAction,
+    #[schemars(description = "Project root path (defaults to active project if omitted)")]
+    pub path: Option<String>,
+    #[schemars(description = "Skip embedding generation (faster indexing)")]
+    pub skip_embed: Option<bool>,
+}
+
+// ── Session (14 → 4 actions: keeps Recap, Insights, DismissInsight, CurrentSession) ──
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpSessionAction {
+    /// Get session recap (preferences, recent context, goals)
+    Recap,
+    /// Query unified insights digest (pondering, proactive, doc gaps)
+    Insights,
+    /// Dismiss an insight by ID (removes it from future queries)
+    DismissInsight,
+    /// Show current session
+    CurrentSession,
+}
+
+impl From<McpSessionAction> for SessionAction {
+    fn from(a: McpSessionAction) -> Self {
+        match a {
+            McpSessionAction::Recap => SessionAction::Recap,
+            McpSessionAction::Insights => SessionAction::Insights,
+            McpSessionAction::DismissInsight => SessionAction::DismissInsight,
+            McpSessionAction::CurrentSession => SessionAction::CurrentSession,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct McpSessionRequest {
+    #[schemars(description = "Action: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight), current_session (show current)")]
+    pub action: McpSessionAction,
+    #[schemars(description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)")]
+    pub insight_source: Option<String>,
+    #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.5)")]
+    pub min_confidence: Option<f64>,
+    #[schemars(description = "Insight row ID to dismiss (for dismiss_insight action)")]
+    pub insight_id: Option<i64>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+    #[schemars(description = "Filter to last N days (default: 30)")]
+    pub since_days: Option<u32>,
+}
+
+impl From<McpSessionRequest> for SessionRequest {
+    fn from(r: McpSessionRequest) -> Self {
+        Self {
+            action: r.action.into(),
+            session_id: None,
+            task_id: None,
+            limit: r.limit,
+            group_by: None,
+            since_days: r.since_days,
+            insight_source: r.insight_source,
+            min_confidence: r.min_confidence,
+            insight_id: r.insight_id,
+            dry_run: None,
+            category: None,
+        }
+    }
+}

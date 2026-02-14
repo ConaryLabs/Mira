@@ -119,10 +119,8 @@ mod tests {
             schema_for_output::<SessionOutput>().is_ok(),
             "SessionOutput"
         );
-        assert!(schema_for_output::<DocOutput>().is_ok(), "DocOutput");
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
-        assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");
-        assert!(schema_for_output::<RecipeOutput>().is_ok(), "RecipeOutput");
         assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");
+        // DocOutput, TeamOutput, RecipeOutput removed from MCP but still valid types for CLI
     }
 }

@@ -35,47 +35,46 @@ where
 #[tool_router]
 impl MiraServer {
     #[tool(
-        description = "Manage project context and workspace initialization. Actions: start (initialize session with codebase map), set (change project), get (show current). Use for workspace setup, project configuration, and session initialization.",
+        description = "Manage project context and workspace initialization. Actions: start (initialize session with codebase map), get (show current).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ProjectOutput>()
             .expect("ProjectOutput schema")
     )]
     async fn project(
         &self,
-        Parameters(req): Parameters<ProjectRequest>,
+        Parameters(req): Parameters<McpProjectRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        // For start action, use provided session ID or fall back to Claude's hook-generated ID
+        let action: ProjectAction = req.action.into();
         let session_id = req.session_id.or_else(read_claude_session_id);
-        tool_result(tools::project(self, req.action, req.project_path, req.name, session_id).await)
+        tool_result(tools::project(self, action, req.project_path, req.name, session_id).await)
     }
 
     #[tool(
-        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID), archive (exclude from auto-export, keep for history), export_claude_local (export memories to CLAUDE.local.md). Store and retrieve decisions, preferences, patterns, and context across sessions. Scope: personal, project (default), team.",
+        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID), archive (exclude from auto-export, keep for history). Scope: personal, project (default), team.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::MemoryOutput>()
             .expect("MemoryOutput schema")
     )]
     async fn memory(
         &self,
-        Parameters(req): Parameters<MemoryRequest>,
+        Parameters(req): Parameters<McpMemoryRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_memory(self, req).await)
+        tool_result(tools::handle_memory(self, req.into()).await)
     }
 
     #[tool(
-        description = "Code intelligence: semantic search, call graph, and static analysis. Actions: search (find code by meaning), symbols (list definitions in file), callers/callees (trace call graph), dependencies (module graph + circular deps), patterns (detect architectural patterns), tech_debt (per-module scores), diff (analyze git changes semantically with impact and risk assessment).",
+        description = "Code intelligence: semantic search, call graph, and diff analysis. Actions: search (find code by meaning), symbols (list definitions in file), callers/callees (trace call graph), diff (analyze git changes with impact assessment).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::CodeOutput>()
             .expect("CodeOutput schema")
     )]
     async fn code(
         &self,
-        Parameters(req): Parameters<CodeRequest>,
+        Parameters(req): Parameters<McpCodeRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        use crate::mcp::requests::CodeAction;
-        if matches!(req.action, CodeAction::Diff) {
+        if matches!(req.action, McpCodeAction::Diff) {
             return tool_result(
                 tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
             );
         }
-        tool_result(tools::handle_code(self, req).await)
+        tool_result(tools::handle_code(self, req.into()).await)
     }
 
     #[tool(
@@ -91,70 +90,32 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Index codebase for semantic search and analysis. Actions: project (full reindex), file (single file), status (index stats), compact (optimize storage), summarize (generate module summaries), health (full code health scan). Builds embeddings and symbol tables.",
+        description = "Index codebase for semantic search and analysis. Actions: project (full reindex), file (single file), status (index stats). Builds embeddings and symbol tables.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
             .expect("IndexOutput schema")
     )]
     async fn index(
         &self,
-        Parameters(req): Parameters<IndexRequest>,
+        Parameters(req): Parameters<McpIndexRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::index(self, req.action, req.path, req.skip_embed.unwrap_or(false)).await)
+        let action: IndexAction = req.action.into();
+        tool_result(tools::index(self, action, req.path, req.skip_embed.unwrap_or(false)).await)
     }
 
     #[tool(
-        description = "Session management, analytics, and background task tracking. Actions: current_session, list_sessions, get_history (session history), recap (preferences + context + goals), usage_summary/usage_stats/usage_list (LLM analytics), insights (pondering/proactive/doc_gap digest), dismiss_insight (remove resolved insight), tasks_list/tasks_get/tasks_cancel (async background operations), storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview).",
+        description = "Session management and insights. Actions: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight), current_session (show current).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
             .expect("SessionOutput schema")
     )]
     async fn session(
         &self,
-        Parameters(req): Parameters<SessionRequest>,
+        Parameters(req): Parameters<McpSessionRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        use crate::mcp::requests::SessionAction;
-        match req.action {
-            SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
-                tool_result(tools::tasks::handle_tasks(self, req.action, req.task_id).await)
-            }
-            _ => tool_result(tools::handle_session(self, req).await),
-        }
+        tool_result(tools::handle_session(self, req.into()).await)
     }
 
-    #[tool(
-        description = "Manage documentation gap detection and writing tasks. Actions: list (show needed docs), get (task details with writing guidelines), complete (mark done), skip (mark not needed), batch_skip (skip multiple tasks), inventory (show all docs), scan (trigger scan).",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DocOutput>()
-            .expect("DocOutput schema")
-    )]
-    async fn documentation(
-        &self,
-        Parameters(req): Parameters<DocumentationRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::documentation(self, req).await)
-    }
-
-    #[tool(
-        description = "Team intelligence for Claude Code Agent Teams. Actions: status (active members, files, conflicts), review (teammate's modified files), distill (extract key findings into team memories). Requires an active Agent Teams session.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::TeamOutput>()
-            .expect("TeamOutput schema")
-    )]
-    async fn team(
-        &self,
-        Parameters(req): Parameters<TeamRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_team(self, req).await)
-    }
-
-    #[tool(
-        description = "Get reusable team recipes for common workflows. Actions: list (available recipes), get (full recipe with members/tasks/prompts). Recipes define team blueprints for Agent Teams.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::RecipeOutput>()
-            .expect("RecipeOutput schema")
-    )]
-    async fn recipe(
-        &self,
-        Parameters(req): Parameters<RecipeRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_recipe(req).await)
-    }
+    // documentation, team, recipe tools removed from MCP surface.
+    // Still accessible via `mira tool <name> '<json>'` CLI.
 }
 
 impl MiraServer {
