@@ -80,6 +80,32 @@ Where it all began - a personal AI assistant with memory.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-02-14
+
+### Added
+- **Parallel fuzzy search** -- Fuzzy search now runs alongside semantic and keyword search in every query via `tokio::join!`, instead of only as a fallback when embeddings are unavailable. Catches typos and partial matches that both semantic and keyword miss.
+- **Cross-project knowledge** -- Session recap and prompt context now surface relevant patterns and preferences learned from other projects.
+- **Health dashboard** -- Categorized insights with trend tracking and 54 new tests. Provides system health overview via `session(action="insights")`.
+- **/mira:status slash command** -- Quick health check showing index stats, storage, and active goals.
+- **Codex CLI MCP integration** -- Mira can be used with the Codex CLI in addition to Claude Code.
+- **Insight differentiation** -- Insights from Mira are now clearly distinguished from Claude Code's built-in system messages.
+
+### Changed
+- **Tool surface consolidation** -- Reduced from 9 MCP tools / 58 actions to 6 tools / 28 actions. Grouped by workflow instead of domain.
+- **MIRA_FUZZY_FALLBACK renamed to MIRA_FUZZY_SEARCH** -- Reflects always-on behavior. The old env var name is no longer accepted.
+- **Fuzzy search bounded concurrency** -- Fuzzy runs with a 500ms timeout via `tokio::spawn` (cache warms in background on timeout) and a semaphore limits to 1 concurrent fuzzy task to prevent pileup under load.
+
+### Fixed
+- **Session summaries missing for 94% of sessions** -- Fixed summary generation pipeline.
+- **Behavior log tool count undercount** -- Snapshot zero counts and summary source selection corrected.
+- **Stop hook summary source** -- Uses richer source, with regression tests added.
+- **Goal list total** -- Returns true total for all modes; consistent empty-state message when limit=0 with existing goals.
+- **Churn query column mismatch** -- Fixed legacy pattern leak and required MCP enforcement.
+- **Source selection counts** -- Capped at 50 to match summary query limits.
+- **Stale MCP references** -- Removed references to removed actions and corrected task method names.
+- **Cross-project knowledge codex review findings** -- EXISTS hardening and UTF-8 truncation edge cases.
+- **Collapsible if clippy warning** -- Fixed in session.rs cross-project preferences.
+
 ## [0.7.6] - 2026-02-13
 
 ### Added

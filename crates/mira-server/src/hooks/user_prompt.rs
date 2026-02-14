@@ -217,8 +217,13 @@ pub async fn run() -> Result<()> {
         if crate::context::is_simple_command(user_message) {
             None
         } else {
-            get_cross_project_context(&pool, &embeddings_for_cross_project, project_id, user_message)
-                .await
+            get_cross_project_context(
+                &pool,
+                &embeddings_for_cross_project,
+                project_id,
+                user_message,
+            )
+            .await
         }
     } else {
         None
@@ -531,13 +536,9 @@ async fn get_cross_project_context(
             }
 
             // Fallback: general cross-project recall with looser threshold
-            let results = crate::db::recall_cross_project_sync(
-                conn,
-                &embedding_bytes,
-                project_id,
-                5,
-            )
-            .unwrap_or_default();
+            let results =
+                crate::db::recall_cross_project_sync(conn, &embedding_bytes, project_id, 5)
+                    .unwrap_or_default();
 
             // Filter to only reasonably relevant results
             let relevant: Vec<_> = results.into_iter().filter(|r| r.distance < 0.35).collect();

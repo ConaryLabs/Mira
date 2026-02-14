@@ -180,17 +180,14 @@ pub fn get_cross_project_preferences_sync(
     "#;
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params![current_project_id, limit as i64],
-        |row| {
-            Ok(CrossProjectPreference {
-                content: row.get(0)?,
-                projects: row.get(1)?,
-                project_count: row.get(2)?,
-                max_confidence: row.get(3)?,
-            })
-        },
-    )?;
+    let rows = stmt.query_map(rusqlite::params![current_project_id, limit as i64], |row| {
+        Ok(CrossProjectPreference {
+            content: row.get(0)?,
+            projects: row.get(1)?,
+            project_count: row.get(2)?,
+            max_confidence: row.get(3)?,
+        })
+    })?;
 
     rows.collect()
 }
@@ -315,7 +312,10 @@ mod tests {
         // Content > 200 bytes with multibyte chars forces truncation through
         // truncate_at_boundary. This must not panic on char boundaries.
         let long_unicode = "日本語".repeat(30); // 30 * 9 bytes = 270 bytes, exceeds 200
-        assert!(long_unicode.len() > 200, "test content must exceed 200 bytes");
+        assert!(
+            long_unicode.len() > 200,
+            "test content must exceed 200 bytes"
+        );
         let memories = vec![CrossProjectMemory {
             fact_id: 3,
             content: long_unicode,

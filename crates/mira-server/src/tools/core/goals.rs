@@ -425,7 +425,11 @@ async fn action_list<C: ToolContext>(
             }
         })
         .collect();
-    let total = if total_count > 0 { total_count } else { items.len() }; // fallback only if count query failed
+    let total = if total_count > 0 {
+        total_count
+    } else {
+        items.len()
+    }; // fallback only if count query failed
     Ok(Json(GoalOutput {
         action: "list".into(),
         message: response,

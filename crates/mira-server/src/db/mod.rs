@@ -81,12 +81,12 @@ pub use cartographer::{
     get_external_deps_sync, get_module_dependencies_sync, get_module_exports_sync,
     get_modules_needing_summaries_sync, update_module_purposes_sync, upsert_module_sync,
 };
+pub use chat::get_last_chat_time_sync;
 pub use cross_project::{
     CrossProjectMemory, CrossProjectPreference, find_solved_in_other_project_sync,
     format_cross_project_context, format_cross_project_preferences,
     get_cross_project_preferences_sync, recall_cross_project_sync,
 };
-pub use chat::get_last_chat_time_sync;
 pub use diff_analysis::{
     DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync,
     get_recent_diff_analyses_sync, store_diff_analysis_sync,
@@ -186,9 +186,9 @@ pub use session::{
 };
 pub use tasks::{
     count_goals_sync, create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync,
-    get_active_goals_sync,
-    get_goal_by_id_sync, get_goals_sync, get_pending_tasks_sync, get_task_by_id_sync,
-    get_tasks_sync, parse_goal_row, parse_task_row, update_goal_sync, update_task_sync,
+    get_active_goals_sync, get_goal_by_id_sync, get_goals_sync, get_pending_tasks_sync,
+    get_task_by_id_sync, get_tasks_sync, parse_goal_row, parse_task_row, update_goal_sync,
+    update_task_sync,
 };
 pub use team::{
     FileConflict, TeamInfo, TeamMemberInfo, cleanup_stale_sessions_sync,

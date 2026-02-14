@@ -195,11 +195,8 @@ async fn test_cross_project_preferences_excludes_suspicious_in_current_project()
 
     // Mark the current-project memory as suspicious
     db!(pool, |conn| {
-        conn.execute(
-            "UPDATE memory_facts SET suspicious = 1 WHERE id = ?",
-            [id1],
-        )
-        .map_err(Into::into)
+        conn.execute("UPDATE memory_facts SET suspicious = 1 WHERE id = ?", [id1])
+            .map_err(Into::into)
     });
 
     // Suspicious current-project memory should not qualify the preference
@@ -384,7 +381,8 @@ async fn test_recall_cross_project_no_other_projects() {
     let embedding_bytes = crate::search::embedding_to_bytes(&fake_embedding);
     let embedding_bytes_clone = embedding_bytes.clone();
     db!(pool, |conn| {
-        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone).map_err(Into::into)
+        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone)
+            .map_err(Into::into)
     });
 
     // Query from the same project — should find nothing (cross-project excludes current)
@@ -423,7 +421,8 @@ async fn test_recall_cross_project_finds_other_project() {
     let embedding_bytes = crate::search::embedding_to_bytes(&fake_embedding);
     let embedding_bytes_clone = embedding_bytes.clone();
     db!(pool, |conn| {
-        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone).map_err(Into::into)
+        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone)
+            .map_err(Into::into)
     });
 
     // Query from project A — should find project B's memory
@@ -465,7 +464,8 @@ async fn test_recall_cross_project_excludes_archived() {
     let embedding_bytes = crate::search::embedding_to_bytes(&fake_embedding);
     let embedding_bytes_clone = embedding_bytes.clone();
     db!(pool, |conn| {
-        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone).map_err(Into::into)
+        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone)
+            .map_err(Into::into)
     });
 
     // Archive it
@@ -514,13 +514,13 @@ async fn test_find_solved_in_other_project() {
     let embedding_bytes = crate::search::embedding_to_bytes(&fake_embedding);
     let embedding_bytes_clone = embedding_bytes.clone();
     db!(pool, |conn| {
-        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone).map_err(Into::into)
+        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone)
+            .map_err(Into::into)
     });
 
     // Exact same embedding → distance ≈ 0, well within 0.25 threshold
     let results = db!(pool, |conn| {
-        find_solved_in_other_project_sync(conn, &embedding_bytes, pid1, 0.25, 5)
-            .map_err(Into::into)
+        find_solved_in_other_project_sync(conn, &embedding_bytes, pid1, 0.25, 5).map_err(Into::into)
     });
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].project_name, "ProjectB");
@@ -556,13 +556,13 @@ async fn test_find_solved_excludes_low_confidence() {
     let embedding_bytes = crate::search::embedding_to_bytes(&fake_embedding);
     let embedding_bytes_clone = embedding_bytes.clone();
     db!(pool, |conn| {
-        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone).map_err(Into::into)
+        store_fact_embedding_sync(conn, fact_id, "embedded content", &embedding_bytes_clone)
+            .map_err(Into::into)
     });
 
     // Should not find low-confidence memories even with perfect embedding match
     let results = db!(pool, |conn| {
-        find_solved_in_other_project_sync(conn, &embedding_bytes, pid1, 0.25, 5)
-            .map_err(Into::into)
+        find_solved_in_other_project_sync(conn, &embedding_bytes, pid1, 0.25, 5).map_err(Into::into)
     });
     assert!(results.is_empty());
 }
