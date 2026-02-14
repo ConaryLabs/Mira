@@ -4,8 +4,8 @@
 use super::HEURISTIC_PREFIX;
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    close_session_sync, get_session_tool_summary_sync, get_sessions_needing_summary_sync,
-    get_stale_sessions_sync, update_session_summary_sync,
+    close_session_sync, get_session_behavior_summary_sync, get_session_tool_summary_sync,
+    get_sessions_needing_summary_sync, get_stale_sessions_sync, update_session_summary_sync,
 };
 use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::truncate_at_boundary;
@@ -154,7 +154,26 @@ async fn generate_session_summary(
         .ok()?;
 
     if tool_summary.is_empty() {
-        return None;
+        // Fallback: try behavior log
+        let session_id_clone2 = session_id.to_string();
+        let behavior_summary = pool
+            .interact(move |conn| {
+                get_session_behavior_summary_sync(conn, &session_id_clone2)
+                    .map_err(|e| anyhow::anyhow!("Failed to get behavior summary: {}", e))
+            })
+            .await
+            .ok()?;
+
+        if behavior_summary.is_empty() {
+            return None;
+        }
+
+        return match client {
+            Some(client) => {
+                generate_session_summary_llm(pool, client, &behavior_summary, project_id).await
+            }
+            None => generate_session_summary_fallback(&behavior_summary),
+        };
     }
 
     match client {
@@ -354,7 +373,24 @@ pub async fn close_session_now(
     let summary = if tool_count >= MIN_TOOLS_FOR_SUMMARY {
         generate_session_summary(pool, client, session_id, project_id).await
     } else {
-        None
+        // Fallback: check behavior log
+        let session_id_clone2 = session_id.to_string();
+        let behavior_count: i64 = pool
+            .run(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM session_behavior_log WHERE session_id = ? AND event_type = 'tool_use'",
+                    [&session_id_clone2],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .unwrap_or(0);
+
+        if behavior_count >= MIN_TOOLS_FOR_SUMMARY {
+            generate_session_summary(pool, client, session_id, project_id).await
+        } else {
+            None
+        }
     };
 
     // Close the session

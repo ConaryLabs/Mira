@@ -121,6 +121,66 @@ pub fn get_session_modified_files_sync(
     }
 }
 
+/// Get tool usage stats from behavior log (fallback when tool_history is empty).
+/// Returns (event_count, top_tool_names) from session_behavior_log tool_use events.
+pub fn get_behavior_tool_stats_sync(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> (i64, Vec<String>) {
+    let sql = r#"
+        SELECT json_extract(event_data, '$.tool_name') as tool_name, COUNT(*) as cnt
+        FROM session_behavior_log
+        WHERE session_id = ? AND event_type = 'tool_use'
+          AND json_extract(event_data, '$.tool_name') IS NOT NULL
+        GROUP BY tool_name
+        ORDER BY cnt DESC
+        LIMIT 5
+    "#;
+    match conn.prepare(sql) {
+        Ok(mut stmt) => {
+            let rows: Vec<(String, i64)> = stmt
+                .query_map([session_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
+                .unwrap_or_default();
+            let total: i64 = rows.iter().map(|(_, c)| c).sum();
+            let names: Vec<String> = rows.into_iter().map(|(n, _)| n).collect();
+            (total, names)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to query behavior tool stats: {e}");
+            (0, Vec::new())
+        }
+    }
+}
+
+/// Get files modified from behavior log (fallback when tool_history is empty).
+/// Looks for file_access events with Write/Edit/NotebookEdit/MultiEdit actions.
+pub fn get_behavior_modified_files_sync(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Vec<String> {
+    let sql = r#"
+        SELECT DISTINCT json_extract(event_data, '$.file_path')
+        FROM session_behavior_log
+        WHERE session_id = ?
+          AND event_type = 'file_access'
+          AND json_extract(event_data, '$.action') IN ('Write', 'Edit', 'NotebookEdit', 'MultiEdit')
+          AND json_extract(event_data, '$.file_path') IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 10
+    "#;
+    match conn.prepare(sql) {
+        Ok(mut stmt) => stmt
+            .query_map([session_id], |row| row.get::<_, String>(0))
+            .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
+            .unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("Failed to query behavior modified files: {e}");
+            Vec::new()
+        }
+    }
+}
+
 /// Fetch active goals for a project and format them for context injection.
 /// Uses `get_active_goals_sync` and returns lines in the format:
 ///   `"- {title} [{status}] ({progress}%)"`

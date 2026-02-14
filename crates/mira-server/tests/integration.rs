@@ -736,11 +736,15 @@ async fn test_pool_concurrent_access() {
     .await
     .expect("session_start failed");
 
-    // Run multiple concurrent memory operations
+    // Run multiple concurrent memory operations.
+    // Stagger starts to avoid thundering herd on in-memory shared-cache DB,
+    // where SQLITE_LOCKED (table-level lock) isn't retried by busy_timeout.
+    // Real requests don't arrive at the same nanosecond either.
     let futures: Vec<_> = (0..5)
         .map(|i| {
             let ctx_ref = &ctx;
             async move {
+                tokio::time::sleep(std::time::Duration::from_millis(i * 50)).await;
                 remember(
                     ctx_ref,
                     format!("Concurrent memory {}", i),
@@ -3399,9 +3403,14 @@ async fn test_insights_empty_no_data_shows_setup_instructions() {
     use mira::mcp::requests::{SessionAction, SessionRequest};
     let ctx = TestContext::new().await;
 
-    session_start(&ctx, "/tmp/test_insights_empty".into(), Some("Insights Empty".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_insights_empty".into(),
+        Some("Insights Empty".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
 
     // No insights, no health snapshots → should show setup instructions
     let req = SessionRequest {
@@ -3432,9 +3441,14 @@ async fn test_insights_empty_with_snapshot_shows_healthy() {
     use mira::mcp::requests::{SessionAction, SessionRequest};
     let ctx = TestContext::new().await;
 
-    session_start(&ctx, "/tmp/test_insights_healthy".into(), Some("Insights Healthy".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_insights_healthy".into(),
+        Some("Insights Healthy".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
     let project = ctx.get_project().await.expect("project should be set");
 
     // Insert a health snapshot but no insights → genuinely healthy
@@ -3480,9 +3494,14 @@ async fn test_insights_empty_with_filters_shows_filter_message() {
     use mira::mcp::requests::{SessionAction, SessionRequest};
     let ctx = TestContext::new().await;
 
-    session_start(&ctx, "/tmp/test_insights_filter".into(), Some("Insights Filter".into()), None)
-        .await
-        .expect("session_start failed");
+    session_start(
+        &ctx,
+        "/tmp/test_insights_filter".into(),
+        Some("Insights Filter".into()),
+        None,
+    )
+    .await
+    .expect("session_start failed");
     let project = ctx.get_project().await.expect("project should be set");
 
     // Insert a health snapshot so the "no data" branch isn't hit

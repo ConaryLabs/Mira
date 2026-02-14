@@ -380,7 +380,67 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
     };
 
     if tool_count == 0 {
-        return None;
+        // Fallback: check behavior log for native Claude Code tool usage
+        let (behavior_count, behavior_tools) =
+            super::get_behavior_tool_stats_sync(conn, session_id);
+        if behavior_count == 0 {
+            return None;
+        }
+
+        // Build summary from behavior log data
+        let files_modified = super::get_behavior_modified_files_sync(conn, session_id);
+        let duration: Option<String> = {
+            let sql = r#"
+                SELECT
+                    CAST((julianday(last_activity) - julianday(started_at)) * 24 * 60 AS INTEGER)
+                FROM sessions
+                WHERE id = ?
+            "#;
+            conn.query_row(sql, [session_id], |row| row.get::<_, i64>(0))
+                .ok()
+                .map(|mins| {
+                    if mins >= 60 {
+                        format!("{}h {}m", mins / 60, mins % 60)
+                    } else {
+                        format!("{}m", mins)
+                    }
+                })
+        };
+
+        let mut parts: Vec<String> = Vec::new();
+        if !behavior_tools.is_empty() {
+            parts.push(format!(
+                "{} tool calls ({})",
+                behavior_count,
+                behavior_tools.join(", ")
+            ));
+        } else {
+            parts.push(format!("{} tool calls", behavior_count));
+        }
+        if !files_modified.is_empty() {
+            let file_names: Vec<&str> = files_modified
+                .iter()
+                .map(|p| {
+                    std::path::Path::new(p.as_str())
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or(p)
+                })
+                .collect();
+            if file_names.len() <= 3 {
+                parts.push(format!("Modified: {}", file_names.join(", ")));
+            } else {
+                parts.push(format!(
+                    "Modified: {} (+{} more)",
+                    file_names[..3].join(", "),
+                    file_names.len().saturating_sub(3)
+                ));
+            }
+        }
+        if let Some(dur) = duration {
+            parts.push(format!("Duration: {}", dur));
+        }
+        return Some(parts.join(". "));
     }
 
     // Get files modified (Write/Edit tool calls)
@@ -459,6 +519,55 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
         crate::db::get_session_stats_sync(conn, session_id).unwrap_or((0, Vec::new()));
 
     if tool_count == 0 {
+        // Fallback: check behavior log for native Claude Code tool usage
+        let (behavior_count, behavior_tools) =
+            super::get_behavior_tool_stats_sync(conn, session_id);
+        if behavior_count == 0 {
+            return Ok(());
+        }
+
+        let files_modified = super::get_behavior_modified_files_sync(conn, session_id);
+        let top_tools_json: Vec<serde_json::Value> = behavior_tools
+            .iter()
+            .map(|name| serde_json::json!({"name": name, "count": 0}))
+            .collect();
+
+        // Check for existing compaction context
+        let existing_compaction: Option<serde_json::Value> = conn
+            .query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                [session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
+            .and_then(|snap| snap.get("compaction_context").cloned());
+
+        let mut snapshot = serde_json::json!({
+            "tool_count": behavior_count,
+            "top_tools": top_tools_json,
+            "top_tool_names": behavior_tools,
+            "files_modified": files_modified,
+            "source": "behavior_log",
+        });
+
+        if let Some(compaction) = existing_compaction {
+            snapshot["compaction_context"] = compaction;
+        }
+
+        let snapshot_str = serde_json::to_string(&snapshot)?;
+        conn.execute(
+            "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(session_id) DO UPDATE SET snapshot = ?2, created_at = datetime('now')",
+            rusqlite::params![session_id, snapshot_str],
+        )?;
+
+        eprintln!(
+            "[mira] Session snapshot saved from behavior log ({} tools, {} files modified)",
+            behavior_count,
+            files_modified.len()
+        );
         return Ok(());
     }
 
@@ -825,6 +934,211 @@ mod tests {
         assert!(
             snapshot.get("compaction_context").is_none(),
             "compaction_context should not exist when PreCompact didn't run"
+        );
+    }
+
+    // ── behavior log fallback ───────────────────────────────────────────
+
+    /// Seed behavior log tool_use events (simulates native Claude Code tool calls).
+    fn seed_behavior_tool_use(
+        conn: &rusqlite::Connection,
+        session_id: &str,
+        project_id: i64,
+        tool_name: &str,
+        seq: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+             VALUES (?, ?, 'tool_use', ?, ?)",
+            rusqlite::params![
+                session_id,
+                project_id,
+                serde_json::json!({"tool_name": tool_name}).to_string(),
+                seq,
+            ],
+        )
+        .unwrap();
+    }
+
+    /// Seed behavior log file_access events (simulates Write/Edit file modifications).
+    fn seed_behavior_file_access(
+        conn: &rusqlite::Connection,
+        session_id: &str,
+        project_id: i64,
+        action: &str,
+        file_path: &str,
+        seq: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+             VALUES (?, ?, 'file_access', ?, ?)",
+            rusqlite::params![
+                session_id,
+                project_id,
+                serde_json::json!({"action": action, "file_path": file_path}).to_string(),
+                seq,
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn build_summary_behavior_log_fallback() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/behavior-proj");
+        seed_session(&conn, "behavior-sess", pid, "active");
+
+        // No tool_history entries — only behavior log
+        seed_behavior_tool_use(&conn, "behavior-sess", pid, "Edit", 1);
+        seed_behavior_tool_use(&conn, "behavior-sess", pid, "Edit", 2);
+        seed_behavior_tool_use(&conn, "behavior-sess", pid, "Read", 3);
+        seed_behavior_file_access(
+            &conn,
+            "behavior-sess",
+            pid,
+            "Edit",
+            "/tmp/behavior-proj/main.rs",
+            4,
+        );
+
+        let summary = build_session_summary(&conn, "behavior-sess");
+        assert!(
+            summary.is_some(),
+            "should produce summary from behavior log"
+        );
+        let s = summary.unwrap();
+        assert!(
+            s.contains("3 tool calls"),
+            "should report 3 tool calls, got: {s}"
+        );
+        assert!(s.contains("Edit"), "should mention Edit tool, got: {s}");
+        assert!(
+            s.contains("main.rs"),
+            "should mention modified file, got: {s}"
+        );
+    }
+
+    #[test]
+    fn build_summary_returns_none_when_both_empty() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/empty-both-proj");
+        seed_session(&conn, "empty-both-sess", pid, "active");
+
+        // No tool_history AND no behavior log
+        let summary = build_session_summary(&conn, "empty-both-sess");
+        assert!(
+            summary.is_none(),
+            "should return None when both sources are empty"
+        );
+    }
+
+    #[test]
+    fn snapshot_behavior_log_fallback() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/snap-behavior-proj");
+        seed_session(&conn, "snap-behavior-sess", pid, "active");
+
+        // No tool_history — only behavior log
+        seed_behavior_tool_use(&conn, "snap-behavior-sess", pid, "Write", 1);
+        seed_behavior_tool_use(&conn, "snap-behavior-sess", pid, "Bash", 2);
+        seed_behavior_file_access(
+            &conn,
+            "snap-behavior-sess",
+            pid,
+            "Write",
+            "/tmp/snap-behavior-proj/new_file.rs",
+            3,
+        );
+
+        save_session_snapshot(&conn, "snap-behavior-sess").unwrap();
+
+        let snapshot_str: String = conn
+            .query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                ["snap-behavior-sess"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+
+        assert_eq!(
+            snapshot["tool_count"], 2,
+            "should count 2 behavior tool calls"
+        );
+        assert_eq!(
+            snapshot["source"], "behavior_log",
+            "should mark source as behavior_log"
+        );
+        let top_names = snapshot["top_tool_names"].as_array().unwrap();
+        assert!(!top_names.is_empty(), "should have top tool names");
+        let files = snapshot["files_modified"].as_array().unwrap();
+        assert_eq!(files.len(), 1, "should have 1 modified file");
+        assert_eq!(files[0], "/tmp/snap-behavior-proj/new_file.rs");
+    }
+
+    #[test]
+    fn snapshot_behavior_log_no_activity_skips() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/snap-empty-proj");
+        seed_session(&conn, "snap-empty-sess", pid, "active");
+
+        // No tool_history AND no behavior log
+        save_session_snapshot(&conn, "snap-empty-sess").unwrap();
+
+        // Should not create a snapshot row
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_snapshots WHERE session_id = ?",
+                ["snap-empty-sess"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "should not create snapshot when no activity");
+    }
+
+    #[test]
+    fn snapshot_behavior_log_preserves_compaction_context() {
+        let conn = setup_test_connection();
+        let pid = seed_project(&conn, "/tmp/snap-compact-behavior");
+        seed_session(&conn, "snap-compact-beh", pid, "active");
+
+        // Pre-seed a compaction context (as if PreCompact ran)
+        let precompact = serde_json::json!({
+            "compaction_context": {
+                "decisions": ["use behavior log fallback"],
+                "active_work": [],
+                "issues": [],
+                "pending_tasks": []
+            }
+        });
+        conn.execute(
+            "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+             VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![
+                "snap-compact-beh",
+                serde_json::to_string(&precompact).unwrap()
+            ],
+        )
+        .unwrap();
+
+        // Only behavior log, no tool_history
+        seed_behavior_tool_use(&conn, "snap-compact-beh", pid, "Read", 1);
+
+        save_session_snapshot(&conn, "snap-compact-beh").unwrap();
+
+        let snapshot_str: String = conn
+            .query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                ["snap-compact-beh"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+
+        assert_eq!(snapshot["source"], "behavior_log");
+        assert!(
+            snapshot.get("compaction_context").is_some(),
+            "compaction_context should be preserved in behavior log fallback"
         );
     }
 }

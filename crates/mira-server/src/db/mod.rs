@@ -171,9 +171,10 @@ pub use search::{
 };
 pub use session::{
     build_session_recap_sync, close_session_sync, create_session_ext_sync, create_session_sync,
-    get_history_after_sync, get_recent_sessions_sync, get_session_history_sync,
-    get_session_stats_sync, get_session_tool_summary_sync, get_sessions_needing_summary_sync,
-    get_stale_sessions_sync, log_tool_call_sync, touch_session_sync, update_session_summary_sync,
+    get_history_after_sync, get_recent_sessions_sync, get_session_behavior_summary_sync,
+    get_session_history_sync, get_session_stats_sync, get_session_tool_summary_sync,
+    get_sessions_needing_summary_sync, get_stale_sessions_sync, log_tool_call_sync,
+    touch_session_sync, update_session_summary_sync,
 };
 pub use tasks::{
     create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync, get_active_goals_sync,

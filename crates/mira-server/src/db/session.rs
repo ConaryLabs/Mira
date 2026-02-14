@@ -314,21 +314,82 @@ pub fn get_session_tool_summary_sync(
 
 /// Get completed sessions that need summaries
 /// Returns (session_id, project_id, tool_count)
+/// Includes sessions with enough tool_history entries OR behavior_log events.
 pub fn get_sessions_needing_summary_sync(
     conn: &Connection,
 ) -> rusqlite::Result<Vec<(String, Option<i64>, i64)>> {
     let mut stmt = conn.prepare(
         "SELECT s.id, s.project_id,
-                (SELECT COUNT(*) FROM tool_history WHERE session_id = s.id) as tool_count
+                COALESCE(
+                    NULLIF((SELECT COUNT(*) FROM tool_history WHERE session_id = s.id), 0),
+                    (SELECT COUNT(*) FROM session_behavior_log WHERE session_id = s.id AND event_type = 'tool_use')
+                ) as tool_count
          FROM sessions s
          WHERE s.status = 'completed'
            AND s.summary IS NULL
-           AND (SELECT COUNT(*) FROM tool_history WHERE session_id = s.id) >= 3
+           AND (
+               (SELECT COUNT(*) FROM tool_history WHERE session_id = s.id) >= 3
+               OR (SELECT COUNT(*) FROM session_behavior_log WHERE session_id = s.id AND event_type = 'tool_use') >= 3
+           )
          ORDER BY s.last_activity DESC
          LIMIT 10",
     )?;
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     rows.collect()
+}
+
+/// Get session tool summary from behavior log (fallback when tool_history is empty).
+/// Returns formatted text similar to get_session_tool_summary_sync.
+pub fn get_session_behavior_summary_sync(
+    conn: &Connection,
+    session_id: &str,
+) -> rusqlite::Result<String> {
+    let mut stmt = conn.prepare(
+        "SELECT event_type, event_data
+         FROM session_behavior_log
+         WHERE session_id = ? AND event_type IN ('tool_use', 'file_access')
+         ORDER BY sequence_position ASC
+         LIMIT 50",
+    )?;
+
+    let entries: Vec<String> = stmt
+        .query_map(params![session_id], |row| {
+            let event_type: String = row.get(0)?;
+            let event_data: String = row.get(1)?;
+
+            let data: serde_json::Value =
+                serde_json::from_str(&event_data).unwrap_or(serde_json::json!({}));
+
+            let line = match event_type.as_str() {
+                "tool_use" => {
+                    let tool = data
+                        .get("tool_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let args = data
+                        .get("args_summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    format!("✓ {}({}) -> ok", tool, truncate(args, 100))
+                }
+                "file_access" => {
+                    let file = data.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                    let action = data
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Read");
+                    format!("✓ {}({}) -> ok", action, truncate(file, 100))
+                }
+                _ => String::new(),
+            };
+
+            Ok(line)
+        })?
+        .filter_map(super::log_and_discard)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    Ok(entries.join("\n"))
 }
 
 /// Update session summary (for background worker)

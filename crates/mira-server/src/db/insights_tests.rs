@@ -485,7 +485,9 @@ mod tests {
         );
         // The low-confidence one (0.3) must NOT be present
         assert!(
-            results.iter().all(|r| !r.description.contains("low confidence")),
+            results
+                .iter()
+                .all(|r| !r.description.contains("low confidence")),
             "Low-confidence insight should have been filtered out"
         );
     }
