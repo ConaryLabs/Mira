@@ -1,11 +1,11 @@
 <!-- docs/modules/mira-server/fuzzy.md -->
 # fuzzy
 
-Nucleo-based fuzzy fallback search for code chunks and memories.
+Nucleo-based fuzzy search for code chunks and memories.
 
 ## Overview
 
-Provides fuzzy matching when embedding-based semantic search is unavailable (no OpenAI API key). Loads code chunks and memory facts into an in-memory cache from the database, then uses the `nucleo` matcher library for fast fuzzy string matching. The cache refreshes on a TTL basis (60s for code, 30s for memories).
+Provides fuzzy matching as part of the hybrid search pipeline alongside semantic and keyword search. Loads code chunks and memory facts into an in-memory cache from the database, then uses the `nucleo` matcher library for fast fuzzy string matching. The cache refreshes on a TTL basis (60s for code, 30s for memories). Fuzzy search runs with a 500ms timeout to avoid blocking on cold cache refresh; the cache warms in the background.
 
 ## Key Types
 
@@ -21,4 +21,4 @@ Provides fuzzy matching when embedding-based semantic search is unavailable (no 
 
 ## Architecture Notes
 
-Scores are normalized to 0.0-1.0 relative to the maximum score in each result set. The code index pre-computes a combined `"{file_path} {content}"` search text for each chunk to avoid repeated allocation during matching. Memory visibility respects the same scope rules (personal/project/team) as the SQL-backed search paths. Cache sizes are capped at 200K code items and 50K memory items. Enabled via `MIRA_FUZZY_FALLBACK` env var (defaults to true).
+Scores are normalized to 0.0-1.0 relative to the maximum score in each result set. The code index pre-computes a combined `"{file_path} {content}"` search text for each chunk to avoid repeated allocation during matching. Memory visibility respects the same scope rules (personal/project/team) as the SQL-backed search paths. Cache sizes are capped at 200K code items and 50K memory items. Enabled via `MIRA_FUZZY_SEARCH` env var (defaults to true).

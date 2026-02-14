@@ -154,7 +154,7 @@ pub async fn run() -> Result<()> {
     let env_config = EnvConfig::load();
     let embeddings = get_embeddings(Some(pool.clone()));
     let embeddings_for_cross_project = embeddings.clone();
-    let fuzzy = if env_config.fuzzy_fallback {
+    let fuzzy = if env_config.fuzzy_search {
         Some(Arc::new(FuzzyCache::new()))
     } else {
         None

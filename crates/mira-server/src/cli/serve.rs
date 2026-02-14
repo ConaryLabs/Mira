@@ -123,7 +123,7 @@ async fn init_server_context() -> Result<ServerContext> {
         code_pool,
         embeddings,
         &env_config.api_keys,
-        env_config.fuzzy_fallback,
+        env_config.fuzzy_search,
     );
 
     // Restore project context

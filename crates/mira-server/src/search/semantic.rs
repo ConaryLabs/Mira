@@ -1,5 +1,5 @@
 // crates/mira-server/src/search/semantic.rs
-// Semantic code search with hybrid fallback
+// Semantic code search with hybrid parallel search
 
 use super::context::expand_context;
 use super::keyword::keyword_search;
@@ -12,6 +12,11 @@ use crate::fuzzy::FuzzyCache;
 use crate::utils::{safe_join, truncate, truncate_at_boundary};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Semaphore;
+
+/// Bounds concurrent fuzzy search tasks to prevent unbounded background work.
+static FUZZY_SEMAPHORE: Semaphore = Semaphore::const_new(1);
 
 /// Search result with file path, content, and similarity score
 #[derive(Debug, Clone)]
@@ -293,8 +298,8 @@ fn merge_results(
     (results, search_type)
 }
 
-/// Hybrid search: runs semantic and keyword searches in parallel, merges results
-/// Falls back to keyword-only if embeddings unavailable
+/// Hybrid search: runs semantic, keyword, and fuzzy searches in parallel, merges results.
+/// Each backend gracefully degrades if unavailable (no embeddings, no fuzzy cache).
 pub async fn hybrid_search(
     pool: &Arc<DatabasePool>,
     embeddings: Option<&Arc<EmbeddingClient>>,
@@ -329,13 +334,12 @@ pub async fn hybrid_search(
             })
     };
 
-    // Run searches in parallel
-    let (semantic_results, keyword_results, fuzzy_results) = if let Some(emb) = embeddings {
-        let emb = emb.clone();
-        let pool_for_semantic = pool.clone();
-        let query_for_semantic = query.to_string();
-
-        let semantic_future = async move {
+    // Prepare semantic search future (runs if embeddings available)
+    let semantic_future = async {
+        if let Some(emb) = embeddings {
+            let emb = emb.clone();
+            let pool_for_semantic = pool.clone();
+            let query_for_semantic = query.to_string();
             semantic_search(
                 &pool_for_semantic,
                 &emb,
@@ -344,33 +348,58 @@ pub async fn hybrid_search(
                 fetch_limit,
             )
             .await
-        };
-
-        let (semantic_res, keyword_res) = tokio::join!(semantic_future, keyword_future);
-
-        // Handle semantic search failure gracefully - continue with keyword results
-        let semantic = semantic_res.unwrap_or_else(|e| {
-            tracing::warn!("Semantic search failed, using keyword only: {}", e);
-            Vec::new()
-        });
-
-        (semantic, keyword_res, Vec::new())
-    } else {
-        // No embeddings available, keyword + fuzzy fallback if enabled
-        let keyword_res = keyword_future.await;
-        let fuzzy_res = if let Some(cache) = fuzzy {
-            cache
-                .search_code(pool, project_id, query, fetch_limit)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Fuzzy search failed, using keyword only: {}", e);
-                    Vec::new()
-                })
+            .unwrap_or_else(|e| {
+                tracing::warn!("Semantic search failed: {}", e);
+                Vec::new()
+            })
         } else {
             Vec::new()
-        };
-        (Vec::new(), keyword_res, fuzzy_res)
+        }
     };
+
+    // Prepare fuzzy search future with timeout and bounded concurrency.
+    // Uses tokio::spawn so cache warmup completes in background on timeout.
+    // Semaphore limits to 1 concurrent fuzzy task to prevent pileup under load.
+    let pool_for_fuzzy = pool.clone();
+    let query_for_fuzzy = query.to_string();
+    let fuzzy_future = async move {
+        if let Some(cache) = fuzzy {
+            let permit = FUZZY_SEMAPHORE.try_acquire();
+            if permit.is_err() {
+                tracing::debug!("Fuzzy search skipped, another fuzzy task is running");
+                return Vec::new();
+            }
+            let cache = cache.clone();
+            let handle = tokio::spawn(async move {
+                let result = cache
+                    .search_code(&pool_for_fuzzy, project_id, &query_for_fuzzy, fetch_limit)
+                    .await;
+                drop(permit);
+                result
+            });
+            match tokio::time::timeout(Duration::from_millis(500), handle).await {
+                Ok(Ok(Ok(results))) => results,
+                Ok(Ok(Err(e))) => {
+                    tracing::warn!("Fuzzy search failed: {}", e);
+                    Vec::new()
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("Fuzzy search task panicked: {}", e);
+                    Vec::new()
+                }
+                Err(_) => {
+                    tracing::debug!("Fuzzy search timed out (500ms), cache warming in background");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        }
+    };
+
+    // Run all three searches in parallel
+    let (semantic_results, keyword_results, fuzzy_results) =
+        tokio::join!(semantic_future, keyword_future, fuzzy_future);
 
     // Convert keyword results to SearchResult
     let keyword_results: Vec<SearchResult> = keyword_results
@@ -639,6 +668,67 @@ mod tests {
         let (results, _) = merge_results(semantic, keyword, vec![]);
         assert_eq!(results.len(), 1);
         // Should keep higher score
+        assert_eq!(results[0].score, 0.9);
+    }
+
+    #[test]
+    fn test_merge_results_fuzzy_only() {
+        let fuzzy = vec![SearchResult {
+            file_path: "src/fuzzy.rs".to_string(),
+            content: "fuzzy match".to_string(),
+            score: 0.75,
+            start_line: 5,
+        }];
+        let (results, search_type) = merge_results(vec![], vec![], fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(search_type, SearchType::Fuzzy);
+    }
+
+    #[test]
+    fn test_merge_results_all_three_sources() {
+        let semantic = vec![SearchResult {
+            file_path: "src/semantic.rs".to_string(),
+            content: "semantic match".to_string(),
+            score: 0.95,
+            start_line: 1,
+        }];
+        let keyword = vec![SearchResult {
+            file_path: "src/keyword.rs".to_string(),
+            content: "keyword match".to_string(),
+            score: 0.80,
+            start_line: 10,
+        }];
+        let fuzzy = vec![SearchResult {
+            file_path: "src/fuzzy.rs".to_string(),
+            content: "fuzzy match".to_string(),
+            score: 0.70,
+            start_line: 20,
+        }];
+        let (results, search_type) = merge_results(semantic, keyword, fuzzy);
+        assert_eq!(results.len(), 3);
+        assert_eq!(search_type, SearchType::Semantic);
+        // Results should be sorted by score descending
+        assert!(results[0].score >= results[1].score);
+        assert!(results[1].score >= results[2].score);
+    }
+
+    #[test]
+    fn test_merge_results_fuzzy_dedup_with_semantic() {
+        let semantic = vec![SearchResult {
+            file_path: "src/main.rs".to_string(),
+            content: "fn main()".to_string(),
+            score: 0.9,
+            start_line: 1,
+        }];
+        let fuzzy = vec![SearchResult {
+            file_path: "src/main.rs".to_string(),
+            content: "fn main()".to_string(),
+            score: 0.7,
+            start_line: 1,
+        }];
+        let (results, _) = merge_results(semantic, vec![], fuzzy);
+        assert_eq!(results.len(), 1);
+        // Should keep higher score (semantic's 0.9)
         assert_eq!(results[0].score, 0.9);
     }
 

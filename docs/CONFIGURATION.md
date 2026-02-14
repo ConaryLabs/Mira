@@ -19,7 +19,7 @@ Mira uses environment variables for API keys and configuration. These are set in
 | `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |
 | `BRAVE_API_KEY` | Optional | Enables web search |
 | `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek`, `zhipu`, or `ollama` |
-| `MIRA_FUZZY_FALLBACK` | Optional | Enable fuzzy fallback search when embeddings are unavailable (default: true) |
+| `MIRA_FUZZY_SEARCH` | Optional | Enable fuzzy search in hybrid search pipeline (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_PROJECT_PATH` | Optional | Override project path detection (useful when Claude Code hooks are not present) |
 | `MIRA_USER_ID` | Optional | User identity override. Identity chain: git config → `MIRA_USER_ID` → system username |

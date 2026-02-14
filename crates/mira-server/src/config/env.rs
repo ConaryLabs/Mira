@@ -247,8 +247,8 @@ pub struct EnvConfig {
     pub default_provider: Option<String>,
     /// User identity override (MIRA_USER_ID)
     pub user_id: Option<String>,
-    /// Enable fuzzy fallback search when embeddings are unavailable (MIRA_FUZZY_FALLBACK)
-    pub fuzzy_fallback: bool,
+    /// Enable fuzzy search in hybrid search pipeline (MIRA_FUZZY_SEARCH)
+    pub fuzzy_search: bool,
 }
 
 impl EnvConfig {
@@ -263,7 +263,7 @@ impl EnvConfig {
                 .ok()
                 .filter(|s| !s.is_empty()),
             user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
-            fuzzy_fallback: parse_bool_env("MIRA_FUZZY_FALLBACK").unwrap_or(true),
+            fuzzy_search: parse_bool_env("MIRA_FUZZY_SEARCH").unwrap_or(true),
         }
     }
 
@@ -379,7 +379,7 @@ mod tests {
             embeddings: EmbeddingsConfig::default(),
             default_provider: None,
             user_id: None,
-            fuzzy_fallback: true,
+            fuzzy_search: true,
         };
 
         let validation = config.validate();
@@ -394,7 +394,7 @@ mod tests {
             embeddings: EmbeddingsConfig::default(),
             default_provider: Some("gpt4".to_string()),
             user_id: None,
-            fuzzy_fallback: true,
+            fuzzy_search: true,
         };
 
         let validation = config.validate();
@@ -414,7 +414,7 @@ mod tests {
             embeddings: EmbeddingsConfig::default(),
             default_provider: Some("deepseek".to_string()),
             user_id: None,
-            fuzzy_fallback: true,
+            fuzzy_search: true,
         };
 
         let validation = config.validate();
@@ -434,7 +434,7 @@ mod tests {
             embeddings: EmbeddingsConfig::default(),
             default_provider: Some("sampling".to_string()),
             user_id: None,
-            fuzzy_fallback: true,
+            fuzzy_search: true,
         };
 
         let validation = config.validate();
@@ -454,7 +454,7 @@ mod tests {
             embeddings: EmbeddingsConfig::default(),
             default_provider: Some("glm".to_string()),
             user_id: None,
-            fuzzy_fallback: true,
+            fuzzy_search: true,
         };
 
         let validation = config.validate();

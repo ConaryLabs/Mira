@@ -1,5 +1,5 @@
 // crates/mira-server/src/fuzzy/mod.rs
-// Nucleo-based fuzzy fallback search for code chunks and memories
+// Nucleo-based fuzzy search for code chunks and memories
 
 use crate::db::pool::DatabasePool;
 use crate::tools::core::NO_ACTIVE_PROJECT_ERROR;
