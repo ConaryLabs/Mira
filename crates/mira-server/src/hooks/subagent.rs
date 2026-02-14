@@ -1,14 +1,10 @@
 // crates/mira-server/src/hooks/subagent.rs
 // SubagentStart and SubagentStop hook handlers
 
-use crate::db::pool::DatabasePool;
-use crate::hooks::{
-    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
-};
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 /// Maximum total characters for injected context (~500 tokens)
 const MAX_CONTEXT_CHARS: usize = 2000;
@@ -99,18 +95,11 @@ pub async fn run_start() -> Result<()> {
             })
     );
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
+    let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _)) = client.resolve_project(None).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -118,7 +107,7 @@ pub async fn run_start() -> Result<()> {
     let mut context_parts: Vec<String> = Vec::new();
 
     // Get active goals
-    let goal_lines = super::format_active_goals(&pool, project_id, 3).await;
+    let goal_lines = client.get_active_goals(project_id, 3).await;
     if !goal_lines.is_empty() {
         context_parts.push(format!(
             "[Mira/goals] Active goals:\n{}",
@@ -128,7 +117,7 @@ pub async fn run_start() -> Result<()> {
 
     // Get relevant memories based on task description (semantic with keyword fallback)
     if let Some(task) = &start_input.task_description {
-        let memories = crate::hooks::recall::recall_memories(&pool, project_id, task).await;
+        let memories = client.recall_memories(project_id, task).await;
         if !memories.is_empty() {
             context_parts.push(format!(
                 "[Mira/memory] Relevant context:\n{}",
@@ -228,18 +217,11 @@ pub async fn run_stop() -> Result<()> {
         entities.len()
     );
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
+    let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _)) = client.resolve_project(None).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -248,26 +230,18 @@ pub async fn run_stop() -> Result<()> {
     let entity_summary = build_entity_summary(&stop_input.subagent_type, &entities);
 
     // Store as a subagent discovery observation
-    pool.try_interact_warn("subagent discovery", move |conn| {
-        crate::db::store_observation_sync(
-            conn,
-            crate::db::StoreObservationParams {
-                project_id: Some(project_id),
-                key: None,
-                content: &entity_summary,
-                observation_type: "subagent_discovery",
-                category: Some("subagent_discovery"),
-                confidence: 0.6,
-                source: "subagent",
-                session_id: None,
-                team_id: None,
-                scope: "project",
-                expires_at: Some("+7 days"),
-            },
-        )?;
-        Ok(())
-    })
-    .await;
+    client
+        .store_observation(
+            Some(project_id),
+            &entity_summary,
+            "subagent_discovery",
+            Some("subagent_discovery"),
+            0.6,
+            "subagent",
+            "project",
+            Some("+7 days"),
+        )
+        .await;
 
     write_hook_output(&serde_json::json!({}));
     Ok(())

@@ -20,7 +20,12 @@ fn get_embeddings(pool: Option<Arc<DatabasePool>>) -> Option<Arc<EmbeddingClient
 }
 
 /// Log user query for behavior tracking
-async fn log_behavior(pool: &Arc<DatabasePool>, project_id: i64, session_id: &str, message: &str) {
+pub(crate) async fn log_behavior(
+    pool: &Arc<DatabasePool>,
+    project_id: i64,
+    session_id: &str,
+    message: &str,
+) {
     let session_id_clone = session_id.to_string();
     let message_clone = message.to_string();
     pool.try_interact("behavior logging", move |conn| {
@@ -32,7 +37,7 @@ async fn log_behavior(pool: &Arc<DatabasePool>, project_id: i64, session_id: &st
 }
 
 /// Get proactive context from pondering-based insights
-async fn get_proactive_context(
+pub(crate) async fn get_proactive_context(
     pool: &Arc<DatabasePool>,
     project_id: i64,
     _project_path: Option<&str>,
@@ -136,6 +141,104 @@ pub async fn run() -> Result<()> {
         input.as_object().map(|obj| obj.keys().collect::<Vec<_>>())
     );
 
+    // Try IPC first — single composite call runs everything server-side
+    let mut client = crate::ipc::client::HookClient::connect().await;
+
+    if let Some(ctx) = client.get_user_prompt_context(user_message, session_id).await {
+        return assemble_output_from_ipc(ctx);
+    }
+
+    // Direct fallback: open local pools and run full logic
+    run_direct(user_message, session_id).await
+}
+
+/// Assemble hook output from the composite IPC result.
+fn assemble_output_from_ipc(
+    ctx: crate::ipc::client::UserPromptContextResult,
+) -> Result<()> {
+    use crate::context::{
+        BudgetEntry, BudgetManager, PRIORITY_CROSS_PROJECT, PRIORITY_PROACTIVE, PRIORITY_REACTIVE,
+        PRIORITY_TASKS, PRIORITY_TEAM,
+    };
+
+    // Get pending native tasks (filesystem-only, not served via IPC)
+    let task_context = get_task_context();
+    if task_context.is_some() {
+        eprintln!("[mira] Added pending task context");
+    }
+
+    let mut budget_entries: Vec<BudgetEntry> = Vec::new();
+
+    if !ctx.reactive_context.is_empty() {
+        budget_entries.push(BudgetEntry::new(
+            PRIORITY_REACTIVE,
+            ctx.reactive_context.clone(),
+            "reactive",
+        ));
+        if !ctx.reactive_summary.is_empty() {
+            eprintln!("[mira] {}", ctx.reactive_summary);
+        }
+    }
+
+    if let Some(ref tc) = ctx.team_context {
+        budget_entries.push(BudgetEntry::new(PRIORITY_TEAM, tc.clone(), "team"));
+        eprintln!("[mira] Added team context");
+    }
+
+    let has_proactive = match ctx.proactive_context {
+        Some(ref pc) if !pc.is_empty() => {
+            budget_entries.push(BudgetEntry::new(
+                PRIORITY_PROACTIVE,
+                pc.clone(),
+                "proactive",
+            ));
+            eprintln!("[mira] Added proactive context suggestions");
+            true
+        }
+        _ => false,
+    };
+
+    if let Some(ref cpc) = ctx.cross_project_context {
+        budget_entries.push(BudgetEntry::new(
+            PRIORITY_CROSS_PROJECT,
+            cpc.clone(),
+            "cross-project",
+        ));
+        eprintln!("[mira] Added cross-project context");
+    }
+
+    if let Some(ref tc) = task_context {
+        budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
+    }
+
+    let hook_budget =
+        BudgetManager::with_limit(ctx.config_max_chars.saturating_mul(2).max(3000));
+    let final_context = hook_budget.apply_budget_prioritized(budget_entries);
+
+    if !final_context.is_empty() {
+        let mut output = serde_json::json!({});
+        output["metadata"] = serde_json::json!({
+            "sources": ctx.reactive_sources,
+            "from_cache": ctx.reactive_from_cache,
+            "has_proactive": has_proactive
+        });
+        output["hookSpecificOutput"] = serde_json::json!({
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": final_context
+        });
+        write_hook_output(&output);
+    } else {
+        if let Some(reason) = &ctx.reactive_skip_reason {
+            eprintln!("[mira] Context injection skipped: {}", reason);
+        }
+        write_hook_output(&serde_json::json!({}));
+    }
+
+    Ok(())
+}
+
+/// Direct-pool fallback when IPC is unavailable.
+async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     // Open database pools (main + code index)
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open_hook(std::path::Path::new(&db_path)).await?);
@@ -180,9 +283,6 @@ pub async fn run() -> Result<()> {
         .await;
 
     // Get proactive predictions if enabled.
-    // Gate proactive context with simple command and length checks to avoid
-    // injecting suggestions for CLI commands or large code pastes.
-    // (Proactive has its own rate limiting so sampling is not applied here.)
     let session_id_for_proactive = if session_id.is_empty() {
         None
     } else {
@@ -236,8 +336,6 @@ pub async fn run() -> Result<()> {
     }
 
     // Route ALL context through a unified budget with priority scoring.
-    // This replaces the previous ad-hoc concatenation that had no cap on
-    // team/proactive/task context.
     use crate::context::{
         BudgetEntry, PRIORITY_CROSS_PROJECT, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_TASKS,
         PRIORITY_TEAM,
@@ -245,7 +343,6 @@ pub async fn run() -> Result<()> {
 
     let mut budget_entries: Vec<BudgetEntry> = Vec::new();
 
-    // Reactive context (already priority-sorted internally by ContextInjectionManager)
     if !result.context.is_empty() {
         budget_entries.push(BudgetEntry::new(
             PRIORITY_REACTIVE,
@@ -255,13 +352,11 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] {}", result.summary());
     }
 
-    // Team context -- high priority since conflicts are blocking issues
     if let Some(ref tc) = team_context {
         budget_entries.push(BudgetEntry::new(PRIORITY_TEAM, tc.clone(), "team"));
         eprintln!("[mira] Added team context");
     }
 
-    // Proactive predictions
     let has_proactive = match proactive_context {
         Some(ref pc) if !pc.is_empty() => {
             budget_entries.push(BudgetEntry::new(
@@ -275,7 +370,6 @@ pub async fn run() -> Result<()> {
         _ => false,
     };
 
-    // Cross-project knowledge
     if let Some(ref cpc) = cross_project_context {
         budget_entries.push(BudgetEntry::new(
             PRIORITY_CROSS_PROJECT,
@@ -285,12 +379,10 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] Added cross-project context");
     }
 
-    // Pending native tasks
     if let Some(ref tc) = task_context {
         budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
     }
 
-    // Apply unified budget (2x the per-injector budget to accommodate all sources)
     let hook_budget = crate::context::BudgetManager::with_limit(
         manager.config().max_chars.saturating_mul(2).max(3000),
     );
@@ -298,20 +390,15 @@ pub async fn run() -> Result<()> {
 
     if !final_context.is_empty() {
         let mut output = serde_json::json!({});
-
         output["metadata"] = serde_json::json!({
             "sources": result.sources,
             "from_cache": result.from_cache,
             "has_proactive": has_proactive
         });
-
-        // Using additionalContext (not systemMessage) so Claude treats
-        // user-stored memories as user-provided, not system-authoritative.
         output["hookSpecificOutput"] = serde_json::json!({
             "hookEventName": "UserPromptSubmit",
             "additionalContext": final_context
         });
-
         write_hook_output(&output);
     } else {
         if let Some(reason) = &result.skip_reason {
@@ -324,7 +411,10 @@ pub async fn run() -> Result<()> {
 }
 
 /// Get team context: lazy detection, heartbeat, and recent team discoveries.
-async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<String> {
+pub(crate) async fn get_team_context(
+    pool: &Arc<DatabasePool>,
+    session_id: &str,
+) -> Option<String> {
     if session_id.is_empty() {
         return None;
     }
@@ -506,7 +596,7 @@ async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<
 /// First tries tight "you solved this" matching (decisions/patterns, distance < 0.25),
 /// then falls back to general cross-project recall (distance < 0.35).
 /// Returns formatted context string or None if no relevant matches.
-async fn get_cross_project_context(
+pub(crate) async fn get_cross_project_context(
     pool: &Arc<DatabasePool>,
     embeddings: &Option<Arc<EmbeddingClient>>,
     project_id: i64,

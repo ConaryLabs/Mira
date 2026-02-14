@@ -1,14 +1,8 @@
 // crates/mira-server/src/hooks/post_tool_failure.rs
 // Hook handler for PostToolUseFailure events - tracks and learns from tool failures
 
-use crate::db::pool::DatabasePool;
-use crate::hooks::{
-    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
-};
-use crate::proactive::EventType;
-use crate::proactive::behavior::BehaviorTracker;
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
-use std::sync::Arc;
 
 /// PostToolUseFailure hook input from Claude Code
 #[derive(Debug)]
@@ -67,18 +61,11 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect via IPC (falls back to direct DB)
+    let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _)) = client.resolve_project(None).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -92,73 +79,38 @@ pub async fn run() -> Result<()> {
         crate::db::error_fingerprint(&failure_input.tool_name, &error_summary);
 
     {
-        let session_id = failure_input.session_id.clone();
-        let tool_name = failure_input.tool_name.clone();
-        let error_summary_clone = error_summary.clone();
-        let fingerprint_clone = fingerprint.clone();
-        pool.try_interact("tool failure logging", move |conn| {
-            let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
-            let data = serde_json::json!({
-                "tool_name": tool_name,
-                "error": error_summary_clone,
-                "behavior_type": "tool_failure",
-                "error_fingerprint": fingerprint_clone,
-            });
-            if let Err(e) = tracker.log_event(conn, EventType::ToolFailure, data) {
-                tracing::debug!("Failed to log tool failure: {e}");
-            }
-            Ok(())
-        })
-        .await;
+        let data = serde_json::json!({
+            "tool_name": failure_input.tool_name,
+            "error": error_summary,
+            "behavior_type": "tool_failure",
+            "error_fingerprint": fingerprint,
+        });
+        client
+            .log_behavior(
+                &failure_input.session_id,
+                project_id,
+                "tool_failure",
+                data,
+            )
+            .await;
     }
 
     // Store/update error pattern for cross-session learning
-    {
-        let tool_name = failure_input.tool_name.clone();
-        let error_text = error_summary.clone();
-        let session_id = failure_input.session_id.clone();
-        let fp = fingerprint.clone();
-        let tmpl = template.clone();
-        pool.try_interact("error pattern storage", move |conn| {
-            crate::db::store_error_pattern_sync(
-                conn,
-                crate::db::StoreErrorPatternParams {
-                    project_id,
-                    tool_name: &tool_name,
-                    error_fingerprint: &fp,
-                    error_template: &tmpl,
-                    raw_error_sample: &error_text,
-                    session_id: &session_id,
-                },
-            )?;
-            Ok(())
-        })
+    client
+        .store_error_pattern(
+            project_id,
+            &failure_input.tool_name,
+            &fingerprint,
+            &template,
+            &error_summary,
+            &failure_input.session_id,
+        )
         .await;
-    }
 
     // Count how many times this tool has failed in the current session
-    let tool_name_for_count = failure_input.tool_name.clone();
-    let session_id_for_count = failure_input.session_id.clone();
-    let failure_count: i64 = pool
-        .interact(move |conn| {
-            let sql = r#"
-                SELECT COUNT(*)
-                FROM session_behavior_log
-                WHERE session_id = ?
-                  AND event_type = 'tool_failure'
-                  AND json_extract(event_data, '$.tool_name') = ?
-            "#;
-            let count = conn
-                .query_row(
-                    sql,
-                    rusqlite::params![session_id_for_count, tool_name_for_count],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap_or(0);
-            Ok::<_, anyhow::Error>(count)
-        })
-        .await
-        .unwrap_or(0);
+    let failure_count = client
+        .count_session_failures(&failure_input.session_id, &failure_input.tool_name)
+        .await;
 
     eprintln!(
         "[mira] Tool '{}' has failed {} time(s) in this session",
@@ -168,29 +120,16 @@ pub async fn run() -> Result<()> {
     // If 3+ failures, look up known fixes first, then fall back to memory recall
     if failure_count >= 3 {
         // Check for resolved error patterns (cross-session fix knowledge)
-        let fix_context = {
-            let tool_name = failure_input.tool_name.clone();
-            let error_text = error_summary.clone();
-            pool.interact(move |conn| {
-                let (fingerprint, _) = crate::db::error_fingerprint(&tool_name, &error_text);
-                Ok::<_, anyhow::Error>(crate::db::lookup_resolved_pattern_sync(
-                    conn,
-                    project_id,
-                    &tool_name,
-                    &fingerprint,
-                ))
-            })
-            .await
-            .ok()
-            .flatten()
-        };
+        let fix_context = client
+            .lookup_resolved_pattern(project_id, &failure_input.tool_name, &fingerprint)
+            .await;
 
-        if let Some(pattern) = fix_context {
+        if let Some(fix_description) = fix_context {
             let context = format!(
                 "[Mira/fix] Tool '{}' failed ({}x). A similar error was resolved before:\n  Fix: {}",
                 failure_input.tool_name,
                 failure_count,
-                crate::utils::truncate(&pattern.fix_description, 300),
+                crate::utils::truncate(&fix_description, 300),
             );
             let output = serde_json::json!({
                 "hookSpecificOutput": {
@@ -203,8 +142,7 @@ pub async fn run() -> Result<()> {
         }
 
         // Fall back to memory recall if no resolved pattern found
-        let memories =
-            crate::hooks::recall::recall_memories(&pool, project_id, &error_summary).await;
+        let memories = client.recall_memories(project_id, &error_summary).await;
 
         if !memories.is_empty() {
             let context = format!(

@@ -473,13 +473,14 @@ async fn test_compaction_context_end_to_end() {
 
     // Gap fix 1: Use extract_and_save_context for the DB write instead of manual INSERT.
     // First call exercises the INSERT path (no prior snapshot).
-    super::precompact::extract_and_save_context(&pool, "e2e-sess", &transcript)
+    let mut client = crate::ipc::client::HookClient::from_pool(pool.clone());
+    super::precompact::extract_and_save_context(&mut client, "e2e-sess", &transcript)
         .await
         .expect("extract_and_save_context (insert) should succeed");
 
     // Second call exercises the UPDATE/merge path (snapshot already exists).
     let transcript2 = r#"{"role":"assistant","content":"We decided to switch from mutex to rwlock for better read concurrency."}"#;
-    super::precompact::extract_and_save_context(&pool, "e2e-sess", transcript2)
+    super::precompact::extract_and_save_context(&mut client, "e2e-sess", transcript2)
         .await
         .expect("extract_and_save_context (merge) should succeed");
 

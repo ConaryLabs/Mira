@@ -1,14 +1,8 @@
 // crates/mira-server/src/hooks/task_completed.rs
 // Hook handler for TaskCompleted events - auto-links tasks to Mira goals
 
-use crate::db::pool::DatabasePool;
-use crate::hooks::{
-    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
-};
-use crate::proactive::EventType;
-use crate::proactive::behavior::BehaviorTracker;
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
-use std::sync::Arc;
 
 /// TaskCompleted hook input from Claude Code
 #[derive(Debug)]
@@ -61,53 +55,38 @@ pub async fn run() -> Result<()> {
         task_input.task_id, task_input.task_subject,
     );
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect via IPC (falls back to direct DB)
+    let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _)) = client.resolve_project(None).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
 
     // Log task completion event
     {
-        let session_id = task_input.session_id.clone();
-        let task_id = task_input.task_id.clone();
-        let task_subject = task_input.task_subject.clone();
-        let task_description = task_input.task_description.clone();
-        pool.try_interact("task completion logging", move |conn| {
-            let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
-            let mut data = serde_json::json!({
-                "behavior_type": "task_completed",
-                "task_id": task_id,
-                "task_subject": task_subject,
-            });
-            if let Some(desc) = task_description {
-                data["task_description"] = serde_json::Value::String(desc);
-            }
-            if let Err(e) = tracker.log_event(conn, EventType::GoalUpdate, data) {
-                tracing::debug!("Failed to log task completion: {e}");
-            }
-            Ok(())
-        })
-        .await;
+        let mut data = serde_json::json!({
+            "behavior_type": "task_completed",
+            "task_id": task_input.task_id,
+            "task_subject": task_input.task_subject,
+        });
+        if let Some(ref desc) = task_input.task_description {
+            data["task_description"] = serde_json::Value::String(desc.clone());
+        }
+        client
+            .log_behavior(&task_input.session_id, project_id, "goal_update", data)
+            .await;
     }
 
     // Try to auto-link task completion to goal milestones
-    let task_subject = task_input.task_subject.clone();
-    let task_description = task_input.task_description.clone();
-    pool.try_interact("milestone auto-link", move |conn| {
-        auto_link_milestone(conn, project_id, &task_subject, task_description.as_deref())
-    })
-    .await;
+    client
+        .auto_link_milestone(
+            project_id,
+            &task_input.task_subject,
+            task_input.task_description.as_deref(),
+        )
+        .await;
 
     write_hook_output(&serde_json::json!({}));
     Ok(())
@@ -115,7 +94,7 @@ pub async fn run() -> Result<()> {
 
 /// Check if a completed task matches any active goal milestones and auto-complete them.
 /// Matches against both the task subject and optional description for better coverage.
-fn auto_link_milestone(
+pub fn auto_link_milestone(
     conn: &rusqlite::Connection,
     project_id: i64,
     task_subject: &str,

@@ -19,6 +19,7 @@ pub mod hooks;
 pub mod http;
 pub mod identity;
 pub mod indexer;
+pub mod ipc;
 pub mod llm;
 pub mod mcp;
 pub mod proactive;

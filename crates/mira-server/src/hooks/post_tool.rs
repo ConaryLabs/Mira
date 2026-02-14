@@ -1,13 +1,8 @@
 // crates/mira-server/src/hooks/post_tool.rs
 // PostToolUse hook handler - tracks file changes and detects team conflicts
 
-use crate::db::pool::DatabasePool;
-use crate::hooks::{
-    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
-};
-use crate::proactive::behavior::BehaviorTracker;
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
-use std::sync::Arc;
 
 /// PostToolUse hook input from Claude Code
 #[derive(Debug)]
@@ -63,18 +58,11 @@ pub async fn run() -> Result<()> {
         post_input.file_path.as_deref().unwrap_or("none")
     );
 
-    // Open database (shared across all branches)
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect via IPC (falls back to direct DB)
+    let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _)) = client.resolve_project(None).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -82,67 +70,14 @@ pub async fn run() -> Result<()> {
     // Resolve error patterns if this tool had recent failures in this session.
     // Only resolves a pattern when THAT SPECIFIC fingerprint had 3+ failures
     // in this session (not just any failure of the same tool).
-    {
-        let session_id = post_input.session_id.clone();
-        let tool_name = post_input.tool_name.clone();
-        pool.try_interact("error pattern resolution", move |conn| {
-            // Get all candidate patterns (global occurrence_count >= 3)
-            let candidates = crate::db::get_unresolved_patterns_for_tool_sync(
-                conn, project_id, &tool_name, &session_id,
-            );
-
-            // For each candidate, get its session failure count and most recent
-            // failure timestamp. The fingerprint that failed most recently is the
-            // one most likely fixed by this success. Only resolve ONE per success.
-            // (fingerprint, count, max_sequence_position)
-            let mut best: Option<(String, i64, i64)> = None;
-            for (_id, fingerprint) in &candidates {
-                let row: Option<(i64, i64)> = conn
-                    .query_row(
-                        "SELECT COUNT(*), COALESCE(MAX(sequence_position), 0)
-                         FROM session_behavior_log
-                         WHERE session_id = ? AND project_id = ?
-                           AND event_type = 'tool_failure'
-                           AND json_extract(event_data, '$.error_fingerprint') = ?",
-                        rusqlite::params![&session_id, project_id, fingerprint],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .ok();
-
-                if let Some((count, max_seq)) = row
-                    && count >= 3
-                {
-                    let dominated = match &best {
-                        None => true,
-                        Some((_, _, best_seq)) => max_seq > *best_seq,
-                    };
-                    if dominated {
-                        best = Some((fingerprint.clone(), count, max_seq));
-                    }
-                }
-            }
-
-            if let Some((fingerprint, session_fp_count, _)) = best {
-                let _ = crate::db::resolve_error_pattern_sync(
-                    conn,
-                    project_id,
-                    &tool_name,
-                    &fingerprint,
-                    &session_id,
-                    &format!(
-                        "Tool '{}' succeeded after {} session failures of this pattern",
-                        tool_name, session_fp_count
-                    ),
-                );
-                eprintln!(
-                    "[mira] Resolved error pattern for tool '{}' (succeeded after {} session failures)",
-                    tool_name,
-                    session_fp_count
-                );
-            }
-            Ok(())
-        })
+    let resolved = client
+        .resolve_error_patterns(project_id, &post_input.session_id, &post_input.tool_name)
         .await;
+    if resolved {
+        eprintln!(
+            "[mira] Resolved error pattern for tool '{}'",
+            post_input.tool_name
+        );
     }
 
     // Handle Bash commands: detect file-modifying commands and log them
@@ -150,21 +85,14 @@ pub async fn run() -> Result<()> {
         if let Some(ref command) = post_input.command
             && is_file_modifying_command(command)
         {
-            let session_id = post_input.session_id.clone();
             let cmd = crate::utils::truncate(command, 500);
-            pool.try_interact("bash file modify logging", move |conn| {
-                let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
-                let data = serde_json::json!({
-                    "behavior_type": "bash_file_modify",
-                    "command": cmd,
-                });
-                if let Err(e) = tracker.log_event(conn, crate::proactive::EventType::ToolUse, data)
-                {
-                    tracing::debug!("Failed to log bash file modify: {e}");
-                }
-                Ok(())
-            })
-            .await;
+            let data = serde_json::json!({
+                "behavior_type": "bash_file_modify",
+                "command": cmd,
+            });
+            client
+                .log_behavior(&post_input.session_id, project_id, "tool_use", data)
+                .await;
         }
         write_hook_output(&serde_json::json!({}));
         return Ok(());
@@ -180,25 +108,14 @@ pub async fn run() -> Result<()> {
 
     // Log behavior events for proactive intelligence
     {
-        let session_id = post_input.session_id.clone();
-        let tool_name = post_input.tool_name.clone();
-        let file_path_clone = file_path.clone();
-        pool.try_interact("behavior tracking", move |conn| {
-            let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
-
-            // Log tool use
-            if let Err(e) = tracker.log_tool_use(conn, &tool_name, None) {
-                tracing::debug!("Failed to log tool use: {e}");
-            }
-
-            // Log file access
-            if let Err(e) = tracker.log_file_access(conn, &file_path_clone, &tool_name) {
-                tracing::debug!("Failed to log file access: {e}");
-            }
-
-            Ok(())
-        })
-        .await;
+        let data = serde_json::json!({
+            "tool_name": post_input.tool_name,
+            "file_path": file_path,
+            "behavior_type": "file_access",
+        });
+        client
+            .log_behavior(&post_input.session_id, project_id, "tool_use", data)
+            .await;
     }
 
     // Track file ownership for team intelligence (only for file-mutating tools)
@@ -207,33 +124,22 @@ pub async fn run() -> Result<()> {
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit"
     );
     if is_write_tool
-        && let Some(membership) =
-            crate::hooks::session::read_team_membership_from_db(&pool, &post_input.session_id).await
+        && let Some(membership) = client.get_team_membership(&post_input.session_id).await
     {
-        let sid = post_input.session_id.clone();
-        let member = membership.member_name.clone();
-        let fp = file_path.clone();
-        let tool = post_input.tool_name.clone();
-        let team_id = membership.team_id;
-        if let Err(e) = pool
-            .run(move |conn| {
-                crate::db::record_file_ownership_sync(conn, team_id, &sid, &member, &fp, &tool)
-            })
-            .await
-        {
-            eprintln!("[mira] File ownership tracking failed: {}", e);
-        }
+        client
+            .record_file_ownership(
+                membership.team_id,
+                &post_input.session_id,
+                &membership.member_name,
+                &file_path,
+                &post_input.tool_name,
+            )
+            .await;
 
         // Check for conflicts with other teammates
-        let pool_clone = pool.clone();
-        let sid = post_input.session_id.clone();
-        let tid = membership.team_id;
-        let conflicts: Vec<crate::db::FileConflict> = pool_clone
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(crate::db::get_file_conflicts_sync(conn, tid, &sid))
-            })
-            .await
-            .unwrap_or_default();
+        let conflicts = client
+            .get_file_conflicts(membership.team_id, &post_input.session_id)
+            .await;
 
         if !conflicts.is_empty() {
             let warnings: Vec<String> = conflicts

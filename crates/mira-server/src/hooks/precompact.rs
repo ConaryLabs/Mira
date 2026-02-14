@@ -1,15 +1,12 @@
 // crates/mira-server/src/hooks/precompact.rs
 // PreCompact hook handler - preserves context before summarization
 
-use crate::db::pool::DatabasePool;
-use crate::db::{StoreObservationParams, store_observation_sync};
-use crate::hooks::get_db_path;
+use crate::ipc::client::HookClient;
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 /// Confidence level for compaction log entries
 const COMPACTION_CONFIDENCE: f64 = 0.3;
@@ -110,8 +107,13 @@ pub async fn run() -> Result<()> {
         .as_ref()
         .and_then(|p| fs::read_to_string(p).ok());
 
+    // Connect via IPC (falls back to direct DB)
+    let mut client = HookClient::connect().await;
+
     // Save pre-compaction state
-    if let Err(e) = save_pre_compaction_state(session_id, trigger, transcript.as_deref()).await {
+    if let Err(e) =
+        save_pre_compaction_state(&mut client, session_id, trigger, transcript.as_deref()).await
+    {
         eprintln!("[mira] Failed to save pre-compaction state: {}", e);
     }
 
@@ -121,14 +123,12 @@ pub async fn run() -> Result<()> {
 
 /// Save important context before compaction occurs
 async fn save_pre_compaction_state(
+    client: &mut HookClient,
     session_id: &str,
     trigger: &str,
     transcript: Option<&str>,
 ) -> Result<()> {
-    let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open_hook(&db_path).await?);
-
-    let project_id = crate::hooks::resolve_project_id(&pool).await;
+    let project_id = client.resolve_project(None).await.map(|(id, _)| id);
 
     // Store compaction event as an audit marker
     let note_content = format!(
@@ -137,30 +137,22 @@ async fn save_pre_compaction_state(
         truncate_at_boundary(session_id, 8)
     );
 
-    pool.interact(move |conn| {
-        store_observation_sync(
-            conn,
-            StoreObservationParams {
-                project_id,
-                key: None,
-                content: &note_content,
-                observation_type: "session_event",
-                category: Some("compaction"),
-                confidence: COMPACTION_CONFIDENCE,
-                source: "precompact",
-                session_id: None,
-                team_id: None,
-                scope: "project",
-                expires_at: Some("+7 days"),
-            },
+    client
+        .store_observation(
+            project_id,
+            &note_content,
+            "session_event",
+            Some("compaction"),
+            COMPACTION_CONFIDENCE,
+            "precompact",
+            "project",
+            Some("+7 days"),
         )
-        .map_err(|e| anyhow::anyhow!("{}", e))
-    })
-    .await?;
+        .await;
 
     // Parse transcript JSONL, extract structured context, store in session_snapshots
     if let Some(transcript) = transcript
-        && let Err(e) = extract_and_save_context(&pool, session_id, transcript).await
+        && let Err(e) = extract_and_save_context(client, session_id, transcript).await
     {
         eprintln!("[mira] Context extraction failed: {}", e);
     }
@@ -288,7 +280,7 @@ pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> Comp
 /// If a snapshot already exists (from a prior compaction), it merges;
 /// if not, it creates a partial snapshot.
 pub(crate) async fn extract_and_save_context(
-    pool: &Arc<DatabasePool>,
+    client: &mut HookClient,
     session_id: &str,
     transcript: &str,
 ) -> Result<()> {
@@ -303,42 +295,9 @@ pub(crate) async fn extract_and_save_context(
     }
 
     let count = ctx.total_items();
-    let session_id_owned = session_id.to_string();
     let ctx_json = serde_json::to_value(&ctx)?;
 
-    pool.interact(move |conn| {
-        // Read existing snapshot (from a prior compaction in the same session)
-        let existing: Option<String> = conn
-            .query_row(
-                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
-                [&session_id_owned],
-                |row| row.get::<_, String>(0),
-            )
-            .ok();
-
-        let mut snapshot = if let Some(ref json_str) = existing {
-            serde_json::from_str::<serde_json::Value>(json_str)
-                .unwrap_or_else(|_| serde_json::json!({}))
-        } else {
-            serde_json::json!({})
-        };
-
-        snapshot["compaction_context"] = ctx_json;
-
-        let snapshot_str =
-            serde_json::to_string(&snapshot).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        conn.execute(
-            "INSERT INTO session_snapshots (session_id, snapshot, created_at)
-             VALUES (?1, ?2, datetime('now'))
-             ON CONFLICT(session_id) DO UPDATE SET snapshot = ?2, created_at = datetime('now')",
-            rusqlite::params![session_id_owned, snapshot_str],
-        )
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        Ok::<_, anyhow::Error>(())
-    })
-    .await?;
+    client.save_compaction_context(session_id, ctx_json).await;
 
     eprintln!("[mira] Extracted {} context items from transcript", count);
     Ok(())

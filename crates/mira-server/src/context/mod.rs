@@ -95,7 +95,7 @@ pub enum InjectionSource {
 }
 
 impl InjectionSource {
-    fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Semantic => "semantic",
             Self::FileAware => "files",

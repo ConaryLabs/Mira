@@ -1,11 +1,8 @@
 // crates/mira-server/src/hooks/permission.rs
 // Permission hook for Claude Code auto-approval
 
-use crate::db::{get_permission_rules_sync, pool::DatabasePool};
 use crate::hooks::{read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
-use std::path::PathBuf;
-use std::sync::Arc;
 
 /// Run permission hook
 pub async fn run() -> Result<()> {
@@ -15,15 +12,11 @@ pub async fn run() -> Result<()> {
     let tool_name = input["tool_name"].as_str().unwrap_or("").to_string();
     let tool_input = &input["tool_input"];
 
-    // Open database pool
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let db_path = home.join(".mira/mira.db");
-    let pool = Arc::new(DatabasePool::open_hook(&db_path).await?);
+    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
+    let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Check for matching permission rules
-    let rules = pool
-        .interact(move |conn| Ok::<_, anyhow::Error>(get_permission_rules_sync(conn, &tool_name)))
-        .await?;
+    let rules = client.get_permission_rules(&tool_name).await;
 
     // Collect all matchable strings from tool_input:
     // - The canonical (sorted-key) JSON serialization

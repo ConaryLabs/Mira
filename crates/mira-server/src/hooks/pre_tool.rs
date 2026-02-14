@@ -1,16 +1,11 @@
 // crates/mira-server/src/hooks/pre_tool.rs
 // PreToolUse hook handler - injects relevant context before Grep/Glob searches
 
-use crate::db::pool::DatabasePool;
-use crate::hooks::recall;
-use crate::hooks::{
-    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
-};
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const COOLDOWN_SECS: u64 = 3;
@@ -261,24 +256,21 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
+    let mut client = crate::ipc::client::HookClient::connect().await;
+    eprintln!(
+        "[mira] PreToolUse using {} backend",
+        if client.is_ipc() { "IPC" } else { "direct" }
+    );
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _path)) = client.resolve_project(None).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
 
     // Query for relevant memories (semantic search with keyword fallback)
-    let memories = recall::recall_memories(&pool, project_id, &search_query).await;
+    let memories = client.recall_memories(project_id, &search_query).await;
 
     // Record this query in cooldown state
     write_cooldown(&search_query);

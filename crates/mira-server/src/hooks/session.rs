@@ -2,6 +2,7 @@
 // SessionStart hook handler - captures Claude Code's session_id and cwd
 
 use crate::db::pool::DatabasePool;
+use crate::ipc::client::HookClient;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -192,43 +193,14 @@ pub async fn run() -> Result<()> {
         eprintln!("[mira] Captured Claude task list: {}", list_id);
     }
 
+    // Connect to MCP server via IPC (falls back to direct DB)
+    let mut client = HookClient::connect().await;
+
     // Register session in DB so the background loop sees activity
     if let (Some(sid), Some(cwd_val)) = (session_id, cwd) {
-        let db_path = get_db_path();
-        let sid_owned = sid.to_string();
-        let cwd_owned = cwd_val.to_string();
-        let source_owned = source.to_string();
-        if let Ok(pool) = DatabasePool::open_hook(&db_path).await {
-            let pool = Arc::new(pool);
-            let res = pool
-                .run(move |conn| {
-                    // Resolve project from cwd
-                    let (project_id, _) =
-                        crate::db::get_or_create_project_sync(conn, &cwd_owned, None)?;
-                    // Create or reactivate session. Uses create_session_ext_sync
-                    // which sets status='active' on conflict, properly reactivating
-                    // completed sessions when Claude Code restarts.
-                    crate::db::create_session_ext_sync(
-                        conn,
-                        &sid_owned,
-                        Some(project_id),
-                        Some(&source_owned),
-                        None,
-                    )?;
-                    // Record source in session history
-                    conn.execute(
-                        "INSERT INTO session_behavior_log (session_id, event_type, event_data) \
-                         VALUES (?1, 'session_start', ?2)",
-                        rusqlite::params![sid_owned, source_owned],
-                    )
-                    .ok(); // best-effort
-                    Ok::<_, rusqlite::Error>(())
-                })
-                .await;
-            match res {
-                Ok(()) => eprintln!("[mira] Session registered in DB"),
-                Err(e) => eprintln!("[mira] Failed to register session: {}", e),
-            }
+        match client.register_session(sid, cwd_val, source).await {
+            Some(pid) => eprintln!("[mira] Session registered in DB (project: {})", pid),
+            None => eprintln!("[mira] Failed to register session"),
         }
     }
 
@@ -241,75 +213,22 @@ pub async fn run() -> Result<()> {
                 det.team_name, det.role, det.member_name
             );
 
-            // Register in DB
-            let db_path = get_db_path();
-            let det_team_name = det.team_name.clone();
-            let det_config_path = det.config_path.clone();
-            let det_member_name = det.member_name.clone();
-            let det_role = det.role.clone();
-            let det_agent_type = det.agent_type.clone();
-            let sid_owned = sid.to_string();
-            let cwd_owned = cwd.map(String::from);
-
             let membership = async {
-                let pool = match DatabasePool::open_hook(&db_path).await {
-                    Ok(p) => Arc::new(p),
-                    Err(_) => return None,
-                };
-
-                // Get project_id from cwd
-                let project_id: Option<i64> = if let Some(ref cwd_path) = cwd_owned {
-                    let pool_c = pool.clone();
-                    let cwd_c = cwd_path.clone();
-                    pool_c
-                        .interact(move |conn| {
-                            Ok::<_, anyhow::Error>(
-                                crate::db::get_or_create_project_sync(conn, &cwd_c, None)
-                                    .ok()
-                                    .map(|(id, _)| id),
-                            )
-                        })
-                        .await
-                        .ok()
-                        .flatten()
-                } else {
-                    None
-                };
-
-                let team_name = det_team_name.clone();
-                let config_path = det_config_path.clone();
-                let member_name = det_member_name.clone();
-                let role = det_role.clone();
-                let agent_type = det_agent_type.clone();
-                let session_id = sid_owned.clone();
-
-                let team_id = pool
-                    .interact(move |conn| {
-                        let tid = crate::db::get_or_create_team_sync(
-                            conn,
-                            &team_name,
-                            project_id,
-                            &config_path,
-                        )?;
-                        crate::db::register_team_session_sync(
-                            conn,
-                            tid,
-                            &session_id,
-                            &member_name,
-                            &role,
-                            agent_type.as_deref(),
-                        )?;
-                        Ok::<_, anyhow::Error>(tid)
-                    })
-                    .await
-                    .ok()?;
-
+                let team_id = client.register_team_session(
+                    &det.team_name,
+                    &det.config_path,
+                    &det.member_name,
+                    &det.role,
+                    det.agent_type.as_deref(),
+                    sid,
+                    cwd,
+                ).await?;
                 Some(TeamMembership {
                     team_id,
-                    team_name: det_team_name,
-                    member_name: det_member_name,
-                    role: det_role,
-                    config_path: det_config_path,
+                    team_name: det.team_name.clone(),
+                    member_name: det.member_name.clone(),
+                    role: det.role.clone(),
+                    config_path: det.config_path.clone(),
                 })
             }
             .await;
@@ -321,15 +240,14 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Inject context about previous work.
-    // Reuse the pool from session registration if available, avoiding a redundant open.
+    // Inject context about previous work via IPC
     let cwd_owned = cwd.map(String::from);
     let session_id_owned = session_id.map(String::from);
 
     let context = if source == "resume" {
-        build_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref(), None).await
+        client.get_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await
     } else {
-        build_startup_context(cwd_owned.as_deref(), None).await
+        client.get_startup_context(cwd_owned.as_deref()).await
     };
 
     if let Some(ctx) = context {

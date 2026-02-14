@@ -1,14 +1,8 @@
 // crates/mira-server/src/hooks/teammate_idle.rs
 // Hook handler for TeammateIdle events - monitors team member activity
 
-use crate::db::pool::DatabasePool;
-use crate::hooks::{
-    HookTimer, get_db_path, read_hook_input, resolve_project_id, write_hook_output,
-};
-use crate::proactive::EventType;
-use crate::proactive::behavior::BehaviorTracker;
+use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
-use std::sync::Arc;
 
 /// TeammateIdle hook input from Claude Code
 #[derive(Debug)]
@@ -54,41 +48,24 @@ pub async fn run() -> Result<()> {
         idle_input.teammate_name, idle_input.team_name,
     );
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
+    let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _)) = client.resolve_project(None).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
 
     // Log idle event
-    {
-        let session_id = idle_input.session_id.clone();
-        let teammate_name = idle_input.teammate_name.clone();
-        let team_name = idle_input.team_name.clone();
-        pool.try_interact("teammate idle logging", move |conn| {
-            let mut tracker = BehaviorTracker::for_session(conn, session_id, project_id);
-            let data = serde_json::json!({
-                "behavior_type": "teammate_idle",
-                "teammate_name": teammate_name,
-                "team_name": team_name,
-            });
-            if let Err(e) = tracker.log_event(conn, EventType::ToolUse, data) {
-                tracing::debug!("Failed to log teammate idle: {e}");
-            }
-            Ok(())
-        })
+    let data = serde_json::json!({
+        "behavior_type": "teammate_idle",
+        "teammate_name": idle_input.teammate_name,
+        "team_name": idle_input.team_name,
+    });
+    client
+        .log_behavior(&idle_input.session_id, project_id, "tool_use", data)
         .await;
-    }
 
     write_hook_output(&serde_json::json!({}));
     Ok(())

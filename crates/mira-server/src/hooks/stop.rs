@@ -1,11 +1,10 @@
 // crates/mira-server/src/hooks/stop.rs
 // Stop hook handler - checks goal progress, snapshots tasks, and saves session state
 
-use crate::db::pool::DatabasePool;
-use crate::hooks::{get_db_path, read_hook_input, resolve_project_id, write_hook_output};
+use crate::hooks::{read_hook_input, write_hook_output};
+use crate::ipc::client::HookClient;
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
-use std::sync::Arc;
 
 /// Stop hook input from Claude Code
 #[derive(Debug)]
@@ -53,25 +52,18 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(_) => {
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect to MCP server (or fall back to direct DB)
+    let mut client = HookClient::connect().await;
 
     // Get current project
-    let Some(project_id) = resolve_project_id(&pool).await else {
+    let Some((project_id, _)) = client.resolve_project(None).await else {
         // No active project, just allow stop
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
 
     // Check for in-progress goals
-    let goal_lines = super::format_active_goals(&pool, project_id, 5).await;
+    let goal_lines = client.get_active_goals(project_id, 5).await;
 
     // Build output
     let output = serde_json::json!({});
@@ -85,77 +77,13 @@ pub async fn run() -> Result<()> {
     }
 
     // Build session summary, save snapshot, and close the session
-    {
-        let session_id = stop_input.session_id.clone();
-        pool.try_interact_warn("session close", move |conn| {
-            if let Err(e) = crate::db::set_server_state_sync(
-                conn,
-                "last_stop_time",
-                &chrono::Utc::now().to_rfc3339(),
-            ) {
-                eprintln!("  Warning: failed to save server state: {e}");
-            }
-
-            // Build session summary from stats
-            let summary = if !session_id.is_empty() {
-                build_session_summary(conn, &session_id)
-            } else {
-                None
-            };
-
-            // Save structured session snapshot for future resume context
-            if !session_id.is_empty()
-                && let Err(e) = save_session_snapshot(conn, &session_id)
-            {
-                eprintln!("[mira] Session snapshot failed: {}", e);
-            }
-
-            // Close the session with summary
-            if !session_id.is_empty() {
-                if let Err(e) = crate::db::close_session_sync(conn, &session_id, summary.as_deref())
-                {
-                    eprintln!("  Warning: failed to close session: {e}");
-                }
-                eprintln!(
-                    "[mira] Closed session {}",
-                    truncate_at_boundary(&session_id, 8)
-                );
-            }
-            Ok(())
-        })
-        .await;
-    }
+    client.close_session(&stop_input.session_id).await;
 
     // Snapshot native Claude Code tasks
-    snapshot_tasks(&pool, project_id, &stop_input.session_id, false).await;
+    snapshot_tasks(&mut client, project_id, &stop_input.session_id, false).await;
 
     // Auto-export ranked memories to CLAUDE.local.md
-    {
-        let pid = project_id;
-        pool.try_interact_warn("CLAUDE.local.md export", move |conn| {
-            let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
-                tracing::warn!("Failed to get last active project: {e}");
-                None
-            });
-            if let Some(project_path) = path {
-                match crate::tools::core::claude_local::write_claude_local_md_sync(
-                    conn,
-                    pid,
-                    &project_path,
-                ) {
-                    Ok(count) if count > 0 => {
-                        eprintln!("[mira] Auto-exported {} memories to CLAUDE.local.md", count);
-                    }
-                    Err(e) => {
-                        eprintln!("[mira] CLAUDE.local.md export failed: {}", e);
-                    }
-                    _ => {}
-                }
-            }
-            Ok(())
-        })
-        .await;
-    }
+    client.write_claude_local_md(project_id).await;
 
     write_hook_output(&output);
     Ok(())
@@ -174,57 +102,27 @@ pub async fn run_session_end() -> Result<()> {
         truncate_at_boundary(session_id, 8),
     );
 
-    // Open database
-    let db_path = get_db_path();
-    let pool = match DatabasePool::open_hook(&db_path).await {
-        Ok(p) => Arc::new(p),
-        Err(e) => {
-            eprintln!("[mira] SessionEnd: failed to open DB: {}", e);
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
+    // Connect to MCP server (or fall back to direct DB)
+    let mut client = HookClient::connect().await;
 
     // Deactivate team session if we're in a team
     if !session_id.is_empty() {
-        if let Some(membership) =
-            crate::hooks::session::read_team_membership_from_db(&pool, session_id).await
-        {
-            // Trigger knowledge distillation before deactivating (async, non-blocking)
-            let distill_pool = pool.clone();
-            let distill_team_id = membership.team_id;
-            let distill_project_id = super::resolve_project_id(&pool).await;
-
-            // Run distillation inline (not spawned) so it completes before the hook exits
-            match crate::background::knowledge_distillation::distill_team_session(
-                &distill_pool,
-                distill_team_id,
-                distill_project_id,
-            )
-            .await
-            {
-                Ok(Some(result)) => {
-                    eprintln!(
-                        "[mira] Distilled {} finding(s) from team '{}'",
-                        result.findings.len(),
-                        result.team_name,
-                    );
-                }
-                Ok(None) => {
-                    eprintln!("[mira] No findings to distill for team session");
-                }
-                Err(e) => {
-                    eprintln!("[mira] Knowledge distillation failed: {}", e);
-                }
+        if let Some(membership) = client.get_team_membership(session_id).await {
+            // Trigger knowledge distillation before deactivating
+            let distill_project_id = client.resolve_project(None).await.map(|(id, _)| id);
+            let (distilled, findings_count, team_name) = client
+                .distill_team_session(membership.team_id, distill_project_id)
+                .await;
+            if distilled {
+                eprintln!(
+                    "[mira] Distilled {} finding(s) from team '{}'",
+                    findings_count, team_name,
+                );
+            } else {
+                eprintln!("[mira] No findings to distill for team session");
             }
 
-            let sid = session_id.to_string();
-            if let Err(e) = pool
-                .run(move |conn| crate::db::deactivate_team_session_sync(conn, &sid))
-                .await
-            {
-                eprintln!("[mira] Failed to deactivate team session: {}", e);
-            }
+            client.deactivate_team_session(session_id).await;
             eprintln!(
                 "[mira] Deactivated team session (team: {})",
                 membership.team_name
@@ -234,62 +132,29 @@ pub async fn run_session_end() -> Result<()> {
         crate::hooks::session::cleanup_team_file(session_id);
     }
 
-    // Build session summary and close the session (same as Stop hook)
+    // Close the session (builds summary, saves snapshot, updates status)
     if !session_id.is_empty() {
-        let sid = session_id.to_string();
-        pool.try_interact_warn("session end close", move |conn| {
-            // Build session summary from stats
-            let summary = build_session_summary(conn, &sid);
-
-            // Save structured session snapshot for future resume context
-            if let Err(e) = save_session_snapshot(conn, &sid) {
-                eprintln!("[mira] SessionEnd snapshot failed: {}", e);
-            }
-
-            // Close the session with summary
-            if let Err(e) = crate::db::close_session_sync(conn, &sid, summary.as_deref()) {
-                eprintln!("  Warning: failed to close session: {e}");
-            }
-            eprintln!(
-                "[mira] SessionEnd closed session {}",
-                truncate_at_boundary(&sid, 8)
-            );
-            Ok(())
-        })
-        .await;
+        client.close_session(session_id).await;
+        eprintln!(
+            "[mira] SessionEnd closed session {}",
+            truncate_at_boundary(session_id, 8)
+        );
     }
 
     // Get current project (id and path)
-    let (project_id, project_path) = super::resolve_project(&pool).await;
+    let (project_id, project_path) = match client.resolve_project(None).await {
+        Some((id, path)) => (Some(id), Some(path)),
+        None => (None, None),
+    };
 
     if let Some(project_id) = project_id
-        && let Some(project_path) = project_path
+        && let Some(ref project_path) = project_path
     {
         // Snapshot native Claude Code tasks
-        snapshot_tasks(&pool, project_id, session_id, true).await;
+        snapshot_tasks(&mut client, project_id, session_id, true).await;
 
         // Auto-export to Claude Code's auto memory (if feature available)
-        let path_clone = project_path.clone();
-        pool.try_interact_warn("auto memory export", move |conn| {
-            // Only write if auto memory directory exists (non-invasive feature detection)
-            if crate::tools::core::claude_local::auto_memory_dir_exists(&path_clone) {
-                match crate::tools::core::claude_local::write_auto_memory_sync(
-                    conn,
-                    project_id,
-                    &path_clone,
-                ) {
-                    Ok(count) if count > 0 => {
-                        eprintln!("[mira] Auto-exported {} memories to MEMORY.mira.md", count);
-                    }
-                    Err(e) => {
-                        eprintln!("[mira] Auto memory export failed: {}", e);
-                    }
-                    _ => {}
-                }
-            }
-            Ok(())
-        })
-        .await;
+        client.write_auto_memory(project_id, project_path).await;
     }
 
     write_hook_output(&serde_json::json!({}));
@@ -299,7 +164,7 @@ pub async fn run_session_end() -> Result<()> {
 /// Snapshot Claude Code's native task files into Mira's database.
 /// Always approves on any error — never blocks session end due to task snapshotting failure.
 async fn snapshot_tasks(
-    pool: &Arc<DatabasePool>,
+    client: &mut HookClient,
     project_id: i64,
     session_id: &str,
     is_session_end: bool,
@@ -326,50 +191,19 @@ async fn snapshot_tasks(
         return;
     }
 
-    let (completed, remaining) = tasks.iter().fold((0usize, 0usize), |(c, r), t| {
-        if t.status == "completed" {
-            (c + 1, r)
-        } else {
-            (c, r + 1)
-        }
-    });
-
-    let pool_clone = pool.clone();
     let sid = if session_id.is_empty() {
         None
     } else {
-        Some(session_id.to_string())
+        Some(session_id)
     };
 
-    let result = pool_clone
-        .interact(move |conn| {
-            let count = crate::db::session_tasks::snapshot_native_tasks_sync(
-                conn,
-                project_id,
-                &list_id,
-                sid.as_deref(),
-                &tasks,
-            )?;
-            Ok::<usize, anyhow::Error>(count)
-        })
+    client
+        .snapshot_tasks(project_id, &list_id, sid, &tasks, is_session_end)
         .await;
-
-    match result {
-        Ok(count) => {
-            let label = if is_session_end { "SessionEnd" } else { "Stop" };
-            eprintln!(
-                "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
-                label, count, completed, remaining,
-            );
-        }
-        Err(e) => {
-            eprintln!("[mira] Task snapshot failed: {}", e);
-        }
-    }
 }
 
 /// Build a session summary from tool history or behavior log, whichever is richer.
-fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
+pub(crate) fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
     // Get stats from both sources and pick the richer one.
     // Compare total event counts (including file_access for behavior) to match
     // the background worker's line-count comparison in session_summaries.rs.
