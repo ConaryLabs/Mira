@@ -89,12 +89,16 @@ pub async fn handle_session<C: ToolContext>(
 
 /// Map a tech-debt score to a letter-grade tier label.
 fn score_to_tier_label(score: f64) -> &'static str {
-    match score as u32 {
-        0..=20 => "A (Healthy)",
-        21..=40 => "B (Moderate)",
-        41..=60 => "C (Needs Work)",
-        61..=80 => "D (Poor)",
-        _ => "F (Critical)",
+    if score <= 20.0 {
+        "A (Healthy)"
+    } else if score <= 40.0 {
+        "B (Moderate)"
+    } else if score <= 60.0 {
+        "C (Needs Work)"
+    } else if score <= 80.0 {
+        "D (Poor)"
+    } else {
+        "F (Critical)"
     }
 }
 
@@ -165,7 +169,10 @@ async fn query_insights<C: ToolContext>(
 
     // Handle empty state
     if insights.is_empty() {
-        let empty_msg = if snapshot_summary.is_some() {
+        let has_filters = insight_source.is_some() || min_confidence.is_some();
+        let empty_msg = if has_filters {
+            "No insights match the current filters.".to_string()
+        } else if snapshot_summary.is_some() {
             "No active insights. Codebase is looking healthy.".to_string()
         } else {
             "No insights found.\n\nTo generate health data:\n  \

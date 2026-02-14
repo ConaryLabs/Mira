@@ -438,24 +438,23 @@ mod tests {
     }
 
     #[test]
-    fn test_min_confidence_filters_on_priority_score() {
-        // NOTE: Current behavior filters on priority_score, not confidence.
-        // This test documents that behavior.
+    fn test_min_confidence_filters_on_confidence() {
+        // min_confidence filters on the confidence field, not priority_score.
         let conn = setup_test_connection();
         let project_id = create_test_project(&conn);
         let now = days_ago(0);
 
-        // High confidence + high weight → high priority_score
+        // High confidence (0.95) — should pass min_confidence=0.5
         insert_behavior_pattern(
             &conn,
             project_id,
             "insight_revert_cluster",
-            r#"{"description":"high priority"}"#,
+            r#"{"description":"high confidence"}"#,
             0.95,
             &now,
         );
 
-        // Low confidence → low priority_score
+        // Low confidence (0.3) — should be filtered out by min_confidence=0.5
         conn.execute(
             "INSERT INTO behavior_patterns (project_id, pattern_type, pattern_key, pattern_data, confidence, last_triggered_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -463,26 +462,31 @@ mod tests {
                 project_id,
                 "insight_workflow",
                 "key_low",
-                r#"{"description":"low priority"}"#,
+                r#"{"description":"low confidence"}"#,
                 0.3,
                 now
             ],
         )
         .unwrap();
 
-        // min_confidence=0.5 filters on priority_score
+        // min_confidence=0.5 should filter out the 0.3 confidence insight
         let results =
             get_unified_insights_sync(&conn, project_id, Some("pondering"), 0.5, 30, 100).unwrap();
 
-        // The high-confidence one should pass (priority_score ≈ 0.95)
-        // The low-confidence one has priority_score = 0.3 * 0.7 * ~1.0 ≈ 0.21, filtered out
         assert!(
             !results.is_empty(),
             "Expected at least 1 result after filtering"
         );
+        // All surviving results must have confidence >= 0.5
         assert!(
-            results.iter().all(|r| r.priority_score >= 0.5),
-            "All results should have priority_score >= 0.5"
+            results.iter().all(|r| r.confidence >= 0.5),
+            "All results should have confidence >= 0.5, got: {:?}",
+            results.iter().map(|r| r.confidence).collect::<Vec<_>>()
+        );
+        // The low-confidence one (0.3) must NOT be present
+        assert!(
+            results.iter().all(|r| !r.description.contains("low confidence")),
+            "Low-confidence insight should have been filtered out"
         );
     }
 
