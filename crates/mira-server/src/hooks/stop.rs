@@ -407,12 +407,13 @@ fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Optio
                 })
         };
 
+        let tool_names: Vec<&str> = behavior_tools.iter().map(|(n, _)| n.as_str()).collect();
         let mut parts: Vec<String> = Vec::new();
-        if !behavior_tools.is_empty() {
+        if !tool_names.is_empty() {
             parts.push(format!(
                 "{} tool calls ({})",
                 behavior_count,
-                behavior_tools.join(", ")
+                tool_names.join(", ")
             ));
         } else {
             parts.push(format!("{} tool calls", behavior_count));
@@ -529,8 +530,9 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
         let files_modified = super::get_behavior_modified_files_sync(conn, session_id);
         let top_tools_json: Vec<serde_json::Value> = behavior_tools
             .iter()
-            .map(|name| serde_json::json!({"name": name, "count": 0}))
+            .map(|(name, count)| serde_json::json!({"name": name, "count": count}))
             .collect();
+        let top_tool_names: Vec<&str> = behavior_tools.iter().map(|(n, _)| n.as_str()).collect();
 
         // Check for existing compaction context
         let existing_compaction: Option<serde_json::Value> = conn
@@ -546,7 +548,7 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
         let mut snapshot = serde_json::json!({
             "tool_count": behavior_count,
             "top_tools": top_tools_json,
-            "top_tool_names": behavior_tools,
+            "top_tool_names": top_tool_names,
             "files_modified": files_modified,
             "source": "behavior_log",
         });

@@ -122,11 +122,11 @@ pub fn get_session_modified_files_sync(
 }
 
 /// Get tool usage stats from behavior log (fallback when tool_history is empty).
-/// Returns (event_count, top_tool_names) from session_behavior_log tool_use events.
+/// Returns (total_event_count, top_5_tools_with_counts) from session_behavior_log tool_use events.
 pub fn get_behavior_tool_stats_sync(
     conn: &rusqlite::Connection,
     session_id: &str,
-) -> (i64, Vec<String>) {
+) -> (i64, Vec<(String, i64)>) {
     let sql = r#"
         SELECT json_extract(event_data, '$.tool_name') as tool_name, COUNT(*) as cnt
         FROM session_behavior_log
@@ -134,7 +134,6 @@ pub fn get_behavior_tool_stats_sync(
           AND json_extract(event_data, '$.tool_name') IS NOT NULL
         GROUP BY tool_name
         ORDER BY cnt DESC
-        LIMIT 5
     "#;
     match conn.prepare(sql) {
         Ok(mut stmt) => {
@@ -143,8 +142,8 @@ pub fn get_behavior_tool_stats_sync(
                 .map(|rows| rows.filter_map(crate::db::log_and_discard).collect())
                 .unwrap_or_default();
             let total: i64 = rows.iter().map(|(_, c)| c).sum();
-            let names: Vec<String> = rows.into_iter().map(|(n, _)| n).collect();
-            (total, names)
+            let top_tools: Vec<(String, i64)> = rows.into_iter().take(5).collect();
+            (total, top_tools)
         }
         Err(e) => {
             tracing::warn!("Failed to query behavior tool stats: {e}");

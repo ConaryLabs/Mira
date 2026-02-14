@@ -143,7 +143,9 @@ async fn generate_session_summary(
     session_id: &str,
     project_id: Option<i64>,
 ) -> Option<String> {
-    // Get tool history summary
+    // Get both sources and use whichever is richer.
+    // This avoids the case where a session qualifies via behavior_log (>= 3 events)
+    // but gets summarized from sparse tool_history because it was checked first.
     let session_id_clone = session_id.to_string();
     let tool_summary = pool
         .interact(move |conn| {
@@ -153,32 +155,32 @@ async fn generate_session_summary(
         .await
         .ok()?;
 
-    if tool_summary.is_empty() {
-        // Fallback: try behavior log
-        let session_id_clone2 = session_id.to_string();
-        let behavior_summary = pool
-            .interact(move |conn| {
-                get_session_behavior_summary_sync(conn, &session_id_clone2)
-                    .map_err(|e| anyhow::anyhow!("Failed to get behavior summary: {}", e))
-            })
-            .await
-            .ok()?;
+    let session_id_clone2 = session_id.to_string();
+    let behavior_summary = pool
+        .interact(move |conn| {
+            get_session_behavior_summary_sync(conn, &session_id_clone2)
+                .map_err(|e| anyhow::anyhow!("Failed to get behavior summary: {}", e))
+        })
+        .await
+        .unwrap_or_default();
 
-        if behavior_summary.is_empty() {
-            return None;
-        }
+    // Pick the richer source (more lines = more signal)
+    let tool_lines = tool_summary.lines().count();
+    let behavior_lines = behavior_summary.lines().count();
 
-        return match client {
-            Some(client) => {
-                generate_session_summary_llm(pool, client, &behavior_summary, project_id).await
-            }
-            None => generate_session_summary_fallback(&behavior_summary),
-        };
-    }
+    let summary_text = if tool_lines >= behavior_lines && !tool_summary.is_empty() {
+        &tool_summary
+    } else if !behavior_summary.is_empty() {
+        &behavior_summary
+    } else {
+        return None;
+    };
 
     match client {
-        Some(client) => generate_session_summary_llm(pool, client, &tool_summary, project_id).await,
-        None => generate_session_summary_fallback(&tool_summary),
+        Some(client) => {
+            generate_session_summary_llm(pool, client, summary_text, project_id).await
+        }
+        None => generate_session_summary_fallback(summary_text),
     }
 }
 
