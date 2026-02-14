@@ -100,12 +100,31 @@ pub struct UnifiedInsight {
     pub evidence: Option<String>,
     /// Row ID from behavior_patterns (pondering) for marking as shown
     pub row_id: Option<i64>,
-    /// Trend direction for health insights: "improved", "degraded", or "stable"
+    /// Trend direction for health insights: "improved", "degraded", "stable", or "baseline"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trend: Option<String>,
     /// Human-readable change summary, e.g. "B → C" or "42.3 → 58.1"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change_summary: Option<String>,
+    /// Dashboard category for grouping: "attention", "quality", "testing", "workflow", "documentation", "health"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+/// A point-in-time snapshot of codebase health metrics
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HealthSnapshot {
+    pub id: i64,
+    pub avg_debt_score: f64,
+    pub max_debt_score: f64,
+    pub tier_distribution: String,
+    pub module_count: i64,
+    pub snapshot_at: String,
+    pub warning_count: i64,
+    pub todo_count: i64,
+    pub unwrap_count: i64,
+    pub error_handling_count: i64,
+    pub total_finding_count: i64,
 }
 
 /// Project briefing (What's New since last session)

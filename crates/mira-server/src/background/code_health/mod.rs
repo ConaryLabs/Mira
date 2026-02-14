@@ -784,10 +784,7 @@ async fn scan_unused_functions_sharded(
 
 /// Capture a health snapshot after scoring completes.
 /// Rate-limited: at most one snapshot per 6 hours per project.
-async fn capture_health_snapshot(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Result<(), String> {
+async fn capture_health_snapshot(pool: &Arc<DatabasePool>, project_id: i64) -> Result<(), String> {
     pool.run(move |conn| {
         // Rate limit: skip if latest snapshot is < 6 hours old
         let too_recent: bool = conn

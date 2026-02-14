@@ -32,6 +32,8 @@ pub mod team;
 #[macro_use]
 pub(crate) mod test_support;
 #[cfg(test)]
+mod insights_tests;
+#[cfg(test)]
 mod memory_tests;
 #[cfg(test)]
 mod project_tests;
@@ -108,7 +110,7 @@ pub use index::{
     queue_pending_embedding_sync,
 };
 pub(crate) use insights::compute_age_days;
-pub use insights::{dismiss_insight_sync, get_unified_insights_sync};
+pub use insights::{dismiss_insight_sync, get_health_history_sync, get_unified_insights_sync};
 pub use memory::{
     MemoryScopeInfo,
     RankedMemory,

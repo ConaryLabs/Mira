@@ -47,7 +47,7 @@ pub fn get_unified_insights_sync(
     }
 
     // Filter by min_confidence, sort by priority_score desc then timestamp desc
-    all.retain(|i| i.priority_score >= min_confidence);
+    all.retain(|i| i.confidence >= min_confidence);
     all.sort_by(|a, b| {
         b.priority_score
             .partial_cmp(&a.priority_score)
@@ -93,7 +93,7 @@ fn humanize_insight_type(pattern_type: &str) -> String {
         "insight_untested" => "Untested Code".to_string(),
         "insight_recurring_error" => "Recurring Error".to_string(),
         "insight_churn_hotspot" => "Code Churn".to_string(),
-        "insight_health_degrading" => "Health Trend".to_string(),
+        "insight_health_degrading" => "Health Degradation".to_string(),
         "insight_session" => "Session Pattern".to_string(),
         "insight_workflow" => "Workflow".to_string(),
         other => other
@@ -188,6 +188,15 @@ fn fetch_pondering_insights(
         };
         let priority_score = confidence * type_weight * decay;
 
+        let category = match pattern_type.as_str() {
+            "insight_revert_cluster" | "insight_fragile_code" => "quality",
+            "insight_untested" | "insight_recurring_error" => "testing",
+            "insight_stale_goal" | "insight_session" | "insight_workflow" => "workflow",
+            "insight_churn_hotspot" => "quality",
+            "insight_health_degrading" => "health",
+            _ => "other",
+        };
+
         insights.push(UnifiedInsight {
             source: "pondering".to_string(),
             source_type: humanize_insight_type(&pattern_type),
@@ -199,6 +208,7 @@ fn fetch_pondering_insights(
             row_id: Some(row_id),
             trend: None,
             change_summary: None,
+            category: Some(category.to_string()),
         });
     }
 
@@ -259,6 +269,7 @@ fn fetch_doc_gap_insights(
             row_id: None,
             trend: None,
             change_summary: None,
+            category: Some("documentation".to_string()),
         });
     }
 
@@ -302,6 +313,26 @@ fn fetch_health_trend_insights(
 
     // Check for meaningful change: >10% delta
     if *prev_avg == 0.0 {
+        if *current_avg > 0.0 {
+            // Baseline → degraded: report as new finding
+            let description = format!(
+                "Codebase health baseline established: avg debt score {:.1} across {} modules",
+                current_avg, module_count
+            );
+            return Ok(vec![UnifiedInsight {
+                source: "health_trend".to_string(),
+                source_type: "Health Trend".to_string(),
+                description,
+                priority_score: 0.6,
+                confidence: 0.7,
+                timestamp: current_time.clone(),
+                evidence: None,
+                row_id: None,
+                trend: Some("baseline".to_string()),
+                change_summary: Some(format!("0.0 → {:.1}", current_avg)),
+                category: Some("health".to_string()),
+            }]);
+        }
         return Ok(vec![]);
     }
     let delta_pct = ((current_avg - prev_avg) / prev_avg) * 100.0;
@@ -350,6 +381,46 @@ fn fetch_health_trend_insights(
         evidence,
         row_id: None,
         trend: Some(trend),
-        change_summary: Some(change_summary.clone()),
+        change_summary: Some(change_summary),
+        category: Some("health".to_string()),
     }])
+}
+
+/// Get recent health snapshots for trend analysis.
+/// Returns up to `limit` snapshots ordered newest-first.
+pub fn get_health_history_sync(
+    conn: &Connection,
+    project_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<super::types::HealthSnapshot>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, avg_debt_score, max_debt_score, tier_distribution,
+                module_count, snapshot_at, warning_count, todo_count,
+                unwrap_count, error_handling_count, total_finding_count
+         FROM health_snapshots
+         WHERE project_id = ?1
+         ORDER BY snapshot_at DESC
+         LIMIT ?2",
+    )?;
+
+    let snapshots: Vec<super::types::HealthSnapshot> = stmt
+        .query_map(params![project_id, limit as i64], |row| {
+            Ok(super::types::HealthSnapshot {
+                id: row.get(0)?,
+                avg_debt_score: row.get(1)?,
+                max_debt_score: row.get(2)?,
+                tier_distribution: row.get(3)?,
+                module_count: row.get(4)?,
+                snapshot_at: row.get(5)?,
+                warning_count: row.get(6)?,
+                todo_count: row.get(7)?,
+                unwrap_count: row.get(8)?,
+                error_handling_count: row.get(9)?,
+                total_finding_count: row.get(10)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(snapshots)
 }

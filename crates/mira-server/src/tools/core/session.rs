@@ -87,7 +87,29 @@ pub async fn handle_session<C: ToolContext>(
     }
 }
 
-/// Query unified insights digest
+/// Map a tech-debt score to a letter-grade tier label.
+fn score_to_tier_label(score: f64) -> &'static str {
+    match score as u32 {
+        0..=20 => "A (Healthy)",
+        21..=40 => "B (Moderate)",
+        41..=60 => "C (Needs Work)",
+        61..=80 => "D (Poor)",
+        _ => "F (Critical)",
+    }
+}
+
+/// Category display order and human-readable labels.
+const CATEGORY_ORDER: &[(&str, &str)] = &[
+    ("attention", "Attention Required"),
+    ("quality", "Code Quality"),
+    ("testing", "Testing & Reliability"),
+    ("workflow", "Workflow"),
+    ("documentation", "Documentation"),
+    ("health", "Health Trend"),
+    ("other", "Other"),
+];
+
+/// Query unified insights digest, formatted as a categorized Health Dashboard.
 async fn query_insights<C: ToolContext>(
     ctx: &C,
     insight_source: Option<String>,
@@ -95,6 +117,8 @@ async fn query_insights<C: ToolContext>(
     since_days: Option<u32>,
     limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, String> {
+    use std::collections::BTreeMap;
+
     let project = ctx.get_project().await;
     let project_id = project
         .as_ref()
@@ -105,6 +129,8 @@ async fn query_insights<C: ToolContext>(
     let min_conf = min_confidence.unwrap_or(0.5);
     let days_back = since_days.unwrap_or(30) as i64;
     let lim = limit.unwrap_or(20).max(0) as usize;
+
+    let project_id_for_snapshot = project_id;
 
     let insights = ctx
         .pool()
@@ -120,10 +146,37 @@ async fn query_insights<C: ToolContext>(
         })
         .await?;
 
+    // Fetch latest health snapshot for the dashboard header
+    let snapshot_summary = ctx
+        .pool()
+        .run(move |conn| {
+            let result: Option<(f64, i64, String)> = conn
+                .query_row(
+                    "SELECT avg_debt_score, module_count, tier_distribution
+                     FROM health_snapshots WHERE project_id = ?1
+                     ORDER BY snapshot_at DESC LIMIT 1",
+                    rusqlite::params![project_id_for_snapshot],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .ok();
+            Ok::<_, String>(result)
+        })
+        .await?;
+
+    // Handle empty state
     if insights.is_empty() {
+        let empty_msg = if snapshot_summary.is_some() {
+            "No active insights. Codebase is looking healthy.".to_string()
+        } else {
+            "No insights found.\n\nTo generate health data:\n  \
+             1. Index your project: index(action=\"project\")\n  \
+             2. Run health scan: index(action=\"health\")\n  \
+             3. Then check insights again"
+                .to_string()
+        };
         return Ok(Json(SessionOutput {
             action: "insights".into(),
-            message: "No insights found.".into(),
+            message: empty_msg,
             data: Some(SessionData::Insights(InsightsData {
                 insights: vec![],
                 total: 0,
@@ -131,26 +184,106 @@ async fn query_insights<C: ToolContext>(
         }));
     }
 
-    let mut output = format!("{} insights:\n\n", insights.len());
+    // ── Build categorized dashboard ──
+
+    // Separate high-priority items into "attention" bucket; track their indices
+    // so they don't also appear under their original category.
+    let mut attention_indices: Vec<usize> = Vec::new();
+    for (i, insight) in insights.iter().enumerate() {
+        if insight.priority_score >= 0.75 {
+            attention_indices.push(i);
+        }
+    }
+
+    // Group remaining insights by category
+    let mut by_category: BTreeMap<String, Vec<(usize, &crate::db::UnifiedInsight)>> =
+        BTreeMap::new();
+    for (i, insight) in insights.iter().enumerate() {
+        if attention_indices.contains(&i) {
+            by_category
+                .entry("attention".to_string())
+                .or_default()
+                .push((i, insight));
+        } else {
+            let cat = insight.category.as_deref().unwrap_or("other").to_string();
+            by_category.entry(cat).or_default().push((i, insight));
+        }
+    }
+
+    // ── Dashboard header ──
+    let mut output = String::from("## Project Health Dashboard\n\n");
+    if let Some((avg_score, module_count, ref tier_dist)) = snapshot_summary {
+        let tier = score_to_tier_label(avg_score);
+        output.push_str(&format!(
+            "### Overall: {} | Score: {:.1} | {} modules\n",
+            tier, avg_score, module_count
+        ));
+        // Parse tier distribution for summary
+        if let Ok(tiers) = serde_json::from_str::<serde_json::Value>(tier_dist)
+            && let Some(obj) = tiers.as_object()
+        {
+            let tier_summary: Vec<String> =
+                obj.iter().map(|(k, v)| format!("{}:{}", k, v)).collect();
+            if !tier_summary.is_empty() {
+                output.push_str(&format!("    tiers: {{{}}}\n", tier_summary.join(",")));
+            }
+        }
+        output.push_str("\n---\n\n");
+    }
+
+    // ── Category sections (skip empty) ──
+    for &(cat_key, cat_label) in CATEGORY_ORDER {
+        let entries = by_category.get(cat_key);
+        let count = entries.map_or(0, |v| v.len());
+        if count == 0 {
+            continue;
+        }
+        output.push_str(&format!("### {} ({})\n\n", cat_label, count));
+
+        if let Some(entries) = entries {
+            for (_idx, insight) in entries {
+                let indicator = if insight.priority_score >= 0.75 {
+                    "[!!]"
+                } else if insight.priority_score >= 0.5 {
+                    "[!]"
+                } else {
+                    "[ ]"
+                };
+                let age = format_age(&insight.timestamp);
+                output.push_str(&format!("  {} {}{}\n", indicator, insight.description, age));
+                if let Some(ref trend) = insight.trend
+                    && let Some(ref summary) = insight.change_summary
+                {
+                    output.push_str(&format!("       Trend: {} ({})\n", trend, summary));
+                }
+                if let Some(ref evidence) = insight.evidence {
+                    output.push_str(&format!("       {}\n", evidence));
+                }
+                output.push('\n');
+            }
+        }
+    }
+
+    // ── Footer ──
+    let dismissable = insights.iter().filter(|i| i.row_id.is_some()).count();
+    if dismissable > 0 {
+        output.push_str("---\n");
+        output.push_str(&format!(
+            "{} dismissable (use session action=dismiss_insight insight_id=<row_id>)\n",
+            dismissable
+        ));
+    }
+
+    // ── Build InsightItem vec ──
     let items: Vec<InsightItem> = insights
         .iter()
-        .map(|insight| {
-            let prefix = if insight.priority_score >= 0.75 {
-                "[HIGH]"
+        .enumerate()
+        .map(|(i, insight)| {
+            let item_category = if attention_indices.contains(&i) {
+                Some("attention".to_string())
             } else {
-                "[INFO]"
+                insight.category.clone()
             };
-            let age = format_age(&insight.timestamp);
-            output.push_str(&format!("{} {}{}\n", prefix, insight.description, age));
-            if let Some(ref trend) = insight.trend
-                && let Some(ref summary) = insight.change_summary
-            {
-                output.push_str(&format!("    Trend: {} ({})\n", trend, summary));
-            }
-            if let Some(ref evidence) = insight.evidence {
-                output.push_str(&format!("    {}\n", evidence));
-            }
-            output.push('\n');
             InsightItem {
                 row_id: insight.row_id,
                 source: insight.source.clone(),
@@ -161,6 +294,7 @@ async fn query_insights<C: ToolContext>(
                 evidence: insight.evidence.clone(),
                 trend: insight.trend.clone(),
                 change_summary: insight.change_summary.clone(),
+                category: item_category,
             }
         })
         .collect();

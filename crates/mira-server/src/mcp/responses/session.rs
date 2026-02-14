@@ -78,4 +78,7 @@ pub struct InsightItem {
     /// Change summary when applicable (health insights)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change_summary: Option<String>,
+    /// Dashboard category for grouping
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
