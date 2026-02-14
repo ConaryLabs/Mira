@@ -198,7 +198,7 @@ pub async fn run() -> Result<()> {
         let sid_owned = sid.to_string();
         let cwd_owned = cwd_val.to_string();
         let source_owned = source.to_string();
-        if let Ok(pool) = DatabasePool::open(&db_path).await {
+        if let Ok(pool) = DatabasePool::open_hook(&db_path).await {
             let pool = Arc::new(pool);
             let res = pool
                 .run(move |conn| {
@@ -252,7 +252,7 @@ pub async fn run() -> Result<()> {
             let cwd_owned = cwd.map(String::from);
 
             let membership = async {
-                let pool = match DatabasePool::open(&db_path).await {
+                let pool = match DatabasePool::open_hook(&db_path).await {
                     Ok(p) => Arc::new(p),
                     Err(_) => return None,
                 };
@@ -356,7 +356,7 @@ pub(crate) async fn build_startup_context(
         Some(p) => p,
         None => {
             let db_path = get_db_path();
-            match DatabasePool::open(&db_path).await {
+            match DatabasePool::open_hook(&db_path).await {
                 Ok(p) => Arc::new(p),
                 Err(_) => return None,
             }
@@ -449,7 +449,7 @@ pub(crate) async fn build_resume_context(
         Some(p) => p,
         None => {
             let db_path = get_db_path();
-            match DatabasePool::open(&db_path).await {
+            match DatabasePool::open_hook(&db_path).await {
                 Ok(p) => Arc::new(p),
                 Err(_) => return None,
             }

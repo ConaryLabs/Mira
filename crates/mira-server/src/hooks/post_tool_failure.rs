@@ -69,7 +69,7 @@ pub async fn run() -> Result<()> {
 
     // Open database
     let db_path = get_db_path();
-    let pool = match DatabasePool::open(&db_path).await {
+    let pool = match DatabasePool::open_hook(&db_path).await {
         Ok(p) => Arc::new(p),
         Err(_) => {
             write_hook_output(&serde_json::json!({}));

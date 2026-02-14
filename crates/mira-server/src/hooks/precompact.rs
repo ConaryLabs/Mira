@@ -126,7 +126,7 @@ async fn save_pre_compaction_state(
     transcript: Option<&str>,
 ) -> Result<()> {
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let pool = Arc::new(DatabasePool::open_hook(&db_path).await?);
 
     let project_id = crate::hooks::resolve_project_id(&pool).await;
 

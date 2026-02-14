@@ -5,8 +5,18 @@ use mira_types::MemoryFact;
 use rusqlite::OptionalExtension;
 use std::sync::LazyLock;
 
-/// (fact_id, content, distance, branch, team_id) tuple from semantic recall
-pub type RecallRow = (i64, String, f32, Option<String>, Option<i64>);
+/// Semantic recall result with metadata inlined to avoid N+1 queries.
+#[derive(Debug, Clone)]
+pub struct RecallRow {
+    pub id: i64,
+    pub content: String,
+    pub distance: f32,
+    pub branch: Option<String>,
+    pub team_id: Option<i64>,
+    pub fact_type: String,
+    pub category: Option<String>,
+    pub status: String,
+}
 
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
 #[derive(Debug, Clone)]
@@ -120,7 +130,8 @@ pub fn scope_filter_sql(prefix: &str) -> String {
 
 /// Cached semantic recall query with scope filtering.
 ///
-/// Returns SQL that selects (fact_id, content, distance, branch, team_id) from vec_memory + memory_facts.
+/// Returns SQL that selects (fact_id, content, distance, branch, team_id, fact_type, category, status)
+/// from vec_memory + memory_facts. Inlines metadata to avoid N+1 queries.
 /// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id, ?5 = team_id
 /// User memory fact_types -- system types live in system_observations now
 const USER_FACT_TYPES_SQL: &str =
@@ -128,7 +139,8 @@ const USER_FACT_TYPES_SQL: &str =
 
 static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "SELECT v.fact_id, f.content, vec_distance_cosine(v.embedding, ?1) as distance, f.branch, f.team_id
+        "SELECT v.fact_id, f.content, vec_distance_cosine(v.embedding, ?1) as distance,
+                f.branch, f.team_id, f.fact_type, f.category, f.status
          FROM vec_memory v
          JOIN memory_facts f ON v.fact_id = f.id
          WHERE {}
@@ -389,13 +401,16 @@ pub fn recall_semantic_with_entity_boost_sync(
                 team_id
             ],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
+                Ok(RecallRow {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    distance: row.get(2)?,
+                    branch: row.get(3)?,
+                    team_id: row.get(4)?,
+                    fact_type: row.get(5)?,
+                    category: row.get(6)?,
+                    status: row.get(7)?,
+                })
             },
         )?
         .filter_map(super::log_and_discard)
@@ -411,20 +426,24 @@ pub fn recall_semantic_with_entity_boost_sync(
     // Apply branch boost + entity boost + team boost, then re-sort
     let mut boosted: Vec<RecallRow> = results
         .into_iter()
-        .map(|(id, content, distance, branch, mem_team_id)| {
-            let mut d = apply_branch_boost(distance, branch.as_deref(), current_branch);
-            if let Some(&match_count) = entity_counts.get(&id) {
-                d = apply_entity_boost(d, match_count);
+        .map(|mut r| {
+            r.distance = apply_branch_boost(r.distance, r.branch.as_deref(), current_branch);
+            if let Some(&match_count) = entity_counts.get(&r.id) {
+                r.distance = apply_entity_boost(r.distance, match_count);
             }
             // Team boost: memories from the same team get a 10% distance reduction
-            if team_id.is_some() && mem_team_id == team_id {
-                d *= TEAM_SCOPE_BOOST;
+            if team_id.is_some() && r.team_id == team_id {
+                r.distance *= TEAM_SCOPE_BOOST;
             }
-            (id, content, d, branch, mem_team_id)
+            r
         })
         .collect();
 
-    boosted.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    boosted.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     boosted.truncate(limit);
 
     Ok(boosted)
@@ -459,6 +478,7 @@ pub fn recall_semantic_with_branch_sync(
                 user_id,
                 team_id
             ],
+            // Parse only the columns this function needs (ignore fact_type/category/status)
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?
         .filter_map(super::log_and_discard)
@@ -480,41 +500,6 @@ pub fn recall_semantic_with_branch_sync(
     boosted.truncate(limit);
 
     Ok(boosted)
-}
-
-/// Batch-lookup fact_type and category for a set of memory IDs.
-/// Used to post-filter semantic recall results which only return (id, content, distance, branch).
-pub fn get_memory_metadata_sync(
-    conn: &rusqlite::Connection,
-    ids: &[i64],
-) -> rusqlite::Result<std::collections::HashMap<i64, (String, Option<String>)>> {
-    if ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    // Cap to 500 IDs to stay within SQLite's default 999 parameter limit
-    let ids = if ids.len() > 500 { &ids[..500] } else { ids };
-    let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
-    let sql = format!(
-        "SELECT id, fact_type, category FROM memory_facts WHERE id IN ({})",
-        placeholders.join(", ")
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = ids
-        .iter()
-        .map(|id| id as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-        ))
-    })?;
-    let mut map = std::collections::HashMap::new();
-    for row in rows.filter_map(super::log_and_discard) {
-        map.insert(row.0, (row.1, row.2));
-    }
-    Ok(map)
 }
 
 /// Search memories by text with scope filtering (sync version for pool.interact())

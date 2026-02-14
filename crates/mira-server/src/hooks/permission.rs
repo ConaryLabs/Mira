@@ -18,7 +18,7 @@ pub async fn run() -> Result<()> {
     // Open database pool
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let db_path = home.join(".mira/mira.db");
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let pool = Arc::new(DatabasePool::open_hook(&db_path).await?);
 
     // Check for matching permission rules
     let rules = pool

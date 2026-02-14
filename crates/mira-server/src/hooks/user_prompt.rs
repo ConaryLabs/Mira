@@ -138,7 +138,7 @@ pub async fn run() -> Result<()> {
 
     // Open database pools (main + code index)
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(std::path::Path::new(&db_path)).await?);
+    let pool = Arc::new(DatabasePool::open_hook(std::path::Path::new(&db_path)).await?);
     let code_db_path = get_code_db_path();
     let code_pool = if code_db_path.exists() {
         match DatabasePool::open_code_db(&code_db_path).await {

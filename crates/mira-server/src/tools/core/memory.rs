@@ -589,32 +589,22 @@ pub async fn recall<C: ToolContext>(
         // Filter out low-quality results (distance >= 0.7 means similarity < 0.3)
         let results: Vec<_> = results
             .into_iter()
-            .filter(|(_, _, distance, _, _)| *distance < 0.7)
+            .filter(|r| r.distance < 0.7)
             .collect();
 
         if !results.is_empty() {
-            // Always fetch metadata for fact_type population (and filtering if needed)
-            let ids_for_meta: Vec<i64> = results.iter().map(|(id, _, _, _, _)| *id).collect();
-            let meta_map = ctx
-                .pool()
-                .run(move |conn| crate::db::get_memory_metadata_sync(conn, &ids_for_meta))
-                .await
-                .unwrap_or_default();
-
-            // Apply category/fact_type filters if requested
+            // Apply category/fact_type filters if requested (using inline metadata)
             let results = if has_filters {
                 let cat = category.clone();
                 let ft = fact_type.clone();
                 results
                     .into_iter()
-                    .filter(|(id, _, _, _, _)| {
-                        if let Some((mem_ft, mem_cat)) = meta_map.get(id) {
-                            let ft_ok = ft.as_ref().is_none_or(|f| f == mem_ft);
-                            let cat_ok = cat.as_ref().is_none_or(|c| mem_cat.as_ref() == Some(c));
-                            ft_ok && cat_ok
-                        } else {
-                            false
-                        }
+                    .filter(|r| {
+                        let ft_ok = ft.as_ref().is_none_or(|f| f == &r.fact_type);
+                        let cat_ok =
+                            cat.as_ref()
+                                .is_none_or(|c| r.category.as_ref() == Some(c));
+                        ft_ok && cat_ok
                     })
                     .take(limit)
                     .collect::<Vec<_>>()
@@ -625,21 +615,18 @@ pub async fn recall<C: ToolContext>(
             if !results.is_empty() {
                 // Record memory access for evidence-based tracking
                 if let Some(ref sid) = session_id {
-                    let ids: Vec<i64> = results.iter().map(|(id, _, _, _, _)| *id).collect();
+                    let ids: Vec<i64> = results.iter().map(|r| r.id).collect();
                     spawn_record_access(ctx.pool().clone(), ids, sid.clone());
                 }
 
                 let items: Vec<MemoryItem> = results
                     .iter()
-                    .map(|(id, content, distance, branch, _team_id)| {
-                        let ft = meta_map.get(id).map(|(ft, _)| ft.clone());
-                        MemoryItem {
-                            id: *id,
-                            content: content.clone(),
-                            score: Some(1.0 - distance),
-                            fact_type: ft,
-                            branch: branch.clone(),
-                        }
+                    .map(|r| MemoryItem {
+                        id: r.id,
+                        content: r.content.clone(),
+                        score: Some(1.0 - r.distance),
+                        fact_type: Some(r.fact_type.clone()),
+                        branch: r.branch.clone(),
                     })
                     .collect();
                 let total = items.len();
@@ -647,16 +634,17 @@ pub async fn recall<C: ToolContext>(
                     "{}Found {} memories (semantic search):\n",
                     context_header, total
                 );
-                for (id, content, distance, branch, _team_id) in &results {
-                    let score = 1.0 - distance;
-                    let preview = truncate(content, 100);
-                    let branch_tag = branch
+                for r in &results {
+                    let score = 1.0 - r.distance;
+                    let preview = truncate(&r.content, 100);
+                    let branch_tag = r
+                        .branch
                         .as_ref()
                         .map(|b| format!(" [{}]", b))
                         .unwrap_or_default();
                     response.push_str(&format!(
                         "  [{}] (score: {:.2}){} {}\n",
-                        id, score, branch_tag, preview
+                        r.id, score, branch_tag, preview
                     ));
                 }
                 return Ok(Json(MemoryOutput {

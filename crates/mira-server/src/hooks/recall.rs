@@ -82,44 +82,12 @@ async fn try_semantic_recall(
         .await
         .ok()?;
 
-    // Filter by distance threshold
-    let candidates: Vec<_> = result
+    // Filter by distance threshold and confirmed status (using inline metadata)
+    let memories: Vec<String> = result
         .into_iter()
-        .filter(|(_, _, distance, _, _)| *distance < SEMANTIC_DISTANCE_THRESHOLD)
-        .take(MAX_RECALL_RESULTS * 2) // over-fetch before status filter
-        .collect();
-
-    if candidates.is_empty() {
-        return Some(Vec::new());
-    }
-
-    // Filter to confirmed-only for hook injection (exclude candidate memories)
-    let ids: Vec<i64> = candidates.iter().map(|(id, _, _, _, _)| *id).collect();
-    let pool_confirmed = pool.clone();
-    let confirmed_ids: std::collections::HashSet<i64> = pool_confirmed
-        .interact(move |conn| {
-            let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
-            let sql = format!(
-                "SELECT id FROM memory_facts WHERE id IN ({}) AND status = 'confirmed'",
-                placeholders.join(", ")
-            );
-            let mut stmt = conn.prepare(&sql)?;
-            let params: Vec<&dyn rusqlite::ToSql> =
-                ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-            let rows: Vec<i64> = stmt
-                .query_map(params.as_slice(), |row| row.get(0))?
-                .filter_map(|r| r.ok())
-                .collect();
-            Ok::<_, anyhow::Error>(rows.into_iter().collect::<std::collections::HashSet<i64>>())
-        })
-        .await
-        .ok()?;
-
-    let memories: Vec<String> = candidates
-        .into_iter()
-        .filter(|(id, _, _, _, _)| confirmed_ids.contains(id))
+        .filter(|r| r.distance < SEMANTIC_DISTANCE_THRESHOLD && r.status == "confirmed")
         .take(MAX_RECALL_RESULTS)
-        .map(|(_, ref content, _, _, _)| format_memory_line(content))
+        .map(|r| format_memory_line(&r.content))
         .collect();
 
     Some(memories)

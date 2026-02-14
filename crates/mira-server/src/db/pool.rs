@@ -142,6 +142,43 @@ impl DatabasePool {
         Self::open_internal(DbStorage::File(path.to_path_buf()), DbKind::Main).await
     }
 
+    /// Open a lightweight pool optimized for hooks.
+    ///
+    /// Hooks are short-lived, single-threaded processes that each open their own
+    /// pool. This method reduces overhead by:
+    /// - Using `max_size(1)` — hooks only need one connection
+    /// - Skipping migrations if the DB file already exists (the MCP server is
+    ///   responsible for running migrations via `mira serve`)
+    ///
+    /// Falls back to a full `open()` if the DB file doesn't exist (first run).
+    pub async fn open_hook(path: &Path) -> Result<Self> {
+        // If the DB file doesn't exist yet, fall back to full open (runs migrations)
+        if !path.exists() {
+            return Self::open(path).await;
+        }
+
+        ensure_sqlite_vec_registered();
+        ensure_parent_directory(path)?;
+
+        let conn_str = path_to_string(path);
+        let hook = make_file_post_create_hook(path.to_path_buf());
+
+        let cfg = Config::new(&conn_str);
+        let pool = cfg
+            .builder(Runtime::Tokio1)
+            .context("Failed to create pool builder")?
+            .max_size(1)
+            .post_create(hook)
+            .build()
+            .context("Failed to build connection pool")?;
+
+        Ok(Self {
+            pool,
+            path: Some(path.to_path_buf()),
+            memory_uri: None,
+        })
+    }
+
     /// Open a pooled database for the code index at the given path.
     ///
     /// Runs code-specific migrations instead of the main schema migrations.

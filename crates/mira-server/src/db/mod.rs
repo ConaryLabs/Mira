@@ -132,7 +132,6 @@ pub use memory::{
     get_base_persona_sync,
     get_global_memories_sync,
     get_health_alerts_sync as get_health_alerts_memory_sync, // alias for callers using the old 3-param signature
-    get_memory_metadata_sync,
     get_memory_scope_sync,
     get_memory_stats_sync,
     get_preferences_sync as get_preferences_memory_sync,
