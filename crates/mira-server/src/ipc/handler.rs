@@ -6,6 +6,18 @@ use crate::mcp::MiraServer;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+/// Returns a per-operation timeout. Slow ops (LLM-dependent, multi-query) get 30s,
+/// medium ops (search/recall) get 10s, fast ops (simple lookups/writes) get 5s.
+fn op_timeout(op: &str) -> Duration {
+    match op {
+        "get_user_prompt_context" | "close_session" | "get_startup_context"
+        | "get_resume_context" | "distill_team_session" => Duration::from_secs(30),
+        "recall_memories" | "get_active_goals" | "snapshot_tasks"
+        | "write_claude_local_md" | "write_auto_memory" => Duration::from_secs(10),
+        _ => Duration::from_secs(5),
+    }
+}
+
 /// Handle a single IPC connection: loop reading request lines until EOF.
 ///
 /// Hooks typically need 2-3 operations per invocation (e.g., resolve_project
@@ -44,9 +56,9 @@ pub async fn handle_connection(stream: tokio::net::UnixStream, server: MiraServe
 
         let id = req.id.clone();
 
-        // Dispatch with timeout (15s to accommodate session lifecycle ops)
+        // Dispatch with per-op timeout
         let resp = match tokio::time::timeout(
-            Duration::from_secs(15),
+            op_timeout(&req.op),
             dispatch(&req.op, req.params, &server),
         )
         .await

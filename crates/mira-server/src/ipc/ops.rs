@@ -75,6 +75,12 @@ pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+
+    // Nothing to log without a session
+    if session_id.is_empty() {
+        return Ok(json!({}));
+    }
+
     let project_id = params
         .get("project_id")
         .and_then(|v| v.as_i64())
@@ -532,34 +538,53 @@ pub async fn save_compaction_context(server: &MiraServer, params: Value) -> Resu
     server
         .pool
         .interact(move |conn| {
-            let existing: Option<String> = conn
-                .query_row(
-                    "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
-                    [&session_id],
-                    |row| row.get::<_, String>(0),
+            // Use an explicit transaction to make the read-modify-write atomic.
+            // Without this, another hook could race between the SELECT and INSERT.
+            conn.execute_batch("BEGIN IMMEDIATE;")
+                .map_err(|e| anyhow::anyhow!("begin transaction: {e}"))?;
+
+            let result = (|| -> Result<()> {
+                let existing: Option<String> = conn
+                    .query_row(
+                        "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                        [&session_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok();
+
+                let mut snapshot = if let Some(ref json_str) = existing {
+                    serde_json::from_str::<Value>(json_str).unwrap_or_else(|_| json!({}))
+                } else {
+                    json!({})
+                };
+
+                snapshot["compaction_context"] = context;
+
+                let snapshot_str =
+                    serde_json::to_string(&snapshot).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                conn.execute(
+                    "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+                     VALUES (?1, ?2, datetime('now'))
+                     ON CONFLICT(session_id) DO UPDATE SET snapshot = ?2, created_at = datetime('now')",
+                    rusqlite::params![session_id, snapshot_str],
                 )
-                .ok();
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            let mut snapshot = if let Some(ref json_str) = existing {
-                serde_json::from_str::<Value>(json_str).unwrap_or_else(|_| json!({}))
-            } else {
-                json!({})
-            };
+                Ok(())
+            })();
 
-            snapshot["compaction_context"] = context;
-
-            let snapshot_str =
-                serde_json::to_string(&snapshot).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            conn.execute(
-                "INSERT INTO session_snapshots (session_id, snapshot, created_at)
-                 VALUES (?1, ?2, datetime('now'))
-                 ON CONFLICT(session_id) DO UPDATE SET snapshot = ?2, created_at = datetime('now')",
-                rusqlite::params![session_id, snapshot_str],
-            )
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            Ok::<_, anyhow::Error>(())
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT;")
+                        .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    Err(e)
+                }
+            }
         })
         .await?;
 
@@ -703,6 +728,10 @@ pub async fn get_resume_context(server: &MiraServer, params: Value) -> Result<Va
 }
 
 /// Close a session: build summary, save snapshot, update status.
+///
+/// This is a cleanup operation — individual steps are best-effort.
+/// Each step logs its own error and continues, because partial cleanup
+/// is better than aborting and leaving the session in a broken state.
 pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> {
     let session_id = params
         .get("session_id")
@@ -713,6 +742,7 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
     server
         .pool
         .interact(move |conn| {
+            // Best-effort: record the stop timestamp regardless of session validity
             if let Err(e) = crate::db::set_server_state_sync(
                 conn,
                 "last_stop_time",
@@ -728,11 +758,13 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
             };
 
             if !session_id.is_empty() {
+                // Best-effort: snapshot may fail if session has no data yet
                 if let Err(e) =
                     crate::hooks::stop::save_session_snapshot(conn, &session_id)
                 {
                     eprintln!("[mira] Session snapshot failed: {}", e);
                 }
+                // Best-effort: close may fail if session was already closed
                 if let Err(e) =
                     crate::db::close_session_sync(conn, &session_id, summary.as_deref())
                 {
@@ -769,6 +801,14 @@ pub async fn snapshot_tasks(server: &MiraServer, params: Value) -> Result<Value>
         .get("tasks")
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("missing required param: tasks"))?;
+
+    // Reject unreasonably large task arrays before deserializing
+    if let Some(arr) = tasks_json.as_array() {
+        if arr.len() > 10_000 {
+            anyhow::bail!("too many tasks: {} (max 10000)", arr.len());
+        }
+    }
+
     let tasks: Vec<crate::tasks::NativeTask> = serde_json::from_value(tasks_json)
         .map_err(|e| anyhow::anyhow!("failed to deserialize tasks: {e}"))?;
 
