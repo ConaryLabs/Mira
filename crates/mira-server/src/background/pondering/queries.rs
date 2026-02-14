@@ -568,11 +568,11 @@ pub(super) async fn get_churn_hotspots(
                 r#"SELECT
                         json_extract(event_data, '$.file_path') AS file_path,
                         COUNT(DISTINCT session_id) AS sessions_touched,
-                        CAST(julianday('now') - julianday(MIN(timestamp)) AS INTEGER) AS period_days
+                        CAST(julianday('now') - julianday(MIN(created_at)) AS INTEGER) AS period_days
                    FROM session_behavior_log
                    WHERE project_id = ?
                      AND event_type = 'file_access'
-                     AND timestamp > datetime('now', '-30 days')
+                     AND created_at > datetime('now', '-30 days')
                      AND json_extract(event_data, '$.file_path') IS NOT NULL
                    GROUP BY file_path
                    HAVING sessions_touched >= 5

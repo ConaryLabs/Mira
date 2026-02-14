@@ -24,9 +24,10 @@ impl PendingIntervention {
     /// Format for display to user
     pub fn format(&self) -> String {
         let icon = match self.pattern_type.as_str() {
-            "friction" => "!",
-            "workflow" => "*",
-            "focus_area" => "@",
+            "insight_fragile_code" | "insight_revert_cluster" | "insight_recurring_error" => "!",
+            "insight_session" | "insight_stale_goal" => "*",
+            "insight_untested" | "insight_churn_hotspot" => "@",
+            "insight_health_degrading" => "~",
             "stale_doc" => "~",
             "missing_doc" => "+",
             _ => ">",
@@ -102,6 +103,7 @@ pub fn get_pending_interventions_sync(
         r#"SELECT bp.id, bp.pattern_type, bp.pattern_data, bp.confidence
            FROM behavior_patterns bp
            WHERE bp.project_id = ?
+             AND bp.pattern_type LIKE 'insight_%'
              AND bp.confidence >= ?
              AND bp.last_triggered_at > datetime('now', '-7 days')
              AND (bp.dismissed IS NULL OR bp.dismissed = 0)
@@ -131,11 +133,12 @@ pub fn get_pending_interventions_sync(
         let description = extract_description(&pattern_data)
             .unwrap_or_else(|| format!("Pattern detected: {}", pattern_type));
 
-        // Map pattern type to intervention type
+        // Map insight pattern type to intervention type
         let intervention_type = match pattern_type.as_str() {
-            "friction" => InterventionType::BugWarning,
-            "workflow" | "tool_chain" => InterventionType::ContextPrediction,
-            "focus_area" => InterventionType::ResourceSuggestion,
+            "insight_fragile_code" | "insight_revert_cluster" | "insight_recurring_error" => {
+                InterventionType::BugWarning
+            }
+            "insight_untested" | "insight_churn_hotspot" => InterventionType::ResourceSuggestion,
             _ => InterventionType::ContextPrediction,
         };
 
@@ -487,7 +490,7 @@ mod tests {
             content: "You often forget to run tests after editing handlers".to_string(),
             confidence: 0.85,
             pattern_id: Some(1),
-            pattern_type: "friction".to_string(),
+            pattern_type: "insight_fragile_code".to_string(),
         };
 
         let formatted = intervention.format();

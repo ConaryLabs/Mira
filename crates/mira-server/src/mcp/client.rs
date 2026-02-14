@@ -540,8 +540,8 @@ impl McpClientManager {
     }
 
     /// Connect to all configured servers and call a closure for each connected server.
-    /// Handles connection errors by logging and skipping.
-    async fn for_each_connected_server<F, T>(&self, mut f: F) -> Vec<T>
+    /// Returns an error if a required server fails to connect.
+    async fn for_each_connected_server<F, T>(&self, mut f: F) -> Result<Vec<T>, String>
     where
         F: FnMut(&str, &ConnectedServer) -> Vec<T>,
     {
@@ -549,6 +549,12 @@ impl McpClientManager {
 
         for config in &self.configs {
             if let Err(e) = self.ensure_connected(&config.name).await {
+                if config.required {
+                    return Err(format!(
+                        "Required MCP server '{}' failed to connect: {}",
+                        config.name, e
+                    ));
+                }
                 warn!(server = %config.name, error = %e, "Failed to connect to MCP server");
                 continue;
             }
@@ -559,12 +565,12 @@ impl McpClientManager {
             }
         }
 
-        results
+        Ok(results)
     }
 
     /// List tools from all configured MCP servers
-    /// Returns Vec of (server_name, tools) pairs
-    pub async fn list_tools(&self) -> Vec<(String, Vec<McpToolInfo>)> {
+    /// Returns Vec of (server_name, tools) pairs, or error if a required server fails
+    pub async fn list_tools(&self) -> Result<Vec<(String, Vec<McpToolInfo>)>, String> {
         self.for_each_connected_server(|name, server| {
             let tools: Vec<McpToolInfo> = server
                 .tools
